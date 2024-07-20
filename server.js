@@ -6,12 +6,19 @@ const bodyParser = require('body-parser');
 const authRoutes = require('./routes/auth');
 const eventRoutes = require('./routes/events');
 const photoRoutes = require('./routes/photos');
+const messageRoutes = require('./routes/messages');
+const notificationRoutes = require('./routes/notifications');
+const searchRoutes = require('./routes/search');
+const checkinRoutes = require('./routes/checkin');
+const profileRoutes = require('./routes/profile');
 const protect = require('./middleware/auth');
+const path = require('path');
 
 dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 mongoose
   .connect(process.env.MONGO_URI, {
@@ -25,6 +32,11 @@ mongoose
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/photos', photoRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/search', searchRoutes);
+app.use('/api/checkin', checkinRoutes);
+app.use('/api/profile', profileRoutes);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

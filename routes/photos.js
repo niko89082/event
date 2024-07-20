@@ -50,4 +50,51 @@ router.post('/main', protect, (req, res) => {
   });
 });
 
-module.exports = router;
+
+router.post('/like/:photoId', protect, async (req, res) => {
+    try {
+      const photo = await Photo.findById(req.params.photoId);
+  
+      if (!photo) {
+        return res.status(404).json({ message: 'Photo not found' });
+      }
+  
+      if (photo.likes.includes(req.user._id)) {
+        // Unlike the photo
+        photo.likes.pull(req.user._id);
+      } else {
+        // Like the photo
+        photo.likes.push(req.user._id);
+      }
+  
+      await photo.save();
+      res.status(200).json(photo);
+    } catch (error) {
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+  
+//comment on an existing post
+router.post('/comment/:photoId', protect, async (req, res) => {
+    try {
+      const photo = await Photo.findById(req.params.photoId);
+  
+      if (!photo) {
+        return res.status(404).json({ message: 'Photo not found' });
+      }
+  
+      const newComment = {
+        user: req.user._id,
+        text: req.body.text,
+      };
+  
+      photo.comments.push(newComment);
+      await photo.save();
+  
+      res.status(201).json(photo);
+    } catch (error) {
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+  
+  module.exports = router;
