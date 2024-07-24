@@ -3,6 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
+const path = require('path');
 const authRoutes = require('./routes/auth');
 const eventRoutes = require('./routes/events');
 const photoRoutes = require('./routes/photos');
@@ -11,8 +12,8 @@ const notificationRoutes = require('./routes/notifications');
 const searchRoutes = require('./routes/search');
 const checkinRoutes = require('./routes/checkin');
 const profileRoutes = require('./routes/profile');
+const followRoutes = require('./routes/follow'); // Add this line
 const protect = require('./middleware/auth');
-const path = require('path');
 
 dotenv.config();
 
@@ -37,6 +38,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/checkin', checkinRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/follow', followRoutes); // Add this line
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

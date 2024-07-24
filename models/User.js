@@ -42,6 +42,14 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false,
   },
+  followers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  following: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }]
 });
 
 // Corrected Pre-Save Hook

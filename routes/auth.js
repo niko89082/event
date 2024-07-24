@@ -3,7 +3,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { check, validationResult } = require('express-validator');
 const User = require('../models/User');
-
+const QRCode = require('qrcode');
 const router = express.Router();
 
 // Signup Route
@@ -30,14 +30,19 @@ router.post(
         return res.status(400).json({ message: 'User already exists' });
       }
 
-      const user = new User({
+      let user = new User({
         username,
         email,
-        password,
+        password, // Password will be hashed in the pre-save hook
         gender,
         dateOfBirth,
       });
-
+      console.log("works")
+      // Generate the QR code
+      const qrCodeData = user._id.toString(); // Using the user ID
+      const qrCode = await QRCode.toDataURL(qrCodeData);
+      // Update user with QR code
+      user.qrCode = qrCode;
       await user.save();
 
       const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
