@@ -1,9 +1,9 @@
-// routes/auth.js
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { check, validationResult } = require('express-validator');
 const User = require('../models/User');
 const QRCode = require('qrcode');
+
 const router = express.Router();
 
 // Signup Route
@@ -22,7 +22,7 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { username, email, password, gender, dateOfBirth } = req.body;
+    const { username, email, password, gender, dateOfBirth, backgroundImage, theme, colorScheme, bio, socialMediaLinks } = req.body;
 
     try {
       const existingUser = await User.findOne({ email });
@@ -36,11 +36,17 @@ router.post(
         password, // Password will be hashed in the pre-save hook
         gender,
         dateOfBirth,
+        backgroundImage,
+        theme,
+        colorScheme,
+        bio,
+        socialMediaLinks: JSON.parse(socialMediaLinks)
       });
-      console.log("works")
+
       // Generate the QR code
       const qrCodeData = user._id.toString(); // Using the user ID
       const qrCode = await QRCode.toDataURL(qrCodeData);
+
       // Update user with QR code
       user.qrCode = qrCode;
       await user.save();
@@ -49,7 +55,7 @@ router.post(
         expiresIn: '1h',
       });
 
-      res.status(201).json({ token });
+      res.status(201).json({ token, user });
     } catch (error) {
       res.status(500).json({ message: 'Server error' });
     }
@@ -86,7 +92,7 @@ router.post(
         expiresIn: '1h',
       });
 
-      res.status(200).json({ token });
+      res.status(200).json({ token, user });
     } catch (error) {
       res.status(500).json({ message: 'Server error' });
     }

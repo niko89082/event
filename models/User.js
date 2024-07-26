@@ -42,17 +42,37 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false,
   },
+  backgroundImage: {
+    type: String,
+    required: false,
+  },
+  theme: {
+    type: String,
+    required: false,
+  },
+  colorScheme: {
+    type: String,
+    required: false,
+  },
+  bio: {
+    type: String,
+    required: false,
+  },
+  socialMediaLinks: {
+    type: Map,
+    of: String,
+    required: false,
+  },
   followers: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
   }],
   following: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }]
+    ref: 'User',
+  }],
 });
 
-// Corrected Pre-Save Hook
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {
     return next();
@@ -66,7 +86,6 @@ UserSchema.pre('save', async function (next) {
   }
 });
 
-// Method to Match Password
 UserSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };

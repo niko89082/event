@@ -1,4 +1,3 @@
-// models/Event.js
 const mongoose = require('mongoose');
 
 const EventSchema = new mongoose.Schema({
@@ -8,7 +7,7 @@ const EventSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: false,
+    required: true,
   },
   time: {
     type: Date,
@@ -16,6 +15,10 @@ const EventSchema = new mongoose.Schema({
   },
   location: {
     type: String,
+    required: true,
+  },
+  maxAttendees: {
+    type: Number,
     required: true,
   },
   host: {
@@ -29,10 +32,6 @@ const EventSchema = new mongoose.Schema({
       ref: 'User',
     },
   ],
-  maxAttendees: {
-    type: Number,
-    required: true,
-  },
   price: {
     type: Number,
     required: false,
@@ -45,8 +44,24 @@ const EventSchema = new mongoose.Schema({
   ],
   isPublic: {
     type: Boolean,
-    default: true, // Default to public
+    default: true,
   },
+  recurring: {
+    type: String, // e.g., "weekly", "monthly", etc.
+    required: false,
+  },
+  documents: [
+    {
+      type: String, // URLs of uploaded documents
+      required: false,
+    },
+  ],
+  announcements: [
+    {
+      message: String,
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
 });
 
 module.exports = mongoose.model('Event', EventSchema);

@@ -1,4 +1,3 @@
-// routes/profile.js
 const express = require('express');
 const multer = require('multer');
 const User = require('../models/User');
@@ -63,6 +62,38 @@ router.delete('/delete', protect, async (req, res) => {
   try {
     await User.findByIdAndDelete(req.user._id);
     res.status(200).json({ message: 'Profile deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get user profile
+router.get('/', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    res.status(200).json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update user profile customization
+router.put('/customize', protect, upload.single('backgroundImage'), async (req, res) => {
+  const { theme, colorScheme, bio, socialMediaLinks } = req.body;
+
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (req.file) {
+      user.backgroundImage = `/uploads/${req.file.filename}`;
+    }
+    if (theme) user.theme = theme;
+    if (colorScheme) user.colorScheme = colorScheme;
+    if (bio) user.bio = bio;
+    if (socialMediaLinks) user.socialMediaLinks = JSON.parse(socialMediaLinks);
+
+    await user.save();
+    res.status(200).json(user);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
