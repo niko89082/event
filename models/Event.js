@@ -1,5 +1,16 @@
 const mongoose = require('mongoose');
 
+const AnnouncementSchema = new mongoose.Schema({
+  message: {
+    type: String,
+    required: true,
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
 const EventSchema = new mongoose.Schema({
   title: {
     type: String,
@@ -7,7 +18,7 @@ const EventSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: true,
+    required: false,
   },
   time: {
     type: Date,
@@ -15,10 +26,6 @@ const EventSchema = new mongoose.Schema({
   },
   location: {
     type: String,
-    required: true,
-  },
-  maxAttendees: {
-    type: Number,
     required: true,
   },
   host: {
@@ -32,6 +39,10 @@ const EventSchema = new mongoose.Schema({
       ref: 'User',
     },
   ],
+  maxAttendees: {
+    type: Number,
+    required: true,
+  },
   price: {
     type: Number,
     required: false,
@@ -46,21 +57,81 @@ const EventSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  openToPublic: {
+    type: Boolean,
+    default: false,
+  },
+  allowUploads: {
+    type: Boolean,
+    default: true,
+  },
   recurring: {
-    type: String, // e.g., "weekly", "monthly", etc.
+    type: String,
     required: false,
   },
+  announcements: [AnnouncementSchema],
   documents: [
     {
-      type: String, // URLs of uploaded documents
+      type: String,
       required: false,
     },
   ],
-  announcements: [
+  categories: [
     {
-      message: String,
-      createdAt: { type: Date, default: Date.now }
+      type: String,
+      required: false,
+    },
+  ],
+  likes: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+  ],
+  comments: [
+    {
+      user: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+      },
+      text: {
+        type: String,
+        required: true,
+      },
+      tags: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      }],
+      createdAt: {
+        type: Date,
+        default: Date.now,
+      },
     }
+  ],
+  ticketsSold: {
+    type: Number,
+    default: 0,
+  },
+  ticketPrice: {
+    type: Number,
+    required: false,
+  },
+  allowPhotos: {
+    type: Boolean,
+    default: true,
+  },
+  photos: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Photo',
+    },
+  ],
+  checkedIn: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
   ],
 });
 

@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { check, validationResult } = require('express-validator');
 const User = require('../models/User');
 const QRCode = require('qrcode');
+const nodemailer = require('nodemailer');
 
 const router = express.Router();
 
@@ -62,6 +63,11 @@ router.post(
   }
 );
 
+// Generate 2FA Code
+const generateTwoFactorCode = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
 // Login Route
 router.post(
   '/login',
@@ -88,15 +94,69 @@ router.post(
         return res.status(400).json({ message: 'Invalid credentials' });
       }
 
-      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-        expiresIn: '1h',
-      });
+      if (user.twoFactorEnabled) {
+        const twoFactorCode = generateTwoFactorCode();
+        user.twoFactorCode = twoFactorCode;
+        await user.save();
 
-      res.status(200).json({ token, user });
+        // Send the 2FA code via email
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.EMAIL,
+            pass: process.env.EMAIL_PASSWORD,
+          },
+        });
+
+        const mailOptions = {
+          from: process.env.EMAIL,
+          to: user.email,
+          subject: 'Your 2FA Code',
+          text: `Your 2FA code is ${twoFactorCode}`,
+        };
+
+        transporter.sendMail(mailOptions, (error, info) => {
+          if (error) {
+            return res.status(500).json({ message: 'Server error' });
+          } else {
+            return res.status(200).json({ message: '2FA code sent' });
+          }
+        });
+      } else {
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+          expiresIn: '1h',
+        });
+
+        res.status(200).json({ token, user });
+      }
     } catch (error) {
       res.status(500).json({ message: 'Server error' });
     }
   }
 );
+
+// Verify 2FA Code
+router.post('/verify-2fa', protect, async (req, res) => {
+  const { code } = req.body;
+
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.twoFactorCode !== code) {
+      return res.status(400).json({ message: 'Invalid 2FA code' });
+    }
+
+    // Clear the 2FA code after successful verification
+    user.twoFactorCode = null;
+    await user.save();
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: '1h',
+    });
+
+    res.status(200).json({ token, user });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 module.exports = router;

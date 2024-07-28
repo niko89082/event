@@ -1,6 +1,6 @@
-// models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const QRCode = require('qrcode');
 
 const UserSchema = new mongoose.Schema({
   username: {
@@ -71,6 +71,40 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   }],
+  attendedEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
+  }],
+  likedEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
+  }],
+  commentedEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
+  }],
+  twoFactorEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  twoFactorCode: {
+    type: String,
+    required: false,
+  },
+  blockedUsers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  interests: [{
+    type: String,
+    required: false,
+  }],
+  featuredEvents: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Event',
+    },
+  ],
 });
 
 UserSchema.pre('save', async function (next) {
@@ -85,6 +119,22 @@ UserSchema.pre('save', async function (next) {
     next(error);
   }
 });
+
+UserSchema.pre('save', async function (next) {
+  if (!this.isModified('qrCode')) {
+    this.qrCode = await generateQRCode(this._id.toString());
+  }
+  next();
+});
+
+async function generateQRCode(data) {
+  try {
+    const qrCodeData = await QRCode.toDataURL(data);
+    return qrCodeData;
+  } catch (err) {
+    console.error('Error generating QR code:', err);
+  }
+}
 
 UserSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);

@@ -66,4 +66,65 @@ router.get('/users', protect, async (req, res) => {
   }
 });
 
+// Get trending events
+router.get('/trending/events', async (req, res) => {
+  try {
+    const events = await Event.find().sort({ attendees: -1 }).limit(10).populate('host', 'username');
+    res.status(200).json(events);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get trending photos
+router.get('/trending/photos', async (req, res) => {
+  try {
+    const photos = await Photo.find().sort({ likes: -1 }).limit(10).populate('user', 'username');
+    res.status(200).json(photos);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Generate event recommendations for the user
+router.get('/recommendations/events', protect, async (req, res) => {
+  try {
+    // Get the current user
+    const user = await User.findById(req.user._id);
+
+    // Get events that the user attended, liked, or commented on
+    const attendedEvents = await Event.find({ attendees: user._id }).populate('host', 'username');
+    const likedEvents = await Event.find({ likes: user._id }).populate('host', 'username');
+    const commentedEvents = await Event.find({ 'comments.user': user._id }).populate('host', 'username');
+
+    // Merge all events and remove duplicates
+    const allEvents = [...new Set([...attendedEvents, ...likedEvents, ...commentedEvents])];
+
+    res.status(200).json(allEvents);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Generate user recommendations for the user
+router.get('/recommendations/users', protect, async (req, res) => {
+  try {
+    // Get the current user
+    const user = await User.findById(req.user._id);
+
+    // Get users that the current user follows
+    const followedUsers = user.following;
+
+    // Find other users followed by the followed users
+    const recommendedUsers = await User.find({ _id: { $in: followedUsers } }).populate('followers');
+
+    // Remove the current user from the recommendations
+    const filteredUsers = recommendedUsers.filter(u => u._id.toString() !== user._id.toString());
+
+    res.status(200).json(filteredUsers);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;

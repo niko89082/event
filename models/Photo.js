@@ -1,4 +1,3 @@
-// models/Photo.js
 const mongoose = require('mongoose');
 
 const CommentSchema = new mongoose.Schema({
@@ -11,6 +10,10 @@ const CommentSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  tags: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
   createdAt: {
     type: Date,
     default: Date.now,
@@ -42,6 +45,16 @@ const PhotoSchema = new mongoose.Schema({
     },
   ],
   comments: [CommentSchema],
+  tags: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    }
+  ],
+  visibleInEvent: {
+    type: Boolean,
+    default: true,
+  },
 });
 
 module.exports = mongoose.model('Photo', PhotoSchema);

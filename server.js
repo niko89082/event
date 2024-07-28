@@ -12,7 +12,7 @@ const notificationRoutes = require('./routes/notifications');
 const searchRoutes = require('./routes/search');
 const checkinRoutes = require('./routes/checkin');
 const profileRoutes = require('./routes/profile');
-const followRoutes = require('./routes/follow'); // Add this line
+const followRoutes = require('./routes/follow'); 
 const protect = require('./middleware/auth');
 
 dotenv.config();
@@ -38,7 +38,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/checkin', checkinRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/follow', followRoutes); // Add this line
+app.use('/api/follow', followRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

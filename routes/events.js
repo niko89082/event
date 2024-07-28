@@ -1,8 +1,11 @@
 const express = require('express');
 const multer = require('multer');
 const Event = require('../models/Event');
-const User = require('../models/User');
+const Photo = require('../models/Photo');
 const protect = require('../middleware/auth');
+const paypal = require('paypal-rest-sdk');
+const fs = require('fs');
+const path = require('path');
 
 const router = express.Router();
 
@@ -18,9 +21,16 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Create an event
+// PayPal Configuration
+paypal.configure({
+  'mode': 'sandbox', // Sandbox or live
+  'client_id': process.env.PAYPAL_CLIENT_ID,
+  'client_secret': process.env.PAYPAL_CLIENT_SECRET
+});
+
+// Create Event
 router.post('/create', protect, async (req, res) => {
-  const { title, description, time, location, maxAttendees, price, isPublic, recurring } = req.body;
+  const { title, description, time, location, maxAttendees, price, isPublic, recurring, allowPhotos, openToPublic, allowUploads } = req.body;
 
   try {
     const event = new Event({
@@ -30,17 +40,65 @@ router.post('/create', protect, async (req, res) => {
       location,
       maxAttendees,
       price,
-      host: req.user.id,
+      host: req.user._id,
       isPublic,
       recurring,
+      allowPhotos,
+      openToPublic,
+      allowUploads,
     });
 
     await event.save();
+    
+    // Handle recurring events
+    if (recurring) {
+      const recurringEvents = [];
+      let currentTime = new Date(time);
+      
+      for (let i = 0; i < 10; i++) { // Create 10 recurring events
+        currentTime = getNextRecurringDate(currentTime, recurring);
+        const newEvent = new Event({
+          title,
+          description,
+          time: currentTime,
+          location,
+          maxAttendees,
+          price,
+          host: req.user._id,
+          isPublic,
+          recurring,
+          allowPhotos,
+          openToPublic,
+          allowUploads,
+        });
+        recurringEvents.push(newEvent);
+      }
+      
+      await Event.insertMany(recurringEvents);
+    }
+    
     res.status(201).json(event);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+function getNextRecurringDate(currentDate, recurring) {
+  const nextDate = new Date(currentDate);
+  switch (recurring) {
+    case 'daily':
+      nextDate.setDate(nextDate.getDate() + 1);
+      break;
+    case 'weekly':
+      nextDate.setDate(nextDate.getDate() + 7);
+      break;
+    case 'monthly':
+      nextDate.setMonth(nextDate.getMonth() + 1);
+      break;
+    // Add more cases if needed
+  }
+  return nextDate;
+}
 
 // Get all events
 router.get('/', protect, async (req, res) => {
@@ -58,13 +116,23 @@ router.get('/:eventId', protect, async (req, res) => {
     const event = await Event.findById(req.params.eventId)
       .populate('host', 'username')
       .populate('coHosts', 'username')
-      .populate('attendees', 'username');
+      .populate('attendees', 'username')
+      .populate('comments.user', 'username')
+      .populate('comments.tags', 'username')
+      .populate('announcements')
+      .populate('documents')
+      .populate('likes', 'username')
+      .populate('photos'); // Populate photos associated with the event
+
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
-    if (!event.isPublic && !(req.user && (event.host.toString() === req.user._id.toString() || event.coHosts.includes(req.user._id) || event.attendees.includes(req.user._id)))) {
-      return res.status(403).json({ message: 'Access forbidden' });
+
+    // Ensure only attendees can view private events
+    if (!event.isPublic && !event.attendees.includes(req.user._id)) {
+      return res.status(401).json({ message: 'User not authorized to view this private event' });
     }
+
     res.status(200).json(event);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -73,17 +141,15 @@ router.get('/:eventId', protect, async (req, res) => {
 
 // Update Event
 router.put('/:eventId', protect, async (req, res) => {
-  const { eventId } = req.params;
-  const { title, description, time, location, maxAttendees, price, isPublic, recurring } = req.body;
+  const { title, description, time, location, maxAttendees, price, isPublic, recurring, allowPhotos, openToPublic, allowUploads } = req.body;
 
   try {
-    const event = await Event.findById(eventId);
-
+    let event = await Event.findById(req.params.eventId);
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    if (event.host.toString() !== req.user._id.toString()) {
+    if (event.host.toString() !== req.user._id.toString() && !event.coHosts.includes(req.user._id)) {
       return res.status(401).json({ message: 'User not authorized' });
     }
 
@@ -92,9 +158,12 @@ router.put('/:eventId', protect, async (req, res) => {
     event.time = time || event.time;
     event.location = location || event.location;
     event.maxAttendees = maxAttendees || event.maxAttendees;
-    event.price = price || event.price;
-    event.isPublic = isPublic || event.isPublic;
+    event.price = price !== undefined ? price : event.price;
+    event.isPublic = isPublic !== undefined ? isPublic : event.isPublic;
     event.recurring = recurring || event.recurring;
+    event.allowPhotos = allowPhotos !== undefined ? allowPhotos : event.allowPhotos;
+    event.openToPublic = openToPublic !== undefined ? openToPublic : event.openToPublic;
+    event.allowUploads = allowUploads !== undefined ? allowUploads : event.allowUploads;
 
     await event.save();
     res.status(200).json(event);
@@ -184,7 +253,7 @@ router.post('/upload/:eventId', protect, upload.array('documents'), async (req, 
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    if (event.host.toString() !== req.user.id) {
+    if (event.host.toString() !== req.user.id && !event.coHosts.includes(req.user._id)) {
       return res.status(401).json({ message: 'User not authorized' });
     }
 
@@ -210,7 +279,7 @@ router.post('/announce/:eventId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    if (event.host.toString() !== req.user.id) {
+    if (event.host.toString() !== req.user.id && !event.coHosts.includes(req.user._id)) {
       return res.status(401).json({ message: 'User not authorized' });
     }
 
@@ -220,6 +289,178 @@ router.post('/announce/:eventId', protect, async (req, res) => {
     res.status(200).json({ message: 'Announcement sent', announcements: event.announcements });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Like Event
+router.post('/like/:eventId', protect, async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId);
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    if (event.likes.includes(req.user._id)) {
+      // Unlike the event
+      event.likes.pull(req.user._id);
+    } else {
+      // Like the event
+      event.likes.push(req.user._id);
+    }
+
+    await event.save();
+    res.status(200).json(event.likes);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Comment on Event
+router.post('/comment/:eventId', protect, async (req, res) => {
+  const { text, tags } = req.body;
+
+  try {
+    const event = await Event.findById(req.params.eventId);
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const comment = {
+      user: req.user._id,
+      text,
+      tags,
+    };
+
+    event.comments.push(comment);
+    await event.save();
+    res.status(200).json(event.comments);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get trending events
+router.get('/trending', async (req, res) => {
+  try {
+    const events = await Event.find().sort({ attendees: -1 }).limit(10).populate('host', 'username');
+    res.status(200).json(events);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Purchase ticket using PayPal
+router.post('/purchase/:eventId', protect, async (req, res) => {
+  const { eventId } = req.params;
+
+  try {
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    if (event.attendees.length >= event.maxAttendees) {
+      return res.status(400).json({ message: 'Event is full' });
+    }
+
+    const payment = {
+      intent: 'sale',
+      payer: {
+        payment_method: 'paypal',
+      },
+      redirect_urls: {
+        return_url: 'http://localhost:3000/success',
+        cancel_url: 'http://localhost:3000/cancel',
+      },
+      transactions: [{
+        item_list: {
+          items: [{
+            name: event.title,
+            sku: '001',
+            price: event.ticketPrice.toString(),
+            currency: 'USD',
+            quantity: 1,
+          }],
+        },
+        amount: {
+          currency: 'USD',
+          total: event.ticketPrice.toString(),
+        },
+        description: `Ticket for ${event.title}`,
+      }],
+    };
+
+    paypal.payment.create(payment, (error, payment) => {
+      if (error) {
+        return res.status(500).json({ message: 'PayPal payment error', error });
+      }
+
+      for (let i = 0; i < payment.links.length; i++) {
+        if (payment.links[i].rel === 'approval_url') {
+          return res.status(200).json({ forwardLink: payment.links[i].href });
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+// Get events for a calendar view
+router.get('/calendar', protect, async (req, res) => {
+  try {
+    const events = await Event.find().populate('host', 'username');
+    const calendarEvents = events.map(event => ({
+      title: event.title,
+      start: event.time,
+      end: event.time, // Assuming the event is a one-day event. Adjust if needed.
+      url: `/events/${event._id}`,
+    }));
+    res.status(200).json(calendarEvents);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete Photo from Event
+router.delete('/:eventId/photo/:photoId', protect, async (req, res) => {
+  const { eventId, photoId } = req.params;
+
+  try {
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    if (event.host.toString() !== req.user._id.toString() && !event.coHosts.includes(req.user._id)) {
+      return res.status(401).json({ message: 'User not authorized' });
+    }
+
+    const photo = await Photo.findById(photoId);
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    if (photo.event.toString() !== eventId) {
+      return res.status(400).json({ message: 'Photo does not belong to this event' });
+    }
+
+    // Delete photo file from server
+    fs.unlink(path.join(__dirname, '..', photo.path), (err) => {
+      if (err) {
+        console.error(err);
+      }
+    });
+
+    await photo.remove();
+    event.photos.pull(photoId);
+    await event.save();
+
+    res.status(200).json({ message: 'Photo deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
