@@ -1,4 +1,3 @@
-// models/Conversation.js
 const mongoose = require('mongoose');
 
 const ConversationSchema = new mongoose.Schema({
@@ -9,6 +8,22 @@ const ConversationSchema = new mongoose.Schema({
       required: true,
     },
   ],
+  isGroup: {
+    type: Boolean,
+    default: false,
+  },
+  group: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Group',
+  },
+  lastMessage: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message',
+  },
+  lastMessageAt: {
+    type: Date,
+    default: Date.now,
+  },
   messages: [
     {
       type: mongoose.Schema.Types.ObjectId,

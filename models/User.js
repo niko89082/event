@@ -1,3 +1,4 @@
+// models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const QRCode = require('qrcode');
@@ -26,13 +27,9 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     required: true,
   },
-  stripeCustomerId: {
-    type: String,
-    required: false,
-  },
   qrCode: {
     type: String,
-    required: false,
+    required: true,
   },
   isPublic: {
     type: Boolean,
@@ -83,6 +80,10 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Event',
   }],
+  groups: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Group',
+  }],
   twoFactorEnabled: {
     type: Boolean,
     default: false,
@@ -99,12 +100,14 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false,
   }],
-  featuredEvents: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Event',
-    },
-  ],
+  featuredEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
+  }],
+  followRequests: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
 });
 
 UserSchema.pre('save', async function (next) {
@@ -121,7 +124,7 @@ UserSchema.pre('save', async function (next) {
 });
 
 UserSchema.pre('save', async function (next) {
-  if (!this.isModified('qrCode')) {
+  if (!this.qrCode) {
     this.qrCode = await generateQRCode(this._id.toString());
   }
   next();
@@ -133,6 +136,7 @@ async function generateQRCode(data) {
     return qrCodeData;
   } catch (err) {
     console.error('Error generating QR code:', err);
+    return null;
   }
 }
 

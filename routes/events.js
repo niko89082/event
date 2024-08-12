@@ -1,7 +1,9 @@
 const express = require('express');
 const multer = require('multer');
 const Event = require('../models/Event');
+const Group = require('../models/Group');
 const Photo = require('../models/Photo');
+const User = require('../models/User');
 const protect = require('../middleware/auth');
 const paypal = require('paypal-rest-sdk');
 const fs = require('fs');
@@ -25,14 +27,25 @@ const upload = multer({ storage });
 paypal.configure({
   'mode': 'sandbox', // Sandbox or live
   'client_id': process.env.PAYPAL_CLIENT_ID,
-  'client_secret': process.env.PAYPAL_CLIENT_SECRET
+  'client_secret': process.env.PAYPAL_CLIENT_SECRET,
 });
 
 // Create Event
 router.post('/create', protect, async (req, res) => {
-  const { title, description, time, location, maxAttendees, price, isPublic, recurring, allowPhotos, openToPublic, allowUploads } = req.body;
+  const { title, description, time, location, maxAttendees, price, isPublic, recurring, allowPhotos, openToPublic, allowUploads, groupId } = req.body;
 
   try {
+    let group = null;
+    if (groupId) {
+      group = await Group.findById(groupId);
+      if (!group) {
+        return res.status(404).json({ message: 'Group not found' });
+      }
+      if (!group.members.includes(req.user._id)) {
+        return res.status(401).json({ message: 'User not authorized to create an event for this group' });
+      }
+    }
+
     const event = new Event({
       title,
       description,
@@ -41,20 +54,26 @@ router.post('/create', protect, async (req, res) => {
       maxAttendees,
       price,
       host: req.user._id,
-      isPublic,
+      isPublic: group ? false : isPublic,
       recurring,
       allowPhotos,
       openToPublic,
       allowUploads,
+      group: groupId || undefined,
     });
 
     await event.save();
-    
+
+    if (group) {
+      group.events.push(event._id);
+      await group.save();
+    }
+
     // Handle recurring events
     if (recurring) {
       const recurringEvents = [];
       let currentTime = new Date(time);
-      
+
       for (let i = 0; i < 10; i++) { // Create 10 recurring events
         currentTime = getNextRecurringDate(currentTime, recurring);
         const newEvent = new Event({
@@ -65,21 +84,22 @@ router.post('/create', protect, async (req, res) => {
           maxAttendees,
           price,
           host: req.user._id,
-          isPublic,
+          isPublic: group ? false : isPublic,
           recurring,
           allowPhotos,
           openToPublic,
           allowUploads,
+          group: groupId || undefined,
         });
         recurringEvents.push(newEvent);
       }
-      
+
       await Event.insertMany(recurringEvents);
     }
-    
+
     res.status(201).json(event);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
@@ -128,9 +148,16 @@ router.get('/:eventId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Ensure only attendees can view private events
+    // Ensure only attendees and group members can view private events
     if (!event.isPublic && !event.attendees.includes(req.user._id)) {
-      return res.status(401).json({ message: 'User not authorized to view this private event' });
+      if (event.group) {
+        const group = await Group.findById(event.group);
+        if (!group || !group.members.includes(req.user._id)) {
+          return res.status(401).json({ message: 'User not authorized to view this private event' });
+        }
+      } else {
+        return res.status(401).json({ message: 'User not authorized to view this private event' });
+      }
     }
 
     res.status(200).json(event);
@@ -288,7 +315,7 @@ router.post('/announce/:eventId', protect, async (req, res) => {
     await event.save();
     res.status(200).json({ message: 'Announcement sent', announcements: event.announcements });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status500().json({ message: 'Server error' });
   }
 });
 
@@ -420,7 +447,7 @@ router.get('/calendar', protect, async (req, res) => {
     }));
     res.status(200).json(calendarEvents);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status500.json({ message: 'Server error' });
   }
 });
 
@@ -459,6 +486,52 @@ router.delete('/:eventId/photo/:photoId', protect, async (req, res) => {
     await event.save();
 
     res.status(200).json({ message: 'Photo deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+router.get('/share/:eventId', async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const shareLink = `${req.protocol}://${req.get('host')}/events/${event._id}`;
+    const socialLinks = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
+      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
+      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
+      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
+    };
+
+    res.status(200).json({ shareLink, socialLinks });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Share Event
+router.get('/share/:eventId', async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Increment share count
+    event.shareCount += 1;
+    await event.save();
+
+    const shareLink = `${req.protocol}://${req.get('host')}/events/${event._id}`;
+    const socialLinks = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
+      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
+      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
+      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
+    };
+
+    res.status(200).json({ shareLink, socialLinks });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

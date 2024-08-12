@@ -2,14 +2,14 @@
 const express = require('express');
 const Event = require('../models/Event');
 const User = require('../models/User');
+const Photo = require('../models/Photo');
 const protect = require('../middleware/auth');
 
 const router = express.Router();
 
 // Search and filter events
 router.get('/events', async (req, res) => {
-  const { title, location, startDate, endDate, minPrice, maxPrice } = req.query;
-
+  const { title, location, startDate, endDate, minPrice, maxPrice, category } = req.query;
   let query = { isPublic: true }; // Only include public events by default
 
   if (title) {
@@ -38,6 +38,10 @@ router.get('/events', async (req, res) => {
     if (maxPrice) {
       query.price.$lte = parseFloat(maxPrice);
     }
+  }
+
+  if (category) {
+    query.category = category;
   }
 
   try {
@@ -102,7 +106,7 @@ router.get('/recommendations/events', protect, async (req, res) => {
 
     res.status(200).json(allEvents);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
@@ -123,7 +127,7 @@ router.get('/recommendations/users', protect, async (req, res) => {
 
     res.status(200).json(filteredUsers);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

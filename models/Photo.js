@@ -55,6 +55,10 @@ const PhotoSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  shareCount: {
+    type: Number,
+    default: 0,
+  },
 });
 
 module.exports = mongoose.model('Photo', PhotoSchema);

@@ -1,3 +1,4 @@
+// models/Event.js
 const mongoose = require('mongoose');
 
 const AnnouncementSchema = new mongoose.Schema({
@@ -11,128 +12,51 @@ const AnnouncementSchema = new mongoose.Schema({
   },
 });
 
-const EventSchema = new mongoose.Schema({
-  title: {
-    type: String,
-    required: true,
-  },
-  description: {
-    type: String,
-    required: false,
-  },
-  time: {
-    type: Date,
-    required: true,
-  },
-  location: {
-    type: String,
-    required: true,
-  },
-  host: {
+const CommentSchema = new mongoose.Schema({
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
   },
-  coHosts: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    },
-  ],
-  maxAttendees: {
-    type: Number,
+  text: {
+    type: String,
     required: true,
   },
-  price: {
-    type: Number,
-    required: false,
+  tags: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  createdAt: {
+    type: Date,
+    default: Date.now,
   },
-  attendees: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    },
-  ],
-  isPublic: {
-    type: Boolean,
-    default: true,
-  },
-  openToPublic: {
-    type: Boolean,
-    default: false,
-  },
-  allowUploads: {
-    type: Boolean,
-    default: true,
-  },
-  recurring: {
-    type: String,
-    required: false,
-  },
+});
+
+const EventSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  time: { type: Date, required: true },
+  location: { type: String, required: true },
+  maxAttendees: { type: Number, required: true },
+  price: { type: Number, default: 0 },
+  host: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  coHosts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  isPublic: { type: Boolean, default: true },
+  recurring: { type: String, enum: ['daily', 'weekly', 'monthly'], default: null },
+  allowPhotos: { type: Boolean, default: true },
+  openToPublic: { type: Boolean, default: true },
+  allowUploads: { type: Boolean, default: true },
+  group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
+  attendees: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  comments: [CommentSchema],
   announcements: [AnnouncementSchema],
-  documents: [
-    {
-      type: String,
-      required: false,
-    },
-  ],
-  categories: [
-    {
-      type: String,
-      required: false,
-    },
-  ],
-  likes: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    },
-  ],
-  comments: [
-    {
-      user: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true,
-      },
-      text: {
-        type: String,
-        required: true,
-      },
-      tags: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      }],
-      createdAt: {
-        type: Date,
-        default: Date.now,
-      },
-    }
-  ],
-  ticketsSold: {
-    type: Number,
-    default: 0,
-  },
-  ticketPrice: {
-    type: Number,
-    required: false,
-  },
-  allowPhotos: {
-    type: Boolean,
-    default: true,
-  },
-  photos: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Photo',
-    },
-  ],
-  checkedIn: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    },
-  ],
+  documents: [{ type: String }],
+  likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  photos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Photo' }],
+  ticketPrice: { type: Number, required: true, default: 0 },
+  checkedIn: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  shareCount: { type: Number, default: 0 },
+  category: { type: String, required: true },
 });
 
 module.exports = mongoose.model('Event', EventSchema);

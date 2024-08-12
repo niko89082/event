@@ -194,4 +194,30 @@ router.get('/trending', async (req, res) => {
   }
 });
 
+// Share Photo
+router.get('/share/:photoId', async (req, res) => {
+  try {
+    const photo = await Photo.findById(req.params.photoId);
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Increment share count
+    photo.shareCount += 1;
+    await photo.save();
+
+    const shareLink = `${req.protocol}://${req.get('host')}/photos/${photo._id}`;
+    const socialLinks = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
+      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
+      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
+      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
+    };
+
+    res.status(200).json({ shareLink, socialLinks });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;

@@ -55,4 +55,20 @@ router.put('/:id/read', protect, async (req, res) => {
   }
 });
 
+//delete notification
+router.delete('/:id', protect, async (req, res) => {
+  try {
+      const notification = await Notification.findById(req.params.id);
+      if (!notification) {
+          return res.status(404).json({ message: 'Notification not found' });
+      }
+      if (notification.user.toString() !== req.user._id.toString()) {
+          return res.status(401).json({ message: 'Unauthorized' });
+      }
+      await notification.remove();
+      res.status(200).json({ message: 'Notification deleted' });
+  } catch (error) {
+      res.status(500).json({ message: 'Server error' });
+  }
+});
 module.exports = router;

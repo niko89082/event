@@ -52,9 +52,34 @@ router.put('/visibility', protect, async (req, res) => {
 
   try {
     const user = await User.findById(req.user._id);
-    user.isPublic = isPublic;
+    if (typeof isPublic !== 'undefined') {
+      user.isPublic = isPublic;
+    }
     await user.save();
-    res.status(200).json({ message: 'Profile visibility updated successfully' });
+    res.status(200).json({ message: 'Profile visibility updated successfully', isPublic: user.isPublic });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Update profile
+router.put('/', protect, async (req, res) => {
+  const { bio, socialMediaLinks, backgroundImage, theme, colorScheme } = req.body;
+
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (bio) user.bio = bio;
+    if (socialMediaLinks) user.socialMediaLinks = JSON.parse(socialMediaLinks || '{}');
+    if (backgroundImage) user.backgroundImage = backgroundImage;
+    if (theme) user.theme = theme;
+    if (colorScheme) user.colorScheme = colorScheme;
+
+    await user.save();
+    res.status(200).json(user);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
@@ -73,7 +98,7 @@ router.delete('/delete', protect, async (req, res) => {
 // Get user profile
 router.get('/', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user._id).select('-password');
     res.status(200).json(user);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -132,7 +157,7 @@ router.put('/customize', protect, upload.single('backgroundImage'), async (req, 
   const { theme, colorScheme, bio, socialMediaLinks } = req.body;
 
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user._id);
 
     if (req.file) {
       user.backgroundImage = `/uploads/${req.file.filename}`;
