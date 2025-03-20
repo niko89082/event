@@ -142,4 +142,67 @@ router.post('/memory/:memoryId/photo', protect, async (req, res) => {
   }
 });
 
+
+
+
+router.post('/:groupId/rename', protect, async (req, res) => {
+  const { groupId } = req.params;
+  const { newName } = req.body;
+
+  try {
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ message: 'Group not found' });
+
+    // If you only allow the group’s "creator" to rename:
+    // if (!group.creator.equals(req.user._id)) {
+    //   return res.status(403).json({ message: 'Only the group creator can rename.' });
+    // }
+
+    group.name = newName;
+    await group.save();
+
+    return res.json({ message: 'Group renamed', group });
+  } catch (err) {
+    console.error('Error renaming group:', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+router.post('/:groupId/remove', protect, async (req, res) => {
+  const { groupId } = req.params;
+  const { userId } = req.body; // user to remove
+
+  try {
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ message: 'Group not found' });
+
+    // If only the group creator can remove:
+    // if (!group.creator.equals(req.user._id)) {
+    //   return res.status(403).json({ message: 'Not authorized to remove users' });
+    // }
+
+    // If user is not in the group
+    if (!group.members.includes(userId)) {
+      return res.status(400).json({ message: 'User is not a member' });
+    }
+
+    // Remove them
+    group.members = group.members.filter(m => m.toString() !== userId);
+    await group.save();
+
+    // Also remove from user's list of groups if your user model references it
+    const user = await User.findById(userId);
+    if (user) {
+      user.groups = user.groups.filter(g => g.toString() !== groupId);
+      await user.save();
+    }
+
+    return res.json({ message: 'User removed from group', group });
+  } catch (err) {
+    console.error('Error removing user from group:', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+
 module.exports = router;

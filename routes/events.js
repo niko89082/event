@@ -32,7 +32,7 @@ paypal.configure({
 
 // Create Event
 router.post('/create', protect, async (req, res) => {
-  const { title, description, time, location, maxAttendees, price, isPublic, recurring, allowPhotos, openToPublic, allowUploads, groupId } = req.body;
+  const { title, description, category, time, location, maxAttendees, price, isPublic, recurring, allowPhotos, openToPublic, allowUploads, groupId } = req.body;
 
   try {
     let group = null;
@@ -51,6 +51,7 @@ router.post('/create', protect, async (req, res) => {
       description,
       time,
       location,
+      category,
       maxAttendees,
       price,
       host: req.user._id,
@@ -315,7 +316,7 @@ router.post('/announce/:eventId', protect, async (req, res) => {
     await event.save();
     res.status(200).json({ message: 'Announcement sent', announcements: event.announcements });
   } catch (error) {
-    res.status500().json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -490,26 +491,6 @@ router.delete('/:eventId/photo/:photoId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
-router.get('/share/:eventId', async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    const shareLink = `${req.protocol}://${req.get('host')}/events/${event._id}`;
-    const socialLinks = {
-      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
-      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
-      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
-      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
-    };
-
-    res.status(200).json({ shareLink, socialLinks });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
 
 // Share Event
 router.get('/share/:eventId', async (req, res) => {
@@ -534,6 +515,61 @@ router.get('/share/:eventId', async (req, res) => {
     res.status(200).json({ shareLink, socialLinks });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+// Check-in endpoint
+router.post('/:eventId/checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { scannedUserId } = req.body; // user ID from the QR code
+
+    const event = await Event.findById(eventId).populate('attendees', '_id username profilePicture');
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Ensure the requestor is the host or co-host
+    if (event.host.toString() !== req.user._id.toString() &&
+        !event.coHosts.includes(req.user._id)) {
+      return res.status(401).json({ message: 'User not authorized to check in attendees' });
+    }
+
+    // Find the user
+    const user = await User.findById(scannedUserId).select('username profilePicture');
+    if (!user) {
+      return res.status(404).json({ message: 'Scanned user not found in system' });
+    }
+
+    // Check if user is in attendees
+    const isAttendee = event.attendees.some(a => a._id.equals(scannedUserId));
+
+    if (isAttendee) {
+      // Optional: Mark them as "checkedIn" if you store that in the Event or a separate list
+      // e.g.: event.checkedIn.push(userId)...
+
+      // Return success + user info
+      return res.json({
+        status: 'success',
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture || null,
+        },
+      });
+    } else {
+      // They are NOT in the official attendee list
+      return res.json({
+        status: 'not_attendee', // let the front-end handle
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture || null,
+        },
+      });
+    }
+  } catch (err) {
+    console.error('Check-in error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 

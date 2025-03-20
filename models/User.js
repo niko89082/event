@@ -2,6 +2,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const QRCode = require('qrcode');
+const crypto = require('crypto');
 
 const UserSchema = new mongoose.Schema({
   username: {
@@ -21,14 +22,15 @@ const UserSchema = new mongoose.Schema({
   gender: {
     type: String,
     enum: ['Male', 'Female', 'Other'],
-    required: true,
+    required: false,
   },
   dateOfBirth: {
     type: Date,
-    required: true,
+    required: false,
   },
   qrCode: {
     type: String,
+    default: '',
     required: true,
   },
   isPublic: {
@@ -60,6 +62,12 @@ const UserSchema = new mongoose.Schema({
     of: String,
     required: false,
   },
+  photos: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Photo',
+    },
+  ],
   followers: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -108,12 +116,11 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   }],
+  resetPasswordToken: String,
+  resetPasswordExpires: Date,
 });
-
-UserSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    return next();
-  }
+UserSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -123,25 +130,15 @@ UserSchema.pre('save', async function (next) {
   }
 });
 
-UserSchema.pre('save', async function (next) {
-  if (!this.qrCode) {
-    this.qrCode = await generateQRCode(this._id.toString());
-  }
-  next();
-});
-
-async function generateQRCode(data) {
-  try {
-    const qrCodeData = await QRCode.toDataURL(data);
-    return qrCodeData;
-  } catch (err) {
-    console.error('Error generating QR code:', err);
-    return null;
-  }
-}
-
 UserSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+UserSchema.methods.createPasswordResetToken = function() {
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  this.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  this.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes from now
+  return resetToken;
 };
 
 module.exports = mongoose.model('User', UserSchema);

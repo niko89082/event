@@ -8,14 +8,17 @@ const MemorySchema = new mongoose.Schema({
   },
   date: {
     type: Date,
+    default: Date.now,
   },
-  photos: [{
+  photos: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Photo',
+    }
+  ],
+  conversation: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Photo',
-  }],
-  group: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Group',
+    ref: 'Conversation',
     required: true,
   },
   createdBy: {

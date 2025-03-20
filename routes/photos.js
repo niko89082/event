@@ -4,11 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const Photo = require('../models/Photo');
 const Event = require('../models/Event');
+const User = require('../models/User'); // Import the User model
 const protect = require('../middleware/auth');
 
 const router = express.Router();
 
-// Configure Multer for photo uploads
+// Configure Multer for multiple photo uploads with a cap of 10
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, 'uploads/photos/');
@@ -18,10 +19,13 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { files: 10 } // Cap uploads at 10 files
+});
 
-// Upload Photo
-router.post('/upload/:eventId', protect, upload.single('photo'), async (req, res) => {
+// Upload Photos to an Event
+router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res) => {
   const { eventId } = req.params;
 
   try {
@@ -38,10 +42,16 @@ router.post('/upload/:eventId', protect, upload.single('photo'), async (req, res
       return res.status(403).json({ message: 'Only attendees can upload photos to this event' });
     }
 
+    if (req.files.length === 0) {
+      return res.status(400).json({ message: 'No photos uploaded' });
+    }
+
+    const paths = req.files.map(file => `/uploads/photos/${file.filename}`);
+
     const photo = new Photo({
       user: req.user._id,
       event: eventId,
-      path: `/uploads/photos/${req.file.filename}`,
+      paths: paths,
       visibleInEvent: true,
     });
 
@@ -51,6 +61,42 @@ router.post('/upload/:eventId', protect, upload.single('photo'), async (req, res
 
     res.status(201).json(photo);
   } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.post('/upload', protect, upload.array('photos'), async (req, res) => {
+  console.log("uploading photo")
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'No user found in request' });
+    }
+    console.log('req.user is', req.user);
+    
+    if (req.files.length === 0) {
+      return res.status(400).json({ message: 'No photos uploaded' });
+    }
+    const paths = req.files.map(file => `/uploads/photos/${file.filename}`);
+
+    const photo = new Photo({
+      user: req.user._id,
+      paths: paths,
+      visibleInEvent: false, 
+    });
+
+    await photo.save();
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found in DB' });
+    }
+
+    user.photos.push(photo._id);
+    await user.save();
+
+    res.status(201).json(photo);
+  } catch (error) {
+    console.error('Server catch error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -88,22 +134,33 @@ router.delete('/:photoId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Photo not found' });
     }
 
+    // Only the owner can delete
     if (photo.user.toString() !== req.user._id.toString()) {
-      return res.status(401).json({ message: 'User not authorized to delete this photo' });
+      return res.status(401).json({ message: 'User not authorized' });
     }
 
-    // Delete photo file from server
-    fs.unlink(path.join(__dirname, '..', photo.path), (err) => {
-      if (err) {
-        console.error(err);
-      }
+    // Delete each file in photo.paths
+    photo.paths.forEach((photoPath) => {
+      const absolutePath = path.join(__dirname, '..', photoPath);
+      fs.unlink(absolutePath, (err) => {
+        if (err) console.error('Error deleting file:', err);
+      });
     });
 
     await photo.remove();
+
+    // If it was an event photo, remove from event
     const event = await Event.findById(photo.event);
     if (event) {
       event.photos.pull(photo._id);
       await event.save();
+    }
+
+    // Also remove from the user's photos
+    const user = await User.findById(photo.user);
+    if (user) {
+      user.photos.pull(photo._id);
+      await user.save();
     }
 
     res.status(200).json({ message: 'Photo deleted successfully' });
@@ -111,6 +168,28 @@ router.delete('/:photoId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
+
+router.get('/user/:userId', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId)
+      .populate({
+        path: 'photos',
+        populate: { path: 'event', select: 'title' }
+      })
+      .select('username photos'); // show whichever fields you want
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // user.photos is an array of Photo docs, each can have .paths, .event, etc.
+    res.status(200).json(user.photos);
+  } catch (error) {
+    console.error('Error fetching user posts:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 // Update Photo Visibility
 router.put('/visibility/:photoId', protect, async (req, res) => {
@@ -153,7 +232,7 @@ router.post('/like/:photoId', protect, async (req, res) => {
     }
 
     await photo.save();
-    res.status(200).json(photo.likes);
+    res.status(200).json({likes: photo.likes, likeCount: photo.likes.length});
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }

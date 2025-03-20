@@ -7,19 +7,17 @@ const protect = require('../middleware/auth');
 
 const router = express.Router();
 
-// Configure Multer
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Destination folder
+    cb(null, 'uploads/');
   },
   filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname); // Filename format
+    cb(null, Date.now() + '-' + file.originalname); 
   },
 });
 
 const upload = multer({ storage });
 
-// Upload Profile Picture
 router.post('/upload', protect, upload.single('profilePicture'), async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -27,7 +25,7 @@ router.post('/upload', protect, upload.single('profilePicture'), async (req, res
       return res.status(404).json({ message: 'User not found' });
     }
 
-    user.profilePicture = `/uploads/${req.file.filename}`; // Store the URL of the uploaded image
+    user.profilePicture = `/uploads/${req.file.filename}`; 
     await user.save();
 
     res.status(200).json({ message: 'Profile picture uploaded successfully', profilePicture: user.profilePicture });
@@ -36,7 +34,6 @@ router.post('/upload', protect, upload.single('profilePicture'), async (req, res
   }
 });
 
-// Get profile visibility status
 router.get('/visibility', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -82,6 +79,7 @@ router.put('/', protect, async (req, res) => {
     res.status(200).json(user);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -98,24 +96,64 @@ router.delete('/delete', protect, async (req, res) => {
 // Get user profile
 router.get('/', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
-    res.status(200).json(user);
+    // This is key: you must populate('photos')
+    const user = await User.findById(req.user._id)
+      .select('-password')
+      .populate('photos');  // <--- populate the photos array
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user); // user.photos => array of Photo docs
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-// Get user profile by ID
+// Get user profile by ID OLD
+// router.get('/:userId', protect, async (req, res) => {
+//   try {
+//     const user = await User.findById(req.params.userId).select('-password');
+//     if (!user) {
+//       return res.status(404).json({ message: 'User not found' });
+//     }
+
+//     res.status(200).json(user);
+//   } catch (error) {
+//     res.status(500).json({ message: 'Server error' });
+//   }
+// });
+// routes/profile.js (or wherever your /profile/:userId route is)
 router.get('/:userId', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId).select('-password');
+    // userId we want to view:
+    const targetUserId = req.params.userId;
+
+    // current user from token:
+    const currentUserId = req.user._id;
+
+    // find the user we want to view, populate followers if needed
+    const user = await User.findById(targetUserId)
+      .populate('followers', '_id username')
+      .populate('following', '_id username')
+      .populate('photos');
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.status(200).json(user);
+    // Check if the current user is in this user’s followers array
+    const isFollowing = user.followers.some(
+      (follower) => follower._id.toString() === currentUserId.toString()
+    );
+
+    // Return all user info, plus isFollowing
+    res.json({
+      ...user.toObject(), // Convert Mongoose doc to a plain object
+      isFollowing
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

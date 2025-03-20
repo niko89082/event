@@ -38,5 +38,23 @@ router.get('/recommendations/users', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+router.get('/:userId/followers', protect, async (req, res) => {
+  console.log("getting followers");
+  try{
+  const user = await User.findById(req.params.userId).populate('followers', 'username');
+  res.json(user.followers);
+  }catch(e){
+    console.log(e);
+  }
+});
+
+router.get('/:userId/following', protect, async (req, res) => {
+  try{
+  const user = await User.findById(req.params.userId).populate('following', 'username');
+  res.json(user.following);
+  }catch(e){
+    console.log(e);
+  }
+});
 
 module.exports = router;

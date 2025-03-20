@@ -30,10 +30,10 @@ const PhotoSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Event',
   },
-  path: {
+  paths: [{
     type: String,
     required: true,
-  },
+  }],
   uploadDate: {
     type: Date,
     default: Date.now,
