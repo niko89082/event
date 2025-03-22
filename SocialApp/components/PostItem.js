@@ -3,34 +3,34 @@ import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
+import UserProfileRow from './UserProfileRow';
 
-export default function PostItem({ post, currentUserId, onPressComments }) {
-  const [likeCount, setLikeCount] = useState(post.likes?.length || 0);
-  const isInitiallyLiked = post.likes?.some(
-    (userId) => userId.toString() === currentUserId
-  );
-  const [isLiked, setIsLiked] = useState(isInitiallyLiked);
-
-  const [imgErr, setImgErr] = useState(null);
-  const [imgLoaded, setImgLoaded] = useState(false);
-
-  // If post.paths has at least 1 image path
+export default function PostItem({
+  post,
+  currentUserId,
+  hideUserInfo = false,
+  navigation,
+  onDeletePost, // <-- new callback prop
+}) {
   let finalPath = post.paths?.[0] || '';
   if (finalPath && !finalPath.startsWith('/')) {
     finalPath = '/' + finalPath;
   }
+  const imageUrl = finalPath ? `http://${API_BASE_URL}:3000${finalPath}` : null;
 
-  const imageUrl = finalPath
-    ? `http://${API_BASE_URL}:3000${finalPath}`
-    : null;
+  const initialLikeCount = post.likes?.length || 0;
+  const isInitiallyLiked = post.likes?.some(
+    (userId) => String(userId) === String(currentUserId)
+  );
+
+  const [likeCount, setLikeCount] = useState(initialLikeCount);
+  const [isLiked, setIsLiked] = useState(isInitiallyLiked);
 
   const handleToggleLike = async () => {
     try {
       const res = await api.post(`/photos/like/${post._id}`);
       const { likes, likeCount: newCount } = res.data;
-      const userLiked = likes.includes(currentUserId);
-
-      setIsLiked(userLiked);
+      setIsLiked(likes.map(String).includes(String(currentUserId)));
       setLikeCount(newCount);
     } catch (error) {
       console.error('Error toggling like:', error.response?.data || error);
@@ -38,35 +38,43 @@ export default function PostItem({ post, currentUserId, onPressComments }) {
   };
 
   const handlePressComments = () => {
-    if (onPressComments) {
-      onPressComments(post);
+    if (!navigation) return;
+    navigation.navigate('CommentsScreen', { postId: post._id });
+  };
+
+  const canShowUser = !hideUserInfo && post.user;
+  const handlePressUser = (clickedUser) => {
+    if (!navigation) return;
+    navigation.navigate('ProfileScreen', { userId: clickedUser._id });
+  };
+
+  const isOwner = String(post.user?._id) === String(currentUserId);
+
+  const handleDelete = async () => {
+    try {
+      await api.delete(`/photos/${post._id}`);
+      console.log('Post deleted successfully.');
+      // Remove from local list by calling the parent's callback
+      if (onDeletePost) {
+        onDeletePost(post._id);
+      }
+    } catch (error) {
+      console.error('Error deleting post:', error.response?.data || error);
     }
   };
 
   return (
     <View style={styles.postContainer}>
+      {canShowUser && (
+        <UserProfileRow user={post.user} onPress={handlePressUser} />
+      )}
+
       {imageUrl ? (
-        <Image
-          source={{ uri: imageUrl }}
-          style={styles.postImage}
-          onError={(err) => setImgErr(err.nativeEvent.error)}
-          onLoad={() => setImgLoaded(true)}
-        />
+        <Image source={{ uri: imageUrl }} style={styles.postImage} />
       ) : (
         <View style={styles.placeholder}>
           <Text>No Image</Text>
         </View>
-      )}
-
-      {imgErr && (
-        <Text style={{ color: 'red' }}>
-          Post image failed to load: {imgErr}
-        </Text>
-      )}
-      {imgLoaded && (
-        <Text style={{ color: 'green' }}>
-          Post image loaded successfully!
-        </Text>
       )}
 
       <View style={styles.actionsRow}>
@@ -79,6 +87,12 @@ export default function PostItem({ post, currentUserId, onPressComments }) {
         <TouchableOpacity onPress={handlePressComments} style={styles.actionBtn}>
           <Text style={styles.actionText}>Comment</Text>
         </TouchableOpacity>
+
+        {isOwner && (
+          <TouchableOpacity onPress={handleDelete} style={styles.actionBtn}>
+            <Text style={styles.actionText}>Delete</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

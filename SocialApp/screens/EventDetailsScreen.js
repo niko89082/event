@@ -1,16 +1,20 @@
-// screens/EventDetailsScreen.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { View, Text, StyleSheet, Button, ActivityIndicator, Alert } from 'react-native';
 import api from '../services/api';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { AuthContext } from '../services/AuthContext';  // <--- so we can check currentUser
 
 export default function EventDetailsScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const { eventId } = route.params || {};
 
+  const { currentUser } = useContext(AuthContext);
   const [event, setEvent] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // We'll see who the current user is, so we can check if they're the host
+  const isHost = event?.host?._id === currentUser?._id;
 
   useEffect(() => {
     if (eventId) {
@@ -31,9 +35,8 @@ export default function EventDetailsScreen() {
   };
 
   const handleAttend = async () => {
-    // POST /events/attend/:eventId
     try {
-      const res = await api.post(`/events/attend/${eventId}`);
+      await api.post(`/events/attend/${eventId}`);
       Alert.alert('Success', 'You are now attending this event.');
       fetchEventDetails(); // re-fetch to update attendees
     } catch (err) {
@@ -43,8 +46,26 @@ export default function EventDetailsScreen() {
   };
 
   const handleCheckinMode = () => {
-    // Suppose only the host sees a "Check in" button
     navigation.navigate('QrScanScreen', { eventId });
+  };
+
+  // Navigate to a new "EditEventScreen" if user is host
+  const handleEditEvent = () => {
+    navigation.navigate('EditEventScreen', { eventId });
+  };
+
+  // Show a screen listing all attendees
+  const handleViewAttendees = () => {
+    navigation.navigate('AttendeeListScreen', {
+      eventId,
+      // optionally: attendees: event.attendees,
+      // or just fetch inside AttendeeListScreen
+    });
+  };
+
+  // Show a screen listing all "checked in" attendees, if you track that
+  const handleViewCheckins = () => {
+    navigation.navigate('CheckinListScreen', { eventId });
   };
 
   if (loading) {
@@ -63,9 +84,6 @@ export default function EventDetailsScreen() {
     );
   }
 
-  // Possibly check if current user is host => show "Scan to check in"
-  // e.g. const isHost = (event.host?._id === currentUserId);
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{event.title}</Text>
@@ -83,12 +101,28 @@ export default function EventDetailsScreen() {
         <Button title="Attend" onPress={handleAttend} />
       </View>
 
-      {/* If user is host, show "Check In" */}
-      {event.host && (
-        <View style={{ marginTop: 16 }}>
-          <Button title="Check In Attendees" onPress={handleCheckinMode} />
-        </View>
+      {/* If user is host, show more controls */}
+      {isHost && (
+        <>
+          <View style={{ marginTop: 16 }}>
+            <Button title="Check In Attendees" onPress={handleCheckinMode} />
+          </View>
+
+          <View style={{ marginTop: 16 }}>
+            <Button title="Edit Event" onPress={handleEditEvent} />
+          </View>
+        </>
       )}
+
+      {/* Everyone can see who is attending, presumably */}
+      <View style={{ marginTop: 16 }}>
+        <Button title="View Attendees" onPress={handleViewAttendees} />
+      </View>
+
+      {/* If you want a separate screen for "checkedIn" */}
+      <View style={{ marginTop: 16 }}>
+        <Button title="View Checked-In" onPress={handleViewCheckins} />
+      </View>
     </View>
   );
 }

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import api from '../services/api';
+import UserProfileRow from '../components/UserProfileRow'
 
 export default function FollowListScreen({ route, navigation }) {
   const { userId, mode } = route.params;
@@ -24,9 +25,15 @@ export default function FollowListScreen({ route, navigation }) {
     }
   };
 
-  const handlePressUser = (anotherUserId) => {
-    // Go to that user’s profile
-    navigation.navigate('ProfileScreen', { userId: anotherUserId });
+  const handlePressUser = (clickedUser) => {
+    // clickedUser => { _id, username, profilePicture? ... }
+    navigation.navigate('ProfileScreen', { userId: clickedUser._id });
+  };
+
+  const renderItem = ({ item }) => {
+    return (
+      <UserProfileRow user={item} onPress={handlePressUser} />
+    );
   };
 
   return (
@@ -34,11 +41,7 @@ export default function FollowListScreen({ route, navigation }) {
       <FlatList
         data={users}
         keyExtractor={(item) => item._id}
-        renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => handlePressUser(item._id)}>
-            <Text style={styles.username}>{item.username}</Text>
-          </TouchableOpacity>
-        )}
+        renderItem={renderItem}
       />
     </View>
   );
@@ -46,5 +49,4 @@ export default function FollowListScreen({ route, navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  username: { fontSize: 16, marginVertical: 8 },
 });

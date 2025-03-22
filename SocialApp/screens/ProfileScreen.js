@@ -1,14 +1,24 @@
 // screens/ProfileScreen.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import {
-  View, Text, StyleSheet, Button, Image,
-  FlatList, ActivityIndicator, TouchableOpacity
+  View,
+  Text,
+  StyleSheet,
+  Button,
+  Image,
+  FlatList,
+  ActivityIndicator,
+  TouchableOpacity
 } from 'react-native';
 import api from '../services/api';
 import PostItem from '../components/PostItem';
 import { API_BASE_URL } from '@env';
+import { useIsFocused } from '@react-navigation/native';
+import { AuthContext } from '../services/AuthContext';
 
 export default function ProfileScreen({ route, navigation, onLogout }) {
+  const { currentUser } = useContext(AuthContext);
+  const currentUserId = currentUser?._id;
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [headerImgErr, setHeaderImgErr] = useState(null);
@@ -16,14 +26,14 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
   const [isFollowing, setIsFollowing] = useState(false);
   const [isSelf, setIsSelf] = useState(false);
 
-  // Example: current user ID (could come from context)
-  const currentUserId = '6778b0c2d3207cceeb3844fb';
   const userId = route?.params?.userId || null;
+  const isFocused = useIsFocused();
 
   useEffect(() => {
-    fetchProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+    if (isFocused) {
+      fetchProfile();
+    }
+  }, [isFocused, userId]);
 
   const fetchProfile = async () => {
     try {
@@ -34,8 +44,9 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
       } else {
         response = await api.get('/profile');
       }
-
       const data = response.data;
+
+      // isFollowing logic
       if (typeof data.isFollowing === 'boolean') {
         setIsFollowing(data.isFollowing);
       } else {
@@ -45,6 +56,7 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
         setIsFollowing(!!isFollowed);
       }
 
+      // Check if this profile belongs to the current user
       if (!userId || String(data._id) === String(currentUserId)) {
         setIsSelf(true);
       } else {
@@ -59,10 +71,6 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
     }
   };
 
-  const handleLogout = () => {
-    onLogout && onLogout();
-  };
-
   const handleToggleFollow = async () => {
     if (!userId) return;
     try {
@@ -75,8 +83,12 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
       }
       fetchProfile();
     } catch (err) {
-      // optionally log error
+      console.error(err);
     }
+  };
+
+  const handleLogout = () => {
+    onLogout && onLogout();
   };
 
   const handlePressFollowers = () => {
@@ -95,13 +107,20 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
     });
   };
 
-  const renderPhotoItem = ({ item }) => (
-    <PostItem
-      post={item}
-      currentUserId={currentUserId}
-      onPressComments={(post) => navigation.navigate('CommentsScreen', { postId: post._id })}
-    />
-  );
+  // -------------- NEW --------------
+  // Called when a post is successfully deleted
+  const handleDeletePost = (deletedId) => {
+    // Remove the deleted photo from local state
+    setProfile((prev) => {
+      if (!prev) return prev;
+      const updatedPhotos = prev.photos.filter((p) => p._id !== deletedId);
+      return {
+        ...prev,
+        photos: updatedPhotos,
+      };
+    });
+  };
+  // ---------------------------------
 
   if (loading) {
     return (
@@ -122,18 +141,17 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
   const { username, profilePicture, followers, following, photos } = profile;
   const postCount = photos?.length || 0;
 
-  // Fix: ensure we have a leading slash if needed
   let finalProfilePicturePath = profilePicture || '';
   if (finalProfilePicturePath && !finalProfilePicturePath.startsWith('/')) {
     finalProfilePicturePath = '/' + finalProfilePicturePath;
   }
-
   const profileImageUrl = finalProfilePicturePath
     ? `http://${API_BASE_URL}:3000${finalProfilePicturePath}`
     : null;
 
   return (
     <View style={styles.container}>
+      {/* HEADER */}
       <View style={styles.header}>
         {profilePicture ? (
           <Image
@@ -160,6 +178,7 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
         <Text style={styles.username}>{username}</Text>
       </View>
 
+      {/* STATS */}
       <View style={styles.statsRow}>
         <TouchableOpacity style={styles.statsBox} onPress={handlePressFollowers}>
           <Text style={styles.statsNumber}>{followers?.length || 0}</Text>
@@ -177,13 +196,13 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
         </View>
       </View>
 
+      {/* FOLLOW / SETTINGS */}
       {!isSelf && (
         <Button
           title={isFollowing ? 'Unfollow' : 'Follow'}
           onPress={handleToggleFollow}
         />
       )}
-
       {isSelf && (
         <View style={styles.selfButtonsContainer}>
           <Button
@@ -194,6 +213,7 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
         </View>
       )}
 
+      {/* POSTS */}
       <View style={styles.postsSection}>
         <Text style={styles.sectionTitle}>Posts</Text>
         {postCount === 0 ? (
@@ -202,7 +222,16 @@ export default function ProfileScreen({ route, navigation, onLogout }) {
           <FlatList
             data={photos}
             keyExtractor={(item) => item._id}
-            renderItem={renderPhotoItem}
+            renderItem={({ item }) => (
+              <PostItem
+                post={item}
+                currentUserId={currentUserId}
+                hideUserInfo={true}
+                navigation={navigation}
+                // Pass the callback so PostItem can remove itself after delete
+                onDeletePost={handleDeletePost}
+              />
+            )}
           />
         )}
       </View>

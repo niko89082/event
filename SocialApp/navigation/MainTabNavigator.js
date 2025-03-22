@@ -1,79 +1,59 @@
 // navigation/MainTabNavigator.js
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+
+// Import your sub‐stacks
 import FeedStack from './FeedStack';
+import SearchStack from './SearchStack';
 import QrStack from './QrStack';
 import ChatStack from './ChatStack';
-import SearchStack from './SearchStack';
 import ProfileStack from './ProfileStack';
-import EventStack from './EventStack'; // <-- import your new stack
+import EventStack from './EventStack';
+
 import { Ionicons } from '@expo/vector-icons';
 
 const Tab = createBottomTabNavigator();
 
 export default function MainTabNavigator({ onLogout }) {
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-          switch (route.name) {
-            case 'FeedTab':
-              iconName = focused ? 'home' : 'home-outline';
-              break;
-            case 'SearchTab':
-              iconName = focused ? 'search' : 'search-outline';
-              break;
-            case 'QRTab':
-              iconName = focused ? 'qr-code' : 'qr-code-outline';
-              break;
-            case 'ChatTab':
-              iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
-              break;
-            case 'ProfileTab':
-              iconName = focused ? 'person' : 'person-outline';
-              break;
-            case 'EventsTab':
-              iconName = focused ? 'calendar' : 'calendar-outline';
-              break;
-          }
-          return <Ionicons name={iconName} size={size} color={color} />;
-        },
-      })}
-    >
-      {/* Existing tabs */}
+    <Tab.Navigator>
       <Tab.Screen
         name="FeedTab"
         component={FeedStack}
-        options={{ title: 'Feed' }}
+        options={{ title: 'Feed', tabBarIcon: makeIcon('home') }}
       />
       <Tab.Screen
         name="SearchTab"
         component={SearchStack}
-        options={{ title: 'Search' }}
+        options={{ title: 'Search', tabBarIcon: makeIcon('search') }}
       />
       <Tab.Screen
         name="QRTab"
         component={QrStack}
-        options={{ title: 'QR' }}
+        options={{ title: 'QR', tabBarIcon: makeIcon('qr-code') }}
       />
       <Tab.Screen
         name="ChatTab"
         component={ChatStack}
-        options={{ title: 'Chat' }}
+        options={{ title: 'Chat', tabBarIcon: makeIcon('chatbubbles') }}
       />
       <Tab.Screen
         name="EventsTab"
-        component={EventStack} // <-- add your new stack here
-        options={{ title: 'Events' }}
+        component={EventStack}
+        options={{ title: 'Events', tabBarIcon: makeIcon('calendar') }}
       />
-      {/* For "ProfileTab", pass onLogout */}
       <Tab.Screen
         name="ProfileTab"
-        options={{ title: 'Profile' }}
-      >
-        {() => <ProfileStack onLogout={onLogout} />}
-      </Tab.Screen>
+        // pass onLogout if needed
+        children={(props) => <ProfileStack {...props} onLogout={onLogout} />}
+        options={{ title: 'Profile', tabBarIcon: makeIcon('person') }}
+      />
     </Tab.Navigator>
   );
+}
+
+function makeIcon(iconName) {
+  return ({ color, size, focused }) => {
+    return <Ionicons name={focused ? iconName : iconName + '-outline'} size={size} color={color} />;
+  };
 }

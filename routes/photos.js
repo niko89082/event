@@ -111,17 +111,56 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// Get Photo by ID
+// Get Photo by ID// GET /photos/:photoId
 router.get('/:photoId', protect, async (req, res) => {
   try {
     const photo = await Photo.findById(req.params.photoId)
       .populate('user', 'username')
-      .populate('event', 'title');
+      .populate('event', 'title')
+      .populate({
+        path: 'comments.user',
+        select: 'username',
+      });
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
     res.status(200).json(photo);
   } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ---------------------
+// POST a new comment on a photo (single route)
+// ---------------------
+router.post('/comment/:photoId', protect, async (req, res) => {
+  const { text, tags } = req.body;
+  try {
+    // 1) Append the new comment to the photo
+    await Photo.findByIdAndUpdate(
+      req.params.photoId,
+      { $push: { comments: { user: req.user._id, text, tags } } },
+      { new: true, runValidators: true }
+    );
+
+    // 2) Re-query with full population
+    const updatedPhoto = await Photo.findById(req.params.photoId)
+      .populate('user', 'username')
+      .populate('event', 'title')
+      .populate({
+        path: 'comments.user',
+        select: 'username',
+      });
+
+    if (!updatedPhoto) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Return the entire updated, populated photo
+    res.status(200).json(updatedPhoto);
+
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -147,7 +186,7 @@ router.delete('/:photoId', protect, async (req, res) => {
       });
     });
 
-    await photo.remove();
+    await Photo.findByIdAndDelete(req.params.photoId);
 
     // If it was an event photo, remove from event
     const event = await Event.findById(photo.event);

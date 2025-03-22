@@ -4,6 +4,8 @@ import { View, Text, FlatList, StyleSheet, TouchableOpacity, Image, Button, Text
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
+import UserProfileRow from '../components/UserProfileRow'; 
+
 
 export default function ChatInfoScreen({ route, navigation }) {
   // We expect route.params.conversationId (or groupId if relevant)
@@ -69,16 +71,14 @@ export default function ChatInfoScreen({ route, navigation }) {
   };
 
   // Render each participant
-  const renderParticipantItem = ({ item }) => {
-    return (
-      <TouchableOpacity
-        style={styles.participantItem}
-        onPress={() => handlePressUser(item)}
-      >
-        <Text style={styles.participantName}>{item.username}</Text>
-      </TouchableOpacity>
-    );
-  };
+  const renderParticipantItem = ({ item }) => (
+    <UserProfileRow
+      user={item}
+      onPress={(u) => {
+        navigation.navigate('ProfileScreen', { userId: u._id });
+      }}
+    />
+  );
 
   // Render each photo in a small horizontal list
   const renderPhotoItem = ({ item }) => {

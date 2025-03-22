@@ -16,6 +16,7 @@ export default function LoginScreen({ navigation }) {
       const { token, user } = res.data;
       setTokenAndUser(token, user);
     } catch (error) {
+      console.log("WHERTERER");
       alert('Login failed => ' + (error.response?.data?.message || error.message));
     }
   };

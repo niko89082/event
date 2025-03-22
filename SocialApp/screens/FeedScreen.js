@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, Button } from 'react-native';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 import PostItem from '../components/PostItem'; 
+import { AuthContext } from '../services/AuthContext';
 
 export default function FeedScreen({ navigation }) {
+  const { currentUser } = useContext(AuthContext);
+  const currentUserId = currentUser?._id;      
   const [feed, setFeed] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -35,13 +38,18 @@ export default function FeedScreen({ navigation }) {
   };
 
   const renderItem = ({ item }) => {
+    // If it's a post (item.uploadDate exists) => show PostItem
     if (item.uploadDate) {
       return (
         <PostItem
           post={item}
+          currentUserId={currentUserId} // now defined
+          navigation={navigation}
+          hideUserInfo={false}
         />
       );
-    } 
+    }
+    // If it's an event (item.time exists) => show event
     else if (item.time) {
       return (
         <View style={styles.eventItem}>
@@ -51,6 +59,7 @@ export default function FeedScreen({ navigation }) {
       );
     }
 
+    // Fallback
     return (
       <View>
         <Text>Unknown feed item</Text>
@@ -72,7 +81,7 @@ export default function FeedScreen({ navigation }) {
         />
       )}
 
-      {/* Buttons for "Create Post" & "Create Event" */}
+      {/* Create Post & Create Event buttons */}
       <Button
         title="Create Post"
         onPress={() => navigation.navigate('CreatePostScreen')}
