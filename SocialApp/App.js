@@ -1,29 +1,25 @@
-// App.js
+
 import React, { useContext } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-
+import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthContext, AuthProvider } from './services/AuthContext';
 
-// Auth screens
 import LoginScreen from './screens/Auth/LoginScreen';
 import RegisterScreen from './screens/Auth/RegisterScreen';
 
-// Main tabs (which includes your sub-stacks)
 import MainTabNavigator from './navigation/MainTabNavigator';
-
-// Common “global” screens used by entire app:
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ProfileScreen from './screens/ProfileScreen';
-import CommentsScreen from './screens/CommentsScreen';
 import FollowListScreen from './screens/FollowListScreen';
 import UserSettingsScreen from './screens/UserSettingsScreen';
-
+import { PUBLISHABLE_KEY } from '@env';
+import { palette } from './theme'; 
 const RootStack = createStackNavigator();
 
 function RootNavigator() {
   const { isAuthenticated, loadingToken, logout } = useContext(AuthContext);
 
-  // Show nothing while checking token
   if (loadingToken) {
     return null;
   }
@@ -68,22 +64,17 @@ function RootNavigator() {
           <RootStack.Screen
             name="ProfileScreen"
             component={ProfileScreen}
-            options={{ headerShown: true, title: 'Profile' }}
-          />
-          <RootStack.Screen
-            name="CommentsScreen"
-            component={CommentsScreen}
-            options={{ headerShown: true, title: 'Comments' }}
+            options={{ headerShown:false }}
           />
           <RootStack.Screen
             name="FollowListScreen"
             component={FollowListScreen}
-            options={{ headerShown: true, title: 'Followers/Following' }}
+            options={{ headerShown:false }}
           />
           <RootStack.Screen
             name="UserSettingsScreen"
             component={UserSettingsScreen}
-            options={{ headerShown: true, title: 'Settings' }}
+            options={{ headerShown: false}}
           />
         </>
       )}
@@ -93,10 +84,20 @@ function RootNavigator() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <NavigationContainer>
-        <RootNavigator />
-      </NavigationContainer>
-    </AuthProvider>
+    <StripeProvider
+      publishableKey={PUBLISHABLE_KEY}
+      merchantDisplayName="MyApp"
+      returnURL="myapp://stripe-redirect"  // Ensure this matches your app's URL scheme
+    >
+      <AuthProvider>
+        <SafeAreaProvider>
+        <SafeAreaView style={{ flex:1, backgroundColor:palette.bg }}>
+        <NavigationContainer>
+          <RootNavigator />
+        </NavigationContainer>
+        </SafeAreaView>
+        </SafeAreaProvider>
+      </AuthProvider>
+    </StripeProvider>
   );
 }

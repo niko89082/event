@@ -6,10 +6,11 @@ import EventDetailsScreen from '../screens/EventDetailsScreen';
 import CreateEventScreen from '../screens/CreateEventScreen';
 import QrScanScreen from '../screens/QrScanScreen';
 import ProfileScreen from '../screens/ProfileScreen';
-import EditEventScreen from '../screens/EditEventScreen'; // <--- Import it
-import AttendeeListScreen from '../screens/AttendeeListScreen';   // <-- import
-import CheckinListScreen from '../screens/CheckinListScreen';     // <-- import
+import EditEventScreen from '../screens/EditEventScreen';
+import AttendeeListScreen from '../screens/AttendeeListScreen'; 
+import CheckinListScreen from '../screens/CheckinListScreen';     
 
+import CalendarScreen from '../screens/CalendarScreen';
 const Stack = createStackNavigator();
 
 export default function EventStack() {
@@ -42,7 +43,7 @@ export default function EventStack() {
       />
       <Stack.Screen
         name="EditEventScreen"
-        component={EditEventScreen}   // <--- Add this line
+        component={EditEventScreen}
         options={{ title: 'Edit Event' }}
       />
       <Stack.Screen
@@ -55,6 +56,11 @@ export default function EventStack() {
         component={CheckinListScreen}
         options={{ title: 'Checked In' }}
       />
+      <Stack.Screen
+      name="CalendarScreen"
+      component={CalendarScreen}
+      options={{ title: 'My Calendar' }}
+    />
     </Stack.Navigator>
   );
 }

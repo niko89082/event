@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import api from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
+import { API_BASE_URL } from '@env';
 
 // Pass in a conversationId from the ChatScreen
 export default function MemoryManager({ conversationId }) {
@@ -153,14 +154,18 @@ export default function MemoryManager({ conversationId }) {
           keyExtractor={(item) => item._id}
           renderItem={({ item }) => (
             <View style={styles.photoContainer}>
-              {item.paths[0] && (
+              {item.path && (
                 <Image
                   style={styles.photo}
-                  source={{ uri: `http://YOUR_IP:3000${item.paths[0]}` }}
+                  source={{
+                    uri: `http://${API_BASE_URL}:3000${
+                      item.path.startsWith('/') ? '' : '/'
+                    }${item.path}`,
+                  }}
                 />
               )}
               <Text>Uploaded by {item.user?.username || 'Unknown'}</Text>
-              <Text>{new Date(item.uploadDate).toLocaleString()}</Text>
+              <Text>{new Date(item.created).toLocaleString()}</Text>
             </View>
           )}
         />

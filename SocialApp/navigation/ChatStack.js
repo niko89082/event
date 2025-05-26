@@ -1,10 +1,17 @@
+// navigation/ChatStack.js
 import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
+
+// Existing imports...
 import ConversationListScreen from '../screens/ConversationListScreen';
 import NewChatScreen from '../screens/NewChatScreen';
 import ChatScreen from '../screens/ChatScreen';
 import ChatInfoScreen from '../screens/ChatInfoScreen';
-import ProfileScreen from '../screens/ProfileScreen'; // <-- Add this
+import ProfileScreen from '../screens/ProfileScreen'; 
+import SelectChatScreen from '../screens/SelectChatScreen';
+
+// 1) Import the MemoryDetailsScreen
+import MemoryDetailsScreen from '../screens/MemoryDetailsScreen';
 
 const Stack = createStackNavigator();
 
@@ -33,8 +40,20 @@ export default function ChatStack() {
       />
       <Stack.Screen
         name="ProfileScreen"
-        component={ProfileScreen}  // <-- So we can do navigation.navigate('ProfileScreen', ...)
+        component={ProfileScreen}
         options={{ title: 'Profile' }}
+      />
+      <Stack.Screen
+        name="SelectChatScreen"
+        component={SelectChatScreen}
+        options={{ title: 'Share...' }}
+      />
+
+      {/* 2) Add MemoryDetailsScreen so we can navigate to it */}
+      <Stack.Screen
+        name="MemoryDetailsScreen"
+        component={MemoryDetailsScreen}
+        options={{ title: 'Memory Details' }}
       />
     </Stack.Navigator>
   );

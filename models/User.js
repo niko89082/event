@@ -76,7 +76,7 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   }],
-  attendedEvents: [{
+  attendingEvents: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Event',
   }],
@@ -108,7 +108,7 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false,
   }],
-  featuredEvents: [{
+  sharedEvents: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Event',
   }],
@@ -137,7 +137,7 @@ UserSchema.methods.matchPassword = async function (enteredPassword) {
 UserSchema.methods.createPasswordResetToken = function() {
   const resetToken = crypto.randomBytes(32).toString('hex');
   this.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-  this.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes from now
+  this.resetPasswordExpires = Date.now() + 10 * 60 * 1000; 
   return resetToken;
 };
 

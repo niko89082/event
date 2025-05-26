@@ -25,42 +25,64 @@ const upload = multer({
 });
 
 // Upload Photos to an Event
+// routes/photos.js   –  inside this router
 router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res) => {
   const { eventId } = req.params;
 
   try {
-    const event = await Event.findById(eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
+    const event = await Event.findById(eventId).populate('host');
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+
+    /* ─── 1) permission checks ───────────────────────────────────────────── */
+    if (!event.allowPhotos) return res.status(403).json({ message: 'Photo uploads are disabled' });
+
+    const isHost      = String(event.host) === String(req.user._id);
+    const isAttendee  = event.attendees.includes(req.user._id);
+
+    if (!isHost && !isAttendee) {
+      return res.status(403).json({ message: 'Only attendees may upload' });
     }
 
-    if (!event.allowPhotos) {
-      return res.status(403).json({ message: 'Photo uploads are not allowed for this event' });
-    }
-
-    if (!event.attendees.includes(req.user._id)) {
-      return res.status(403).json({ message: 'Only attendees can upload photos to this event' });
+    /* host might block uploads until the event starts */
+    if (!event.allowUploadsBeforeStart && !isHost) {
+      const eventHasStarted = new Date(event.time) <= new Date();
+      if (!eventHasStarted) {
+        return res.status(403).json({ message: 'Uploads open once the event begins' });
+      }
     }
 
     if (req.files.length === 0) {
       return res.status(400).json({ message: 'No photos uploaded' });
     }
 
-    const paths = req.files.map(file => `/uploads/photos/${file.filename}`);
+    /* ─── 2) save a Photo doc for every file ─────────────────────────────── */
+    const savedPhotos = [];
+    for (const file of req.files) {
+      const p = new Photo({
+        user:  req.user._id,
+        event: eventId,
+        paths: [`/uploads/photos/${file.filename}`],
+        visibleInEvent: true,
+      });
+      await p.save();
 
-    const photo = new Photo({
-      user: req.user._id,
-      event: eventId,
-      paths: paths,
-      visibleInEvent: true,
-    });
-
-    await photo.save();
-    event.photos.push(photo._id);
+      /* do NOT re‑add a photo the host previously removed */
+      if (!event.removedPhotos.includes(p._id)) {
+        event.photos.push(p._id);
+      }
+      savedPhotos.push(p);
+    }
     await event.save();
 
-    res.status(201).json(photo);
+    /* also add the photos to the uploader’s profile pics array */
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { $addToSet: { photos: { $each: savedPhotos.map(p => p._id) } } },
+    );
+
+    res.status(201).json(savedPhotos);
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -228,7 +250,44 @@ router.get('/user/:userId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+router.put('/:photoId', protect, async (req, res) => {
+  const { caption, eventId } = req.body;
+  const photo = await Photo.findById(req.params.photoId).populate('event');
 
+  if (!photo) return res.status(404).json({ message: 'Photo not found' });
+  if (String(photo.user) !== String(req.user._id))
+    return res.status(401).json({ message: 'Not authorised' });
+
+  if (caption !== undefined) photo.caption = caption;
+
+  /* handle event re-linking */
+  const oldEvId = photo.event ? String(photo.event._id) : null;
+  const newEvId = eventId || null;        // null or '' means remove link
+
+  if (oldEvId !== newEvId) {
+    if (oldEvId) await Event.findByIdAndUpdate(oldEvId, { $pull: { photos: photo._id } });
+
+    if (newEvId) {
+      const ev = await Event.findById(newEvId);
+      if (!ev) return res.status(404).json({ message: 'Event not found' });
+
+      const banned = ev.removedPhotos?.some(id => String(id) === String(photo._id));
+      if (!banned) await Event.findByIdAndUpdate(newEvId, { $addToSet: { photos: photo._id } });
+
+      photo.event = newEvId;
+    } else {
+      photo.event = undefined;
+    }
+  }
+
+  await photo.save();
+
+  const updated = await Photo.findById(photo._id)
+    .populate('user', 'username')
+    .populate('event', 'title');
+
+  res.json(updated);
+});
 
 // Update Photo Visibility
 router.put('/visibility/:photoId', protect, async (req, res) => {

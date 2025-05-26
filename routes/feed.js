@@ -1,59 +1,104 @@
-const express = require('express');
-const Photo = require('../models/Photo');
-const Event = require('../models/Event');
-const User = require('../models/User');
-const protect = require('../middleware/auth');
+/*************************************************
+ * routes/feed.js
+ *************************************************/
+const express  = require('express');
+const Photo    = require('../models/Photo');
+const Event    = require('../models/Event');
+const User     = require('../models/User');
+const protect  = require('../middleware/auth');
 
 const router = express.Router();
 
-// Get User Feed
+/* ─── scoring helper ─── */
+const recencyScore = (d) => {
+  const hours = (Date.now() - d.getTime()) / 3.6e6;
+  return Math.exp(-hours / 18);
+};
+
+/* ─── main GET /feed ─── */
 router.get('/feed', protect, async (req, res) => {
+  const page  = +req.query.page  || 1;
+  const limit = +req.query.limit || 10;
+  const skip  = (page - 1) * limit;
+  console.log(`🟡 [API] /feed -> user ${req.user._id} page ${page}`);
+
   try {
-    // Get the logged-in user's following list and interests
-    const user = await User.findById(req.user._id).populate('following', 'username');
+    /* 1) viewer info ---------------------------------------------------- */
+    const viewer = await User.findById(req.user._id)
+      .select('following interests')
+      .populate('following','_id');
 
-    // Get posts from followed users
-    const followedUsersPosts = await Photo.find({
-      user: { $in: user.following }
-    }).populate('user', 'username').sort({ uploadDate: -1 });
+    const followingIds = viewer.following.map((u)=>u._id);
+    const interests    = viewer.interests || [];
+    console.log(`🟡   following ${followingIds.length}   interests ${interests.length}`);
 
-    // Get events from followed users
-    const followedUsersEvents = await Event.find({
-      host: { $in: user.following }
-    }).populate('host', 'username').sort({ time: -1 });
+    /* 2) fetch raw posts + events -------------------------------------- */
+    const [postsRaw, eventsRaw] = await Promise.all([
+      Photo.find({
+        $or:[
+          { user:{ $in:followingIds } },
+          { tags:{ $in:interests    } },
+        ],
+      }).select('+likes +comments').lean(),
 
-    // Get posts based on user's interests
-    const interestsPosts = await Photo.find({
-      tags: { $in: user.interests }
-    }).populate('user', 'username').sort({ uploadDate: -1 });
+      Event.find({
+        isPublic:true,
+        $or:[
+          { host:{ $in:followingIds } },
+          { categories:{ $in:interests } },
+        ],
+      }).select('+attendees').lean(),
+    ]);
 
-    // Get events based on user's interests
-    const interestsEvents = await Event.find({
-      categories: { $in: user.interests }
-    }).populate('host', 'username').sort({ time: -1 });
+    console.log('🟡   postsRaw',postsRaw.length,'eventsRaw',eventsRaw.length);
 
-    // Combine and sort feed items
-    const feedItems = [
-      ...followedUsersPosts,
-      ...followedUsersEvents,
-      ...interestsPosts,
-      ...interestsEvents
-    ].sort((a, b) => b.uploadDate - a.uploadDate || b.time - a.time);
+    /* 3) score ---------------------------------------------------------------- */
+    const w = { rec:3, eng:2, rel:1.5, int:1 };
+    const scored = [];
 
-    // Pagination
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedFeed = feedItems.slice(startIndex, endIndex);
-
-    res.status(200).json({
-      feed: paginatedFeed,
-      page,
-      totalPages: Math.ceil(feedItems.length / limit)
+    postsRaw.forEach((p)=>{
+      const s =
+        w.rec*recencyScore(p.uploadDate) +
+        w.eng*Math.log10((p.likes?.length||0)+(p.comments?.length||0)+1) +
+        w.rel*(followingIds.some(id=>id.equals(p.user))?1:0) +
+        w.int*(p.tags?.some(t=>interests.includes(t))?1:0);
+      scored.push({ kind:'post', doc:p, score:s });
     });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+
+    eventsRaw.forEach((e)=>{
+      const s =
+        w.rec*recencyScore(e.time) +
+        w.eng*Math.log10((e.attendees?.length||0)+1) +
+        w.rel*(followingIds.some(id=>id.equals(e.host))?1:0) +
+        w.int*(e.categories?.some(c=>interests.includes(c))?1:0);
+      scored.push({ kind:'event', doc:e, score:s });
+    });
+
+    /* 4) sort / slice --------------------------------------------------- */
+    scored.sort((a,b)=>b.score-a.score);
+    const pageSlice = scored.slice(skip, skip+limit);
+    console.log('🟡   pageSlice', pageSlice.length);
+
+    /* 5) lightweight populate ------------------------------------------ */
+    const feed = await Promise.all(pageSlice.map(async item=>{
+      if(item.kind==='post'){
+        return Photo.populate(item.doc,[
+          { path:'user',  select:'username profilePicture' },
+          { path:'event', select:'title time' }
+        ]);
+      }
+      return Event.populate(item.doc,{ path:'host',select:'username profilePicture' });
+    }));
+
+    console.log('🟢  sending feed len', feed.length);
+    return res.json({
+      feed,
+      page,
+      totalPages: Math.ceil(scored.length/limit),
+    });
+  } catch (err) {
+    console.error('❌  /feed error', err);
+    return res.status(500).json({ message:'Server error' });
   }
 });
 

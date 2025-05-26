@@ -75,6 +75,41 @@ mongoose
   .then(() => console.log('MongoDB connected'))
   .catch((err) => console.log(err));
 
+async function ensureIndexes () {
+  const User   = mongoose.model('User');
+  const Event  = mongoose.model('Event');
+
+  await Promise.all([
+    /* full-text for users */
+    User.collection.createIndex(
+      { username: 'text', displayName: 'text', bio: 'text' },
+      { name: 'UserFullText', weights: { username: 10, displayName: 5, bio: 2 } }
+    ),
+
+    /* full-text for events */
+    Event.collection.createIndex(
+      { title: 'text', category: 'text', description: 'text' },
+      { name: 'EventFullText', weights: { title: 8, category: 5, description: 1 } }
+    ),
+
+    /* upcoming-date index */
+    Event.collection.createIndex({ time: 1 }),
+
+    /* geo index on the GEO field, **NOT** on location string.
+       The partialFilter avoids errors if some legacy docs
+       still miss the geo.coordinates array. */
+    Event.collection.createIndex(
+      { geo: '2dsphere' },
+      {
+        name: 'GeoIndex',
+        partialFilterExpression: { 'geo.coordinates.0': { $exists: true } }
+      }
+    )
+  ]);
+
+  console.log('✅  indexes ensured');
+}
+mongoose.connection.once('open', ensureIndexes);
 // ********************************
 // 4) Socket.io setup
 //    Optionally parse JWT from handshake, attach user to socket, etc.
@@ -91,13 +126,11 @@ io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
 
 
-  // Listen for "joinRoom" to join conversation-based rooms
   socket.on('joinRoom', ({ conversationId }) => {
     socket.join(conversationId);
     console.log(`Socket ${socket.id} joined room: ${conversationId}`);
   });
 
-  // Listen for "sendMessage" from client for real-time broadcast
   socket.on('sendMessage', async ({ conversationId, message }) => {
     io.to(conversationId).emit('message', message);
   });
@@ -127,7 +160,6 @@ app.use('/api', feedRoutes);
 app.use('/api/memories', memoryRoutes);
 app.use('/users', usersRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

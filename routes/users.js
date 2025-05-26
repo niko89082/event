@@ -56,5 +56,74 @@ router.get('/:userId/following', protect, async (req, res) => {
     console.log(e);
   }
 });
+router.get('/search', protect, async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || q.trim().length < 1) {
+      return res.status(400).json({ message: 'Search query too short' });
+    }
+
+    const searchQuery = q.trim();
+    
+    // Search by username, fullName, or email (case insensitive)
+    const users = await User.find({
+      $and: [
+        { _id: { $ne: req.user._id } }, // Exclude current user
+        {
+          $or: [
+            { username: { $regex: searchQuery, $options: 'i' } },
+            { fullName: { $regex: searchQuery, $options: 'i' } },
+            { email: { $regex: searchQuery, $options: 'i' } }
+          ]
+        }
+      ]
+    })
+    .select('username fullName email profilePicture')
+    .limit(50)
+    .sort({ username: 1 });
+
+    res.json(users);
+  } catch (error) {
+    console.error('Search users error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET /users/following - Get users that current user follows
+router.get('/following', protect, async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user._id)
+      .populate('following', 'username fullName email profilePicture')
+      .select('following');
+    
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json(currentUser.following || []);
+  } catch (error) {
+    console.error('Get following error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET /users/followers - Get users that follow current user
+router.get('/followers', protect, async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user._id)
+      .populate('followers', 'username fullName email profilePicture')
+      .select('followers');
+    
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json(currentUser.followers || []);
+  } catch (error) {
+    console.error('Get followers error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 module.exports = router;

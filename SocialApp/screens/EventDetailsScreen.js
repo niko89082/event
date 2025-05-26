@@ -1,137 +1,212 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, Button, ActivityIndicator, Alert } from 'react-native';
-import api from '../services/api';
+import React, { useEffect, useState, useContext } from 'react';
+import {
+  View, Text, Image, StyleSheet, ScrollView, FlatList,
+  ActivityIndicator, TouchableOpacity, Button, Alert, Dimensions,
+} from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { AuthContext } from '../services/AuthContext';  // <--- so we can check currentUser
+import { useStripe }  from '@stripe/stripe-react-native';
+import { AuthContext } from '../services/AuthContext';
+import api             from '../services/api';
+import { API_BASE_URL } from '@env';
+import { palette as C, spacing as sp, radius, shadow } from '../theme';
 
+const W      = Dimensions.get('window').width;
+const THUMB  = (W - sp(4) - sp(2)) / 2;        // album grid (2-col)
+
+/* ------------------------------------------------------------------ */
 export default function EventDetailsScreen() {
-  const route = useRoute();
-  const navigation = useNavigation();
-  const { eventId } = route.params || {};
-
+  /* ── context / nav ------------------------------------------------ */
+  const { eventId }  = useRoute().params ?? {};
+  const navigation   = useNavigation();
   const { currentUser } = useContext(AuthContext);
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+
+  /* ── state -------------------------------------------------------- */
   const [event, setEvent] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [load,  setLoad ] = useState(true);
 
-  // We'll see who the current user is, so we can check if they're the host
-  const isHost = event?.host?._id === currentUser?._id;
+  /* ── fetch -------------------------------------------------------- */
+  useEffect(() => { if (eventId) fetchEvent(); }, [eventId]);
 
-  useEffect(() => {
-    if (eventId) {
-      fetchEventDetails();
-    }
-  }, [eventId]);
-
-  const fetchEventDetails = async () => {
-    setLoading(true);
+  const fetchEvent = async () => {
     try {
-      const res = await api.get(`/events/${eventId}`);
-      setEvent(res.data);
-    } catch (err) {
-      console.error('EventDetails => error:', err.response?.data || err);
-    } finally {
-      setLoading(false);
-    }
+      setLoad(true);
+      const { data } = await api.get(`/events/${eventId}`);
+      setEvent(data);
+    } catch (e) {
+      Alert.alert('Error', e.response?.data?.message || 'Unable to load event');
+    } finally { setLoad(false); }
   };
 
-  const handleAttend = async () => {
+  /* ── guards ------------------------------------------------------- */
+  if (load)    return <View style={S.center}><ActivityIndicator size="large"/></View>;
+  if (!event)  return <View style={S.center}><Text>Event not found.</Text></View>;
+
+  /* ── helpers ------------------------------------------------------ */
+  const hero = event.coverImage
+    ? (event.coverImage.startsWith('http')
+        ? event.coverImage
+        : `http://${API_BASE_URL}:3000${event.coverImage}`)
+    : null;
+
+  const past        = Date.now() > new Date(event.time).getTime();
+  const host        = String(event.host?._id) === String(currentUser?._id);
+  const attending   = event.attendees?.some(u => String(u._id) === String(currentUser?._id));
+  const attendeeCt  = event.attendees?.length || 0;
+
+  /* ── attend / pay ------------------------------------------------- */
+  const attend = async () => {
     try {
-      await api.post(`/events/attend/${eventId}`);
-      Alert.alert('Success', 'You are now attending this event.');
-      fetchEventDetails(); // re-fetch to update attendees
-    } catch (err) {
-      console.log('Attend error:', err.response?.data || err);
-      Alert.alert('Error', err.response?.data?.message || 'Could not attend.');
+      /* free OR already paid route */
+      if (event.price <= 1) {
+        await api.post(`/events/attend/${eventId}`, { paymentConfirmed:true });
+        fetchEvent(); return;
+      }
+      /* paid route */
+      const { data } = await api.post(`/events/attend/${eventId}`); // creates PI
+      const i = await initPaymentSheet({
+        paymentIntentClientSecret:data.clientSecret,
+        merchantDisplayName:'MyApp',
+        returnURL:'myapp://stripe-redirect',
+      });
+      if (i.error) return Alert.alert('Payment', i.error.message);
+      const p = await presentPaymentSheet();
+      if (p.error) return Alert.alert('Payment', p.error.message);
+
+      await api.post(`/events/attend/${eventId}`, { paymentConfirmed:true });
+      fetchEvent();
+    } catch (e) {
+      Alert.alert('Error', e.response?.data?.message || 'Unable to attend');
     }
   };
-
-  const handleCheckinMode = () => {
-    navigation.navigate('QrScanScreen', { eventId });
+  const unattend = async () => {
+    try { await api.delete(`/events/attend/${eventId}`); fetchEvent(); }
+    catch(e){ console.log(e.response?.data||e); }
   };
 
-  // Navigate to a new "EditEventScreen" if user is host
-  const handleEditEvent = () => {
-    navigation.navigate('EditEventScreen', { eventId });
-  };
+  /* ── shared-posts thumbnail -------------------------------------- */
+  const renderThumb = ({ item }) => (
+    <TouchableOpacity
+      style={{ width:THUMB, height:THUMB, borderRadius:radius.thumb,
+               marginBottom:sp(2), overflow:'hidden' }}
+      onPress={()=>navigation.navigate('PostDetailsScreen',{ postId:item._id })}
+    >
+      <Image
+        source={{ uri:`http://${API_BASE_URL}:3000${item.paths[0]}` }}
+        style={{ width:'100%', height:'100%' }}
+      />
+    </TouchableOpacity>
+  );
 
-  // Show a screen listing all attendees
-  const handleViewAttendees = () => {
-    navigation.navigate('AttendeeListScreen', {
-      eventId,
-      // optionally: attendees: event.attendees,
-      // or just fetch inside AttendeeListScreen
-    });
-  };
-
-  // Show a screen listing all "checked in" attendees, if you track that
-  const handleViewCheckins = () => {
-    navigation.navigate('CheckinListScreen', { eventId });
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
-
-  if (!event) {
-    return (
-      <View style={styles.centered}>
-        <Text>Event not found.</Text>
-      </View>
-    );
-  }
-
+  /* ── UI ----------------------------------------------------------- */
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>{event.title}</Text>
-      <Text style={styles.host}>
-        Hosted by: {event.host?.username || 'Unknown'}
-      </Text>
-      <Text style={styles.meta}>
-        {new Date(event.time).toLocaleString()} – {event.location}
-      </Text>
-      <Text style={styles.description}>{event.description}</Text>
-      <Text style={styles.meta}>Max Attendees: {event.maxAttendees}</Text>
-      <Text style={styles.meta}>Current Attendees: {event.attendees?.length || 0}</Text>
+    <ScrollView style={S.root} contentContainerStyle={{ paddingBottom:sp(8) }}>
+      {/* hero ------------------------------------------------------- */}
+      {hero && <Image source={{ uri:hero }} style={S.hero}/>}
 
-      <View style={{ marginTop: 16 }}>
-        <Button title="Attend" onPress={handleAttend} />
+      {/* host block ------------------------------------------------- */}
+      <View style={S.hostRow}>
+        <Image
+          source={{ uri:event.host?.profilePicture
+            ? `http://${API_BASE_URL}:3000${event.host.profilePicture}`
+            : 'https://placehold.co/56x56?text=👤' }}
+          style={S.hostLogo}
+        />
+        <View style={{ flex:1 }}>
+          <Text style={S.hostTxt}>{event.title}</Text>
+          <Text style={S.sub}>
+            {new Date(event.time).toLocaleDateString(undefined,{month:'long',day:'numeric'})}
+            {' • '}
+            {new Date(event.time).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
+          </Text>
+          <Text style={S.sub}>Presented by {event.host?.username}</Text>
+        </View>
       </View>
 
-      {/* If user is host, show more controls */}
-      {isHost && (
-        <>
-          <View style={{ marginTop: 16 }}>
-            <Button title="Check In Attendees" onPress={handleCheckinMode} />
-          </View>
+      {/* description ------------------------------------------------ */}
+      <Section title="Description">
+        <Text style={S.body}>{event.description}</Text>
+      </Section>
 
-          <View style={{ marginTop: 16 }}>
-            <Button title="Edit Event" onPress={handleEditEvent} />
-          </View>
-        </>
-      )}
+      <Section title="Venue">
+        <Text style={S.link}>{event.location}</Text>
+      </Section>
 
-      {/* Everyone can see who is attending, presumably */}
-      <View style={{ marginTop: 16 }}>
-        <Button title="View Attendees" onPress={handleViewAttendees} />
+      <Section title="Tickets">
+        <Text style={S.link}>
+          {event.price > 0 ? `$${event.price.toFixed(2)}` : 'Free'}
+        </Text>
+      </Section>
+
+      <Section title="Guest List">
+        <TouchableOpacity onPress={()=>
+          navigation.navigate('AttendeeListScreen',{ eventId })}>
+          <Text style={S.link}>{attendeeCt} attending • View all</Text>
+        </TouchableOpacity>
+      </Section>
+
+      {/* attend / host buttons ------------------------------------- */}
+      <View style={S.btnBox}>
+        {!past && !host && (
+          attending
+            ? <Button title="Unattend" onPress={unattend}/>
+            : <Button title="Attend"   onPress={attend}/>
+        )}
+        {host && (
+          <>
+            <Button title="Check-In"  onPress={()=>
+              navigation.navigate('QrScanScreen',{ eventId })}/>
+            <View style={{ height:sp() }}/>
+            <Button title="Edit Event" onPress={()=>
+              navigation.navigate('EditEventScreen',{eventId})}/>
+          </>
+        )}
       </View>
 
-      {/* If you want a separate screen for "checkedIn" */}
-      <View style={{ marginTop: 16 }}>
-        <Button title="View Checked-In" onPress={handleViewCheckins} />
-      </View>
-    </View>
+      {/* photo album / shared posts -------------------------------- */}
+      <Section title="Photo Album" noPad>
+        {event.photos?.length
+          ? (
+            <FlatList
+              data={event.photos}
+              keyExtractor={p=>p._id}
+              numColumns={2}
+              columnWrapperStyle={{ justifyContent:'space-between' }}
+              renderItem={renderThumb}
+              scrollEnabled={false}
+            />
+          )
+          : <Text style={S.body}>No photos yet.</Text>}
+      </Section>
+    </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: 'bold', marginBottom: 8 },
-  host: { fontWeight: '600', marginBottom: 4 },
-  meta: { color: '#666', marginBottom: 4 },
-  description: { marginVertical: 8 },
+/* ---------- tiny helpers ------------------------------------------ */
+const Section = ({ title, children, noPad }) => (
+  <View style={{ paddingHorizontal:noPad?sp(2):sp(4), marginTop:sp(4) }}>
+    <Text style={S.secTitle}>{title}</Text>
+    {children}
+  </View>
+);
+
+/* ---------- styles ------------------------------------------------ */
+const S = StyleSheet.create({
+  root:{ flex:1, backgroundColor:C.bg },
+  center:{ flex:1, justifyContent:'center', alignItems:'center' },
+
+  hero:{ width:'100%', height:W*0.6 },
+
+  hostRow:{ flexDirection:'row', alignItems:'center',
+            paddingHorizontal:sp(4), marginTop:sp(4) },
+  hostLogo:{ width:56, height:56, borderRadius:radius.avatar, marginRight:sp(3) },
+  hostTxt:{ fontWeight:'700', fontSize:18, marginBottom:2 },
+  sub:{ color:C.grey, fontSize:13 },
+
+  secTitle:{ fontWeight:'700', fontSize:18, marginBottom:sp(1.5) },
+  body:{ lineHeight:20 },
+  link:{ color:C.brandBlue },
+
+  btnBox:{ paddingHorizontal:sp(4), marginTop:sp(2) },
+
 });

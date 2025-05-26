@@ -1,34 +1,28 @@
 // screens/ChatInfoScreen.js
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, Image, Button, TextInput } from 'react-native';
+import {
+  View, Text, StyleSheet, TouchableOpacity, Image, Button, TextInput,
+  ScrollView, // <-- Import
+} from 'react-native';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
-import UserProfileRow from '../components/UserProfileRow'; 
-
+import UserProfileRow from '../components/UserProfileRow';
+import SharedPostSnippet from '../components/SharedPostSnippet';
+import SharedEventSnippet from '../components/SharedEventSnippet';
 
 export default function ChatInfoScreen({ route, navigation }) {
-  // We expect route.params.conversationId (or groupId if relevant)
   const { conversationId } = route.params || {};
-
   const { currentUser } = useContext(AuthContext);
-  const currentUserId = currentUser?._id;
 
   const [loading, setLoading] = useState(true);
   const [chatInfo, setChatInfo] = useState(null);
   const [error, setError] = useState(null);
 
-  // If you want to rename the group, etc.:
-  const [newGroupName, setNewGroupName] = useState('');
-
   useEffect(() => {
     fetchChatInfo();
   }, [conversationId]);
 
-  // ===========================================
-  // GET /messages/conversation/:conversationId/info (example endpoint)
-  // Return => { conversation: {...}, group: {...}, recentPhotos: [...] }
-  // ===========================================
   const fetchChatInfo = async () => {
     if (!conversationId) {
       setError('No conversationId provided');
@@ -37,6 +31,7 @@ export default function ChatInfoScreen({ route, navigation }) {
     }
     try {
       setLoading(true);
+      // We assume the route now returns conversation, group, recentPhotos, recentShares
       const res = await api.get(`/messages/conversation/${conversationId}/info`);
       setChatInfo(res.data);
     } catch (err) {
@@ -47,53 +42,6 @@ export default function ChatInfoScreen({ route, navigation }) {
     }
   };
 
-  // Optionally rename group
-  const handleRenameGroup = async () => {
-    try {
-      if (!chatInfo?.group?._id) return;
-
-      // Suppose you have an endpoint: POST /group/:groupId/rename { newName }
-      const groupId = chatInfo.group._id;
-      await api.post(`/group/${groupId}/rename`, { newName: newGroupName });
-
-      // Refresh chat info if you want
-      fetchChatInfo();
-      setNewGroupName('');
-    } catch (err) {
-      console.error('Rename group error:', err.response?.data || err);
-    }
-  };
-
-  // Navigate to a user’s profile
-  const handlePressUser = (user) => {
-    // E.g., if you have a "ProfileScreen" in your nav:
-    navigation.navigate('ProfileScreen', { userId: user._id });
-  };
-
-  // Render each participant
-  const renderParticipantItem = ({ item }) => (
-    <UserProfileRow
-      user={item}
-      onPress={(u) => {
-        navigation.navigate('ProfileScreen', { userId: u._id });
-      }}
-    />
-  );
-
-  // Render each photo in a small horizontal list
-  const renderPhotoItem = ({ item }) => {
-    // item might be the content path, e.g. /uploads/photos/xxxx.jpg
-    const finalPath = item.startsWith('/') ? item : `/${item}`;
-    const photoUrl = `http://${API_BASE_URL}:3000${finalPath}`;
-
-    return (
-      <Image
-        source={{ uri: photoUrl }}
-        style={styles.photoItem}
-      />
-    );
-  };
-
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -101,7 +49,6 @@ export default function ChatInfoScreen({ route, navigation }) {
       </View>
     );
   }
-
   if (error) {
     return (
       <View style={styles.centered}>
@@ -109,7 +56,6 @@ export default function ChatInfoScreen({ route, navigation }) {
       </View>
     );
   }
-
   if (!chatInfo) {
     return (
       <View style={styles.centered}>
@@ -118,88 +64,81 @@ export default function ChatInfoScreen({ route, navigation }) {
     );
   }
 
-  const { conversation, group, recentPhotos } = chatInfo;
-  const isGroup = !!group; // if we have a group object => it's a group chat
+  const { conversation, group, recentPhotos, recentShares } = chatInfo;
 
   return (
-    <View style={styles.container}>
-      {/* If group chat => show group name, maybe rename if user is admin */}
-      {isGroup ? (
-        <View style={styles.groupHeader}>
-          <Text style={styles.groupTitle}>{group.name}</Text>
-          {/* If you want rename logic, show an input and button: */}
-          <Text style={styles.label}>Rename Group:</Text>
-          <View style={styles.renameRow}>
-            <TextInput
-              style={styles.renameInput}
-              value={newGroupName}
-              onChangeText={setNewGroupName}
-              placeholder="Enter new group name"
-            />
-            <Button title="Rename" onPress={handleRenameGroup} />
-          </View>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      {group ? (
+        <View>
+          <Text style={styles.title}>{group.name}</Text>
+          {/* rename logic if needed */}
         </View>
       ) : (
-        <Text style={styles.label}>Direct Chat</Text>
+        <Text>Direct Chat</Text>
       )}
 
-      {/* Participants */}
+      {/* 1) Participants */}
       <Text style={styles.label}>Members:</Text>
-      <FlatList
-        data={conversation?.participants || []}
-        keyExtractor={(item) => item._id}
-        renderItem={renderParticipantItem}
-        style={styles.participantsList}
-      />
+      {conversation?.participants?.map((user) => {
+        return (
+          <UserProfileRow
+            key={user._id}
+            user={user}
+            onPress={() => navigation.navigate('ProfileScreen', { userId: user._id })}
+          />
+        );
+      })}
 
-      {/* Recent photos */}
+      {/* 2) Recent Photos */}
       <Text style={styles.label}>Recent Photos:</Text>
       {(!recentPhotos || recentPhotos.length === 0) ? (
-        <Text style={styles.noPhotosText}>No recent photos.</Text>
+        <Text style={styles.noPhotosText}>No recent photos</Text>
       ) : (
-        <FlatList
-          data={recentPhotos}
-          keyExtractor={(item, index) => `${index}`}
-          renderItem={renderPhotoItem}
-          horizontal
-          style={styles.photosList}
-        />
+        <ScrollView horizontal style={styles.photosList}>
+          {recentPhotos.map((p, i) => {
+            const path = p.startsWith('/') ? p : `/${p}`;
+            const url = `http://${API_BASE_URL}:3000${path}`;
+            return (
+              <Image
+                key={`photo-${i}`}
+                source={{ uri: url }}
+                style={styles.photoItem}
+              />
+            );
+          })}
+        </ScrollView>
       )}
-    </View>
+
+      {/* 3) Recent Shares => posts / events */}
+      <Text style={styles.label}>Recent Shares:</Text>
+      {(!recentShares || recentShares.length === 0) ? (
+        <Text style={styles.noPhotosText}>No recent shares</Text>
+      ) : (
+        recentShares.map((msg) => {
+          if (msg.shareType === 'post') {
+            return <SharedPostSnippet key={msg._id} message={msg} senderName="(someone)" />;
+          } else if (msg.shareType === 'event') {
+            return <SharedEventSnippet key={msg._id} message={msg} senderName="(someone)" />;
+          }
+          // if you add 'memory' or others, handle them similarly
+          return null;
+        })
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
+  container: { flex: 1 },
+  scrollContent: {
+    padding: 16,
+  },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  groupHeader: { marginBottom: 16 },
-  groupTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 6 },
   label: { fontWeight: '600', marginVertical: 8 },
-  renameRow: { flexDirection: 'row', alignItems: 'center' },
-  renameInput: {
-    flex: 1,
-    borderWidth: 1, borderColor: '#ccc',
-    padding: 8, marginRight: 6, borderRadius: 4
-  },
-  participantsList: {
-    maxHeight: 150, // or something that works for your layout
-    marginBottom: 16,
-  },
-  participantItem: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderColor: '#eee',
-  },
-  participantName: { fontSize: 16 },
-  photosList: {
-    marginTop: 8,
-  },
+  title: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
+  noPhotosText: { color: '#999', fontStyle: 'italic', marginBottom: 8 },
+  photosList: { marginBottom: 8 },
   photoItem: {
-    width: 80, height: 80,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  noPhotosText: {
-    color: '#999', fontStyle: 'italic',
+    width: 80, height: 80, borderRadius: 4, marginRight: 8,
   },
 });

@@ -60,5 +60,5 @@ const PhotoSchema = new mongoose.Schema({
     default: 0,
   },
 });
-
+PhotoSchema.index({ user: 1, visibleInEvent: 1 });
 module.exports = mongoose.model('Photo', PhotoSchema);

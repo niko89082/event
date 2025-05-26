@@ -1,91 +1,84 @@
-// screens/EventListScreen.js
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Button } from 'react-native';
+import React, { useEffect, useState, useContext } from 'react';
+import { View, FlatList, ActivityIndicator, StyleSheet, Button } from 'react-native';
 import api from '../services/api';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import EventCard from '../components/EventCard';
+import { AuthContext } from '../services/AuthContext';
 
-export default function EventListScreen() {
-  const navigation = useNavigation();
+export default function EventListScreen({ navigation }) {
+  const { currentUser } = useContext(AuthContext);
+  const currentUserId = currentUser?._id;
+
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // We fetch events whenever this screen is focused
-  useFocusEffect(
-    useCallback(() => {
-      fetchEvents();
-    }, [])
-  );
+  useEffect(() => {
+    fetchEvents();
+  }, []);
 
   const fetchEvents = async () => {
-    setLoading(true);
     try {
+      // The server now only returns events the user is allowed to see
       const res = await api.get('/events');
       setEvents(res.data);
-    } catch (error) {
-      console.error('EventListScreen => fetchEvents => error:', error.response?.data || error);
+    } catch (err) {
+      console.error('Error fetching events:', err.response?.data || err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePressEvent = (eventId) => {
-    navigation.navigate('EventDetails', { eventId });
+  // Called when user taps the card
+  const handlePressEvent = (event) => {
+    navigation.navigate('EventDetails', { eventId: event._id });
   };
 
-  const handleCreateEvent = () => {
-    navigation.navigate('CreateEventScreen');
+  // Called when user taps "Attend"
+  const handleAttend = async (event) => {
+    try {
+      const res = await api.post(`/events/attend/${event._id}`);
+      console.log('Attending =>', res.data);
+      // Optionally re-fetch events or update local state
+      fetchEvents();
+    } catch (err) {
+      console.error('Error attending event:', err.response?.data || err);
+    }
   };
-
-  const renderItem = ({ item }) => (
-    <TouchableOpacity style={styles.eventItem} onPress={() => handlePressEvent(item._id)}>
-      <Text style={styles.eventTitle}>{item.title}</Text>
-      <Text style={styles.eventMeta}>{new Date(item.time).toLocaleString()} – {item.location}</Text>
-    </TouchableOpacity>
-  );
 
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large"/>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Button title="Create Event" onPress={handleCreateEvent} />
-      {events.length === 0 ? (
-        <Text style={styles.noEvents}>No events found.</Text>
-      ) : (
-        <FlatList
-          data={events}
-          keyExtractor={(item) => item._id}
-          renderItem={renderItem}
-          style={styles.list}
+    <View>
+      <Button 
+      title="View My Calendar" 
+      onPress={() => navigation.navigate('CalendarScreen')}
+    />
+    <FlatList
+      data={events}
+      keyExtractor={(item) => item._id}
+      renderItem={({ item }) => (
+        <EventCard
+          event={item}
+          currentUserId={currentUserId}
+          onPressEvent={handlePressEvent}
+          onAttend={handleAttend}
+          navigation={navigation}
         />
       )}
+    />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  list: { marginTop: 8 },
-  eventItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderColor: '#ccc',
-  },
-  eventTitle: {
-    fontSize: 16, 
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  eventMeta: { color: '#666' },
-  noEvents: {
-    marginTop: 20, 
-    fontStyle: 'italic',
-    textAlign: 'center',
+  centered: {
+    flex: 1, 
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

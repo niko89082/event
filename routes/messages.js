@@ -10,16 +10,17 @@ const Conversation = require('../models/Conversation');
 const Group = require('../models/Group');
 const User = require('../models/User');
 
-const { createNotification } = require('../utils/notifications');
+// [Add your notification import if needed]
+// const { createNotification } = require('../utils/notifications');
 const protect = require('../middleware/auth');
 
-// Ensure the uploads/messages directory exists
+// Ensure uploads/photos folder exists
 const uploadDir = path.join(__dirname, '..', 'uploads', 'photos');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure Multer for photo uploads (writing to uploads/photos)
+// Multer for images
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     console.log('SERVER => [messages.js] => Setting destination => uploads/photos');
@@ -33,26 +34,29 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-/**
- * We wrap our routes in a function that takes `io` and `connectedUsers`.
- * This lets us emit real-time events from inside our routes.
- */
 module.exports = function messageRoutes(io, connectedUsers) {
   const router = express.Router();
 
   /**
    * POST /messages/send
-   * Body can contain { recipientId, conversationId, content }
-   * - If conversationId => add a new message to that conversation
-   * - If recipientId => find or create a conversation with [me, recipientId]
-   *   for 1-1 DM
+   * Body can contain:
+   *  - { recipientId, conversationId, content, shareType, shareId }
+   * If shareType/Id are present, we store them; content can be empty or optional.
    */
   router.post('/send', protect, async (req, res) => {
-    const { recipientId, conversationId, content } = req.body;
+    const {
+      recipientId,
+      conversationId,
+      content,      // text
+      shareType,    // 'post' | 'event' | null
+      shareId,      // ObjectId
+    } = req.body;
+
     try {
       let conversation;
       let isNewConversation = false;
 
+      // 1) Find or create the conversation
       if (conversationId) {
         conversation = await Conversation.findById(conversationId);
         if (!conversation) {
@@ -85,12 +89,43 @@ module.exports = function messageRoutes(io, connectedUsers) {
           .json({ message: 'No conversationId or recipientId provided' });
       }
 
+      // 2) Build message data
       const messageData = {
         sender: req.user._id,
         conversation: conversation._id,
-        content, // text content
+        content: content || '',  // fallback empty
       };
+      // Handle reply functionality
+      if (req.body.replyTo) {
+        const replyMessage = await Message.findById(req.body.replyTo)
+          .populate('sender', 'username');
+        if (replyMessage) {
+          messageData.replyTo = replyMessage._id;
+        }
+      }
+      // if shareType is present, store it
+      const allowed = ['post', 'event', 'profile', 'memory'];
+      if (shareType && !allowed.includes(shareType))
+        return res.status(400).json({ message: 'Invalid shareType' });
 
+      if (shareType) {
+         messageData.shareType = shareType;
+       }
+      if (shareId) {
+        // extra guard to avoid dangling refs
+        const model =
+          shareType === 'post'    ? 'Photo'   :
+          shareType === 'event'   ? 'Event'   :
+          shareType === 'profile' ? 'User'    : null;
+
+        if (model) {
+          const doc = await mongoose.model(model).findById(shareId);
+          if (!doc) return res.status(404).json({ message: `${model} not found` });
+        }
+        messageData.shareId = shareId;
+      }
+
+      // if this is a 2-participant DM, store recipient
       if (!conversation.isGroup && conversation.participants.length === 2) {
         const otherUserId = conversation.participants.find(
           (pid) => pid.toString() !== req.user._id.toString()
@@ -100,25 +135,27 @@ module.exports = function messageRoutes(io, connectedUsers) {
         }
       }
 
+      // 3) Create & save message
       const message = new Message(messageData);
       await message.save();
 
+      // 4) Update conversation
       conversation.messages.push(message._id);
       conversation.lastMessage = message._id;
       conversation.lastMessageAt = message.timestamp;
       await conversation.save();
 
+      // If new conversation, notify the other user
       if (isNewConversation) {
         const populatedConvo = await Conversation.findById(conversation._id)
           .populate('participants', 'username')
           .populate('lastMessage');
-
         const otherUser = populatedConvo.participants.find(
           (p) => p._id.toString() !== req.user._id.toString()
         );
         if (otherUser) {
           const otherUserId = otherUser._id.toString();
-          if (connectedUsers[otherUserId] && connectedUsers[otherUserId].length > 0) {
+          if (connectedUsers[otherUserId]) {
             connectedUsers[otherUserId].forEach((sockId) => {
               io.to(sockId).emit('conversationCreated', populatedConvo);
             });
@@ -126,8 +163,22 @@ module.exports = function messageRoutes(io, connectedUsers) {
         }
       }
 
+      // 5) Emit the message to the conversation room
       const populatedMsg = await Message.findById(message._id)
-        .populate('sender', 'username');
+      .populate('sender', 'username')
+      .populate({
+        path: 'replyTo',
+        populate: {
+          path: 'sender',
+          select: 'username'
+        }
+      })
+      .populate({
+        path: 'shareId',
+        select: 'username pronouns profilePicture title time paths',
+      });
+
+
       io.to(conversation._id.toString()).emit('message', {
         ...populatedMsg.toObject(),
         conversationId: conversation._id.toString(),
@@ -140,9 +191,9 @@ module.exports = function messageRoutes(io, connectedUsers) {
     }
   });
 
-  // ==============================================
-  // POST /messages/send/photo (Image)
-  // ==============================================
+  // =========================================================
+  // POST /messages/send/photo (image)
+  // =========================================================
   router.post('/send/photo', protect, upload.single('photo'), async (req, res) => {
     try {
       const { recipientId, conversationId } = req.body;
@@ -159,12 +210,10 @@ module.exports = function messageRoutes(io, connectedUsers) {
         if (!recipient) {
           return res.status(400).json({ message: 'Recipient not found' });
         }
-
         conversation = await Conversation.findOne({
           participants: { $all: [req.user._id, recipientId] },
           isGroup: false,
         });
-
         if (!conversation) {
           conversation = new Conversation({
             participants: [req.user._id, recipientId],
@@ -173,18 +222,17 @@ module.exports = function messageRoutes(io, connectedUsers) {
           isNewConversation = true;
         }
       } else {
-        return res
-          .status(400)
-          .json({ message: 'No conversationId or recipientId provided' });
+        return res.status(400).json({ message: 'No conversationId or recipientId provided' });
       }
 
       const fileName = req.file.filename;
       const messageData = {
         sender: req.user._id,
         conversation: conversation._id,
-        content: `/uploads/photos/${fileName}`, // store the path
+        content: `/uploads/photos/${fileName}`,
       };
 
+      // if 1-1 DM
       if (!conversation.isGroup && conversation.participants.length === 2) {
         const otherUserId = conversation.participants.find(
           (pid) => pid.toString() !== req.user._id.toString()
@@ -206,13 +254,12 @@ module.exports = function messageRoutes(io, connectedUsers) {
         const populatedConvo = await Conversation.findById(conversation._id)
           .populate('participants', 'username')
           .populate('lastMessage');
-
         const otherUser = populatedConvo.participants.find(
           (p) => p._id.toString() !== req.user._id.toString()
         );
         if (otherUser) {
           const otherUserId = otherUser._id.toString();
-          if (connectedUsers[otherUserId] && connectedUsers[otherUserId].length > 0) {
+          if (connectedUsers[otherUserId]) {
             connectedUsers[otherUserId].forEach((sockId) => {
               io.to(sockId).emit('conversationCreated', populatedConvo);
             });
@@ -360,10 +407,12 @@ module.exports = function messageRoutes(io, connectedUsers) {
       await conversation.save();
 
       // Populate the new message's sender
-      const populatedMsg = await Message.findById(message._id).populate(
-        'sender',
-        'username'
-      );
+      const populatedMsg = await Message.findById(message._id)
+              .populate('sender', 'username')
+              .populate({
+                path: 'shareId',
+                select: 'username pronouns profilePicture title time paths', 
+      });
 
       // Emit to group room
       io.to(conversation._id.toString()).emit('message', {
@@ -449,10 +498,18 @@ module.exports = function messageRoutes(io, connectedUsers) {
       }
 
       let messages = await Message.find({ conversation: conversation._id })
-        .populate('sender', 'username')
-        .sort({ timestamp: -1 })
-        .skip(skip)
-        .limit(limit);
+      .populate('sender', 'username profilePicture')
+      .populate({
+        path: 'replyTo',
+        populate: {
+          path: 'sender',
+          select: 'username'
+        }
+      })
+      .populate('seenBy', 'username')
+      .sort({ timestamp: -1 })
+      .skip(skip)
+      .limit(limit);
 
       // reverse => chronological
       messages = messages.reverse();
@@ -465,61 +522,117 @@ module.exports = function messageRoutes(io, connectedUsers) {
     }
   });
 
-  router.get('/conversation/:conversationId/info', protect, async (req, res) => {
-    try {
-      const { conversationId } = req.params;
-      const conversation = await Conversation.findById(conversationId)
-        .populate('participants', 'username')
-        .populate('group'); // if your conversation references a Group
-  
-      if (!conversation) {
-        return res.status(404).json({ message: 'Conversation not found' });
-      }
-  
-      // Ensure the requesting user is in this conversation:
-      if (!conversation.participants.some(p => p._id.equals(req.user._id))) {
-        return res.status(403).json({ message: 'Not a member of this conversation' });
-      }
-  
-      // Query the last 20 photo messages
-      // These are messages with content that starts with "/uploads/photos/"
-      // or your own check, e.g. { content: /^\/uploads\/photos\// }
-      const photoMessages = await Message.find({
-        conversation: conversation._id,
-        content: { $regex: '^/uploads/photos/' },
-      })
-        .sort({ timestamp: -1 })
-        .limit(20);
-  
-      // Reverse to get them chronologically if you want:
-      const recentPhotos = photoMessages.reverse().map(m => m.content);
-  
-      // If it’s a group conversation, you might also want group name, desc, etc.
-      let groupInfo = null;
-      if (conversation.isGroup && conversation.group) {
-        groupInfo = {
-          _id: conversation.group._id,
-          name: conversation.group.name,
-          description: conversation.group.description,
-          members: conversation.group.members,
-          // or anything else from your Group model
-        };
-      }
-  
-      return res.json({
-        conversation: {
-          _id: conversation._id,
-          isGroup: conversation.isGroup,
-          participants: conversation.participants, // array of { _id, username }
-        },
-        group: groupInfo, // if it’s group-based
-        recentPhotos,
-      });
-    } catch (err) {
-      console.error('Error fetching conversation info:', err);
-      return res.status(500).json({ message: 'Server error', error: err.message });
+  // In messages.js -> router.get('/conversation/:conversationId/info')
+router.get('/conversation/:conversationId/info', protect, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conversation = await Conversation.findById(conversationId)
+      .populate('participants', 'username')
+      .populate('group');
+
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' });
     }
-  });
+
+    // Check membership
+    if (!conversation.participants.some((p) => p._id.equals(req.user._id))) {
+      return res.status(403).json({ message: 'Not in this conversation' });
+    }
+
+    // recentPhotos
+    const photoMessages = await Message.find({
+      conversation: conversation._id,
+      content: { $regex: '^/uploads/photos/' },
+    }).sort({ timestamp: -1 }).limit(20);
+
+    const recentPhotos = photoMessages.reverse().map((m) => m.content);
+
+    // NEW: recentShares => last 10 messages with shareType= 'post' or 'event'
+    const shareMessages = await Message.find({
+      conversation: conversation._id,
+      shareType: { $in: ['post', 'event'] },
+    })
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .populate('sender', 'username');
+    // You can store them directly as an array. We'll pass them in "recentShares"
+
+    let groupInfo = null;
+    if (conversation.isGroup && conversation.group) {
+      groupInfo = {
+        _id: conversation.group._id,
+        name: conversation.group.name,
+        // etc
+      };
+    }
+
+    return res.json({
+      conversation: {
+        _id: conversation._id,
+        isGroup: conversation.isGroup,
+        participants: conversation.participants,
+      },
+      group: groupInfo,
+      recentPhotos,
+      recentShares: shareMessages,
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+
+router.delete('/conversation/:conversationId', protect, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' });
+    }
+
+    // Check if user is participant
+    if (!conversation.participants.includes(req.user._id)) {
+      return res.status(403).json({ message: 'Not authorized to delete this conversation' });
+    }
+
+    // Delete all messages in the conversation
+    await Message.deleteMany({ conversation: conversationId });
+    
+    // Delete the conversation
+    await Conversation.findByIdAndDelete(conversationId);
+
+    res.json({ message: 'Conversation deleted successfully' });
+  } catch (error) {
+    console.error('Delete conversation error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST /messages/seen/:messageId - Mark message as seen
+router.post('/seen/:messageId', protect, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ message: 'Message not found' });
+    }
+
+    // Add user to seenBy array if not already there
+    if (!message.seenBy.includes(req.user._id)) {
+      message.seenBy.push(req.user._id);
+      await message.save();
+    }
+
+    res.json({ message: 'Message marked as seen' });
+  } catch (error) {
+    console.error('Mark seen error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+
   // Return the configured router
   return router;
 };

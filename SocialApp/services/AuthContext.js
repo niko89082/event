@@ -5,16 +5,18 @@ import api, { setAuthToken, setOnUnauthorized } from './api';
 
 export const AuthContext = createContext();
 
+
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loadingToken, setLoadingToken] = useState(true);
 
+
   useEffect(() => {
     setOnUnauthorized(logout);
-
     checkForSavedToken();
   }, []);
+
 
   const checkForSavedToken = async () => {
     try {
@@ -22,12 +24,12 @@ export function AuthProvider({ children }) {
       if (savedToken) {
         setAuthToken(savedToken);
         try {
+          
           const res = await api.get('/profile');
           setCurrentUser(res.data);
           setIsAuthenticated(true);
         } catch (verifyErr) {
           console.log('Token invalid, logging out immediately...');
-          // If token is invalid, remove it
           await SecureStore.deleteItemAsync('token');
           setAuthToken('');
           setIsAuthenticated(false);
@@ -41,6 +43,7 @@ export function AuthProvider({ children }) {
     }
   };
 
+
   const setTokenAndUser = async (token, user) => {
     try {
       await SecureStore.setItemAsync('token', token);
@@ -52,7 +55,8 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // This will be called from the interceptor if any request fails with 401
+
+
   const logout = async () => {
     console.log('AuthContext => logout => forcibly removing token...');
     try {
@@ -64,6 +68,7 @@ export function AuthProvider({ children }) {
       console.log('Error removing token:', err);
     }
   };
+
 
   return (
     <AuthContext.Provider value={{

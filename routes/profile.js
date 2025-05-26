@@ -115,17 +115,16 @@ router.delete('/delete', protect, async (req, res) => {
 router.get('/', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('-password')
-      .populate({
-        path: 'photos',
-        populate: [
-          { path: 'user', select: 'username _id' },
-          { path: 'event', select: 'title time' },
-        ],
-      })
-      .populate('followers', '_id username')
-      .populate('following', '_id username');
-
+  .select('-password')
+  .populate({
+    path: 'photos',                   // 🌟  remove the old   match:{ visibleInEvent:false }
+    populate: [
+      { path: 'user',  select: 'username _id' },
+      { path: 'event', select: 'title time'   },
+    ],
+  })
+  .populate('followers', '_id username')
+  .populate('following', '_id username');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -146,10 +145,10 @@ router.get('/:userId', protect, async (req, res) => {
       .populate('followers', '_id username')
       .populate('following', '_id username')
       .populate({
-        path: 'photos',
+        path: 'photos',                  // 🌟 no match filter ⇒ event-photos now show
         populate: [
-          { path: 'user', select: 'username _id' },
-          { path: 'event', select: 'title time' },
+          { path: 'user',  select: 'username _id' },
+          { path: 'event', select: 'title time'   },
         ],
       });
 
@@ -157,17 +156,49 @@ router.get('/:userId', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Are we following them?
     const isFollowing = user.followers.some(
-      (follower) => follower._id.toString() === currentUserId.toString()
+      (f) => f._id.toString() === currentUserId.toString()
     );
 
+    // Are we the same user?
+    const isSelf = user._id.toString() === currentUserId.toString();
+
+    // If you store followRequests on the user doc:
+    let hasRequested = false;
+    if (user.followRequests && user.followRequests.length > 0) {
+      hasRequested = user.followRequests.some(
+        (rId) => rId.toString() === currentUserId.toString()
+      );
+    }
+
+    // If user is private, but we are not self or follower => hide photos, followers, following
+    if (!user.isPublic && !isSelf && !isFollowing) {
+      // Return a minimal “private” view:
+      return res.json({
+        _id: user._id,
+        username: user.username,
+        profilePicture: user.profilePicture,
+        isPublic: user.isPublic,
+        isFollowing,       // we know it's false
+        hasRequested,      // show if we have a pending request
+        // Hide these arrays entirely:
+        followers: [],
+        following: [],
+        photos: [],
+        message: 'This account is private.',
+      });
+    }
+
+    // Otherwise, they are public or we are allowed => return full doc
     return res.json({
       ...user.toObject(),
       isFollowing,
+      hasRequested,
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: 'Server error', error: error.message });
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -288,6 +319,66 @@ router.post('/report/:userId', protect, async (req, res) => {
     return res.status(500).json({ message: 'Server error' });
   }
 });
+router.get('/:userId/shared-events', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId)
+      .populate({
+        path: 'sharedEvents',
+        populate: { path: 'host', select: 'username' }
+      });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-// Finally, export the router
+    const sharedEvents = user.sharedEvents || [];
+    res.json({ sharedEvents });
+  } catch (error) {
+    console.error('GET /profile/:userId/shared-events =>', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+router.put('/:userId/shared-events', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const { eventIds } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    user.sharedEvents = eventIds;
+    await user.save();
+
+    return res.json({
+      message: 'Shared events updated',
+      sharedEvents: user.sharedEvents
+    });
+  } catch (error) {
+    console.error('PUT /profile/:userId/shared-events =>', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+// routes/profile.js
+router.get('/:userId/attended-events', protect, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    const user = await User.findById(userId)
+      .populate({
+        path: 'attendingEvents',
+        populate: { path: 'host', select: 'username' }
+      });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const events = user.attendingEvents || [];
+
+    res.status(200).json({ events });
+  } catch (error) {
+    console.error('GET /profile/:userId/attended-events =>', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
 module.exports = router;

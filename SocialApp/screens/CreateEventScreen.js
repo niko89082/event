@@ -1,274 +1,189 @@
-import React, { useState } from 'react';
+/******************************************************************
+ * screens/CreateEventScreen.js
+ ******************************************************************/
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  Switch,
   Button,
   StyleSheet,
+  TextInput,
+  Image,
   Alert,
   ScrollView,
-  TouchableOpacity,
+  Switch,
+  TouchableOpacity
 } from 'react-native';
-import api from '../services/api';
+import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
+import api from '../services/api';
+import { fetchNominatimSuggestions } from '../services/locationApi';
+
 export default function CreateEventScreen({ navigation }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [location, setLocation] = useState('');
-  const [dateTime, setDateTime] = useState(new Date());  // we'll store as a Date object
-  const [showPicker, setShowPicker] = useState(false);
+  const [title, setTitle]                 = useState('');
+  const [description, setDescription]     = useState('');
 
-  const [maxAttendees, setMaxAttendees] = useState('10');
-  const [price, setPrice] = useState('0');
-  const [category, setCategory] = useState('General');
+  /* ─── date / time ────────────────────────────────────────── */
+  const [dateTime, setDateTime]           = useState(new Date());
+  const [showPicker, setShowPicker]       = useState(false);
 
-  const [isPublic, setIsPublic] = useState(true);
-  const [allowPhotos, setAllowPhotos] = useState(true);
-  const [openToPublic, setOpenToPublic] = useState(true);
-  const [allowUploads, setAllowUploads] = useState(true);
+  /* ─── location (text + geo) ─────────────────────────────── */
+  const [locQuery, setLocQuery]           = useState('');
+  const [suggestions, setSuggestions]     = useState([]);
+  const [location, setLocation]           = useState('');
+  const [coords, setCoords]               = useState(null);  // [lng, lat]
 
-  const [recurring, setRecurring] = useState(null);
+  /* ─── other fields ──────────────────────────────────────── */
+  const [maxAttendees, setMaxAttendees]   = useState('10');
+  const [price, setPrice]                 = useState('0');
+  const [category, setCategory]           = useState('General');
+  const [privateEvent, setPrivateEvent]   = useState(false);
+  const [allowPhotos, setAllowPhotos]     = useState(true);
+  const [openToPublic, setOpenToPublic]   = useState(true);
+  const [allowUploads, setAllowUploads]   = useState(true);
+  const [allowUploadsBeforeStart,setAllowUploadsBeforeStart] = useState(true);
+  const [groupId, setGroupId]             = useState('');
 
-  // If hosting within a group
-  const [groupId, setGroupId] = useState('');
+  /* ─── cover image ───────────────────────────────────────── */
+  const [cover, setCover]                 = useState(null);
 
-  // Show the date/time picker
-  const openDateTimePicker = () => {
-    setShowPicker(true);
+  useEffect(() => {
+    ImagePicker.requestMediaLibraryPermissionsAsync();
+  }, []);
+
+  /* ─── location search helpers ───────────────────────────── */
+  const onLocQuery = async (txt) => {
+    setLocQuery(txt);
+    setSuggestions([]);
+    if (txt.trim().length < 3) return;
+    const res = await fetchNominatimSuggestions(txt);
+    setSuggestions(res.slice(0, 6));
   };
 
-  const onChangeDateTime = (event, selectedDate) => {
-    setShowPicker(false);
-    if (selectedDate) {
-      setDateTime(selectedDate);
+  const pickSuggestion = (s) => {
+    setLocation(s.display_name);
+    setCoords([Number(s.lon), Number(s.lat)]);
+    setLocQuery(s.display_name);
+    setSuggestions([]);
+  };
+
+  /* ─── cover image picker ────────────────────────────────── */
+  const pickCover = async () => {
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images
+    });
+    if (!r.canceled) setCover(r.assets[0]);
+  };
+
+  /* ─── submit ────────────────────────────────────────────── */
+  const createEvent = async () => {
+    if (!title.trim() || !location.trim() || !coords) {
+      Alert.alert('Please fill title and choose a location from suggestions.');
+      return;
     }
-  };
 
-  const handleCreateEvent = async () => {
+    const fd = new FormData();
+    fd.append('title',        title);
+    fd.append('description',  description);
+    fd.append('category',     category);
+    fd.append('time',         dateTime.toISOString());
+    fd.append('location',     location);
+    fd.append('geo',          JSON.stringify({ type: 'Point', coordinates: coords }));
+    fd.append('maxAttendees', maxAttendees);
+    fd.append('price',        price);
+    fd.append('isPublic',     !privateEvent);
+    fd.append('allowPhotos',  allowPhotos);
+    fd.append('openToPublic', openToPublic);
+    fd.append('allowUploads', allowUploads);
+    fd.append('allowUploadsBeforeStart', allowUploadsBeforeStart);
+    if (groupId.trim()) fd.append('groupId', groupId);
+
+    if (cover) {
+      fd.append('coverImage', {
+        uri:  cover.uri,
+        type: 'image/jpeg',
+        name: 'cover.jpg'
+      });
+    }
+
     try {
-      const maxAttendeesNum = parseInt(maxAttendees, 10);
-      const priceNum = parseFloat(price);
-
-      const eventData = {
-        title,
-        description,
-        // Convert dateTime to something like '2025-01-01 10:00'
-        time: dateTime.toISOString(),
-        location,
-        maxAttendees: maxAttendeesNum,
-        price: priceNum,
-        isPublic,
-        recurring,
-        allowPhotos,
-        openToPublic,
-        allowUploads,
-        groupId,
-        category,
-      };
-
-      const response = await api.post('events/create', eventData);
-      console.log('Created Event:', response.data);
-
-      Alert.alert('Success', 'Event created successfully!', [
-        { text: 'OK', onPress: () => navigation.goBack() },
+      await api.post('/events/create', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      Alert.alert('Success', 'Event created', [
+        { text: 'OK', onPress: () => navigation.goBack() }
       ]);
-    } catch (error) {
-      console.error(error.response?.data || error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to create event'
-      );
+    } catch (e) {
+      console.error(e.response?.data || e);
+      Alert.alert('Error', e.response?.data?.message || 'Create failed');
     }
   };
 
+  /* ─── ui ────────────────────────────────────────────────── */
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      <Text style={styles.label}>Title</Text>
-      <TextInput
-        style={styles.input}
-        value={title}
-        onChangeText={setTitle}
-      />
+    <ScrollView style={st.c}>
+      <Text style={st.l}>Title</Text>
+      <TextInput style={st.i} value={title} onChangeText={setTitle} />
 
-      <Text style={styles.label}>Description</Text>
-      <TextInput
-        style={[styles.input, { height: 60 }]}
-        multiline
-        value={description}
-        onChangeText={setDescription}
-      />
+      <Text style={st.l}>Description</Text>
+      <TextInput style={[st.i, { height: 80 }]} multiline value={description} onChangeText={setDescription} />
 
-      {/* Location picking approach (simple) */}
-      <Text style={styles.label}>Location</Text>
+      <Text style={st.l}>Location</Text>
       <TextInput
-        style={styles.input}
-        value={location}
-        onChangeText={setLocation}
-        placeholder="Enter location or see 'Pick Location' below"
+        style={st.i}
+        value={locQuery}
+        onChangeText={onLocQuery}
+        placeholder="Type an address..."
       />
-      {/* Optionally an advanced approach */}
-      <TouchableOpacity
-        style={styles.pickLocationButton}
-        onPress={() => {
-          // Example:
-          // navigation.navigate('LocationPickerScreen', {
-          //   onLocationSelect: setLocation
-          // });
-          Alert.alert('Location Picker', 'Implement an advanced location picking method if desired.');
-        }}
-      >
-        <Text style={styles.pickLocationText}>Pick Location</Text>
+      {suggestions.map((s) => (
+        <TouchableOpacity key={s.place_id} onPress={() => pickSuggestion(s)} style={st.sug}>
+          <Text>{s.display_name}</Text>
+        </TouchableOpacity>
+      ))}
+
+      <Text style={st.l}>Date & Time</Text>
+      <TouchableOpacity onPress={() => setShowPicker(true)}>
+        <Text>{dateTime.toLocaleString()}</Text>
       </TouchableOpacity>
-
-      {/* DateTime */}
-      <Text style={styles.label}>Event Date & Time</Text>
-      <View style={styles.dateTimeRow}>
-        <Text style={styles.dateTimeValue}>
-          {dateTime.toLocaleString()}
-        </Text>
-        <Button title="Set Date/Time" onPress={openDateTimePicker} />
-      </View>
       {showPicker && (
-        <DateTimePicker
-          value={dateTime}
-          mode="datetime"
-          display="default"
-          onChange={onChangeDateTime}
-        />
+        <DateTimePicker value={dateTime} mode="datetime" onChange={(_, d) => {
+          setShowPicker(false); if (d) setDateTime(d);
+        }} />
       )}
 
-      <Text style={styles.label}>Max Attendees</Text>
-      <TextInput
-        style={styles.input}
-        keyboardType="numeric"
-        value={maxAttendees}
-        onChangeText={setMaxAttendees}
-      />
+      <Text style={st.l}>Max Attendees</Text>
+      <TextInput style={st.i} keyboardType="numeric" value={maxAttendees} onChangeText={setMaxAttendees} />
 
-      <Text style={styles.label}>Price</Text>
-      <TextInput
-        style={styles.input}
-        keyboardType="numeric"
-        value={price}
-        onChangeText={setPrice}
-      />
+      <Text style={st.l}>Price</Text>
+      <TextInput style={st.i} keyboardType="numeric" value={price} onChangeText={setPrice} />
 
-      <Text style={styles.label}>Category</Text>
-      <TextInput
-        style={styles.input}
-        value={category}
-        onChangeText={setCategory}
-        placeholder="E.g., Concert, Workshop, General..."
-      />
+      <Text style={st.l}>Category</Text>
+      <TextInput style={st.i} value={category} onChangeText={setCategory} placeholder="Concert, Workshop…" />
 
-      <Text style={styles.label}>Recurring</Text>
-      <View style={styles.row}>
-        <Button
-          title="None"
-          onPress={() => setRecurring(null)}
-          color={recurring === null ? 'blue' : 'gray'}
-        />
-        <Button
-          title="Daily"
-          onPress={() => setRecurring('daily')}
-          color={recurring === 'daily' ? 'blue' : 'gray'}
-        />
-        <Button
-          title="Weekly"
-          onPress={() => setRecurring('weekly')}
-          color={recurring === 'weekly' ? 'blue' : 'gray'}
-        />
-        <Button
-          title="Monthly"
-          onPress={() => setRecurring('monthly')}
-          color={recurring === 'monthly' ? 'blue' : 'gray'}
-        />
-      </View>
+      <View style={st.row}><Text>Private Event?</Text><Switch value={privateEvent} onValueChange={setPrivateEvent} /></View>
+      <View style={st.row}><Text>Allow Photos?</Text><Switch value={allowPhotos} onValueChange={setAllowPhotos} /></View>
+      <View style={st.row}><Text>Open To Public?</Text><Switch value={openToPublic} onValueChange={setOpenToPublic} /></View>
+      <View style={st.row}><Text>Allow Uploads?</Text><Switch value={allowUploads} onValueChange={setAllowUploads} /></View>
+      <View style={st.row}><Text>Uploads Before Start?</Text><Switch value={allowUploadsBeforeStart} onValueChange={setAllowUploadsBeforeStart} /></View>
 
-      {/* Switches */}
-      <View style={styles.switchRow}>
-        <Text>Public</Text>
-        <Switch value={isPublic} onValueChange={setIsPublic} />
-      </View>
-      <View style={styles.switchRow}>
-        <Text>Allow Photos</Text>
-        <Switch value={allowPhotos} onValueChange={setAllowPhotos} />
-      </View>
-      <View style={styles.switchRow}>
-        <Text>Open To Public</Text>
-        <Switch value={openToPublic} onValueChange={setOpenToPublic} />
-      </View>
-      <View style={styles.switchRow}>
-        <Text>Allow Uploads</Text>
-        <Switch value={allowUploads} onValueChange={setAllowUploads} />
-      </View>
+      <Text style={st.l}>Group ID (optional)</Text>
+      <TextInput style={st.i} value={groupId} onChangeText={setGroupId} />
 
-      {/* If you have groups */}
-      <Text style={styles.label}>Group ID (optional)</Text>
-      <TextInput
-        style={styles.input}
-        value={groupId}
-        onChangeText={setGroupId}
-      />
+      {cover && <Image source={{ uri: cover.uri }} style={{ width: 120, height: 120, marginVertical: 8 }} />}
+      <Button title="Pick Cover Image" onPress={pickCover} />
 
-      {/* Create Button */}
-      <Button title="Create Event" onPress={handleCreateEvent} />
+      <View style={{ height: 12 }} />
+      <Button title="Create Event" onPress={createEvent} />
+      <View style={{ height: 40 }} />
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  scrollContent: {
-    padding: 16,
-  },
-  label: {
-    marginTop: 8,
-    fontWeight: '600',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    padding: 8,
-    marginVertical: 4,
-    borderRadius: 4,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: 8,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginVertical: 4,
-  },
-  pickLocationButton: {
-    backgroundColor: '#ddd',
-    padding: 10,
-    borderRadius: 4,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
-  },
-  pickLocationText: { 
-    color: '#333',
-  },
-  dateTimeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginVertical: 4,
-  },
-  dateTimeValue: {
-    flex: 1,
-    marginRight: 8,
-    fontSize: 16,
-    paddingVertical: 6,
-  },
+const st = StyleSheet.create({
+  c: { flex: 1, backgroundColor: '#fff', padding: 16 },
+  l: { marginTop: 8, fontWeight: '600' },
+  i: { borderWidth: 1, borderColor: '#ccc', borderRadius: 4, padding: 8, marginVertical: 4 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 6 },
+  sug: { padding: 8, borderWidth: 1, borderColor: '#eee' }
 });

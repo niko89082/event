@@ -2,6 +2,7 @@
   "dependencies": {
     "aws-sdk": "^2.1659.0",
     "bcryptjs": "^2.4.3",
+    "chrono-node": "^2.8.0",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -23,6 +24,7 @@
     "react-native-vision-camera": "^4.6.3",
     "redis": "^4.7.0",
     "socket.io": "^4.7.5",
+    "stripe": "^18.0.0",
     "winston": "^3.13.1"
   }
 }
