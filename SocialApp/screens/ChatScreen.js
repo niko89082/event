@@ -141,7 +141,7 @@ export default function ChatScreen({ route, navigation }) {
   async function handleIncoming(m) {
     setMsgs(ms => [...ms, m]);
     if (m.sender._id !== uid) {
-      await api.post(`/messages/seen/${m._id}`).catch(() => {});
+      await api.post(`/api/messages/seen/${m._id}`).catch(() => {});
       socketRef.current.emit('seen', { messageId: m._id });
     }
     // Auto scroll to bottom on new message
@@ -155,7 +155,7 @@ export default function ChatScreen({ route, navigation }) {
     (async () => {
       if (!conversationId) return;
       try {
-        const { data } = await api.get(`/messages/conversation/byId/${conversationId}`);
+        const { data } = await api.get(`/api/messages/conversation/byId/${conversationId}`);
         setMsgs(data.messages || []);
         setTimeout(() => {
           flatRef.current?.scrollToEnd({ animated: false });
@@ -178,6 +178,45 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
+  // ─── Create Memory Function ─────────────────────
+  const handleCreateMemory = async () => {
+    if (!conversationId) {
+      Alert.alert('Error', 'No conversation found to create memory');
+      return;
+    }
+
+    Alert.prompt(
+      'Create Memory',
+      'Enter a title for this memory:',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Create',
+          onPress: async (title) => {
+            if (!title?.trim()) {
+              Alert.alert('Error', 'Please enter a title');
+              return;
+            }
+            
+            try {
+              await api.post(`/api/memories/conversation/${conversationId}`, {
+                title: title.trim(),
+              });
+              Alert.alert('Success', 'Memory created successfully!');
+            } catch (error) {
+              console.error('Create memory error:', error);
+              Alert.alert('Error', 'Failed to create memory');
+            }
+          },
+        },
+      ],
+      'plain-text'
+    );
+  };
+
   // ─── Send message/photo ─────────────────────────
   const send = async () => {
     if (!input.trim() && !photoUri) return;
@@ -190,7 +229,7 @@ export default function ChatScreen({ route, navigation }) {
     
     try {
       if (messageText) {
-        await api.post('/messages/send', {
+        await api.post('/api/messages/send', {
           conversationId, recipientId, groupId,
           content: messageText, replyTo: replyId
         });
@@ -200,7 +239,7 @@ export default function ChatScreen({ route, navigation }) {
         fd.append('photo', { uri: photoUri, type: 'image/jpeg', name: 'photo.jpg' });
         fd.append('conversationId', conversationId);
         if (replyId) fd.append('replyTo', replyId);
-        await api.post('/messages/send/photo', fd, {
+        await api.post('/api/messages/send/photo', fd, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
         setPhoto(null);
@@ -224,7 +263,7 @@ export default function ChatScreen({ route, navigation }) {
 
   // ─── Render each bubble ─────────────────────────
   const renderItem = ({ item, index }) => {
-    const self = item.sender._id === uid;
+    const self = String(item.sender._id) === String(uid);
     const nextMessage = messages[index + 1];
     const isLastFromSender = !nextMessage || nextMessage.sender._id !== item.sender._id;
     const prevMessage = messages[index - 1];
@@ -242,7 +281,7 @@ export default function ChatScreen({ route, navigation }) {
     };
 
     // Read receipt on last outgoing
-    const lastOut = messages.filter(m => m.sender._id === uid).slice(-1)[0]?._id;
+    const lastOut = messages.filter(m => String(m.sender._id) === String(uid)).slice(-1)[0]?._id;
     const seen = item._id === lastOut && (item.seenBy?.length > 0);
 
     let body;
@@ -473,9 +512,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8E8E93',
   },
-  headerRightContainer: {
-    // Removed - no longer needed
-  },
   replyBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -522,9 +558,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
   },
-  messageRowSelf: {
-    justifyContent: 'flex-end',
-  },
   senderAvatar: {
     width: 24,
     height: 24,
@@ -539,43 +572,9 @@ const styles = StyleSheet.create({
     maxWidth: '75%',
     paddingHorizontal: 12,
     paddingVertical: 8,
+    borderRadius: 18,
     marginTop: 2,
     marginBottom: 2,
-  },
-  messageBubbleSelf: {
-    backgroundColor: '#007AFF',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 4,
-  },
-  messageBubbleOther: {
-    backgroundColor: '#F0F0F0',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 18,
-  },
-  photoBubble: {
-    paddingHorizontal: 2,
-    paddingVertical: 2,
-    backgroundColor: 'transparent',
-  },
-  firstBubbleSelf: {
-    marginTop: 8,
-    borderTopRightRadius: 18,
-  },
-  firstBubbleOther: {
-    marginTop: 8,
-    borderTopLeftRadius: 18,
-  },
-  lastBubbleSelf: {
-    marginBottom: 8,
-    borderBottomRightRadius: 4,
-  },
-  lastBubbleOther: {
-    marginBottom: 8,
-    borderBottomLeftRadius: 4,
   },
   messageText: {
     fontSize: 16,
@@ -609,9 +608,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 3,
     backgroundColor: '#8E8E93',
-  },
-  replyLineSelf: {
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
   },
   replyText: {
     fontSize: 14,

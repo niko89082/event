@@ -1,76 +1,133 @@
-// components/FeedBase.js
-import React, { useEffect, useState, useContext } from 'react';
-import {
-  View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text,
-} from 'react-native';
-import api             from '../services/api';
-import PostItem        from '../components/PostItem';
-import EventCard       from '../components/EventCard';
-import { AuthContext } from '../services/AuthContext';
 
-export default function FeedBase({ navigation, filter }) {
-  const { currentUser } = useContext(AuthContext);
-  const uid             = currentUser?._id;
+// screens/FeedScreen.js
+import React, { useLayoutEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
+import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import PostsFeed  from '../components/PostsFeed';
+import EventsFeed from '../components/EventsFeed';
 
-  const [data,setData]         = useState([]);
-  const [page,setPage]         = useState(1);
-  const [pages,setPages]       = useState(1);
-  const [load,setLoad]         = useState(true);
-  const [refresh,setRefresh]   = useState(false);
+const Tab = createMaterialTopTabNavigator();
 
-  useEffect(() => { fetchPage(1); }, [filter]);
+export default function FeedScreen({ navigation }) {
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerStyle: {
+        backgroundColor: '#FFFFFF',
+        shadowOpacity: 0,
+        elevation: 0,
+        borderBottomWidth: 0.5,
+        borderBottomColor: '#E1E1E1',
+        height: 100,
+      },
+      headerTitleStyle: {
+        fontWeight: '700',
+        fontSize: 24,
+        color: '#000000',
+      },
+      headerTitle: () => (
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>Social</Text>
+        </View>
+      ),
+      headerRight: () => (
+        <View style={styles.headerRightContainer}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => navigation.navigate('ChatTab')}
+          >
+            <Ionicons name="chatbubble-outline" size={24} color="#000" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => navigation.navigate('Create')}
+          >
+            <Ionicons name="add-circle-outline" size={24} color="#000" />
+          </TouchableOpacity>
+        </View>
+      ),
+      headerLeft: () => null,
+    });
+  }, [navigation]);
 
-  const fetchPage = async (p, isRef=false) => {
-    try{
-      isRef? setRefresh(true): setLoad(true);
-      console.log('🟡 [FeedBase] hit /feed page',p,'filter',filter);
-      const res = await api.get(`/feed?page=${p}&limit=12`);
-      console.log('🟢  status',res.status,'raw len',res.data.feed?.length);
-
-      const list = (res.data.feed||[]).filter(i =>
-        filter==='posts'  ? i.uploadDate :
-        filter==='events' ? i.time       : true);
-
-      console.log('🟡  after filter len',list.length);
-
-      if(p===1) setData(list); else setData(prev=>[...prev,...list]);
-      setPage(res.data.page);
-      setPages(res.data.totalPages);
-    }catch(e){
-      console.log('❌ [FeedBase] error',e.response?.data||e.message);
-      if(p===1) setData([]);
-    }finally{
-      isRef? setRefresh(false): setLoad(false);
-    }
-  };
-
-  const render = ({item}) =>
-    item.uploadDate
-      ? <PostItem  post={item} currentUserId={uid} navigation={navigation}/>
-      : <EventCard event={item} currentUserId={uid} navigation={navigation}/>;
-
-  return(
-    <View style={styles.flex}>
-      {load&&page===1 ? (
-        <ActivityIndicator size="large" style={styles.center}/>
-      ) : data.length===0 ? (
-        <View style={styles.center}><Text>No feed items.</Text></View>
-      ) : (
-        <FlatList
-          data={data}
-          keyExtractor={i=>i._id}
-          renderItem={render}
-          onEndReached={()=>page<pages&&fetchPage(page+1)}
-          onEndReachedThreshold={0.4}
-          refreshControl={
-            <RefreshControl refreshing={refresh} onRefresh={()=>fetchPage(1,true)}/>
-          }
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <Tab.Navigator
+        screenOptions={{
+          tabBarActiveTintColor: '#000000',
+          tabBarInactiveTintColor: '#8E8E93',
+          tabBarIndicatorStyle: {
+            backgroundColor: '#000000',
+            height: 2,
+          },
+          tabBarStyle: {
+            backgroundColor: '#FFFFFF',
+            elevation: 0,
+            shadowOpacity: 0,
+            borderBottomWidth: 0.5,
+            borderBottomColor: '#E1E1E1',
+          },
+          tabBarLabelStyle: {
+            fontSize: 16,
+            fontWeight: '600',
+            textTransform: 'none',
+          },
+          tabBarPressColor: 'transparent',
+        }}
+      >
+        <Tab.Screen 
+          name="Posts" 
+          component={PostsFeed}
+          options={{
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons 
+                name={focused ? 'grid' : 'grid-outline'} 
+                size={20} 
+                color={color} 
+              />
+            ),
+          }}
         />
-      )}
-    </View>
+        <Tab.Screen 
+          name="Events" 
+          component={EventsFeed}
+          options={{
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons 
+                name={focused ? 'calendar' : 'calendar-outline'} 
+                size={20} 
+                color={color} 
+              />
+            ),
+          }}
+        />
+      </Tab.Navigator>
+    </SafeAreaView>
   );
 }
-const styles=StyleSheet.create({
-  flex:{flex:1},
-  center:{flex:1,justifyContent:'center',alignItems:'center'},
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  headerTitleContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  headerRightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 8,
+  },
+  headerButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
 });

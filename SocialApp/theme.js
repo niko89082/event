@@ -1,16 +1,18 @@
-// theme.js   – central design tokens
+// theme.js – central design tokens
+console.log('🟡 Theme: Loading theme configuration');
+
 export const palette = {
   /* ---- core brand ---- */
-  brandBlue: '#1877F2',          // Facebook-ish blue
-  brandBlueDark: '#145DB2',
+  brandBlue: '#3797EF',          // Instagram-like blue
+  brandBlueDark: '#1877F2',
   white: '#FFFFFF',
-  grey:  '#6B7280',
-  black: '#111827',
+  grey:  '#8E8E93',
+  black: '#000000',
 
   /* ---- semantic ---- */
   bg:      '#FFFFFF',
-  surface: '#F9FAFB',
-  border:  '#E5E7EB',
+  surface: '#FFFFFF',
+  border:  '#E1E1E1',
 };
 
 /* ---- typography ---- */
@@ -19,29 +21,31 @@ export const font = {
   medium:  'System',
   bold:    'System',
 };
+
 export const light = {
-  brandBlue : '#1877F2',
+  brandBlue : '#3797EF',
   surface   : '#FFFFFF',
-  surfaceAlt: '#F2F3F5',
-  border    : '#E6E8EB',
-  text      : '#050505',
-  textDim   : '#606770',
-  danger    : '#E24343',
+  surfaceAlt: '#F8F9FA',
+  border    : '#E1E1E1',
+  text      : '#000000',
+  textDim   : '#8E8E93',
+  danger    : '#FF3B30',
 };
 
 export const dark = {
   brandBlue : '#4590FF',
-  surface   : '#050505',
-  surfaceAlt: '#1C1E21',
-  border    : '#2F3033',
-  text      : '#E4E6EB',
-  textDim   : '#B0B3B8',
-  danger    : '#F25C5C',
+  surface   : '#000000',
+  surfaceAlt: '#1C1C1E',
+  border    : '#2C2C2E',
+  text      : '#FFFFFF',
+  textDim   : '#8E8E93',
+  danger    : '#FF453A',
 };
 
 /* ---- helpers ---- */
 export const spacing = (mult = 1) => 4 * mult;  // 4-pt scale
-export const radius  = { card:12, avatar:6, thumb:4, btn:10 };
+export const radius  = { card:12, avatar:16, thumb:8, btn:8 };
+
 /**
  * call changePalette({...}) anywhere (e.g. Settings screen)
  * to hot-swap colours without touching components.
@@ -51,6 +55,11 @@ export const changePalette = (overrides = {}) => {
 };
 
 export const shadow = {
-  shadowColor:'#000', shadowOpacity:0.1, shadowOffset:{width:0,height:2}, shadowRadius:4,
-  elevation:2, // Android
+  shadowColor:'#000', 
+  shadowOpacity:0.1, 
+  shadowOffset:{width:0,height:2}, 
+  shadowRadius:8,
+  elevation:4, // Android
 };
+
+console.log('🟢 Theme: Configuration loaded successfully');

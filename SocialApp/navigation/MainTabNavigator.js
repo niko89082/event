@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import FeedStack         from './FeedStack';      // Home
 import CreateStack       from './CreateStack';    // Big (+) button
 import ChatStack         from './ChatStack';
+import EventStack        from './EventStack';     // Added missing import
 import NotificationStack from './NotificationStack';
 import ProfileStack      from './ProfileStack';
 import { Ionicons }      from '@expo/vector-icons';
@@ -36,9 +37,12 @@ export default function MainTabNavigator({ onLogout }) {
       />
 
       <Tab.Screen
-        name="ChatTab"
-        component={ChatStack}
-        options={{ tabBarIcon: make('chatbubbles') }}
+        name="EventsTab"
+        component={EventStack}
+        options={{ 
+          tabBarIcon: make('calendar'),
+          tabBarLabel: 'Events'
+        }}
       />
 
       <Tab.Screen
@@ -51,13 +55,25 @@ export default function MainTabNavigator({ onLogout }) {
       />
 
       <Tab.Screen
+        name="ChatTab"
+        component={ChatStack}
+        options={{ 
+          tabBarIcon: make('chatbubbles'),
+          tabBarLabel: 'Messages'
+        }}
+      />
+
+      <Tab.Screen
         name="Notifications"
         component={NotificationStack}
         options={{ tabBarIcon: make('notifications') }}
       />
 
       {/* Profile has to be a render-prop so we can inject onLogout */}
-      <Tab.Screen name="Profile">
+      <Tab.Screen 
+        name="Profile"
+        options={{ tabBarIcon: make('person') }}
+      >
         {(props) => <ProfileStack {...props} onLogout={onLogout} />}
       </Tab.Screen>
     </Tab.Navigator>

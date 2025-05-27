@@ -78,7 +78,7 @@ export default function ConversationListScreen() {
         fontSize: 22,
         color: '#000000',
       },
-      headerTitle: currentUser?.username || 'Direct',
+      headerTitle: 'Messages',
       headerRight: () => (
         <TouchableOpacity
           onPress={() => navigation.navigate('NewChatScreen')}
@@ -119,7 +119,7 @@ export default function ConversationListScreen() {
   const fetchConvos = async () => {
     try {
       setLoad(true);
-      const { data } = await api.get('/messages/my-conversations');
+      const { data } = await api.get('/api/messages/my-conversations');
       // Sort by most recent message
       const sorted = data.sort((a, b) => {
         const aTime = new Date(a.lastMessageAt || a.createdAt);
@@ -142,7 +142,7 @@ export default function ConversationListScreen() {
         ...prev[i], 
         lastMessage: msg, 
         lastMessageAt: msg.createdAt || msg.timestamp,
-        unread: msg.sender._id !== uid 
+        unread: String(msg.sender._id) !== String(uid)
       };
       return [u, ...prev.filter((_, idx) => idx !== i)];
     });
@@ -152,7 +152,7 @@ export default function ConversationListScreen() {
     /* pick header user */
     const other = c.isGroup
       ? { username: c.group?.name, profilePicture: null }
-      : c.participants.find(u => u._id !== uid);
+      : c.participants.find(u => String(u._id) !== String(uid));
 
     navigation.navigate('ChatScreen', {
       conversationId: c._id,
@@ -169,16 +169,16 @@ export default function ConversationListScreen() {
     const isGroup = item.isGroup;
     const other = isGroup
       ? { username: item.group?.name, profilePicture: null }
-      : item.participants.find(u => u._id !== uid);
+      : item.participants.find(u => String(u._id) !== String(uid));
 
-    const avatar = other.profilePicture
+    const avatar = other?.profilePicture
       ? `http://${API_BASE_URL}:3000${other.profilePicture}`
       : defaultPfp;
 
     const last = item.lastMessage;
-    const snippet = snippetFor(last, last?.sender?._id === uid);
+    const snippet = snippetFor(last, String(last?.sender?._id) === String(uid));
     const when = niceDate(last?.createdAt || last?.timestamp);
-    const isUnread = item.unread && last?.sender?._id !== uid;
+    const isUnread = item.unread && String(last?.sender?._id) !== String(uid);
 
     return (
       <TouchableOpacity 
@@ -188,13 +188,13 @@ export default function ConversationListScreen() {
       >
         <View style={styles.avatarContainer}>
           <Image source={{ uri: avatar }} style={styles.avatar} />
-          {/* Online indicator could go here */}
+          {isUnread && <View style={styles.unreadIndicator} />}
         </View>
         
         <View style={styles.messageContent}>
           <View style={styles.topRow}>
             <Text style={[styles.username, isUnread && styles.unreadText]} numberOfLines={1}>
-              {other.username}
+              {other?.username || 'Unknown'}
             </Text>
             <Text style={[styles.timestamp, isUnread && styles.unreadTimestamp]}>
               {when}
@@ -204,7 +204,7 @@ export default function ConversationListScreen() {
           <View style={styles.bottomRow}>
             <Text 
               style={[styles.messagePreview, isUnread && styles.unreadMessage]} 
-              numberOfLines={1}
+              numberOfLines={2}
             >
               {snippet || 'Say hello 👋'}
             </Text>
@@ -219,7 +219,7 @@ export default function ConversationListScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centerLoading}>
-          <Text style={styles.loadingText}>Loading...</Text>
+          <Text style={styles.loadingText}>Loading conversations...</Text>
         </View>
       </SafeAreaView>
     );
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
   listContainer: {
-    paddingVertical: 4,
+    paddingTop: 8,
   },
   chatRow: {
     flexDirection: 'row',
@@ -276,9 +276,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F0F0F0',
   },
   unreadRow: {
-    backgroundColor: '#FAFAFA',
+    backgroundColor: '#F8F9FA',
   },
   avatarContainer: {
     marginRight: 12,
@@ -290,6 +292,17 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     backgroundColor: '#F6F6F6',
   },
+  unreadIndicator: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#3797EF',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
   messageContent: {
     flex: 1,
     justifyContent: 'center',
@@ -298,7 +311,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   username: {
     fontSize: 16,
@@ -316,7 +329,7 @@ const styles = StyleSheet.create({
     fontWeight: '400',
   },
   unreadTimestamp: {
-    color: '#007AFF',
+    color: '#3797EF',
     fontWeight: '500',
   },
   bottomRow: {
@@ -329,6 +342,7 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     flex: 1,
     fontWeight: '400',
+    lineHeight: 18,
   },
   unreadMessage: {
     color: '#000000',
@@ -338,7 +352,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#3797EF',
     marginLeft: 8,
   },
   centerLoading: {
@@ -371,7 +385,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sendMessageButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#3797EF',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
