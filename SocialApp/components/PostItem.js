@@ -1,4 +1,4 @@
-// components/PostItem.js
+// components/PostItem.js - Fixed navigation to PostDetailsScreen
 import React, { useState, useMemo } from 'react';
 import {
   View, Text, Image, StyleSheet,
@@ -54,23 +54,28 @@ export default function PostItem({
   };
 
   /* ---- navigation helpers ---------------------------------------- */
-  const openComments = () =>
+  const openComments = () => {
+    console.log('🟡 PostItem: Opening comments for post:', post._id);
     navigation.navigate('PostDetailsScreen', { postId: post._id });
+  };
 
-  const openUser = () =>
-    navigation.navigate('ProfileScreen',    { userId: post.user?._id });
+  const openUser = () => {
+    console.log('🟡 PostItem: Opening user profile:', post.user?._id);
+    navigation.navigate('ProfileScreen', { userId: post.user?._id });
+  };
 
-  const openEvent = () =>
-    navigation.getParent()?.navigate('EventsTab', {
-      screen : 'EventDetails',
-      params : { eventId: post.event._id },
+  const openEvent = () => {
+    console.log('🟡 PostItem: Opening event:', post.event?._id);
+    navigation.navigate('EventDetailsScreen', { eventId: post.event._id });
+  };
+
+  const quickShare = () => {
+    console.log('🟡 PostItem: Sharing post:', post._id);
+    navigation.navigate('SelectChatScreen', {
+      shareType: 'post', 
+      shareId: post._id
     });
-
-  const quickShare = () =>
-    navigation.navigate('ChatTab', {
-      screen : 'SelectChatScreen',
-      params : { shareType:'post', shareId: post._id },
-    });
+  };
 
   /* ---- derived helpers ------------------------------------------- */
   const stamp = useMemo(() => niceDate(post.createdAt || post.uploadDate), [post]);
@@ -89,7 +94,7 @@ export default function PostItem({
       {/* ---------- header row ---------- */}
       {!hideUserInfo && post.user && (
         <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.userInfo} onPress={openUser}>
+          <TouchableOpacity style={styles.userInfo} onPress={openUser} activeOpacity={0.8}>
             <Image
               source={{ uri: post.user.profilePicture
                 ? `http://${API_BASE_URL}:3000${post.user.profilePicture}`
@@ -105,7 +110,7 @@ export default function PostItem({
           </TouchableOpacity>
           
           {isOwner && (
-            <TouchableOpacity onPress={() => setModal(true)} style={styles.moreButton}>
+            <TouchableOpacity onPress={() => setModal(true)} style={styles.moreButton} activeOpacity={0.8}>
               <Ionicons name="ellipsis-horizontal" size={20} color="#000" />
             </TouchableOpacity>
           )}
@@ -113,7 +118,11 @@ export default function PostItem({
       )}
 
       {/* ---------- photo ---------- */}
-      <View style={styles.imageContainer}>
+      <TouchableOpacity 
+        style={styles.imageContainer}
+        onPress={openComments}
+        activeOpacity={1}
+      >
         {imgURL
           ? <Image source={{ uri: imgURL }} style={styles.postImage} resizeMode="cover" />
           : <View style={styles.imagePlaceholder}>
@@ -121,12 +130,12 @@ export default function PostItem({
               <Text style={styles.placeholderText}>No Image</Text>
             </View>
         }
-      </View>
+      </TouchableOpacity>
 
       {/* ---------- action row ---------- */}
       <View style={styles.actionRow}>
         <View style={styles.leftActions}>
-          <TouchableOpacity onPress={toggleLike} style={styles.actionButton}>
+          <TouchableOpacity onPress={toggleLike} style={styles.actionButton} activeOpacity={0.8}>
             <Ionicons
               name={liked ? 'heart' : 'heart-outline'}
               size={24}
@@ -134,11 +143,11 @@ export default function PostItem({
             />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={openComments} style={styles.actionButton}>
+          <TouchableOpacity onPress={openComments} style={styles.actionButton} activeOpacity={0.8}>
             <Ionicons name="chatbubble-outline" size={23} color="#000"/>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={quickShare} style={styles.actionButton}>
+          <TouchableOpacity onPress={quickShare} style={styles.actionButton} activeOpacity={0.8}>
             <Ionicons name="paper-plane-outline" size={23} color="#000"/>
           </TouchableOpacity>
         </View>
@@ -146,7 +155,7 @@ export default function PostItem({
 
       {/* ---------- likes ---------- */}
       {likes > 0 && (
-        <TouchableOpacity style={styles.likesContainer}>
+        <TouchableOpacity style={styles.likesContainer} activeOpacity={0.8}>
           <Text style={styles.likesText}>
             {likes.toLocaleString()} {likes === 1 ? 'like' : 'likes'}
           </Text>
@@ -163,7 +172,7 @@ export default function PostItem({
         )}
         
         {shouldTruncate && !showFullCaption && (
-          <TouchableOpacity onPress={() => setShowFullCaption(true)}>
+          <TouchableOpacity onPress={() => setShowFullCaption(true)} activeOpacity={0.8}>
             <Text style={styles.moreText}>more</Text>
           </TouchableOpacity>
         )}
@@ -171,7 +180,7 @@ export default function PostItem({
 
       {/* ---------- comment preview ---------- */}
       {(post.comments?.length || 0) > 0 && (
-        <TouchableOpacity onPress={openComments} style={styles.commentsPreview}>
+        <TouchableOpacity onPress={openComments} style={styles.commentsPreview} activeOpacity={0.8}>
           <Text style={styles.viewCommentsText}>
             View all {post.comments.length} comments
           </Text>
@@ -193,7 +202,7 @@ export default function PostItem({
 
       {/* ---------- linked event ---------- */}
       {post.event && !disableEventLink && (
-        <TouchableOpacity onPress={openEvent} style={styles.eventLink}>
+        <TouchableOpacity onPress={openEvent} style={styles.eventLink} activeOpacity={0.8}>
           <Ionicons name="calendar-outline" size={16} color="#3797EF" />
           <Text style={styles.eventLinkText}>{post.event.title}</Text>
         </TouchableOpacity>
@@ -202,7 +211,11 @@ export default function PostItem({
       {/* ---------- owner modal ---------- */}
       <Modal transparent visible={modal} animationType="fade"
              onRequestClose={() => setModal(false)}>
-        <View style={styles.modalOverlay}>
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setModal(false)}
+        >
           <View style={styles.modalContent}>
             <TouchableOpacity 
               style={styles.modalOption}
@@ -210,6 +223,7 @@ export default function PostItem({
                 setModal(false); 
                 onDeletePost?.(); 
               }}
+              activeOpacity={0.8}
             >
               <Text style={styles.deleteText}>Delete</Text>
             </TouchableOpacity>
@@ -217,11 +231,12 @@ export default function PostItem({
             <TouchableOpacity 
               style={styles.modalOption}
               onPress={() => setModal(false)}
+              activeOpacity={0.8}
             >
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );

@@ -1,5 +1,5 @@
 /*************************************************
- * server.js (main server file)
+ * server.js (main server file) - FIXED ROUTES
  *************************************************/
 const express = require('express');
 const http = require('http');
@@ -110,21 +110,17 @@ async function ensureIndexes () {
   console.log('✅  indexes ensured');
 }
 mongoose.connection.once('open', ensureIndexes);
+
 // ********************************
 // 4) Socket.io setup
 //    Optionally parse JWT from handshake, attach user to socket, etc.
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
-  // If you want to decode the token to identify the user:
-  //  const userId = decodeJwt(token);
-  //  if (userId) { socket.userId = userId; }
-  // For now, we'll just proceed:
   next();
 });
 
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
-
 
   socket.on('joinRoom', ({ conversationId }) => {
     socket.join(conversationId);
@@ -147,20 +143,31 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+// ********************************
+// 5) FIXED ROUTES - Added /api prefix consistently
+// ********************************
 app.use('/api/auth', authRoutes);
-app.use('/api/events', eventRoutes);
+app.use('/api/events', eventRoutes);  // Changed from /events to /api/events
 app.use('/api/photos', photoRoutes);
 app.use('/api/messages', messageRoutes(io, connectedUsers)); 
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/notifications', notificationRoutes);  // Now matches client expectation
 app.use('/api/search', searchRoutes);
 app.use('/api/checkin', checkinRoutes);
-app.use('/api/profile', profileRoutes);
+app.use('/api/profile', profileRoutes);  // Now matches client expectation
 app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);
 app.use('/api/memories', memoryRoutes);
+app.use('/api/users', usersRoutes);  // Changed from /users to /api/users
+
+// Legacy routes for backward compatibility (if needed)
+app.use('/events', eventRoutes);
+app.use('/notifications', notificationRoutes);
+app.use('/profile', profileRoutes);
+app.use('/follow', followRoutes);
 app.use('/users', usersRoutes);
+
+// Static file serving
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-

@@ -1,33 +1,32 @@
-// screens/ProfileScreen.js
+// screens/ProfileScreen.js - Updated with modern UI
 import React, { useState, useEffect, useContext } from 'react';
 import {
   SafeAreaView, View, Text, StyleSheet, Image, TouchableOpacity,
   ActivityIndicator, RefreshControl, FlatList, Dimensions, ScrollView,
+  StatusBar,
 } from 'react-native';
 import { useIsFocused }  from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons }      from '@expo/vector-icons';
 import api               from '../services/api';
 import { API_BASE_URL }  from '@env';
 import { AuthContext }   from '../services/AuthContext';
-import { palette, spacing, radius } from '../theme';
 
 import SharedEventsTab   from '../components/SharedEventsTab';
 import CalendarTab       from '../components/CalendarTab';
 
 /* ---------- constants ---------- */
 const COLS  = 3;
-const GAP   = spacing(0.5);
+const GAP   = 4;
 const WIDTH = Dimensions.get('window').width;
 const THUMB = (WIDTH - GAP * (COLS + 1)) / COLS;
 
-/* =========================================================================
- * ProfileScreen
- * ========================================================================= */
 export default function ProfileScreen({ route, navigation }) {
   const { currentUser }   = useContext(AuthContext);
   const authId            = currentUser?._id;
   const userId            = route.params?.userId || null;
   const isFocused         = useIsFocused();
+  const insets            = useSafeAreaInsets();
 
   /* state ----------------------------------------------------------- */
   const [profile,     setProfile]     = useState(null);
@@ -38,19 +37,61 @@ export default function ProfileScreen({ route, navigation }) {
   const [isSelf,      setIsSelf]      = useState(false);
   const [tab,         setTab]         = useState(0);      // 0-Posts | 1-Events | 2-Calendar
 
+  /* Setup header with back button */
+  useEffect(() => {
+    navigation.setOptions({
+      headerStyle: {
+        backgroundColor: '#FFFFFF',
+        shadowOpacity: 0,
+        elevation: 0,
+        borderBottomWidth: 0.5,
+        borderBottomColor: '#E1E1E1',
+      },
+      headerTitleStyle: {
+        fontWeight: '600',
+        fontSize: 18,
+        color: '#000000',
+      },
+      headerTitle: profile?.username || 'Profile',
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={26} color="#000000" />
+        </TouchableOpacity>
+      ),
+      headerRight: () => isSelf ? (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('UserSettingsScreen')}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="settings-outline" size={24} color="#000000" />
+        </TouchableOpacity>
+      ) : null,
+    });
+  }, [navigation, profile, isSelf]);
+
   /* fetch ----------------------------------------------------------- */
   useEffect(() => { if (isFocused) fetchProfile(); }, [isFocused, userId]);
 
   const fetchProfile = async (pull=false) => {
     pull ? setRefreshing(true) : setLoading(true);
     try {
-      const { data } = await api.get(userId ? `/profile/${userId}` : '/profile');
+      console.log('🟡 ProfileScreen: Fetching profile...', userId ? `userId: ${userId}` : 'own profile');
+      
+      const endpoint = userId ? `/api/profile/${userId}` : '/api/profile';
+      const { data } = await api.get(endpoint);
+      
+      console.log('🟢 ProfileScreen: Profile loaded successfully');
       setProfile(data);
-      setIsSelf(String(data._id) === String(authId));   // strict self-check
+      setIsSelf(String(data._id) === String(authId));
       setFollowing(!!data.isFollowing);
       setRequested(!!data.hasRequested);
     } catch (err) {
-      console.log('❌ profile fetch', err.response?.data || err);
+      console.log('❌ ProfileScreen: Profile fetch error:', err.response?.data || err.message);
       setProfile(null);
     } finally {
       pull ? setRefreshing(false) : setLoading(false);
@@ -61,18 +102,45 @@ export default function ProfileScreen({ route, navigation }) {
   const toggleFollow = async () => {
     if (!profile) return;
     try {
-      following
-        ? await api.delete(`/follow/unfollow/${profile._id}`)
-        : await api.post(`/follow/follow/${profile._id}`);
+      console.log('🟡 ProfileScreen: Toggling follow status...');
+      
+      if (following) {
+        await api.delete(`/api/follow/unfollow/${profile._id}`);
+        console.log('🟢 ProfileScreen: Unfollowed successfully');
+      } else {
+        await api.post(`/api/follow/follow/${profile._id}`);
+        console.log('🟢 ProfileScreen: Follow request sent/completed');
+      }
+      
       setFollowing(!following);
       setRequested(false);
       fetchProfile();
-    } catch (err) { console.log('❌ follow', err.response?.data || err); }
+    } catch (err) { 
+      console.log('❌ ProfileScreen: Follow toggle error:', err.response?.data || err.message); 
+    }
   };
 
   /* guards ---------------------------------------------------------- */
-  if (loading)  return <View style={styles.center}><ActivityIndicator/></View>;
-  if (!profile) return <View style={styles.center}><Text>Profile unavailable</Text></View>;
+  if (loading)  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#3797EF" />
+        <Text style={styles.loadingText}>Loading profile...</Text>
+      </View>
+    </SafeAreaView>
+  );
+  
+  if (!profile) return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.center}>
+        <Ionicons name="person-outline" size={80} color="#C7C7CC" />
+        <Text style={styles.errorText}>Profile unavailable</Text>
+        <TouchableOpacity onPress={() => fetchProfile()} style={styles.retryButton}>
+          <Text style={styles.retryText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
 
   /* helpers --------------------------------------------------------- */
   const avatar = profile.profilePicture
@@ -80,75 +148,126 @@ export default function ProfileScreen({ route, navigation }) {
     : null;
 
   const mutual = profile.followers
-    .filter(f => currentUser.following.includes(f._id))
-    .map(f => f.username);
+    ?.filter(f => currentUser?.following?.includes(f._id))
+    ?.map(f => f.username) || [];
 
   const mutualLabel = !isSelf && mutual.length
     ? `Followed by ${mutual.slice(0,2).join(', ')}${mutual.length>2 ? ` and ${mutual.length-2} others` : ''}`
     : null;
 
-  /* header component (re-used in FlatList & ScrollView) ------------- */
+  /* header component ------------------------------------------------ */
   const Header = () => (
-    <>
-      {/* ---- Top row ---- */}
-      <View style={styles.topRow}>
-        {/* QR icon visible **only** for self */}
-        {isSelf
-          ? (
-            <TouchableOpacity onPress={() => navigation.navigate('QrScreen')}>
-              <Ionicons name="qr-code-outline" size={24}/>
-            </TouchableOpacity>
-          )
-          : <View style={{ width:24 }}/>}
-        <Text style={styles.username}>{profile.username}</Text>
-        {isSelf ? (
-          <TouchableOpacity onPress={() => navigation.navigate('UserSettingsScreen')}>
-            <Ionicons name="settings-outline" size={24}/>
+    <View style={styles.profileHeader}>
+      {/* Profile Info Section */}
+      <View style={styles.profileInfoSection}>
+        {/* Avatar and Basic Info */}
+        <View style={styles.avatarSection}>
+          <TouchableOpacity activeOpacity={0.8}>
+            {avatar ? (
+              <Image source={{ uri: avatar }} style={styles.avatar}/>
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <Ionicons name="person-outline" size={50} color="#8E8E93" />
+              </View>
+            )}
           </TouchableOpacity>
-        ) : <View style={{ width:24 }}/>}
-      </View>
+          
+          <View style={styles.usernameSection}>
+            <Text style={styles.username}>{profile.username}</Text>
+            {profile.pronouns && (
+              <Text style={styles.pronouns}>{profile.pronouns}</Text>
+            )}
+            {mutualLabel && <Text style={styles.mutualText}>{mutualLabel}</Text>}
+          </View>
+        </View>
 
-      {/* ---- Avatar + counts ---- */}
-      <View style={styles.headRow}>
-        {avatar
-          ? <Image source={{ uri: avatar }} style={styles.avatar}/>
-          : <View style={[styles.avatar,{ backgroundColor:palette.border }]}/>}
-        <View style={styles.countBox}>
-          <Stat n={profile.photos.length}    label="Posts"/>
-          <Stat n={profile.followers.length} label="Followers" onPress={() =>
-            navigation.navigate('FollowListScreen',{ userId:profile._id, mode:'followers'})}/>
-          <Stat n={profile.following.length} label="Following" onPress={() =>
-            navigation.navigate('FollowListScreen',{ userId:profile._id, mode:'following'})}/>
+        {/* Stats Row */}
+        <View style={styles.statsRow}>
+          <Stat n={profile.photos?.length || 0} label="Posts"/>
+          <Stat 
+            n={profile.followers?.length || 0} 
+            label="Followers" 
+            onPress={() => navigation.navigate('FollowListScreen',{ userId:profile._id, mode:'followers'})}
+          />
+          <Stat 
+            n={profile.following?.length || 0} 
+            label="Following" 
+            onPress={() => navigation.navigate('FollowListScreen',{ userId:profile._id, mode:'following'})}
+          />
+        </View>
+
+        {/* Bio */}
+        {profile.bio && (
+          <View style={styles.bioSection}>
+            <Text style={styles.bioText}>{profile.bio}</Text>
+          </View>
+        )}
+
+        {/* Action Buttons */}
+        <View style={styles.actionsSection}>
+          {isSelf ? (
+            <>
+              <TouchableOpacity 
+                style={styles.primaryButton} 
+                onPress={() => navigation.navigate('EditProfileScreen')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryButtonText}>Edit Profile</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.secondaryButton}
+                onPress={() => navigation.navigate('QrScreen')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="qr-code-outline" size={20} color="#000000" />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  following ? styles.followingButton : styles.followButton
+                ]}
+                onPress={toggleFollow}
+                activeOpacity={0.8}
+              >
+                <Text style={[
+                  styles.primaryButtonText,
+                  following ? styles.followingButtonText : styles.followButtonText
+                ]}>
+                  {following ? 'Following' : requested ? 'Requested' : 'Follow'}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.secondaryButton}
+                onPress={() => navigation.navigate('ChatScreen', { 
+                  recipientId: profile._id, 
+                  headerUser: profile 
+                })}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="chatbubble-outline" size={20} color="#000000" />
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.secondaryButton}
+                onPress={() => navigation.navigate('SelectChatScreen',{
+                  shareType:'profile',
+                  shareId:profile._id
+                })}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="share-outline" size={20} color="#000000" />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </View>
 
-      {mutualLabel && <Text style={styles.mutual}>{mutualLabel}</Text>}
-      {profile.bio   && <Text style={styles.bio}>{profile.bio}</Text>}
-
-      {/* ---- actions ---- */}
-      <View style={styles.actions}>
-        {isSelf ? (
-          <>
-            <Action solid label="Edit"   onPress={() => navigation.navigate('EditProfileScreen')}/>
-            <Action       label="Share"  onPress={() =>
-              navigation.navigate('ChatTab',{screen:'SelectChatScreen',
-                params:{shareType:'profile',shareId:profile._id}})}/>
-          </>
-        ) : (
-          <>
-            <Action
-              solid={!following}
-              label={following ? 'Unfollow' : requested ? 'Requested' : 'Follow'}
-              onPress={toggleFollow}
-            />
-            <Action label="Message" onPress={() =>
-              navigation.navigate('ChatTab',{ screen:'ChatScreen',
-                params:{ userId:profile._id }})}/>
-          </>
-        )}
-      </View>
-
-      {/* ---- tab bar ---- */}
+      {/* Tab Bar */}
       <View style={styles.tabBar}>
         {['Posts','Events','Calendar'].map((t,i)=>(
           (i===2 && !isSelf) ? null : (
@@ -159,19 +278,19 @@ export default function ProfileScreen({ route, navigation }) {
           )
         ))}
       </View>
-    </>
+    </View>
   );
 
   /* photo cell ------------------------------------------------------ */
   const renderPhoto = ({ item }) => (
     <TouchableOpacity
-      style={{ width:THUMB, height:THUMB, margin:GAP }}
+      style={styles.photoThumbnail}
       activeOpacity={0.85}
-      onPress={() => navigation.navigate('PostDetailsScreen',{ postId:item._id })}
+      onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
     >
       <Image
         source={{ uri:`http://${API_BASE_URL}:3000${item.paths[0]}` }}
-        style={{ width:'100%', height:'100%', borderRadius:radius.thumb }}
+        style={styles.photoImage}
       />
     </TouchableOpacity>
   );
@@ -179,20 +298,29 @@ export default function ProfileScreen({ route, navigation }) {
   /* ---------------- main return (switch by tab) ------------------- */
   if (tab === 0) {
     return (
-      <SafeAreaView style={styles.root}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <FlatList
-          data={profile.photos}
+          data={profile.photos || []}
           keyExtractor={p=>p._id}
           renderItem={renderPhoto}
           numColumns={COLS}
           ListHeaderComponent={Header}
-          columnWrapperStyle={{ justifyContent:'flex-start' }}
+          columnWrapperStyle={styles.photoRow}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={()=>fetchProfile(true)}/>
           }
-          ListEmptyComponent={<View style={styles.center}><Text>No posts yet.</Text></View>}
-          contentContainerStyle={{ paddingBottom:spacing(8) }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="images-outline" size={80} color="#C7C7CC" />
+              <Text style={styles.emptyTitle}>No posts yet</Text>
+              <Text style={styles.emptySubtitle}>
+                {isSelf ? 'Share your first photo' : 'No posts to show'}
+              </Text>
+            </View>
+          }
+          contentContainerStyle={styles.listContent}
         />
       </SafeAreaView>
     );
@@ -200,12 +328,13 @@ export default function ProfileScreen({ route, navigation }) {
 
   /* Events / Calendar in ScrollView */
   return (
-    <SafeAreaView style={styles.root}>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <ScrollView
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={()=>fetchProfile(true)}/>
         }
-        contentContainerStyle={{ paddingBottom:spacing(8) }}
+        contentContainerStyle={styles.scrollContent}
       >
         <Header/>
         {tab === 1 && (
@@ -220,74 +349,247 @@ export default function ProfileScreen({ route, navigation }) {
 }
 
 /* ---------------- tiny helpers ---------------- */
-const Stat = ({ n,label,onPress }) => (
-  <TouchableOpacity disabled={!onPress} onPress={onPress} style={{ alignItems:'center' }}>
-    <Text style={{ fontWeight:'700', fontSize:16 }}>{n}</Text>
-    <Text style={{ color:palette.grey }}>{label}</Text>
-  </TouchableOpacity>
-);
-
-const Action = ({ label,solid=false,onPress }) => (
-  <TouchableOpacity
-    style={[
-      styles.action,
-      { backgroundColor: solid ? palette.brandBlue : palette.surface },
-    ]}
-    onPress={onPress}
-  >
-    <Text style={{
-      color: solid ? palette.white : palette.black,
-      fontWeight:'600'
-    }}>{label}</Text>
+const Stat = ({ n, label, onPress }) => (
+  <TouchableOpacity disabled={!onPress} onPress={onPress} style={styles.statContainer}>
+    <Text style={styles.statNumber}>{n}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
   </TouchableOpacity>
 );
 
 /* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
-  root:{ flex:1, backgroundColor:palette.bg },
-  center:{ flex:1, justifyContent:'center', alignItems:'center' },
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  headerButton: {
+    padding: 8,
+    marginHorizontal: 8,
+  },
+  center: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  errorText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  retryButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
 
-  topRow:{
-    flexDirection:'row', alignItems:'center', justifyContent:'space-between',
-    paddingHorizontal:spacing(4), paddingTop:spacing(2),
+  // Profile Header
+  profileHeader: {
+    backgroundColor: '#FFFFFF',
   },
-  username:{ fontSize:20, fontWeight:'700' },
+  profileInfoSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+  },
+  
+  // Avatar Section
+  avatarSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  avatar: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+  },
+  avatarPlaceholder: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  usernameSection: {
+    marginLeft: 16,
+    flex: 1,
+  },
+  username: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  pronouns: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 4,
+  },
+  mutualText: {
+    fontSize: 13,
+    color: '#8E8E93',
+  },
 
-  headRow:{
-    flexDirection:'row', alignItems:'center',
-    paddingHorizontal:spacing(4), paddingTop:spacing(3),
+  // Stats
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+    paddingVertical: 16,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
   },
-  avatar:{
-    width:100, height:100,
-    borderRadius:radius.avatar,                    // square avatar
+  statContainer: {
+    alignItems: 'center',
   },
-  countBox:{
-    flexDirection:'row', flex:1, justifyContent:'space-around',
-    marginLeft:spacing(6),
+  statNumber: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
   },
-
-  mutual:{ color:palette.grey, paddingHorizontal:spacing(4), marginTop:spacing(1) },
-  bio:{    paddingHorizontal:spacing(4), marginTop:spacing(2), lineHeight:19 },
-
-  actions:{
-    flexDirection:'row', justifyContent:'space-around',
-    paddingVertical:spacing(3), paddingHorizontal:spacing(4),
-  },
-  action:{
-    flex:1, marginHorizontal:spacing(1),
-    alignItems:'center', paddingVertical:spacing(2),
-    borderRadius:radius.btn,
+  statLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
   },
 
-  tabBar:{
-    flexDirection:'row', borderTopWidth:1, borderBottomWidth:1,
-    borderColor:palette.border, marginTop:spacing(4),
+  // Bio
+  bioSection: {
+    marginBottom: 20,
   },
-  tabBtn:{ flex:1, alignItems:'center', paddingVertical:spacing(2) },
-  tabTxt:{ color:palette.grey, fontWeight:'600' },
-  tabTxtActive:{ color:palette.black },
-  tabIndicator:{
-    position:'absolute', bottom:0, height:3, width:'70%',
-    backgroundColor:palette.brandBlue, borderRadius:2,
+  bioText: {
+    fontSize: 16,
+    color: '#000000',
+    lineHeight: 22,
+  },
+
+  // Actions
+  actionsSection: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  primaryButton: {
+    flex: 1,
+    backgroundColor: '#000000',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  followButton: {
+    backgroundColor: '#3797EF',
+  },
+  followButtonText: {
+    color: '#FFFFFF',
+  },
+  followingButton: {
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  followingButtonText: {
+    color: '#000000',
+  },
+  secondaryButton: {
+    width: 44,
+    height: 44,
+    backgroundColor: '#F0F0F0',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Tab Bar
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+    backgroundColor: '#FFFFFF',
+  },
+  tabBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 16,
+    position: 'relative',
+  },
+  tabTxt: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  tabTxtActive: {
+    color: '#000000',
+    fontWeight: '600',
+  },
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    height: 2,
+    width: '80%',
+    backgroundColor: '#000000',
+    borderRadius: 1,
+  },
+
+  // Photos Grid
+  listContent: {
+    paddingBottom: 40,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  photoRow: {
+    justifyContent: 'flex-start',
+    paddingHorizontal: GAP,
+  },
+  photoThumbnail: {
+    width: THUMB,
+    height: THUMB,
+    margin: GAP / 2,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#F6F6F6',
+  },
+
+  // Empty State
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });

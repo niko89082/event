@@ -1,51 +1,153 @@
-// screens/CreatePickerScreen.js
+// screens/CreatePickerScreen.js - Updated with proper navigation
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, SafeAreaView, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 const OPTIONS = [
-  { key:'event', label:'Event',  desc:'Create an event',          icon:'calendar' },
-  { key:'photo', label:'Photo',  desc:'Add photos to your post',  icon:'image'    },
+  { key:'event', label:'Event',  desc:'Create an event for others to join',          icon:'calendar' },
+  { key:'photo', label:'Photo',  desc:'Share photos and moments',  icon:'image'    },
 ];
 
 export default function CreatePickerScreen({ navigation }) {
 
+  React.useEffect(() => {
+    navigation.setOptions({
+      headerStyle: {
+        backgroundColor: '#FFFFFF',
+        shadowOpacity: 0,
+        elevation: 0,
+        borderBottomWidth: 0.5,
+        borderBottomColor: '#E1E1E1',
+      },
+      headerTitleStyle: {
+        fontWeight: '700',
+        fontSize: 18,
+        color: '#000000',
+      },
+      headerTitle: 'Create',
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="close" size={24} color="#000000" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
   const onSelect = (key) => {
-    if (key === 'event') navigation.navigate('CreateEvent');
-    if (key === 'photo') navigation.navigate('CreatePost');
+    if (key === 'event') navigation.navigate('CreateEventScreen');
+    if (key === 'photo') navigation.navigate('CreatePostScreen');
   };
 
   const renderItem = ({ item }) => (
-    <TouchableOpacity style={st.row} onPress={()=>onSelect(item.key)}>
-      <View style={st.icon}>
-        <Ionicons name={item.icon} size={22} color="#000" />
+    <TouchableOpacity 
+      style={styles.optionCard} 
+      onPress={() => onSelect(item.key)}
+      activeOpacity={0.8}
+    >
+      <View style={styles.iconContainer}>
+        <Ionicons name={item.icon} size={32} color="#3797EF" />
       </View>
-      <View>
-        <Text style={st.label}>{item.label}</Text>
-        <Text style={st.desc}>{item.desc}</Text>
+      <View style={styles.textContainer}>
+        <Text style={styles.optionTitle}>{item.label}</Text>
+        <Text style={styles.optionDescription}>{item.desc}</Text>
       </View>
+      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
     </TouchableOpacity>
   );
 
   return (
-    <View style={st.container}>
-      <View style={st.header}><Text style={st.title}>Create</Text></View>
-      <FlatList
-        data={OPTIONS}
-        renderItem={renderItem}
-        keyExtractor={i=>i.key}
-        contentContainerStyle={{ padding:16 }}
-      />
-    </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
+      <View style={styles.content}>
+        <View style={styles.headerSection}>
+          <Text style={styles.title}>What would you like to create?</Text>
+          <Text style={styles.subtitle}>Choose what you'd like to share with your community</Text>
+        </View>
+
+        <FlatList
+          data={OPTIONS}
+          renderItem={renderItem}
+          keyExtractor={i => i.key}
+          contentContainerStyle={styles.optionsList}
+          showsVerticalScrollIndicator={false}
+        />
+      </View>
+    </SafeAreaView>
   );
 }
 
-const st = StyleSheet.create({
-  container:{ flex:1, backgroundColor:'#fff' },
-  header:{ alignItems:'center', paddingVertical:14, borderBottomWidth:0.5, borderColor:'#ddd' },
-  title:{ fontSize:20, fontWeight:'700' },
-  row:{ flexDirection:'row', alignItems:'center', padding:14, borderRadius:8, marginBottom:8, backgroundColor:'#f3f6fb' },
-  icon:{ width:40, height:40, borderRadius:8, backgroundColor:'#e5ecf7', justifyContent:'center', alignItems:'center', marginRight:12 },
-  label:{ fontWeight:'600', fontSize:16 },
-  desc:{ color:'#567', marginTop:2 },
+const styles = StyleSheet.create({
+  container: { 
+    flex: 1, 
+    backgroundColor: '#FFFFFF' 
+  },
+  headerButton: {
+    padding: 8,
+    marginHorizontal: 8,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 20,
+  },
+  headerSection: {
+    paddingVertical: 32,
+    alignItems: 'center',
+  },
+  title: { 
+    fontSize: 24, 
+    fontWeight: '700',
+    color: '#000000',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  optionsList: {
+    paddingBottom: 40,
+  },
+  optionCard: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  iconContainer: { 
+    width: 56, 
+    height: 56, 
+    borderRadius: 16, 
+    backgroundColor: '#F0F8FF', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginRight: 16,
+  },
+  textContainer: {
+    flex: 1,
+  },
+  optionTitle: { 
+    fontWeight: '700', 
+    fontSize: 18,
+    color: '#000000',
+    marginBottom: 4,
+  },
+  optionDescription: { 
+    color: '#8E8E93', 
+    fontSize: 14,
+    lineHeight: 20,
+  },
 });

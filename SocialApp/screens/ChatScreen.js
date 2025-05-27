@@ -1,4 +1,4 @@
-// screens/ChatScreen.js
+// screens/ChatScreen.js - Fixed message alignment and back navigation
 import React, {
   useState, useEffect, useRef, useContext, useLayoutEffect
 } from 'react';
@@ -263,7 +263,15 @@ export default function ChatScreen({ route, navigation }) {
 
   // ─── Render each bubble ─────────────────────────
   const renderItem = ({ item, index }) => {
+    // FIXED: Proper message alignment based on sender
     const self = String(item.sender._id) === String(uid);
+    console.log('🟡 ChatScreen: Rendering message', {
+      messageId: item._id,
+      senderId: item.sender._id,
+      currentUserId: uid,
+      isSelf: self
+    });
+    
     const nextMessage = messages[index + 1];
     const isLastFromSender = !nextMessage || nextMessage.sender._id !== item.sender._id;
     const prevMessage = messages[index - 1];
@@ -322,7 +330,7 @@ export default function ChatScreen({ route, navigation }) {
           </Text>
         )}
         
-        <View style={styles.messageRow}>
+        <View style={[styles.messageRow, self && styles.messageRowSelf]}>
           {!self && isLastFromSender && (
             <Image
               source={{ 
@@ -557,6 +565,10 @@ const styles = StyleSheet.create({
   messageRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+  },
+  messageRowSelf: {
+    justifyContent: 'flex-end',
   },
   senderAvatar: {
     width: 24,

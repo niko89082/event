@@ -10,9 +10,29 @@ import RegisterScreen from './screens/Auth/RegisterScreen';
 
 import MainTabNavigator from './navigation/MainTabNavigator';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+// Global Screens (accessible from anywhere)
 import ProfileScreen from './screens/ProfileScreen';
 import FollowListScreen from './screens/FollowListScreen';
 import UserSettingsScreen from './screens/UserSettingsScreen';
+import EditProfileScreen from './screens/EditProfileScreen';
+import SearchScreen from './screens/SearchScreen';
+import EventDetailsScreen from './screens/EventDetailsScreen';
+import PostDetailsScreen from './screens/PostDetailsScreen';
+import CreateEventScreen from './screens/CreateEventScreen';
+import CreatePostScreen from './screens/CreatePostScreen';
+import PostPublishedScreen from './screens/PostPublishedScreen';
+import ChatScreen from './screens/ChatScreen';
+import NewChatScreen from './screens/NewChatScreen';
+import SelectChatScreen from './screens/SelectChatScreen';
+import ChatInfoScreen from './screens/ChatInfoScreen';
+import QrScreen from './screens/QrScreen';
+import QrScanScreen from './screens/QrScanScreen';
+import AttendeeListScreen from './screens/AttendeeListScreen';
+import EditEventScreen from './screens/EditEventScreen';
+import CalendarScreen from './screens/CalendarScreen';
+import MemoryDetailsScreen from './screens/MemoryDetailsScreen';
+
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
@@ -30,6 +50,7 @@ console.log('🟡 App: Environment loaded', {
   API_BASE_URL,
   hasPublishableKey: !!PUBLISHABLE_KEY
 });
+
 const RootStack = createStackNavigator();
 
 function RootNavigator() {
@@ -78,13 +99,8 @@ function RootNavigator() {
           />
         </>
       ) : (
-        // If authenticated => main tabs + all "global" screens
+        // If authenticated => main tabs + all global screens
         <>
-          {/*
-            NOTE: We set headerShown: false for the main tabs route
-            so the tab bar can handle the UI, but we can also
-            push other screens with headers on top.
-          */}
           <RootStack.Screen
             name="MainTabs"
             options={{ headerShown: false }}
@@ -101,17 +117,122 @@ function RootNavigator() {
           <RootStack.Screen
             name="ProfileScreen"
             component={ProfileScreen}
-            options={{ headerShown:false }}
+            options={{ headerShown: false }}
           />
           <RootStack.Screen
             name="FollowListScreen"
             component={FollowListScreen}
-            options={{ headerShown:false }}
+            options={{ headerShown: false }}
           />
           <RootStack.Screen
             name="UserSettingsScreen"
             component={UserSettingsScreen}
-            options={{ headerShown: false}}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="EditProfileScreen"
+            component={EditProfileScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="SearchScreen"
+            component={SearchScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="EventDetailsScreen"
+            component={EventDetailsScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="EventDetails"
+            component={EventDetailsScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="PostDetailsScreen"
+            component={PostDetailsScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CreateEventScreen"
+            component={CreateEventScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CreateEvent"
+            component={CreateEventScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CreatePostScreen"
+            component={CreatePostScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CreatePost"
+            component={CreatePostScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="PostPublishedScreen"
+            component={PostPublishedScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="PostPublished"
+            component={PostPublishedScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="ChatScreen"
+            component={ChatScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="NewChatScreen"
+            component={NewChatScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="SelectChatScreen"
+            component={SelectChatScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="ChatInfoScreen"
+            component={ChatInfoScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="QrScreen"
+            component={QrScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="QrScanScreen"
+            component={QrScanScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="AttendeeListScreen"
+            component={AttendeeListScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="EditEventScreen"
+            component={EditEventScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CalendarScreen"
+            component={CalendarScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="MemoryDetailsScreen"
+            component={MemoryDetailsScreen}
+            options={{ headerShown: false }}
           />
         </>
       )}

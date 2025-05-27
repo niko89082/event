@@ -16,12 +16,12 @@ export default function EventCard({ event, currentUserId, navigation, onAttend }
     : null;
 
   const openDetail = () =>
-    navigation.navigate('EventDetails', { eventId: event._id });
+    navigation.navigate('EventDetailsScreen', { eventId: event._id });
 
   const share = () =>
-    navigation.getParent()?.navigate('ChatTab', {
-      screen: 'SelectChatScreen', 
-      params: { shareType: 'event', shareId: event._id }
+    navigation.navigate('SelectChatScreen', { 
+      shareType: 'event', 
+      shareId: event._id 
     });
 
   // Format date

@@ -1,9 +1,11 @@
-// screens/NotificationScreen.js
+// screens/NotificationScreen.js - Fixed with proper API routes and SafeArea
 import React, { useEffect, useState, useContext } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Button, Image
+  ActivityIndicator, Button, Image, SafeAreaView, StatusBar
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { useIsFocused } from '@react-navigation/native';
@@ -14,6 +16,7 @@ import FollowRequestItem from '../components/FollowRequestItem';
 
 export default function NotificationScreen({ navigation }) {
   const { currentUser } = useContext(AuthContext);
+  const insets = useSafeAreaInsets();
 
   // State for normal notifications
   const [notifications, setNotifications] = useState([]);
@@ -23,25 +26,61 @@ export default function NotificationScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const isFocused = useIsFocused();
 
+  // Set up header
+  useEffect(() => {
+    navigation.setOptions({
+      headerStyle: {
+        backgroundColor: '#FFFFFF',
+        shadowOpacity: 0,
+        elevation: 0,
+        borderBottomWidth: 0.5,
+        borderBottomColor: '#E1E1E1',
+      },
+      headerTitleStyle: {
+        fontWeight: '700',
+        fontSize: 18,
+        color: '#000000',
+      },
+      headerTitle: 'Notifications',
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={26} color="#000000" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
   useEffect(() => {
     if (isFocused) {
       fetchAllData();
     }
   }, [isFocused]);
 
-  // Fetch both notifications + follow requests
+  // Fetch both notifications + follow requests with fixed API paths
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      // 1) get normal notifications
-      const notifRes = await api.get('/notifications');
+      console.log('🟡 NotificationScreen: Fetching notifications...');
+      
+      // 1) get normal notifications - FIXED API PATH
+      const notifRes = await api.get('/api/notifications');
+      console.log('🟢 NotificationScreen: Notifications response:', notifRes.status);
       setNotifications(notifRes.data);
 
-      // 2) get my follow requests
-      const reqRes = await api.get('/follow/my-requests');
+      // 2) get my follow requests - FIXED API PATH
+      const reqRes = await api.get('/api/follow/my-requests');
+      console.log('🟢 NotificationScreen: Follow requests response:', reqRes.status);
       setMyRequests(reqRes.data.followRequests || []);
+      
     } catch (err) {
-      console.error('Error fetching data:', err.response?.data || err);
+      console.error('❌ NotificationScreen: Error fetching data:', err.response?.data || err.message);
+      // Set empty arrays on error to prevent crashes
+      setNotifications([]);
+      setMyRequests([]);
     } finally {
       setLoading(false);
     }
@@ -50,7 +89,7 @@ export default function NotificationScreen({ navigation }) {
   /* ------------------ Follow Requests Logic ------------------ */
   const handleAcceptRequest = async (requesterId) => {
     try {
-      await api.post(`/follow/accept/${requesterId}`);
+      await api.post(`/api/follow/accept/${requesterId}`);
       // remove from local state
       setMyRequests((prev) => prev.filter((u) => u._id !== requesterId));
     } catch (err) {
@@ -60,7 +99,7 @@ export default function NotificationScreen({ navigation }) {
 
   const handleDeclineRequest = async (requesterId) => {
     try {
-      await api.delete(`/follow/decline/${requesterId}`);
+      await api.delete(`/api/follow/decline/${requesterId}`);
       // remove from local state
       setMyRequests((prev) => prev.filter((u) => u._id !== requesterId));
     } catch (err) {
@@ -86,7 +125,7 @@ export default function NotificationScreen({ navigation }) {
   /* ------------------ Notifications Logic ------------------ */
   const handleMarkRead = async (notifId) => {
     try {
-      await api.put(`/notifications/${notifId}/read`);
+      await api.put(`/api/notifications/${notifId}/read`);
       setNotifications((prev) =>
         prev.map((n) => (n._id === notifId ? { ...n, isRead: true } : n))
       );
@@ -97,7 +136,7 @@ export default function NotificationScreen({ navigation }) {
 
   const handleDelete = async (notifId) => {
     try {
-      await api.delete(`/notifications/${notifId}`);
+      await api.delete(`/api/notifications/${notifId}`);
       setNotifications((prev) => prev.filter((n) => n._id !== notifId));
     } catch (err) {
       console.error(err);
@@ -121,26 +160,36 @@ export default function NotificationScreen({ navigation }) {
 
     return (
       <View style={[styles.notificationItem, item.isRead && styles.read]}>
-        {senderPicUrl && (
-          <TouchableOpacity onPress={handlePressSender}>
-            <Image source={{ uri: senderPicUrl }} style={styles.senderImage} />
-          </TouchableOpacity>
-        )}
-        <Text style={styles.message}>{item.message}</Text>
-
-        {senderId && (
-          <TouchableOpacity onPress={handlePressSender}>
-            <Text style={styles.profileLink}>
-              View {sender.username || 'User'}'s profile
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        <View style={styles.row}>
-          {!item.isRead && (
-            <Button title="Mark Read" onPress={() => handleMarkRead(item._id)} />
+        <View style={styles.notificationContent}>
+          {senderPicUrl && (
+            <TouchableOpacity onPress={handlePressSender}>
+              <Image source={{ uri: senderPicUrl }} style={styles.senderImage} />
+            </TouchableOpacity>
           )}
-          <Button title="Delete" onPress={() => handleDelete(item._id)} />
+          
+          <View style={styles.notificationTextContainer}>
+            <Text style={styles.message}>{item.message}</Text>
+            <Text style={styles.timestamp}>
+              {new Date(item.createdAt).toLocaleDateString()}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.notificationActions}>
+          {!item.isRead && (
+            <TouchableOpacity 
+              onPress={() => handleMarkRead(item._id)}
+              style={styles.markReadButton}
+            >
+              <Ionicons name="checkmark" size={16} color="#3797EF" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity 
+            onPress={() => handleDelete(item._id)}
+            style={styles.deleteButton}
+          >
+            <Ionicons name="close" size={16} color="#FF3B30" />
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -149,92 +198,171 @@ export default function NotificationScreen({ navigation }) {
   /* ------------------ Rendering ------------------ */
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" />
-      </View>
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading notifications...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   // If no follow requests AND no notifications
   if (!myRequests.length && !notifications.length) {
     return (
-      <View style={styles.centered}>
-        <Text>No notifications or follow requests.</Text>
-      </View>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={styles.emptyState}>
+          <Ionicons name="notifications-outline" size={80} color="#C7C7CC" />
+          <Text style={styles.emptyTitle}>No Notifications</Text>
+          <Text style={styles.emptySubtitle}>
+            When you get likes, follows and comments, they'll appear here.
+          </Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* Section 1: Follow Requests */}
-      <Text style={styles.sectionTitle}>Follow Requests</Text>
-      {myRequests.length ? (
-        <FlatList
-          data={myRequests}
-          keyExtractor={(user) => user._id}
-          renderItem={renderRequestItem}
-          contentContainerStyle={styles.listContainer}
-        />
-      ) : (
-        <Text style={styles.emptyText}>No pending requests.</Text>
-      )}
-
-      {/* Section 2: Other Notifications */}
-      <Text style={styles.sectionTitle}>Notifications</Text>
-      {notifications.length ? (
-        <FlatList
-          data={notifications}
-          keyExtractor={(item) => item._id}
-          renderItem={renderNotificationItem}
-          contentContainerStyle={styles.listContainer}
-        />
-      ) : (
-        <Text style={styles.emptyText}>No notifications found.</Text>
-      )}
-    </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
+      <FlatList
+        data={[
+          // Follow requests section
+          ...(myRequests.length > 0 ? [{
+            type: 'section',
+            title: 'Follow Requests',
+            id: 'follow-requests-header'
+          }] : []),
+          ...myRequests.map(req => ({ type: 'request', data: req, id: req._id })),
+          
+          // Notifications section
+          ...(notifications.length > 0 ? [{
+            type: 'section',
+            title: 'Recent Activity',
+            id: 'notifications-header'
+          }] : []),
+          ...notifications.map(notif => ({ type: 'notification', data: notif, id: notif._id }))
+        ]}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => {
+          if (item.type === 'section') {
+            return (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>{item.title}</Text>
+              </View>
+            );
+          } else if (item.type === 'request') {
+            return renderRequestItem({ item: item.data });
+          } else if (item.type === 'notification') {
+            return renderNotificationItem({ item: item.data });
+          }
+          return null;
+        }}
+        contentContainerStyle={styles.listContainer}
+        showsVerticalScrollIndicator={false}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  headerButton: {
+    padding: 8,
+    marginHorizontal: 8,
+  },
   centered: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   listContainer: {
-    padding: 16,
+    paddingVertical: 8,
+  },
+  sectionHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#F8F9FA',
   },
   sectionTitle: {
-    fontSize: 18, fontWeight: 'bold', marginTop: 8, marginLeft: 16,
-  },
-  emptyText: {
-    marginLeft: 16, fontStyle: 'italic', color: '#666',
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
   },
   notificationItem: {
-    backgroundColor: '#fff',
-    padding: 12,
-    marginBottom: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
   read: {
     opacity: 0.6,
   },
+  notificationContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
   senderImage: {
-    width: 40, height: 40, borderRadius: 20,
-    marginBottom: 6,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  notificationTextContainer: {
+    flex: 1,
   },
   message: {
     fontSize: 14,
-    marginBottom: 4,
+    color: '#000000',
+    marginBottom: 2,
   },
-  row: {
+  timestamp: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  notificationActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-start',
-    marginVertical: 4,
+    alignItems: 'center',
   },
-  profileLink: {
-    color: 'blue',
-    textDecorationLine: 'underline',
-    marginVertical: 4,
+  markReadButton: {
+    padding: 8,
+    marginRight: 4,
+  },
+  deleteButton: {
+    padding: 8,
   },
 });

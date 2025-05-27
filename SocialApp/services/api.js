@@ -1,4 +1,4 @@
-// services/api.js - Fixed for better auth handling
+// services/api.js - Fixed for better auth handling and route consistency
 import axios from 'axios';
 import { API_BASE_URL } from '@env';
 
@@ -43,6 +43,7 @@ api.interceptors.response.use(
       url: error.config?.url,
       status: error.response?.status,
       message: error.response?.data?.message || error.message,
+      data: error.response?.data,
     };
     
     console.error('❌ API Response Error:', errorInfo);
@@ -55,6 +56,11 @@ api.interceptors.response.use(
     
     if (error.response?.status === 403) {
       console.log('🟡 API: Forbidden - user may not have permission');
+    }
+    
+    if (error.response?.status === 404) {
+      console.log('🟡 API: Not Found - endpoint may not exist');
+      console.log('🟡 API: Available endpoints should be prefixed with /api/');
     }
     
     if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error')) {
