@@ -1,4 +1,4 @@
-// screens/ConversationListScreen.js - Updated with New Chat button in header
+// screens/ConversationListScreen.js - FIXED with proper header for iPhone 13 notch
 import React, {
   useState, useEffect, useCallback, useContext, useRef
 } from 'react';
@@ -7,6 +7,7 @@ import {
   StyleSheet, Image, StatusBar, SafeAreaView
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { io } from 'socket.io-client';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
@@ -58,40 +59,18 @@ export default function ConversationListScreen() {
   const { currentUser } = useContext(AuthContext);
   const uid = currentUser._id;
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   const [convos, setConvos] = useState([]);
   const [loading, setLoad] = useState(true);
   const socketRef = useRef(null);
 
-  /* header setup */
+  /* FIXED: Better header setup for iPhone 13 with custom header */
   useEffect(() => {
     navigation.setOptions({
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.33,
-        borderBottomColor: '#E1E1E1',
-        height: 88, // Reduced header height
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 22,
-        color: '#000000',
-      },
-      headerTitle: 'Messages',
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={() => navigation.navigate('NewChatScreen')}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="create-outline" size={26} color="#000000" />
-        </TouchableOpacity>
-      ),
-      headerLeft: () => null, // Remove back button since this is a tab screen
+      headerShown: false, // We'll create our own header
     });
-  }, [navigation, currentUser]);
+  }, [navigation]);
 
   /* live socket updates */
   useEffect(() => {
@@ -211,6 +190,7 @@ export default function ConversationListScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <View style={styles.centerLoading}>
           <Text style={styles.loadingText}>Loading conversations...</Text>
         </View>
@@ -221,6 +201,21 @@ export default function ConversationListScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
+      {/* FIXED: Custom header that properly handles iPhone 13 notch */}
+      <View style={[styles.customHeader, { paddingTop: Math.max(insets.top, 8) }]}>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Messages</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('NewChatScreen')}
+            style={styles.newChatButton}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="create-outline" size={24} color="#3797EF" />
+            <Text style={styles.newChatText}>New</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
       
       {convos.length === 0 ? (
         <View style={styles.emptyState}>
@@ -258,9 +253,43 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  headerButton: {
-    padding: 8,
-    marginHorizontal: 12,
+  // FIXED: Custom header styles for proper positioning
+  customHeader: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.33,
+    borderBottomColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    minHeight: 44,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  newChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F8FF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  newChatText: {
+    color: '#3797EF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   listContainer: {
     paddingTop: 4,

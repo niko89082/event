@@ -1,36 +1,26 @@
-// navigation/MainTabNavigator.js - Reverted to correct 5-tab structure
+// navigation/MainTabNavigator.js - Updated with proper Chat tab setup
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 
-// Screen imports
+// Tab Screens
 import FeedScreen from '../screens/FeedScreen';
+import EventListScreen from '../screens/EventListScreen';
 import ConversationListScreen from '../screens/ConversationListScreen';
-import CreatePickerScreen from '../screens/CreatePickerScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+
+// Create Screens
+import CreatePickerScreen from '../screens/CreatePickerScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
-// Home Stack
-function HomeStack() {
+// FIXED: Chat Stack Navigator to handle conversation screens properly
+function ChatStackNavigator() {
   return (
-    <Stack.Navigator>
-      <Stack.Screen 
-        name="FeedMain" 
-        component={FeedScreen} 
-        options={{ headerShown: false }}
-      />
-    </Stack.Navigator>
-  );
-}
-
-// Chat Stack
-function ChatStack() {
-  return (
-    <Stack.Navigator>
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen 
         name="ConversationList" 
         component={ConversationListScreen}
@@ -40,48 +30,45 @@ function ChatStack() {
   );
 }
 
-// Create Stack
-function CreateStack() {
+// Profile Stack Navigator (for the Profile tab)
+function ProfileStackNavigator() {
   return (
-    <Stack.Navigator>
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen 
+        name="MyProfile" 
+        component={ProfileScreen}
+        // Pass no userId to ProfileScreen to show current user's profile
+        initialParams={{ userId: null }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+// Events Stack Navigator
+function EventsStackNavigator() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen 
+        name="EventList" 
+        component={EventListScreen}
+      />
+    </Stack.Navigator>
+  );
+}
+
+// Create Stack Navigator
+function CreateStackNavigator() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen 
         name="CreatePicker" 
         component={CreatePickerScreen}
-        options={{ headerShown: false }}
-      />
-    </Stack.Navigator>
-  );
-}
-
-// Notifications Stack
-function NotificationsStack() {
-  return (
-    <Stack.Navigator>
-      <Stack.Screen 
-        name="NotificationMain" 
-        component={NotificationScreen}
-        options={{ headerShown: false }}
-      />
-    </Stack.Navigator>
-  );
-}
-
-// Profile Stack
-function ProfileStack({ onLogout }) {
-  return (
-    <Stack.Navigator>
-      <Stack.Screen 
-        name="ProfileMain" 
-        component={ProfileScreen}
-        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );
 }
 
 export default function MainTabNavigator({ onLogout }) {
-  console.log('🟡 MainTabNavigator: Rendering 5 tabs (Home, Chat, Create, Notifications, Profile)');
-
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -89,15 +76,17 @@ export default function MainTabNavigator({ onLogout }) {
           let iconName;
 
           switch (route.name) {
-            case 'Home':
+            case 'Feed':
               iconName = focused ? 'home' : 'home-outline';
               break;
-            case 'Chat':
-              iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
+            case 'Events':
+              iconName = focused ? 'calendar' : 'calendar-outline';
               break;
             case 'Create':
               iconName = focused ? 'add-circle' : 'add-circle-outline';
-              size = focused ? 32 : 28; // Make create button slightly larger
+              break;
+            case 'Chat':
+              iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
               break;
             case 'Notifications':
               iconName = focused ? 'notifications' : 'notifications-outline';
@@ -106,7 +95,7 @@ export default function MainTabNavigator({ onLogout }) {
               iconName = focused ? 'person' : 'person-outline';
               break;
             default:
-              iconName = 'circle';
+              iconName = 'help-outline';
           }
 
           return <Ionicons name={iconName} size={size} color={color} />;
@@ -117,59 +106,66 @@ export default function MainTabNavigator({ onLogout }) {
           backgroundColor: '#FFFFFF',
           borderTopWidth: 0.33,
           borderTopColor: '#E1E1E1',
-          paddingTop: 6,
-          paddingBottom: 6,
-          height: 54, // Reduced height to bring navigation up
+          paddingTop: 8,
+          paddingBottom: 8,
+          height: 84, // Proper height for iPhone with home indicator
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: '500',
-          marginTop: 2,
-          marginBottom: 2,
+          marginTop: 4,
         },
-        headerShown: false,
+        headerShown: false, // Individual screens handle their own headers
       })}
     >
       <Tab.Screen 
-        name="Home" 
-        component={HomeStack}
+        name="Feed" 
+        component={FeedScreen}
         options={{
           tabBarLabel: 'Home',
         }}
       />
       
       <Tab.Screen 
-        name="Chat" 
-        component={ChatStack}
+        name="Events" 
+        component={EventsStackNavigator}
         options={{
-          tabBarLabel: 'Chat',
+          tabBarLabel: 'Events',
         }}
       />
       
       <Tab.Screen 
         name="Create" 
-        component={CreateStack}
+        component={CreateStackNavigator}
         options={{
           tabBarLabel: 'Create',
         }}
       />
       
+      {/* FIXED: Chat tab with proper stack navigator */}
+      <Tab.Screen 
+        name="Chat" 
+        component={ChatStackNavigator}
+        options={{
+          tabBarLabel: 'Messages',
+        }}
+      />
+      
       <Tab.Screen 
         name="Notifications" 
-        component={NotificationsStack}
+        component={NotificationScreen}
         options={{
-          tabBarLabel: 'Notifications',
+          tabBarLabel: 'Activity',
         }}
       />
       
       <Tab.Screen 
         name="Profile" 
+        component={ProfileStackNavigator}
         options={{
           tabBarLabel: 'Profile',
         }}
-      >
-        {(props) => <ProfileStack {...props} onLogout={onLogout} />}
-      </Tab.Screen>
+      />
     </Tab.Navigator>
   );
 }
