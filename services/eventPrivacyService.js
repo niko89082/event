@@ -1,4 +1,4 @@
-// services/eventPrivacyService.js - Privacy & Discovery Logic
+// services/EventPrivacyService.js - Privacy & Discovery Logic
 const Event = require('../models/Event');
 const User = require('../models/User');
 

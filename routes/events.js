@@ -5,12 +5,13 @@ const Group = require('../models/Group');
 const Photo = require('../models/Photo');
 const User = require('../models/User');
 const protect = require('../middleware/auth');
+const EventPrivacyService = require('../services/eventPrivacyService');
 const paypal = require('paypal-rest-sdk');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-console.log(process.env.STRIPE_SECRET_KEY)
+
 const router = express.Router();
 
 const UP_DIR      = path.join(__dirname, '..', 'uploads');
@@ -26,15 +27,23 @@ const upload = multer({ storage });
 
 /* helper to coerce booleans coming from multipart/form-data */
 const bool = (v) => v === true || v === 'true';
+const parseIntSafe = (val, defaultVal = 0) => {
+  const parsed = parseInt(val);
+  return isNaN(parsed) ? defaultVal : parsed;
+};
+const parseFloatSafe = (val, defaultVal = 0) => {
+  const parsed = parseFloat(val);
+  return isNaN(parsed) ? defaultVal : parsed;
+};
 
 // PayPal Configuration
 paypal.configure({
-  'mode': 'sandbox', // Sandbox or live
+  'mode': 'sandbox',
   'client_id': process.env.PAYPAL_CLIENT_ID,
   'client_secret': process.env.PAYPAL_CLIENT_SECRET,
 });
 
-
+// Create Event with Enhanced Privacy
 router.post('/create', protect, upload.single('coverImage'), async (req, res) => {
   try {
     const {
@@ -146,6 +155,7 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
   }
 });
 
+// Create Event from Group Chat
 router.post('/create-from-group/:groupId', protect, upload.single('coverImage'), async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -171,7 +181,7 @@ router.post('/create-from-group/:groupId', protect, upload.single('coverImage'),
   }
 });
 
-// Get all events
+// Get Events with Privacy Filtering
 router.get('/', protect, async (req, res) => {
   try {
     const { 
@@ -205,48 +215,8 @@ router.get('/', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' }); 
   }
 });
-router.get('/my-photo-events', protect, async (req, res) => {
-  try {
-    const list = await Event.find({
-      allowPhotos:true,
-      $or:[ { attendees:req.user._id }, { checkedIn:req.user._id } ]
-    }).select('title time allowPhotos');
-    res.json(list);
-  } catch (err) {
-    console.error('/my-photo-events =>', err);
-    res.status(500).json({ message:'Server error' });
-  }
-});
 
-
-// Get Event by ID// routes/events.js
-router.get('/:eventId', protect, async (req,res)=>{
-  try{
-    const evt = await Event.findById(req.params.eventId)
-      .populate('host',    'username profilePicture')
-      .populate('coHosts', 'username')
-      .populate('attendees invitedUsers', 'username')
-      .populate({
-        path:'photos',
-        populate:{ path:'user', select:'username isPrivate followers' }
-      });
-
-    if (!evt) return res.status(404).json({ message:'Event not found' });
-
-    /* privacy gate for private events */
-    if (!evt.isPublic && ![
-      String(evt.host._id),
-      ...evt.coHosts.map(String),
-      ...evt.attendees.map(String),
-      ...evt.invitedUsers.map(String)
-    ].includes(String(req.user._id))){
-      return res.status(403).json({ message:'Private event' });
-    }
-
-    res.json(evt);
-
-  }catch(e){ res.status(500).json({ message:'Server error' }); }
-});
+// Get Event Recommendations
 router.get('/recommendations', protect, async (req, res) => {
   try {
     const { location, weather, limit = 10 } = req.query;
@@ -277,6 +247,7 @@ router.get('/recommendations', protect, async (req, res) => {
   }
 });
 
+// Get Friends Activity
 router.get('/friends-activity', protect, async (req, res) => {
   try {
     const { limit = 10 } = req.query;
@@ -289,7 +260,75 @@ router.get('/friends-activity', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-// Update Event
+
+// Get My Photo Events
+router.get('/my-photo-events', protect, async (req, res) => {
+  try {
+    const list = await Event.find({
+      allowPhotos: true,
+      $or: [{ attendees: req.user._id }, { checkedIn: req.user._id }]
+    }).select('title time allowPhotos');
+    res.json(list);
+  } catch (err) {
+    console.error('/my-photo-events =>', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get Event by ID with Privacy Check
+router.get('/:eventId', protect, async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId)
+      .populate('host', 'username profilePicture')
+      .populate('coHosts', 'username')
+      .populate('attendees invitedUsers', 'username')
+      .populate('joinRequests.user', 'username profilePicture')
+      .populate({
+        path: 'photos',
+        populate: { path: 'user', select: 'username isPrivate followers' }
+      });
+
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+
+    // Check if user can view this event
+    const permission = await EventPrivacyService.checkPermission(
+      req.user._id, 
+      req.params.eventId, 
+      'view'
+    );
+
+    if (!permission.allowed) {
+      return res.status(403).json({ message: permission.reason });
+    }
+
+    // Filter sensitive information based on privacy settings
+    const eventObj = event.toObject();
+    
+    // Hide attendee list if not public
+    if (!event.permissions.showAttendeesToPublic && 
+        String(event.host) !== String(req.user._id) &&
+        !event.coHosts.some(c => String(c) === String(req.user._id))) {
+      eventObj.attendees = eventObj.attendees.slice(0, 3); // Show only first 3
+    }
+
+    // Add user's relationship to event
+    eventObj.userRelation = {
+      isHost: String(event.host._id) === String(req.user._id),
+      isCoHost: event.coHosts.some(c => String(c._id) === String(req.user._id)),
+      isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
+      isInvited: event.invitedUsers.some(i => String(i._id) === String(req.user._id)),
+      hasRequestedToJoin: event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id))
+    };
+
+    res.json(eventObj);
+
+  } catch (e) { 
+    console.error('Get event error:', e);
+    res.status(500).json({ message: 'Server error' }); 
+  }
+});
+
+// Update Event with Privacy Controls
 router.put('/:eventId', protect, upload.single('coverImage'), async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
@@ -380,7 +419,7 @@ router.put('/:eventId', protect, upload.single('coverImage'), async (req, res) =
   }
 });
 
-// Delete Event
+// Attend Event with Privacy Check
 router.post('/attend/:eventId', protect, async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
@@ -442,6 +481,7 @@ router.post('/attend/:eventId', protect, async (req, res) => {
   }
 });
 
+// Leave Event
 router.delete('/attend/:eventId', protect, async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
@@ -466,411 +506,120 @@ router.delete('/attend/:eventId', protect, async (req, res) => {
   }
 });
 
-// Add Co-host
-router.post('/:eventId/cohost', protect, async (req, res) => {
+// Send Join Request
+router.post('/join-request/:eventId', protect, async (req, res) => {
   try {
-    const { eventId } = req.params;
-    const { userId } = req.body; // user we want to add as cohost
-
-    const event = await Event.findById(eventId);
+    const { message } = req.body;
+    const event = await Event.findById(req.params.eventId);
+    
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
-    // Must be host to add co-hosts
-    if (String(event.host) !== String(req.user._id)) {
-      return res.status(403).json({ message: 'Only the host can add co-hosts' });
-    }
-
-    // Check if user is already in coHosts
-    if (event.coHosts.includes(userId)) {
-      return res.status(400).json({ message: 'User is already a co-host' });
-    }
-
-    event.coHosts.push(userId);
-    await event.save();
-
-    return res.json({ message: 'Co-host added successfully', event });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Upload documents for an event
-router.post('/upload/:eventId', protect, upload.array('documents'), async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    if (event.host.toString() !== req.user.id && !event.coHosts.includes(req.user._id)) {
-      return res.status(401).json({ message: 'User not authorized' });
-    }
-
-    req.files.forEach(file => {
-      event.documents.push(`/uploads/documents/${file.filename}`);
-    });
-
-    await event.save();
-    res.status(200).json({ message: 'Documents uploaded successfully', documents: event.documents });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Send announcements to event attendees
-router.post('/announce/:eventId', protect, async (req, res) => {
-  const { message } = req.body;
-
-  try {
-    const event = await Event.findById(req.params.eventId);
-
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    if (event.host.toString() !== req.user.id && !event.coHosts.includes(req.user._id)) {
-      return res.status(401).json({ message: 'User not authorized' });
-    }
-
-    event.announcements.push({ message });
-
-    await event.save();
-    res.status(200).json({ message: 'Announcement sent', announcements: event.announcements });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Like Event
-router.post('/like/:eventId', protect, async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    if (event.likes.includes(req.user._id)) {
-      // Unlike the event
-      event.likes.pull(req.user._id);
-    } else {
-      // Like the event
-      event.likes.push(req.user._id);
-    }
-
-    await event.save();
-    res.status(200).json(event.likes);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Comment on Event
-router.post('/comment/:eventId', protect, async (req, res) => {
-  const { text, tags } = req.body;
-
-  try {
-    const event = await Event.findById(req.params.eventId);
-
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    const comment = {
-      user: req.user._id,
-      text,
-      tags,
-    };
-
-    event.comments.push(comment);
-    await event.save();
-    res.status(200).json(event.comments);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Get trending events
-router.get('/trending', async (req, res) => {
-  try {
-    const events = await Event.find().sort({ attendees: -1 }).limit(10).populate('host', 'username');
-    res.status(200).json(events);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Purchase ticket using PayPal
-router.post('/purchase/:eventId', protect, async (req, res) => {
-  const { eventId } = req.params;
-
-  try {
-    const event = await Event.findById(eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    if (event.attendees.length >= event.maxAttendees) {
-      return res.status(400).json({ message: 'Event is full' });
-    }
-
-    const payment = {
-      intent: 'sale',
-      payer: {
-        payment_method: 'paypal',
-      },
-      redirect_urls: {
-        return_url: 'http://localhost:3000/success',
-        cancel_url: 'http://localhost:3000/cancel',
-      },
-      transactions: [{
-        item_list: {
-          items: [{
-            name: event.title,
-            sku: '001',
-            price: event.ticketPrice.toString(),
-            currency: 'USD',
-            quantity: 1,
-          }],
-        },
-        amount: {
-          currency: 'USD',
-          total: event.ticketPrice.toString(),
-        },
-        description: `Ticket for ${event.title}`,
-      }],
-    };
-
-    paypal.payment.create(payment, (error, payment) => {
-      if (error) {
-        return res.status(500).json({ message: 'PayPal payment error', error });
-      }
-
-      for (let i = 0; i < payment.links.length; i++) {
-        if (payment.links[i].rel === 'approval_url') {
-          return res.status(200).json({ forwardLink: payment.links[i].href });
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
-  }
-});
-
-// Get events for a calendar view
-router.get('/calendar', protect, async (req, res) => {
-  try {
-    const events = await Event.find().populate('host', 'username');
-    const calendarEvents = events.map(event => ({
-      title: event.title,
-      start: event.time,
-      end: event.time, // Assuming the event is a one-day event. Adjust if needed.
-      url: `/events/${event._id}`,
-    }));
-    res.status(200).json(calendarEvents);
-  } catch (error) {
-    res.status500.json({ message: 'Server error' });
-  }
-});
-
-// Delete Photo from Event
-router.delete('/:eventId/photo/:photoId', protect, async (req,res)=>{
-  try{
-    const { eventId, photoId } = req.params;
-    const justUnlink = req.query.removeTagOnly === 'true';
-
-    const evt = await Event.findById(eventId);
-    if(!evt) return res.status(404).json({ message:'Event not found' });
-
-    const isHostLike = String(evt.host) === String(req.user._id) ||
-                       evt.coHosts.includes(req.user._id);
-    if(!isHostLike) return res.status(403).json({ message:'Not authorized' });
-
-    if (!evt.photos.includes(photoId)){
-      return res.status(400).json({ message:'Photo not in event' });
-    }
-
-    evt.photos.pull(photoId);
-    if (!evt.removedPhotos.includes(photoId)) evt.removedPhotos.push(photoId);
-    await evt.save();
-
-    if (justUnlink){
-      await Photo.findByIdAndUpdate(photoId,{ visibleInEvent:false });
-      return res.json({ message:'Photo un-linked from event' });
-    }
-
-    /* full delete */
-    const ph = await Photo.findById(photoId);
-    if(ph){
-      ph.paths.forEach(p=>fs.unlink(path.join(__dirname,'..',p),()=>{}));
-      await ph.remove();
-    }
-    res.json({ message:'Photo deleted' });
-
-  }catch(e){ res.status(500).json({ message:'Server error', error:e.message }); }
-});
-
-// Share Event
-router.get('/share/:eventId', async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    // Increment share count
-    event.shareCount += 1;
-    await event.save();
-
-    const shareLink = `${req.protocol}://${req.get('host')}/events/${event._id}`;
-    const socialLinks = {
-      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
-      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
-      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
-      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
-    };
-
-    res.status(200).json({ shareLink, socialLinks });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-// Check-in endpoint
-// routes/events.js
-
-router.post('/:eventId/checkin', protect, async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    const { scannedUserId } = req.body; // user ID from the QR code
-
-    const event = await Event.findById(eventId)
-      .populate('attendees', '_id username profilePicture')
-      .populate('checkedIn', '_id username profilePicture');
-
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    // Ensure the requestor is the host or co-host
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts.some(
-      (c) => String(c) === String(req.user._id)
-    );
-    if (!isHost && !isCoHost) {
-      return res.status(401).json({
-        message: 'User not authorized to check in attendees',
-      });
-    }
-
-    // Find the user doc
-    const user = await User.findById(scannedUserId).select('username profilePicture');
-    if (!user) {
-      return res.status(404).json({ message: 'Scanned user not found in system' });
-    }
-
-    // Check if user is in event.attendees
-    const isAttendee = event.attendees.some((a) => a._id.equals(scannedUserId));
-    if (!isAttendee) {
-      // They are NOT in the official attendee list => front end can handle
-      return res.json({
-        status: 'not_attendee',
-        user: {
-          _id: user._id,
-          username: user.username,
-          profilePicture: user.profilePicture || null,
-        },
-      });
-    }
-
-    // If user is an attendee => see if they are already checked in
-    const isAlreadyCheckedIn = event.checkedIn.some((id) =>
-      String(id) === String(scannedUserId)
-    );
-    if (isAlreadyCheckedIn) {
-      return res.json({
-        status: 'already_checked_in',
-        user: {
-          _id: user._id,
-          username: user.username,
-          profilePicture: user.profilePicture || null,
-        },
-      });
-    }
-
-    // Otherwise, add them to checkedIn
-    event.checkedIn.push(scannedUserId);
-    await event.save();
-
-    return res.json({
-      status: 'success',
-      user: {
-        _id: user._id,
-        username: user.username,
-        profilePicture: user.profilePicture || null,
-      },
-    });
-  } catch (err) {
-    console.error('Check-in error:', err);
-    return res.status(500).json({ message: 'Server error', error: err.message });
-  }
-});
-// In your events router:
-// routes/events.js (excerpt)
-router.get('/:eventId', protect, async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId)
-      .populate('host', 'username profilePicture')
-      .populate('coHosts', 'username')
-      .populate('attendees invitedUsers', 'username')
-      .populate('joinRequests.user', 'username profilePicture')
-      .populate({
-        path: 'photos',
-        populate: { path: 'user', select: 'username isPrivate followers' }
-      });
-
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    // Check if user can view this event
+    // Check if user can request to join
     const permission = await EventPrivacyService.checkPermission(
       req.user._id, 
       req.params.eventId, 
-      'view'
+      'join'
     );
 
-    if (!permission.allowed) {
+    if (!permission.allowed && event.permissions.canJoin !== 'approval-required') {
       return res.status(403).json({ message: permission.reason });
     }
 
-    // Filter sensitive information based on privacy settings
-    const eventObj = event.toObject();
-    
-    // Hide attendee list if not public
-    if (!event.permissions.showAttendeesToPublic && 
-        String(event.host) !== String(req.user._id) &&
-        !event.coHosts.some(c => String(c) === String(req.user._id))) {
-      eventObj.attendees = eventObj.attendees.slice(0, 3); // Show only first 3
+    // Check if already requested
+    const existingRequest = event.joinRequests.find(
+      jr => String(jr.user) === String(req.user._id)
+    );
+
+    if (existingRequest) {
+      return res.status(400).json({ message: 'Join request already sent' });
     }
 
-    // Add user's relationship to event
-    eventObj.userRelation = {
-      isHost: String(event.host._id) === String(req.user._id),
-      isCoHost: event.coHosts.some(c => String(c._id) === String(req.user._id)),
-      isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
-      isInvited: event.invitedUsers.some(i => String(i._id) === String(req.user._id)),
-      hasRequestedToJoin: event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id))
-    };
+    // Add join request
+    event.joinRequests.push({
+      user: req.user._id,
+      message: message || '',
+      requestedAt: new Date()
+    });
 
-    res.json(eventObj);
+    await event.save();
+    res.json({ message: 'Join request sent successfully' });
 
-  } catch (e) { 
-    console.error('Get event error:', e);
-    res.status(500).json({ message: 'Server error' }); 
+  } catch (e) {
+    console.error('Join request error:', e);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
+// Approve Join Request
+router.post('/join-request/:eventId/:userId/approve', protect, async (req, res) => {
+  try {
+    const { eventId, userId } = req.params;
+    const event = await Event.findById(eventId);
+    
+    if (!event) return res.status(404).json({ message: 'Event not found' });
 
+    // Only host and co-hosts can approve
+    const isAuthorized = String(event.host) === String(req.user._id) ||
+                        event.coHosts.some(c => String(c) === String(req.user._id));
+    
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Not authorized to approve requests' });
+    }
+
+    // Remove from join requests and add to attendees
+    event.joinRequests = event.joinRequests.filter(
+      jr => String(jr.user) !== String(userId)
+    );
+
+    if (!event.attendees.includes(userId)) {
+      event.attendees.push(userId);
+    }
+
+    // Add to user's attending events
+    await User.findByIdAndUpdate(userId, {
+      $addToSet: { attendingEvents: eventId }
+    });
+
+    await event.save();
+    res.json({ message: 'Join request approved' });
+
+  } catch (e) {
+    console.error('Approve join request error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Reject Join Request
+router.delete('/join-request/:eventId/:userId/reject', protect, async (req, res) => {
+  try {
+    const { eventId, userId } = req.params;
+    const event = await Event.findById(eventId);
+    
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+
+    // Only host and co-hosts can reject
+    const isAuthorized = String(event.host) === String(req.user._id) ||
+                        event.coHosts.some(c => String(c) === String(req.user._id));
+    
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Not authorized to reject requests' });
+    }
+
+    // Remove from join requests
+    event.joinRequests = event.joinRequests.filter(
+      jr => String(jr.user) !== String(userId)
+    );
+
+    await event.save();
+    res.json({ message: 'Join request rejected' });
+
+  } catch (e) {
+    console.error('Reject join request error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Invite Users to Event
 router.post('/:eventId/invite', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -918,155 +667,11 @@ router.post('/:eventId/invite', protect, async (req, res) => {
   }
 });
 
-router.get('/user/:userId/calendar', protect, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { month, year } = req.query;  // optional
-
-    if (userId.toString() !== req.user._id.toString()) {
-      // or check if admin, or if user is viewing own data
-      return res.status(403).json({ message: 'Forbidden' });
-    }
-
-    // Find the user
-    const user = await User.findById(userId).populate('attendingEvents');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    let events = user.attendingEvents;  
-    if (month && year) {
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 1); 
-      events = events.filter((evt) => {
-        if (!evt.time) return false;
-        const t = new Date(evt.time);
-        return (t >= startDate && t < endDate);
-      });
-    }
-
-    res.json({ events });
-  } catch (error) {
-    console.error('GET /events/user/:userId/calendar error =>', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// routes/events.js
-router.delete('/attend/:eventId', protect, async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    const isAttendee = event.attendees.includes(req.user._id);
-    if (!isAttendee) {
-      return res.status(400).json({ message: 'You are not attending this event' });
-    }
-
-    // remove user from event.attendees
-    event.attendees.pull(req.user._id);
-    await event.save();
-
-    // also remove event._id from user.attendingEvents
-    const user = await User.findById(req.user._id);
-    user.attendingEvents.pull(event._id);
-    await user.save();
-
-    return res.json({ message: 'You have left the event', event });
-  } catch (err) {
-    console.error('Unattend =>', err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// routes/events.js (partial)
-
-router.post('/:eventId/cohost/request', protect, async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    const { userId } = req.body; // The user we want to invite as co-host
-
-    const event = await Event.findById(eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    // Must be the host to request co-host
-    if (String(event.host) !== String(req.user._id)) {
-      return res.status(403).json({ message: 'Only the host can request co-hosts' });
-    }
-
-    // If user is already a co-host or already in coHostRequests, skip
-    if (event.coHosts.includes(userId)) {
-      return res.status(400).json({ message: 'User is already a co-host' });
-    }
-    if (!event.coHostRequests) {
-      event.coHostRequests = [];
-    }
-    if (event.coHostRequests.includes(userId)) {
-      return res.status(400).json({ message: 'Co-host request already pending' });
-    }
-
-    // Push to a coHostRequests array
-    event.coHostRequests.push(userId);
-    await event.save();
-
-    return res.json({
-      message: 'Co-host request sent',
-      event,
-    });
-  } catch (error) {
-    console.error('cohost/request error =>', error);
-    return res.status(500).json({ message: 'Server error' });
-  }
-});
-
-
-router.post('/:eventId/cohost/accept', protect, async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    const event = await Event.findById(eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    // Check if user is in coHostRequests
-    if (!event.coHostRequests || !event.coHostRequests.includes(req.user._id)) {
-      return res.status(400).json({ message: 'No co-host request found for you' });
-    }
-
-    // Remove from coHostRequests
-    event.coHostRequests = event.coHostRequests.filter(
-      (id) => String(id) !== String(req.user._id)
-    );
-
-    // Add to coHosts
-    if (!event.coHosts.includes(req.user._id)) {
-      event.coHosts.push(req.user._id);
-    }
-
-    // Also add them to attendees => no payment needed
-    if (!event.attendees.includes(req.user._id)) {
-      event.attendees.push(req.user._id);
-    }
-
-    await event.save();
-
-    // Possibly notify the host or others that user accepted
-    return res.json({
-      message: 'You are now co-hosting this event.',
-      event,
-    });
-  } catch (err) {
-    console.error('cohost/accept error =>', err);
-    return res.status(500).json({ message: 'Server error' });
-  }
-});
-
-
+// Ban User from Event
 router.post('/:eventId/banUser', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { userId, banPermanently } = req.body; 
-    // 'banPermanently' is a boolean: if true => user added to bannedUsers array
+    const { userId, banPermanently } = req.body;
 
     const event = await Event.findById(eventId);
     if (!event) {
@@ -1085,7 +690,6 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
 
     // Ensure the user we want to ban is an attendee OR at least valid
     if (!event.attendees.includes(userId)) {
-      // Possibly they’re not even in the attendee list, handle that
       return res.status(400).json({ message: 'User is not an attendee' });
     }
 
@@ -1126,120 +730,113 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
     return res.status(500).json({ message: 'Server error' });
   }
 });
-router.post('/join-request/:eventId', protect, async (req, res) => {
+
+// Get User Calendar Events
+router.get('/user/:userId/calendar', protect, async (req, res) => {
   try {
-    const { message } = req.body;
-    const event = await Event.findById(req.params.eventId);
-    
-    if (!event) return res.status(404).json({ message: 'Event not found' });
+    const { userId } = req.params;
+    const { month, year } = req.query;
 
-    // Check if user can request to join
-    const permission = await EventPrivacyService.checkPermission(
-      req.user._id, 
-      req.params.eventId, 
-      'join'
-    );
-
-    if (!permission.allowed && event.permissions.canJoin !== 'approval-required') {
-      return res.status(403).json({ message: permission.reason });
+    if (userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Forbidden' });
     }
 
-    // Check if already requested
-    const existingRequest = event.joinRequests.find(
-      jr => String(jr.user) === String(req.user._id)
-    );
+    const user = await User.findById(userId).populate('attendingEvents');
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
-    if (existingRequest) {
-      return res.status(400).json({ message: 'Join request already sent' });
+    let events = user.attendingEvents;  
+    if (month && year) {
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 1); 
+      events = events.filter((evt) => {
+        if (!evt.time) return false;
+        const t = new Date(evt.time);
+        return (t >= startDate && t < endDate);
+      });
     }
 
-    // Add join request
-    event.joinRequests.push({
-      user: req.user._id,
-      message: message || '',
-      requestedAt: new Date()
+    res.json({ events });
+  } catch (error) {
+    console.error('GET /events/user/:userId/calendar error =>', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Check-in endpoint
+router.post('/:eventId/checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { scannedUserId } = req.body;
+
+    const event = await Event.findById(eventId)
+      .populate('attendees', '_id username profilePicture')
+      .populate('checkedIn', '_id username profilePicture');
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Ensure the requestor is the host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts.some(
+      (c) => String(c) === String(req.user._id)
+    );
+    if (!isHost && !isCoHost) {
+      return res.status(401).json({
+        message: 'User not authorized to check in attendees',
+      });
+    }
+
+    // Find the user doc
+    const user = await User.findById(scannedUserId).select('username profilePicture');
+    if (!user) {
+      return res.status(404).json({ message: 'Scanned user not found in system' });
+    }
+
+    // Check if user is in event.attendees
+    const isAttendee = event.attendees.some((a) => a._id.equals(scannedUserId));
+    if (!isAttendee) {
+      return res.json({
+        status: 'not_attendee',
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture || null,
+        },
+      });
+    }
+
+    // If user is an attendee => see if they are already checked in
+    const isAlreadyCheckedIn = event.checkedIn.some((id) =>
+      String(id) === String(scannedUserId)
+    );
+    if (isAlreadyCheckedIn) {
+      return res.json({
+        status: 'already_checked_in',
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture || null,
+        },
+      });
+    }
+
+    // Otherwise, add them to checkedIn
+    event.checkedIn.push(scannedUserId);
+    await event.save();
+
+    return res.json({
+      status: 'success',
+      user: {
+        _id: user._id,
+        username: user.username,
+        profilePicture: user.profilePicture || null,
+      },
     });
-
-    await event.save();
-    res.json({ message: 'Join request sent successfully' });
-
-  } catch (e) {
-    console.error('Join request error:', e);
-    res.status(500).json({ message: 'Server error' });
+  } catch (err) {
+    console.error('Check-in error:', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-router.get('/mine/past', protect, async (req,res)=>{
-  const events = await Event.find({
-    attendees: req.user._id,
-    time     : { $lt: new Date() }
-  }).sort({ time:-1 });
-  res.json(events);
-});
-router.post('/join-request/:eventId/:userId/approve', protect, async (req, res) => {
-  try {
-    const { eventId, userId } = req.params;
-    const event = await Event.findById(eventId);
-    
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    // Only host and co-hosts can approve
-    const isAuthorized = String(event.host) === String(req.user._id) ||
-                        event.coHosts.some(c => String(c) === String(req.user._id));
-    
-    if (!isAuthorized) {
-      return res.status(403).json({ message: 'Not authorized to approve requests' });
-    }
-
-    // Remove from join requests and add to attendees
-    event.joinRequests = event.joinRequests.filter(
-      jr => String(jr.user) !== String(userId)
-    );
-
-    if (!event.attendees.includes(userId)) {
-      event.attendees.push(userId);
-    }
-
-    // Add to user's attending events
-    await User.findByIdAndUpdate(userId, {
-      $addToSet: { attendingEvents: eventId }
-    });
-
-    await event.save();
-    res.json({ message: 'Join request approved' });
-
-  } catch (e) {
-    console.error('Approve join request error:', e);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-router.delete('/join-request/:eventId/:userId/reject', protect, async (req, res) => {
-  try {
-    const { eventId, userId } = req.params;
-    const event = await Event.findById(eventId);
-    
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    // Only host and co-hosts can reject
-    const isAuthorized = String(event.host) === String(req.user._id) ||
-                        event.coHosts.some(c => String(c) === String(req.user._id));
-    
-    if (!isAuthorized) {
-      return res.status(403).json({ message: 'Not authorized to reject requests' });
-    }
-
-    // Remove from join requests
-    event.joinRequests = event.joinRequests.filter(
-      jr => String(jr.user) !== String(userId)
-    );
-
-    await event.save();
-    res.json({ message: 'Join request rejected' });
-
-  } catch (e) {
-    console.error('Reject join request error:', e);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
 module.exports = router;

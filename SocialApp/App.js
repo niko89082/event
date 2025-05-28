@@ -21,7 +21,7 @@ import EventDetailsScreen from './screens/EventDetailsScreen';
 import PostDetailsScreen from './screens/PostDetailsScreen';
 import CreateEventScreen from './screens/CreateEventScreen';
 import CreatePostScreen from './screens/CreatePostScreen';
-import CreatePickerScreen from './screens/CreatePickerScreen'; // FIXED: Added this import
+import CreatePickerScreen from './screens/CreatePickerScreen';
 import PostPublishedScreen from './screens/PostPublishedScreen';
 import ChatScreen from './screens/ChatScreen';
 import NewChatScreen from './screens/NewChatScreen';
@@ -33,6 +33,7 @@ import AttendeeListScreen from './screens/AttendeeListScreen';
 import EditEventScreen from './screens/EditEventScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import MemoryDetailsScreen from './screens/MemoryDetailsScreen';
+import InviteUsersScreen from './screens/InviteUsersScreen'; // NEW
 
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
@@ -175,7 +176,6 @@ function RootNavigator() {
             component={CreatePostScreen}
             options={{ headerShown: false }}
           />
-          {/* FIXED: Added CreatePickerScreen routes */}
           <RootStack.Screen
             name="CreatePickerScreen"
             component={CreatePickerScreen}
@@ -246,6 +246,12 @@ function RootNavigator() {
             component={MemoryDetailsScreen}
             options={{ headerShown: false }}
           />
+          {/* NEW: Invite Users Screen */}
+          <RootStack.Screen
+            name="InviteUsersScreen"
+            component={InviteUsersScreen}
+            options={{ headerShown: false }}
+          />
         </>
       )}
     </RootStack.Navigator>
@@ -253,7 +259,7 @@ function RootNavigator() {
 }
 
 export default function App() {
-  console.log('🟡 App: Starting application...');
+  console.log('🟡 App: Starting application with enhanced event privacy system...');
 
   // Handle environment errors
   if (!API_BASE_URL || !PUBLISHABLE_KEY) {
@@ -277,8 +283,8 @@ export default function App() {
     <ErrorBoundary>
       <StripeProvider
         publishableKey={PUBLISHABLE_KEY}
-        merchantDisplayName="MyApp"
-        returnURL="myapp://stripe-redirect"
+        merchantDisplayName="Social Events"
+        returnURL="socialapp://stripe-redirect"
       >
         <AuthProvider>
           <SafeAreaProvider>
