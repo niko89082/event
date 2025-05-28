@@ -1,173 +1,175 @@
-// navigation/MainTabNavigator.js - Fixed version
+// navigation/MainTabNavigator.js - Reverted to correct 5-tab structure
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
-import { View, TouchableOpacity } from 'react-native';
 
-// Import your screens
+// Screen imports
 import FeedScreen from '../screens/FeedScreen';
 import ConversationListScreen from '../screens/ConversationListScreen';
-import ChatScreen from '../screens/ChatScreen';
 import CreatePickerScreen from '../screens/CreatePickerScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
-const FeedStack = createStackNavigator();
-const ChatStack = createStackNavigator();
-const NotificationStack = createStackNavigator();
-const ProfileStack = createStackNavigator();
+const Stack = createStackNavigator();
 
-// Feed Stack Navigator
-function FeedStackNavigator() {
+// Home Stack
+function HomeStack() {
   return (
-    <FeedStack.Navigator>
-      <FeedStack.Screen 
+    <Stack.Navigator>
+      <Stack.Screen 
         name="FeedMain" 
-        component={FeedScreen}
+        component={FeedScreen} 
         options={{ headerShown: false }}
       />
-    </FeedStack.Navigator>
+    </Stack.Navigator>
   );
 }
 
-// Chat Stack Navigator
-function ChatStackNavigator() {
+// Chat Stack
+function ChatStack() {
   return (
-    <ChatStack.Navigator>
-      <ChatStack.Screen 
+    <Stack.Navigator>
+      <Stack.Screen 
         name="ConversationList" 
         component={ConversationListScreen}
         options={{ headerShown: false }}
       />
-      <ChatStack.Screen 
-        name="ChatScreen" 
-        component={ChatScreen}
-        options={{ headerShown: false }}
-      />
-    </ChatStack.Navigator>
+    </Stack.Navigator>
   );
 }
 
-// Notification Stack Navigator
-function NotificationStackNavigator() {
+// Create Stack
+function CreateStack() {
   return (
-    <NotificationStack.Navigator>
-      <NotificationStack.Screen 
+    <Stack.Navigator>
+      <Stack.Screen 
+        name="CreatePicker" 
+        component={CreatePickerScreen}
+        options={{ headerShown: false }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+// Notifications Stack
+function NotificationsStack() {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen 
         name="NotificationMain" 
         component={NotificationScreen}
         options={{ headerShown: false }}
       />
-    </NotificationStack.Navigator>
+    </Stack.Navigator>
   );
 }
 
-// Profile Stack Navigator
-function ProfileStackNavigator() {
+// Profile Stack
+function ProfileStack({ onLogout }) {
   return (
-    <ProfileStack.Navigator>
-      <ProfileStack.Screen 
+    <Stack.Navigator>
+      <Stack.Screen 
         name="ProfileMain" 
         component={ProfileScreen}
         options={{ headerShown: false }}
       />
-    </ProfileStack.Navigator>
+    </Stack.Navigator>
   );
 }
 
-// Custom Create Button
-function CreateButton({ onPress }) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={{
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: '#3797EF',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 20,
-        shadowColor: '#000',
-        shadowOffset: {
-          width: 0,
-          height: 2,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-        elevation: 5,
-      }}
-    >
-      <Ionicons name="add" size={28} color="white" />
-    </TouchableOpacity>
-  );
-}
+export default function MainTabNavigator({ onLogout }) {
+  console.log('🟡 MainTabNavigator: Rendering 5 tabs (Home, Chat, Create, Notifications, Profile)');
 
-export default function MainTabNavigator({ navigation, onLogout }) {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         tabBarIcon: ({ focused, color, size }) => {
           let iconName;
 
-          if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Messages') {
-            iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
-          } else if (route.name === 'Create') {
-            return null; // We'll handle this separately
-          } else if (route.name === 'Notifications') {
-            iconName = focused ? 'heart' : 'heart-outline';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
+          switch (route.name) {
+            case 'Home':
+              iconName = focused ? 'home' : 'home-outline';
+              break;
+            case 'Chat':
+              iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
+              break;
+            case 'Create':
+              iconName = focused ? 'add-circle' : 'add-circle-outline';
+              size = focused ? 32 : 28; // Make create button slightly larger
+              break;
+            case 'Notifications':
+              iconName = focused ? 'notifications' : 'notifications-outline';
+              break;
+            case 'Profile':
+              iconName = focused ? 'person' : 'person-outline';
+              break;
+            default:
+              iconName = 'circle';
           }
 
           return <Ionicons name={iconName} size={size} color={color} />;
         },
         tabBarActiveTintColor: '#3797EF',
         tabBarInactiveTintColor: '#8E8E93',
-        tabBarShowLabel: false,
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 0.5,
+          borderTopWidth: 0.33,
           borderTopColor: '#E1E1E1',
-          height: 80,
-          paddingBottom: 20,
-          paddingTop: 10,
+          paddingTop: 6,
+          paddingBottom: 6,
+          height: 54, // Reduced height to bring navigation up
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '500',
+          marginTop: 2,
+          marginBottom: 2,
         },
         headerShown: false,
       })}
     >
       <Tab.Screen 
         name="Home" 
-        component={FeedStackNavigator}
-      />
-      <Tab.Screen 
-        name="Messages" 
-        component={ChatStackNavigator}
-      />
-      <Tab.Screen 
-        name="Create" 
-        component={CreatePickerScreen}
+        component={HomeStack}
         options={{
-          tabBarButton: (props) => (
-            <View style={{ flex: 1, alignItems: 'center' }}>
-              <CreateButton 
-                onPress={() => navigation.navigate('Create')}
-              />
-            </View>
-          ),
+          tabBarLabel: 'Home',
         }}
       />
+      
+      <Tab.Screen 
+        name="Chat" 
+        component={ChatStack}
+        options={{
+          tabBarLabel: 'Chat',
+        }}
+      />
+      
+      <Tab.Screen 
+        name="Create" 
+        component={CreateStack}
+        options={{
+          tabBarLabel: 'Create',
+        }}
+      />
+      
       <Tab.Screen 
         name="Notifications" 
-        component={NotificationStackNavigator}
+        component={NotificationsStack}
+        options={{
+          tabBarLabel: 'Notifications',
+        }}
       />
+      
       <Tab.Screen 
         name="Profile" 
-        component={ProfileStackNavigator}
-      />
+        options={{
+          tabBarLabel: 'Profile',
+        }}
+      >
+        {(props) => <ProfileStack {...props} onLogout={onLogout} />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }

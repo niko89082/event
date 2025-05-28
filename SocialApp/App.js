@@ -21,6 +21,7 @@ import EventDetailsScreen from './screens/EventDetailsScreen';
 import PostDetailsScreen from './screens/PostDetailsScreen';
 import CreateEventScreen from './screens/CreateEventScreen';
 import CreatePostScreen from './screens/CreatePostScreen';
+import CreatePickerScreen from './screens/CreatePickerScreen'; // FIXED: Added this import
 import PostPublishedScreen from './screens/PostPublishedScreen';
 import ChatScreen from './screens/ChatScreen';
 import NewChatScreen from './screens/NewChatScreen';
@@ -172,6 +173,17 @@ function RootNavigator() {
           <RootStack.Screen
             name="CreatePost"
             component={CreatePostScreen}
+            options={{ headerShown: false }}
+          />
+          {/* FIXED: Added CreatePickerScreen routes */}
+          <RootStack.Screen
+            name="CreatePickerScreen"
+            component={CreatePickerScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CreatePicker"
+            component={CreatePickerScreen}
             options={{ headerShown: false }}
           />
           <RootStack.Screen

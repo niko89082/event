@@ -1,5 +1,5 @@
 /*************************************************
- * server.js (main server file) - FIXED ROUTES
+ * server.js (main server file) - FIXED ROUTES AND PHOTO ACCESS
  *************************************************/
 const express = require('express');
 const http = require('http');
@@ -55,14 +55,13 @@ const io = socketIo(server);
 
 // ********************************
 // 1) Maintain user -> socket mapping in memory
-//    For a large, production-scale site, you'd typically store this
-//    in Redis or another shared store, especially if you run multiple servers.
 const connectedUsers = {}; 
-// Format: connectedUsers[userId] = [socketId1, socketId2, ...]
 
 // ********************************
 // 2) Body parsing, static paths
 app.use(bodyParser.json());
+
+// FIXED: Static file serving - this must come BEFORE other routes
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ********************************
@@ -95,9 +94,7 @@ async function ensureIndexes () {
     /* upcoming-date index */
     Event.collection.createIndex({ time: 1 }),
 
-    /* geo index on the GEO field, **NOT** on location string.
-       The partialFilter avoids errors if some legacy docs
-       still miss the geo.coordinates array. */
+    /* geo index on the GEO field */
     Event.collection.createIndex(
       { geo: '2dsphere' },
       {
@@ -113,7 +110,6 @@ mongoose.connection.once('open', ensureIndexes);
 
 // ********************************
 // 4) Socket.io setup
-//    Optionally parse JWT from handshake, attach user to socket, etc.
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   next();
@@ -147,27 +143,25 @@ app.use(limiter);
 // 5) FIXED ROUTES - Added /api prefix consistently
 // ********************************
 app.use('/api/auth', authRoutes);
-app.use('/api/events', eventRoutes);  // Changed from /events to /api/events
+app.use('/api/events', eventRoutes);
 app.use('/api/photos', photoRoutes);
 app.use('/api/messages', messageRoutes(io, connectedUsers)); 
-app.use('/api/notifications', notificationRoutes);  // Now matches client expectation
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/checkin', checkinRoutes);
-app.use('/api/profile', profileRoutes);  // Now matches client expectation
+app.use('/api/profile', profileRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);
 app.use('/api/memories', memoryRoutes);
-app.use('/api/users', usersRoutes);  // Changed from /users to /api/users
+app.use('/api/users', usersRoutes);
 
-// Legacy routes for backward compatibility (if needed)
+// FIXED: Legacy routes for backward compatibility WITH BOTH API AND NON-API PATHS
 app.use('/events', eventRoutes);
+app.use('/photos', photoRoutes);  // FIXED: Added this missing route
 app.use('/notifications', notificationRoutes);
 app.use('/profile', profileRoutes);
 app.use('/follow', followRoutes);
 app.use('/users', usersRoutes);
-
-// Static file serving
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

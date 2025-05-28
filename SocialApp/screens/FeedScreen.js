@@ -1,4 +1,4 @@
-// screens/FeedScreen.js - Fixed header spacing for iPhone 13 and improved back button visibility
+// screens/FeedScreen.js - Fixed header positioning
 import React, { useLayoutEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -22,8 +22,8 @@ export default function FeedScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Custom header with reduced top padding */}
-      <View style={[styles.customHeader, { paddingTop: 4 }]}>
+      {/* Custom header with proper positioning */}
+      <View style={styles.customHeader}>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>Social</Text>
           <View style={styles.headerRightContainer}>
@@ -36,7 +36,7 @@ export default function FeedScreen({ navigation }) {
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.headerButton}
-              onPress={() => navigation.navigate('Messages')}
+              onPress={() => navigation.navigate('Chat')}
               activeOpacity={0.8}
             >
               <Ionicons name="chatbubble-outline" size={24} color="#000" />
@@ -57,7 +57,7 @@ export default function FeedScreen({ navigation }) {
             backgroundColor: '#FFFFFF',
             elevation: 0,
             shadowOpacity: 0,
-            borderBottomWidth: 0.5,
+            borderBottomWidth: 0.33,
             borderBottomColor: '#E1E1E1',
           },
           tabBarLabelStyle: {
@@ -108,7 +108,7 @@ const styles = StyleSheet.create({
   },
   customHeader: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
+    borderBottomWidth: 0.33,
     borderBottomColor: '#E1E1E1',
     shadowColor: '#000',
     shadowOffset: {
@@ -124,11 +124,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8, // Reduced from 16 to 8
-    minHeight: 44, // Minimum touch target
+    paddingTop: 4, // Reduced top padding
+    paddingBottom: 8, // Reduced bottom padding
+    minHeight: 48, // Reduced minimum height
   },
   headerTitle: {
-    fontSize: 24, // Back to normal size
+    fontSize: 22, // Slightly smaller
     fontWeight: '700',
     color: '#000000',
   },
@@ -137,8 +138,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerButton: {
-    padding: 10, // Increased touch area
-    marginLeft: 12,
+    padding: 8,
+    marginLeft: 8,
     borderRadius: 8,
     backgroundColor: 'transparent',
   },

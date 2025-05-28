@@ -1,8 +1,8 @@
-// components/PostItem.js - Fixed with square profile pictures and like count positioning
-import React, { useState, useMemo } from 'react';
+// components/PostItem.js - Fixed with double-tap to heart and proper navigation
+import React, { useState, useMemo, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet,
-  TouchableOpacity, Pressable, Modal, Button, Dimensions,
+  TouchableOpacity, Pressable, Modal, Button, Dimensions, Animated,
 } from 'react-native';
 import { Ionicons }      from '@expo/vector-icons';
 import { API_BASE_URL }  from '@env';
@@ -45,12 +45,71 @@ export default function PostItem({
   const [modal, setModal] = useState(false);
   const [showFullCaption, setShowFullCaption] = useState(false);
 
+  /* ---- double tap animation ---------------------------------------- */
+  const scaleValue = useRef(new Animated.Value(1)).current;
+  const heartScale = useRef(new Animated.Value(0)).current;
+  const lastTap = useRef(null);
+
   const toggleLike = async () => {
     try {
       const { data } = await api.post(`/api/photos/like/${post._id}`);
       setLiked(data.likes.includes(currentUserId));
       setLikes(data.likeCount);
     } catch (e) { console.log(e.response?.data || e); }
+  };
+
+  /* ---- double tap handler ----------------------------------------- */
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    const DOUBLE_PRESS_DELAY = 300;
+    
+    if (lastTap.current && (now - lastTap.current) < DOUBLE_PRESS_DELAY) {
+      // Double tap detected!
+      if (!liked) {
+        // Animate heart
+        heartScale.setValue(0);
+        Animated.sequence([
+          Animated.spring(heartScale, {
+            toValue: 1,
+            useNativeDriver: true,
+            tension: 100,
+            friction: 5,
+          }),
+          Animated.timing(heartScale, {
+            toValue: 0,
+            duration: 300,
+            delay: 500,
+            useNativeDriver: true,
+          }),
+        ]).start();
+
+        // Animate image scale
+        Animated.sequence([
+          Animated.timing(scaleValue, {
+            toValue: 0.95,
+            duration: 100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleValue, {
+            toValue: 1,
+            duration: 100,
+            useNativeDriver: true,
+          }),
+        ]).start();
+
+        toggleLike();
+      }
+    } else {
+      // Single tap - open comments after delay to check for double tap
+      setTimeout(() => {
+        const timeSinceLastTap = Date.now() - lastTap.current;
+        if (timeSinceLastTap >= DOUBLE_PRESS_DELAY) {
+          openComments();
+        }
+      }, DOUBLE_PRESS_DELAY);
+    }
+    
+    lastTap.current = now;
   };
 
   /* ---- navigation helpers ---------------------------------------- */
@@ -117,19 +176,35 @@ export default function PostItem({
         </View>
       )}
 
-      {/* ---------- photo ---------- */}
+      {/* ---------- photo with double tap ---------- */}
       <TouchableOpacity 
         style={styles.imageContainer}
-        onPress={openComments}
+        onPress={handleDoubleTap}
         activeOpacity={1}
       >
-        {imgURL
-          ? <Image source={{ uri: imgURL }} style={styles.postImage} resizeMode="cover" />
-          : <View style={styles.imagePlaceholder}>
-              <Ionicons name="image-outline" size={50} color="#C7C7CC" />
-              <Text style={styles.placeholderText}>No Image</Text>
-            </View>
-        }
+        <Animated.View style={[styles.imageWrapper, { transform: [{ scale: scaleValue }] }]}>
+          {imgURL
+            ? <Image source={{ uri: imgURL }} style={styles.postImage} resizeMode="cover" />
+            : <View style={styles.imagePlaceholder}>
+                <Ionicons name="image-outline" size={50} color="#C7C7CC" />
+                <Text style={styles.placeholderText}>No Image</Text>
+              </View>
+          }
+        </Animated.View>
+        
+        {/* Double tap heart animation */}
+        <Animated.View 
+          style={[
+            styles.doubleTapHeart, 
+            { 
+              transform: [{ scale: heartScale }],
+              opacity: heartScale 
+            }
+          ]}
+          pointerEvents="none"
+        >
+          <Ionicons name="heart" size={80} color="#FFFFFF" />
+        </Animated.View>
       </TouchableOpacity>
 
       {/* ---------- action row ---------- */}
@@ -143,7 +218,7 @@ export default function PostItem({
             />
           </TouchableOpacity>
 
-          {/* FIXED: Like count positioned to the right of heart */}
+          {/* Like count positioned to the right of heart */}
           {likes > 0 && (
             <Text style={styles.likeCountInline}>
               {likes.toLocaleString()}
@@ -263,7 +338,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 32,
     height: 32,
-    borderRadius: 8, // FIXED: Square with rounded corners instead of circular
+    borderRadius: 8,
     marginRight: 10,
   },
   userDetails: {
@@ -283,11 +358,16 @@ const styles = StyleSheet.create({
     padding: 5,
   },
 
-  // Image
+  // Image with double tap
   imageContainer: {
     width: '100%',
     aspectRatio: 1,
     backgroundColor: '#F6F6F6',
+    position: 'relative',
+  },
+  imageWrapper: {
+    width: '100%',
+    height: '100%',
   },
   postImage: {
     width: '100%',
@@ -304,6 +384,22 @@ const styles = StyleSheet.create({
     color: '#C7C7CC',
     fontSize: 14,
     marginTop: 8,
+  },
+  doubleTapHeart: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -40,
+    marginLeft: -40,
+    width: 80,
+    height: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
 
   // Actions
@@ -323,13 +419,13 @@ const styles = StyleSheet.create({
     padding: 3,
   },
 
-  // FIXED: Inline like count positioning
+  // Inline like count positioning
   likeCountInline: {
     fontWeight: '600',
     fontSize: 14,
     color: '#000',
-    marginLeft: -10, // Bring it closer to the heart
-    marginRight: 15, // Space before next button
+    marginLeft: -10,
+    marginRight: 15,
   },
 
   // Caption

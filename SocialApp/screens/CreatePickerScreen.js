@@ -1,4 +1,4 @@
-// screens/CreatePickerScreen.js - Updated with proper navigation
+// screens/CreatePickerScreen.js - Fixed with proper navigation
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, SafeAreaView, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,8 +38,16 @@ export default function CreatePickerScreen({ navigation }) {
   }, [navigation]);
 
   const onSelect = (key) => {
-    if (key === 'event') navigation.navigate('CreateEventScreen');
-    if (key === 'photo') navigation.navigate('CreatePostScreen');
+    console.log('🟡 CreatePickerScreen: Selected option:', key);
+    
+    if (key === 'event') {
+      // Navigate to CreateEventScreen (global screen)
+      navigation.navigate('CreateEventScreen');
+    }
+    if (key === 'photo') {
+      // Navigate to CreatePostScreen (global screen)  
+      navigation.navigate('CreatePostScreen');
+    }
   };
 
   const renderItem = ({ item }) => (

@@ -1,4 +1,4 @@
-// screens/ConversationListScreen.js
+// screens/ConversationListScreen.js - Updated with New Chat button in header
 import React, {
   useState, useEffect, useCallback, useContext, useRef
 } from 'react';
@@ -70,8 +70,9 @@ export default function ConversationListScreen() {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
         elevation: 0,
-        borderBottomWidth: 0.5,
+        borderBottomWidth: 0.33,
         borderBottomColor: '#E1E1E1',
+        height: 88, // Reduced header height
       },
       headerTitleStyle: {
         fontWeight: '700',
@@ -88,15 +89,7 @@ export default function ConversationListScreen() {
           <Ionicons name="create-outline" size={26} color="#000000" />
         </TouchableOpacity>
       ),
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-back" size={26} color="#000000" />
-        </TouchableOpacity>
-      ),
+      headerLeft: () => null, // Remove back button since this is a tab screen
     });
   }, [navigation, currentUser]);
 
@@ -231,7 +224,9 @@ export default function ConversationListScreen() {
       
       {convos.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="chatbubbles-outline" size={80} color="#C7C7CC" />
+          <View style={styles.emptyIconContainer}>
+            <Ionicons name="chatbubbles-outline" size={64} color="#C7C7CC" />
+          </View>
           <Text style={styles.emptyTitle}>Your Messages</Text>
           <Text style={styles.emptySubtitle}>
             Send private photos and messages to a friend or group.
@@ -265,18 +260,18 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     padding: 8,
-    marginHorizontal: 8,
+    marginHorizontal: 12,
   },
   listContainer: {
-    paddingTop: 8,
+    paddingTop: 4,
   },
   chatRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
+    borderBottomWidth: 0.33,
     borderBottomColor: '#F0F0F0',
   },
   unreadRow: {
@@ -289,7 +284,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: 16, // Square with rounded corners
     backgroundColor: '#F6F6F6',
   },
   unreadIndicator: {
@@ -370,25 +365,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 40,
   },
+  emptyIconContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#F8F9FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
   emptyTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
     color: '#000000',
-    marginTop: 16,
     marginBottom: 8,
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
+    lineHeight: 22,
+    marginBottom: 32,
   },
   sendMessageButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 12,
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   sendMessageText: {
     color: '#FFFFFF',
