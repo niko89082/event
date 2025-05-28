@@ -1,4 +1,4 @@
-// components/SharedMemorySnippet.js
+// components/SharedMemorySnippet.js - Fixed API route
 import React, { useEffect, useState } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import api from '../services/api';
@@ -16,7 +16,8 @@ export default function SharedMemorySnippet({ message, senderName, navigation })
 
   const fetchMemory = async (memoryId) => {
     try {
-      const res = await api.get(`/memories/${memoryId}`);
+      // FIXED: Use the correct API route with /api prefix
+      const res = await api.get(`/api/memories/${memoryId}`);
       setMemory(res.data.memory);
     } catch (err) {
       console.error('SharedMemorySnippet => fetchMemory error:', err);
@@ -26,8 +27,7 @@ export default function SharedMemorySnippet({ message, senderName, navigation })
 
   const handleViewMemory = () => {
     if (!memory) return;
-    // Example: navigate to some "MemoryDetailsScreen"
-    // passing the memoryId
+    // Navigate to memory details screen
     navigation.navigate('MemoryDetailsScreen', { memoryId: memory._id });
   };
 
@@ -54,8 +54,8 @@ export default function SharedMemorySnippet({ message, senderName, navigation })
   let previewUri = null;
   if (memory.photos?.length) {
     const p = memory.photos[0];
-    if (p.paths?.[0]) {
-      let finalPath = p.paths[0];
+    if (p.path) {
+      let finalPath = p.path;
       if (!finalPath.startsWith('/')) {
         finalPath = '/' + finalPath;
       }

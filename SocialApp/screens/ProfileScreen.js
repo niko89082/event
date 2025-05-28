@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - Updated with modern UI
+// screens/ProfileScreen.js - Updated with square profile pictures and improved back button
 import React, { useState, useEffect, useContext } from 'react';
 import {
   SafeAreaView, View, Text, StyleSheet, Image, TouchableOpacity,
@@ -37,7 +37,7 @@ export default function ProfileScreen({ route, navigation }) {
   const [isSelf,      setIsSelf]      = useState(false);
   const [tab,         setTab]         = useState(0);      // 0-Posts | 1-Events | 2-Calendar
 
-  /* Setup header with back button */
+  /* Setup header with improved back button */
   useEffect(() => {
     navigation.setOptions({
       headerStyle: {
@@ -46,6 +46,7 @@ export default function ProfileScreen({ route, navigation }) {
         elevation: 0,
         borderBottomWidth: 0.5,
         borderBottomColor: '#E1E1E1',
+        height: 100 + insets.top, // Better spacing for iPhone 13
       },
       headerTitleStyle: {
         fontWeight: '600',
@@ -59,7 +60,9 @@ export default function ProfileScreen({ route, navigation }) {
           style={styles.headerButton}
           activeOpacity={0.7}
         >
-          <Ionicons name="chevron-back" size={26} color="#000000" />
+          <View style={styles.headerButtonBackground}>
+            <Ionicons name="chevron-back" size={24} color="#000000" />
+          </View>
         </TouchableOpacity>
       ),
       headerRight: () => isSelf ? (
@@ -68,11 +71,13 @@ export default function ProfileScreen({ route, navigation }) {
           style={styles.headerButton}
           activeOpacity={0.7}
         >
-          <Ionicons name="settings-outline" size={24} color="#000000" />
+          <View style={styles.headerButtonBackground}>
+            <Ionicons name="settings-outline" size={22} color="#000000" />
+          </View>
         </TouchableOpacity>
       ) : null,
     });
-  }, [navigation, profile, isSelf]);
+  }, [navigation, profile, isSelf, insets.top]);
 
   /* fetch ----------------------------------------------------------- */
   useEffect(() => { if (isFocused) fetchProfile(); }, [isFocused, userId]);
@@ -167,7 +172,7 @@ export default function ProfileScreen({ route, navigation }) {
               <Image source={{ uri: avatar }} style={styles.avatar}/>
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Ionicons name="person-outline" size={50} color="#8E8E93" />
+                <Ionicons name="person-outline" size={40} color="#8E8E93" />
               </View>
             )}
           </TouchableOpacity>
@@ -366,6 +371,19 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 8,
   },
+  headerButtonBackground: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
   center: { 
     flex: 1, 
     justifyContent: 'center', 
@@ -415,12 +433,13 @@ const styles = StyleSheet.create({
   avatar: {
     width: 90,
     height: 90,
-    borderRadius: 45,
+    borderRadius: 22, // FIXED: Square with rounded corners instead of circular
+    backgroundColor: '#F6F6F6',
   },
   avatarPlaceholder: {
     width: 90,
     height: 90,
-    borderRadius: 45,
+    borderRadius: 22, // FIXED: Square with rounded corners
     backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',

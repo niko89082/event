@@ -1,4 +1,4 @@
-// screens/FeedScreen.js - Fixed with SafeArea handling
+// screens/FeedScreen.js - Fixed header spacing for iPhone 13 and improved back button visibility
 import React, { useLayoutEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -14,62 +14,30 @@ export default function FeedScreen({ navigation }) {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#E1E1E1',
-        height: 100 + insets.top, // Add safe area to header height
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 24,
-        color: '#000000',
-      },
-      headerTitle: () => (
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Social</Text>
-        </View>
-      ),
-      headerRight: () => (
-        <View style={styles.headerRightContainer}>
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={() => navigation.navigate('SearchScreen')}
-          >
-            <Ionicons name="search-outline" size={24} color="#000" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={() => navigation.navigate('Messages')}
-          >
-            <Ionicons name="chatbubble-outline" size={24} color="#000" />
-          </TouchableOpacity>
-        </View>
-      ),
-      headerLeft: () => null,
+      headerShown: false, // We'll create our own header for better control
     });
-  }, [navigation, insets.top]);
+  }, [navigation]);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Custom header to ensure proper spacing */}
-      <View style={[styles.customHeader, { paddingTop: insets.top }]}>
+      {/* Custom header with reduced top padding */}
+      <View style={[styles.customHeader, { paddingTop: 4 }]}>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>Social</Text>
           <View style={styles.headerRightContainer}>
             <TouchableOpacity 
               style={styles.headerButton}
               onPress={() => navigation.navigate('SearchScreen')}
+              activeOpacity={0.8}
             >
               <Ionicons name="search-outline" size={24} color="#000" />
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.headerButton}
               onPress={() => navigation.navigate('Messages')}
+              activeOpacity={0.8}
             >
               <Ionicons name="chatbubble-outline" size={24} color="#000" />
             </TouchableOpacity>
@@ -109,6 +77,7 @@ export default function FeedScreen({ navigation }) {
                 name={focused ? 'grid' : 'grid-outline'} 
                 size={20} 
                 color={color} 
+                style={{ marginBottom: 2 }}
               />
             ),
           }}
@@ -122,6 +91,7 @@ export default function FeedScreen({ navigation }) {
                 name={focused ? 'calendar' : 'calendar-outline'} 
                 size={20} 
                 color={color} 
+                style={{ marginBottom: 2 }}
               />
             ),
           }}
@@ -140,20 +110,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  headerTitleContainer: {
-    flex: 1,
-    justifyContent: 'center',
+    paddingVertical: 8, // Reduced from 16 to 8
+    minHeight: 44, // Minimum touch target
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 24, // Back to normal size
     fontWeight: '700',
     color: '#000000',
   },
@@ -162,7 +137,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerButton: {
-    padding: 8,
-    marginLeft: 8,
+    padding: 10, // Increased touch area
+    marginLeft: 12,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
   },
 });

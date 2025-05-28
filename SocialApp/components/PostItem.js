@@ -1,4 +1,4 @@
-// components/PostItem.js - Fixed navigation to PostDetailsScreen
+// components/PostItem.js - Fixed with square profile pictures and like count positioning
 import React, { useState, useMemo } from 'react';
 import {
   View, Text, Image, StyleSheet,
@@ -143,6 +143,13 @@ export default function PostItem({
             />
           </TouchableOpacity>
 
+          {/* FIXED: Like count positioned to the right of heart */}
+          {likes > 0 && (
+            <Text style={styles.likeCountInline}>
+              {likes.toLocaleString()}
+            </Text>
+          )}
+
           <TouchableOpacity onPress={openComments} style={styles.actionButton} activeOpacity={0.8}>
             <Ionicons name="chatbubble-outline" size={23} color="#000"/>
           </TouchableOpacity>
@@ -152,15 +159,6 @@ export default function PostItem({
           </TouchableOpacity>
         </View>
       </View>
-
-      {/* ---------- likes ---------- */}
-      {likes > 0 && (
-        <TouchableOpacity style={styles.likesContainer} activeOpacity={0.8}>
-          <Text style={styles.likesText}>
-            {likes.toLocaleString()} {likes === 1 ? 'like' : 'likes'}
-          </Text>
-        </TouchableOpacity>
-      )}
 
       {/* ---------- caption ---------- */}
       <View style={styles.captionContainer}>
@@ -265,7 +263,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 8, // FIXED: Square with rounded corners instead of circular
     marginRight: 10,
   },
   userDetails: {
@@ -325,15 +323,13 @@ const styles = StyleSheet.create({
     padding: 3,
   },
 
-  // Likes
-  likesContainer: {
-    paddingHorizontal: 15,
-    paddingTop: 8,
-  },
-  likesText: {
+  // FIXED: Inline like count positioning
+  likeCountInline: {
     fontWeight: '600',
     fontSize: 14,
     color: '#000',
+    marginLeft: -10, // Bring it closer to the heart
+    marginRight: 15, // Space before next button
   },
 
   // Caption

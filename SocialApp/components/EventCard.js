@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
   hostAvatar: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: 6, // FIXED: Square with rounded corners instead of circular
     marginRight: 8,
     borderWidth: 2,
     borderColor: '#FFFFFF',
@@ -351,14 +351,14 @@ const styles = StyleSheet.create({
   attendeeAvatar: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: 6, // FIXED: Square with rounded corners
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },
   avatarPlaceholder: {
     width: 20,
     height: 20,
-    borderRadius: 10,
+    borderRadius: 5, // FIXED: Square with rounded corners
     backgroundColor: '#E1E1E1',
     justifyContent: 'center',
     alignItems: 'center',

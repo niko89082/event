@@ -1,4 +1,4 @@
-// screens/ChatScreen.js - Fixed message alignment and back navigation
+// screens/ChatScreen.js - Fixed with proper header including name, back button, memory and chat info access
 import React, {
   useState, useEffect, useRef, useContext, useLayoutEffect
 } from 'react';
@@ -51,6 +51,7 @@ export default function ChatScreen({ route, navigation }) {
       : defaultPfp;
 
     navigation.setOptions({
+      headerShown: true,
       headerStyle: {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
@@ -88,13 +89,22 @@ export default function ChatScreen({ route, navigation }) {
         </TouchableOpacity>
       ),
       headerRight: () => (
-        <TouchableOpacity
-          style={styles.headerButton}
-          onPress={handleCreateMemory}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="albums-outline" size={24} color="#000000" />
-        </TouchableOpacity>
+        <View style={styles.headerRightContainer}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={handleCreateMemory}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="albums-outline" size={24} color="#000000" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => navigation.navigate('ChatInfoScreen', { conversationId })}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="information-circle-outline" size={24} color="#000000" />
+          </TouchableOpacity>
+        </View>
       ),
     });
   }, [navigation, conversationId, headerUser]);
@@ -498,14 +508,19 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 4,
   },
+  headerRightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   headerTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   headerAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 8, // FIXED: Square with rounded corners
     marginRight: 8,
   },
   headerTextContainer: {
@@ -573,7 +588,7 @@ const styles = StyleSheet.create({
   senderAvatar: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: 6, // FIXED: Square with rounded corners
     marginRight: 8,
     marginBottom: 2,
   },
@@ -632,7 +647,7 @@ const styles = StyleSheet.create({
   seenAvatar: {
     width: 16,
     height: 16,
-    borderRadius: 8,
+    borderRadius: 4, // FIXED: Square with rounded corners
     marginLeft: 4,
     marginBottom: 2,
   },
