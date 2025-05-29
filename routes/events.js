@@ -839,4 +839,6 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
   }
 });
 
+
+
 module.exports = router;

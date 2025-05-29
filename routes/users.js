@@ -125,5 +125,524 @@ router.get('/followers', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
+// Add this route to routes/users.js
+
+// Get user's past events with statistics
+router.get('/past-events', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { 
+      startDate, 
+      endDate = new Date().toISOString(),
+      includeHosted = 'true',
+      includeAttended = 'true'
+    } = req.query;
+
+    // Build date filter
+    const dateFilter = {
+      time: { $lt: new Date(endDate) }
+    };
+    
+    if (startDate) {
+      dateFilter.time.$gte = new Date(startDate);
+    }
+
+    // Build the match conditions
+    const matchConditions = [];
+    
+    if (includeHosted === 'true') {
+      matchConditions.push({ host: userId });
+    }
+    
+    if (includeAttended === 'true') {
+      matchConditions.push({ attendees: userId });
+    }
+
+    if (matchConditions.length === 0) {
+      return res.json({ events: [], stats: {} });
+    }
+
+    // Find past events
+    const events = await Event.find({
+      ...dateFilter,
+      $or: matchConditions
+    })
+    .populate('host', 'username profilePicture')
+    .populate('attendees', 'username')
+    .sort({ time: -1 }) // Most recent first
+    .lean();
+
+    // Add additional metadata to each event
+    const enrichedEvents = await Promise.all(events.map(async (event) => {
+      // Check if user hosted this event
+      const isHost = String(event.host._id) === String(userId);
+      
+      // Get photo count for this event
+      const photoCount = await Photo.countDocuments({ 
+        event: event._id,
+        user: userId 
+      });
+
+      // Calculate event duration (estimate 2 hours if not specified)
+      const eventDuration = 2; // hours - you could store this in the event model
+
+      return {
+        ...event,
+        isHost,
+        photoCount,
+        attendeeCount: event.attendees ? event.attendees.length : 0,
+        duration: eventDuration
+      };
+    }));
+
+    // Calculate statistics
+    const stats = calculateEventStats(enrichedEvents, userId);
+
+    res.json({
+      events: enrichedEvents,
+      stats,
+      total: enrichedEvents.length
+    });
+
+  } catch (error) {
+    console.error('Get past events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Helper function to calculate event statistics
+function calculateEventStats(events, userId) {
+  const stats = {
+    totalEvents: events.length,
+    hostedEvents: 0,
+    attendedEvents: 0,
+    totalHours: 0,
+    uniqueLocations: 0,
+    favoriteCategory: null,
+    categoryBreakdown: {},
+    monthlyBreakdown: {},
+    locationBreakdown: {}
+  };
+
+  const locations = new Set();
+  const categories = {};
+  const months = {};
+
+  events.forEach(event => {
+    // Count hosted vs attended
+    if (event.isHost) {
+      stats.hostedEvents++;
+    } else {
+      stats.attendedEvents++;
+    }
+
+    // Add to total hours
+    stats.totalHours += event.duration || 2;
+
+    // Track unique locations
+    if (event.location) {
+      locations.add(event.location.toLowerCase().trim());
+      
+      // Location breakdown
+      const locationKey = event.location.trim();
+      stats.locationBreakdown[locationKey] = (stats.locationBreakdown[locationKey] || 0) + 1;
+    }
+
+    // Track categories
+    if (event.category) {
+      categories[event.category] = (categories[event.category] || 0) + 1;
+    }
+
+    // Track monthly breakdown
+    const eventDate = new Date(event.time);
+    const monthKey = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, '0')}`;
+    months[monthKey] = (months[monthKey] || 0) + 1;
+  });
+
+  stats.uniqueLocations = locations.size;
+  stats.categoryBreakdown = categories;
+  stats.monthlyBreakdown = months;
+
+  // Find favorite category
+  let maxCategoryCount = 0;
+  let favoriteCategory = null;
+  
+  Object.entries(categories).forEach(([category, count]) => {
+    if (count > maxCategoryCount) {
+      maxCategoryCount = count;
+      favoriteCategory = category;
+    }
+  });
+
+  stats.favoriteCategory = favoriteCategory;
+
+  return stats;
+}
+
+// Get user's event memories (events with photos)
+router.get('/event-memories', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { limit = 20, offset = 0 } = req.query;
+
+    // Find events where user has uploaded photos
+    const photosWithEvents = await Photo.find({
+      user: userId,
+      event: { $exists: true, $ne: null }
+    })
+    .populate({
+      path: 'event',
+      match: { time: { $lt: new Date() } }, // Only past events
+      populate: {
+        path: 'host',
+        select: 'username profilePicture'
+      }
+    })
+    .sort({ uploadDate: -1 })
+    .limit(parseInt(limit))
+    .skip(parseInt(offset));
+
+    // Filter out null events and group by event
+    const eventMemories = {};
+    
+    photosWithEvents.forEach(photo => {
+      if (photo.event) {
+        const eventId = photo.event._id.toString();
+        
+        if (!eventMemories[eventId]) {
+          eventMemories[eventId] = {
+            event: photo.event,
+            photos: [],
+            photoCount: 0,
+            lastPhotoDate: photo.uploadDate
+          };
+        }
+        
+        eventMemories[eventId].photos.push(photo);
+        eventMemories[eventId].photoCount++;
+        
+        // Update last photo date if this photo is more recent
+        if (photo.uploadDate > eventMemories[eventId].lastPhotoDate) {
+          eventMemories[eventId].lastPhotoDate = photo.uploadDate;
+        }
+      }
+    });
+
+    // Convert to array and sort by last photo date
+    const memoriesArray = Object.values(eventMemories)
+      .sort((a, b) => new Date(b.lastPhotoDate) - new Date(a.lastPhotoDate));
+
+    res.json({
+      memories: memoriesArray,
+      total: memoriesArray.length,
+      hasMore: memoriesArray.length === parseInt(limit)
+    });
+
+  } catch (error) {
+    console.error('Get event memories error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get detailed stats for a specific time period
+router.get('/event-stats/:period', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { period } = req.params; // 'week', 'month', 'quarter', 'year'
+    
+    let startDate = new Date();
+    
+    switch (period) {
+      case 'week':
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case 'month':
+        startDate.setMonth(startDate.getMonth() - 1);
+        break;
+      case 'quarter':
+        startDate.setMonth(startDate.getMonth() - 3);
+        break;
+      case 'year':
+        startDate.setFullYear(startDate.getFullYear() - 1);
+        break;
+      default:
+        startDate.setMonth(startDate.getMonth() - 1);
+    }
+
+    const endDate = new Date();
+
+    // Get events in the period
+    const events = await Event.find({
+      time: { $gte: startDate, $lt: endDate },
+      $or: [
+        { host: userId },
+        { attendees: userId }
+      ]
+    }).lean();
+
+    // Calculate detailed statistics
+    const stats = {
+      period,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      totalEvents: events.length,
+      hostedEvents: events.filter(e => String(e.host) === String(userId)).length,
+      attendedEvents: events.filter(e => 
+        e.attendees && e.attendees.some(a => String(a) === String(userId))
+      ).length,
+      averageAttendeesHosted: 0,
+      topCategories: {},
+      topLocations: {},
+      busyDays: {},
+      socialScore: 0 // Custom metric based on event participation
+    };
+
+    // Calculate average attendees for hosted events
+    const hostedEvents = events.filter(e => String(e.host) === String(userId));
+    if (hostedEvents.length > 0) {
+      const totalAttendees = hostedEvents.reduce((sum, event) => 
+        sum + (event.attendees ? event.attendees.length : 0), 0
+      );
+      stats.averageAttendeesHosted = Math.round(totalAttendees / hostedEvents.length);
+    }
+
+    // Analyze categories, locations, and busy days
+    events.forEach(event => {
+      // Categories
+      if (event.category) {
+        stats.topCategories[event.category] = (stats.topCategories[event.category] || 0) + 1;
+      }
+
+      // Locations
+      if (event.location) {
+        stats.topLocations[event.location] = (stats.topLocations[event.location] || 0) + 1;
+      }
+
+      // Busy days (day of week)
+      const dayOfWeek = new Date(event.time).toLocaleDateString('en-US', { weekday: 'long' });
+      stats.busyDays[dayOfWeek] = (stats.busyDays[dayOfWeek] || 0) + 1;
+    });
+
+    // Calculate social score (0-100)
+    const maxPossibleEvents = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24 * 7)); // Rough weekly estimate
+    stats.socialScore = Math.min(100, Math.round((stats.totalEvents / Math.max(1, maxPossibleEvents)) * 100));
+
+    res.json(stats);
+
+  } catch (error) {
+    console.error('Get event stats error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get event photos for a specific event (for memory viewing)
+router.get('/event-photos/:eventId', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { eventId } = req.params;
+    const { limit = 50, offset = 0 } = req.query;
+
+    // Verify user has access to this event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const isHost = String(event.host) === String(userId);
+    const isAttendee = event.attendees && event.attendees.includes(userId);
+    
+    if (!isHost && !isAttendee) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get photos from this event
+    const photos = await Photo.find({
+      event: eventId,
+      user: userId // Only user's own photos for privacy
+    })
+    .populate('user', 'username profilePicture')
+    .populate('event', 'title time')
+    .sort({ uploadDate: -1 })
+    .limit(parseInt(limit))
+    .skip(parseInt(offset));
+
+    res.json({
+      photos,
+      event: {
+        _id: event._id,
+        title: event.title,
+        time: event.time,
+        location: event.location
+      },
+      total: photos.length,
+      hasMore: photos.length === parseInt(limit)
+    });
+
+  } catch (error) {
+    console.error('Get event photos error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Share a memory from a past event
+router.post('/share-memory', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { eventId, message, shareWith } = req.body; // shareWith could be 'public', 'friends', or specific user IDs
+
+    // Verify user has access to this event
+    const event = await Event.findById(eventId)
+      .populate('host', 'username')
+      .lean();
+    
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const isHost = String(event.host._id) === String(userId);
+    const isAttendee = event.attendees && event.attendees.includes(userId);
+    
+    if (!isHost && !isAttendee) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get some photos from this event to include with the memory
+    const eventPhotos = await Photo.find({
+      event: eventId,
+      user: userId
+    })
+    .limit(3)
+    .sort({ uploadDate: -1 })
+    .lean();
+
+    // Create a memory share object (this could be stored in a separate collection)
+    const memoryShare = {
+      user: userId,
+      event: eventId,
+      message: message || `Great memories from ${event.title}!`,
+      photos: eventPhotos.map(p => p._id),
+      shareWith: shareWith || 'friends',
+      createdAt: new Date()
+    };
+
+    // Here you would typically:
+    // 1. Store the memory share in a database
+    // 2. Send notifications to relevant users
+    // 3. Create social media posts if requested
+    
+    // For now, we'll just return success
+    res.json({
+      message: 'Memory shared successfully',
+      memoryShare,
+      event: {
+        title: event.title,
+        time: event.time,
+        photoCount: eventPhotos.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Share memory error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get user's event timeline (chronological view of all events)
+router.get('/event-timeline', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { 
+      year = new Date().getFullYear(),
+      month = null 
+    } = req.query;
+
+    // Build date filter
+    let startDate, endDate;
+    
+    if (month) {
+      startDate = new Date(year, month - 1, 1);
+      endDate = new Date(year, month, 0, 23, 59, 59);
+    } else {
+      startDate = new Date(year, 0, 1);
+      endDate = new Date(year, 11, 31, 23, 59, 59);
+    }
+
+    // Get all events in the time period
+    const events = await Event.find({
+      time: { $gte: startDate, $lte: endDate },
+      $or: [
+        { host: userId },
+        { attendees: userId }
+      ]
+    })
+    .populate('host', 'username profilePicture')
+    .sort({ time: 1 }) // Chronological order
+    .lean();
+
+    // Add metadata and group by month
+    const timeline = {};
+    
+    for (const event of events) {
+      const eventDate = new Date(event.time);
+      const monthKey = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, '0')}`;
+      
+      if (!timeline[monthKey]) {
+        timeline[monthKey] = {
+          month: eventDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+          events: [],
+          stats: {
+            total: 0,
+            hosted: 0,
+            attended: 0
+          }
+        };
+      }
+
+      const isHost = String(event.host._id) === String(userId);
+      const photoCount = await Photo.countDocuments({ 
+        event: event._id,
+        user: userId 
+      });
+
+      const enrichedEvent = {
+        ...event,
+        isHost,
+        photoCount,
+        attendeeCount: event.attendees ? event.attendees.length : 0,
+        dayOfWeek: eventDate.toLocaleDateString('en-US', { weekday: 'long' }),
+        timeOfDay: eventDate.toLocaleTimeString('en-US', { 
+          hour: 'numeric', 
+          minute: '2-digit',
+          hour12: true 
+        })
+      };
+
+      timeline[monthKey].events.push(enrichedEvent);
+      timeline[monthKey].stats.total++;
+      
+      if (isHost) {
+        timeline[monthKey].stats.hosted++;
+      } else {
+        timeline[monthKey].stats.attended++;
+      }
+    }
+
+    // Convert to array and sort by month
+    const timelineArray = Object.entries(timeline)
+      .map(([key, data]) => ({ monthKey: key, ...data }))
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+    res.json({
+      timeline: timelineArray,
+      year: parseInt(year),
+      month: month ? parseInt(month) : null,
+      totalEvents: events.length
+    });
+
+  } catch (error) {
+    console.error('Get event timeline error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 module.exports = router;

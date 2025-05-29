@@ -1,614 +1,654 @@
-// screens/ProfileScreen.js - Updated with square profile pictures and improved back button
-import React, { useState, useEffect, useContext } from 'react';
+// screens/ProfileScreen.js - Enhanced with Past Events Integration
+import React, { useEffect, useState, useContext } from 'react';
 import {
-  SafeAreaView, View, Text, StyleSheet, Image, TouchableOpacity,
-  ActivityIndicator, RefreshControl, FlatList, Dimensions, ScrollView,
-  StatusBar,
+  View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
+  ActivityIndicator, Alert, SafeAreaView, StatusBar, Dimensions,
+  FlatList, RefreshControl
 } from 'react-native';
-import { useIsFocused }  from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons }      from '@expo/vector-icons';
-import api               from '../services/api';
-import { API_BASE_URL }  from '@env';
-import { AuthContext }   from '../services/AuthContext';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
+import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../services/AuthContext';
+import api from '../services/api';
+import { API_BASE_URL } from '@env';
 
-import SharedEventsTab   from '../components/SharedEventsTab';
-import CalendarTab       from '../components/CalendarTab';
+// Import existing components
+import CalendarTab from '../components/CalendarTab';
+import SharedEventsTab from '../components/SharedEventsTab';
+import PastEventsTab from '../components/PastEventsTab';
 
-/* ---------- constants ---------- */
-const COLS  = 3;
-const GAP   = 4;
-const WIDTH = Dimensions.get('window').width;
-const THUMB = (WIDTH - GAP * (COLS + 1)) / COLS;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const Tab = createMaterialTopTabNavigator();
 
-export default function ProfileScreen({ route, navigation }) {
-  const { currentUser }   = useContext(AuthContext);
-  const authId            = currentUser?._id;
-  const userId            = route.params?.userId || null;
-  const isFocused         = useIsFocused();
-  const insets            = useSafeAreaInsets();
+export default function ProfileScreen() {
+  const { params } = useRoute();
+  const navigation = useNavigation();
+  const { currentUser } = useContext(AuthContext);
 
-  /* state ----------------------------------------------------------- */
-  const [profile,     setProfile]     = useState(null);
-  const [loading,     setLoading]     = useState(true);
-  const [refreshing,  setRefreshing]  = useState(false);
-  const [following,   setFollowing]   = useState(false);
-  const [requested,   setRequested]   = useState(false);
-  const [isSelf,      setIsSelf]      = useState(false);
-  const [tab,         setTab]         = useState(0);      // 0-Posts | 1-Events | 2-Calendar
+  const userId = params?.userId || currentUser?._id;
+  const isSelf = userId === currentUser?._id;
 
-  /* Setup header with improved back button */
+  const [user, setUser] = useState(null);
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [hasRequested, setHasRequested] = useState(false);
+
+  // Set up navigation header
   useEffect(() => {
     navigation.setOptions({
+      title: isSelf ? 'Profile' : user?.username || 'Profile',
       headerStyle: {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
         elevation: 0,
         borderBottomWidth: 0.5,
         borderBottomColor: '#E1E1E1',
-        height: 100 + insets.top, // Better spacing for iPhone 13
       },
       headerTitleStyle: {
-        fontWeight: '600',
+        fontWeight: '700',
         fontSize: 18,
         color: '#000000',
       },
-      headerTitle: profile?.username || 'Profile',
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <View style={styles.headerButtonBackground}>
-            <Ionicons name="chevron-back" size={24} color="#000000" />
-          </View>
-        </TouchableOpacity>
+      headerRight: () => (
+        <View style={styles.headerRightContainer}>
+          {isSelf && (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('UserSettingsScreen')}
+              style={styles.headerButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="settings-outline" size={24} color="#000000" />
+            </TouchableOpacity>
+          )}
+        </View>
       ),
-      headerRight: () => isSelf ? (
-        <TouchableOpacity
-          onPress={() => navigation.navigate('UserSettingsScreen')}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <View style={styles.headerButtonBackground}>
-            <Ionicons name="settings-outline" size={22} color="#000000" />
-          </View>
-        </TouchableOpacity>
-      ) : null,
     });
-  }, [navigation, profile, isSelf, insets.top]);
+  }, [navigation, isSelf, user]);
 
-  /* fetch ----------------------------------------------------------- */
-  useEffect(() => { if (isFocused) fetchProfile(); }, [isFocused, userId]);
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchUserProfile();
+    }, [userId])
+  );
 
-  const fetchProfile = async (pull=false) => {
-    pull ? setRefreshing(true) : setLoading(true);
+  const fetchUserProfile = async (isRefresh = false) => {
     try {
-      console.log('🟡 ProfileScreen: Fetching profile...', userId ? `userId: ${userId}` : 'own profile');
-      
-      const endpoint = userId ? `/api/profile/${userId}` : '/api/profile';
-      const { data } = await api.get(endpoint);
-      
-      console.log('🟢 ProfileScreen: Profile loaded successfully');
-      setProfile(data);
-      setIsSelf(String(data._id) === String(authId));
-      setFollowing(!!data.isFollowing);
-      setRequested(!!data.hasRequested);
-    } catch (err) {
-      console.log('❌ ProfileScreen: Profile fetch error:', err.response?.data || err.message);
-      setProfile(null);
-    } finally {
-      pull ? setRefreshing(false) : setLoading(false);
-    }
-  };
-
-  /* follow toggle --------------------------------------------------- */
-  const toggleFollow = async () => {
-    if (!profile) return;
-    try {
-      console.log('🟡 ProfileScreen: Toggling follow status...');
-      
-      if (following) {
-        await api.delete(`/api/follow/unfollow/${profile._id}`);
-        console.log('🟢 ProfileScreen: Unfollowed successfully');
+      if (isRefresh) {
+        setRefreshing(true);
       } else {
-        await api.post(`/api/follow/follow/${profile._id}`);
-        console.log('🟢 ProfileScreen: Follow request sent/completed');
+        setLoading(true);
       }
-      
-      setFollowing(!following);
-      setRequested(false);
-      fetchProfile();
-    } catch (err) { 
-      console.log('❌ ProfileScreen: Follow toggle error:', err.response?.data || err.message); 
+
+      const { data } = await api.get(`/api/profile/${userId}`);
+      setUser(data);
+      setPosts(data.photos || []);
+      setIsFollowing(data.isFollowing || false);
+      setHasRequested(data.hasRequested || false);
+
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      if (error.response?.status === 404) {
+        Alert.alert('Error', 'User not found');
+        navigation.goBack();
+      } else if (error.response?.status === 403) {
+        Alert.alert('Private Account', 'This account is private.');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  /* guards ---------------------------------------------------------- */
-  if (loading)  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#3797EF" />
-        <Text style={styles.loadingText}>Loading profile...</Text>
-      </View>
-    </SafeAreaView>
-  );
-  
-  if (!profile) return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.center}>
-        <Ionicons name="person-outline" size={80} color="#C7C7CC" />
-        <Text style={styles.errorText}>Profile unavailable</Text>
-        <TouchableOpacity onPress={() => fetchProfile()} style={styles.retryButton}>
-          <Text style={styles.retryText}>Try Again</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
+  const handleFollow = async () => {
+    try {
+      if (isFollowing) {
+        await api.delete(`/api/follow/unfollow/${userId}`);
+        setIsFollowing(false);
+      } else {
+        const { data } = await api.post(`/api/follow/follow/${userId}`);
+        if (data.requestSent) {
+          setHasRequested(true);
+        } else {
+          setIsFollowing(true);
+        }
+      }
+    } catch (error) {
+      console.error('Follow error:', error);
+      Alert.alert('Error', 'Unable to follow/unfollow user');
+    }
+  };
 
-  /* helpers --------------------------------------------------------- */
-  const avatar = profile.profilePicture
-    ? `http://${API_BASE_URL}:3000${profile.profilePicture}`
-    : null;
+  const renderProfileHeader = () => {
+    if (!user) return null;
 
-  const mutual = profile.followers
-    ?.filter(f => currentUser?.following?.includes(f._id))
-    ?.map(f => f.username) || [];
+    const avatar = user.profilePicture
+      ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+      : 'https://placehold.co/120x120.png?text=👤';
 
-  const mutualLabel = !isSelf && mutual.length
-    ? `Followed by ${mutual.slice(0,2).join(', ')}${mutual.length>2 ? ` and ${mutual.length-2} others` : ''}`
-    : null;
+    const followerCount = user.followers?.length || 0;
+    const followingCount = user.following?.length || 0;
+    const postCount = posts.length;
 
-  /* header component ------------------------------------------------ */
-  const Header = () => (
-    <View style={styles.profileHeader}>
-      {/* Profile Info Section */}
-      <View style={styles.profileInfoSection}>
-        {/* Avatar and Basic Info */}
-        <View style={styles.avatarSection}>
-          <TouchableOpacity activeOpacity={0.8}>
-            {avatar ? (
-              <Image source={{ uri: avatar }} style={styles.avatar}/>
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Ionicons name="person-outline" size={40} color="#8E8E93" />
-              </View>
+    return (
+      <View style={styles.profileHeader}>
+        {/* Profile Image and Basic Info */}
+        <View style={styles.profileImageSection}>
+          <Image source={{ uri: avatar }} style={styles.profileImage} />
+          <View style={styles.profileInfo}>
+            <Text style={styles.username}>{user.username}</Text>
+            {user.bio && (
+              <Text style={styles.bio} numberOfLines={3}>
+                {user.bio}
+              </Text>
             )}
-          </TouchableOpacity>
-          
-          <View style={styles.usernameSection}>
-            <Text style={styles.username}>{profile.username}</Text>
-            {profile.pronouns && (
-              <Text style={styles.pronouns}>{profile.pronouns}</Text>
-            )}
-            {mutualLabel && <Text style={styles.mutualText}>{mutualLabel}</Text>}
           </View>
         </View>
 
         {/* Stats Row */}
-        <View style={styles.statsRow}>
-          <Stat n={profile.photos?.length || 0} label="Posts"/>
-          <Stat 
-            n={profile.followers?.length || 0} 
-            label="Followers" 
-            onPress={() => navigation.navigate('FollowListScreen',{ userId:profile._id, mode:'followers'})}
-          />
-          <Stat 
-            n={profile.following?.length || 0} 
-            label="Following" 
-            onPress={() => navigation.navigate('FollowListScreen',{ userId:profile._id, mode:'following'})}
-          />
+        <View style={styles.statsContainer}>
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={() => navigation.navigate('PostListScreen', { userId, posts })}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.statNumber}>{postCount}</Text>
+            <Text style={styles.statLabel}>Posts</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={() => navigation.navigate('FollowListScreen', {
+              userId,
+              mode: 'followers'
+            })}
+            activeOpacity={0.8}
+            disabled={!user.isPublic && !isSelf && !isFollowing}
+          >
+            <Text style={styles.statNumber}>{followerCount}</Text>
+            <Text style={styles.statLabel}>Followers</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={() => navigation.navigate('FollowListScreen', {
+              userId,
+              mode: 'following'
+            })}
+            activeOpacity={0.8}
+            disabled={!user.isPublic && !isSelf && !isFollowing}
+          >
+            <Text style={styles.statNumber}>{followingCount}</Text>
+            <Text style={styles.statLabel}>Following</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Bio */}
-        {profile.bio && (
-          <View style={styles.bioSection}>
-            <Text style={styles.bioText}>{profile.bio}</Text>
-          </View>
-        )}
-
         {/* Action Buttons */}
-        <View style={styles.actionsSection}>
+        <View style={styles.actionButtons}>
           {isSelf ? (
-            <>
-              <TouchableOpacity 
-                style={styles.primaryButton} 
-                onPress={() => navigation.navigate('EditProfileScreen')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.primaryButtonText}>Edit Profile</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.secondaryButton}
-                onPress={() => navigation.navigate('QrScreen')}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="qr-code-outline" size={20} color="#000000" />
-              </TouchableOpacity>
-            </>
+            <TouchableOpacity
+              style={styles.editProfileButton}
+              onPress={() => navigation.navigate('EditProfileScreen')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+            </TouchableOpacity>
           ) : (
             <>
               <TouchableOpacity
                 style={[
-                  styles.primaryButton,
-                  following ? styles.followingButton : styles.followButton
+                  styles.followButton,
+                  (isFollowing || hasRequested) && styles.followingButton
                 ]}
-                onPress={toggleFollow}
+                onPress={handleFollow}
                 activeOpacity={0.8}
               >
                 <Text style={[
-                  styles.primaryButtonText,
-                  following ? styles.followingButtonText : styles.followButtonText
+                  styles.followButtonText,
+                  (isFollowing || hasRequested) && styles.followingButtonText
                 ]}>
-                  {following ? 'Following' : requested ? 'Requested' : 'Follow'}
+                  {hasRequested ? 'Requested' : isFollowing ? 'Following' : 'Follow'}
                 </Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.secondaryButton}
-                onPress={() => navigation.navigate('ChatScreen', { 
-                  recipientId: profile._id, 
-                  headerUser: profile 
+
+              <TouchableOpacity
+                style={styles.messageButton}
+                onPress={() => navigation.navigate('ChatScreen', {
+                  recipientId: userId,
+                  headerUser: user
                 })}
                 activeOpacity={0.8}
               >
-                <Ionicons name="chatbubble-outline" size={20} color="#000000" />
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.secondaryButton}
-                onPress={() => navigation.navigate('SelectChatScreen',{
-                  shareType:'profile',
-                  shareId:profile._id
-                })}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="share-outline" size={20} color="#000000" />
+                <Ionicons name="chatbubble-outline" size={20} color="#3797EF" />
               </TouchableOpacity>
             </>
           )}
         </View>
       </View>
+    );
+  };
 
-      {/* Tab Bar */}
-      <View style={styles.tabBar}>
-        {['Posts','Events','Calendar'].map((t,i)=>(
-          (i===2 && !isSelf) ? null : (
-            <TouchableOpacity key={t} style={styles.tabBtn} onPress={()=>setTab(i)}>
-              <Text style={[styles.tabTxt, tab===i && styles.tabTxtActive]}>{t}</Text>
-              {tab===i && <View style={styles.tabIndicator}/>}
-            </TouchableOpacity>
-          )
-        ))}
-      </View>
-    </View>
-  );
-
-  /* photo cell ------------------------------------------------------ */
-  const renderPhoto = ({ item }) => (
+  const renderPostGrid = ({ item }) => (
     <TouchableOpacity
-      style={styles.photoThumbnail}
-      activeOpacity={0.85}
+      style={styles.postThumbnail}
       onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
+      activeOpacity={0.9}
     >
       <Image
-        source={{ uri:`http://${API_BASE_URL}:3000${item.paths[0]}` }}
-        style={styles.photoImage}
+        source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
+        style={styles.postImage}
       />
     </TouchableOpacity>
   );
 
-  /* ---------------- main return (switch by tab) ------------------- */
-  if (tab === 0) {
+  const PostsTab = () => {
+    if (!user.isPublic && !isSelf && !isFollowing) {
+      return (
+        <View style={styles.privateAccountContainer}>
+          <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.privateAccountTitle}>This account is private</Text>
+          <Text style={styles.privateAccountSubtitle}>
+            Follow this account to see their posts
+          </Text>
+        </View>
+      );
+    }
+
+    if (posts.length === 0) {
+      return (
+        <View style={styles.emptyPostsContainer}>
+          <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.emptyPostsTitle}>
+            {isSelf ? 'Share your first post' : 'No posts yet'}
+          </Text>
+          <Text style={styles.emptyPostsSubtitle}>
+            {isSelf
+              ? 'When you share photos, they\'ll appear on your profile.'
+              : 'When they share photos, they\'ll appear here.'
+            }
+          </Text>
+          {isSelf && (
+            <TouchableOpacity
+              style={styles.createPostButton}
+              onPress={() => navigation.navigate('CreatePickerScreen')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.createPostButtonText}>Create Post</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      );
+    }
+
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <FlatList
-          data={profile.photos || []}
-          keyExtractor={p=>p._id}
-          renderItem={renderPhoto}
-          numColumns={COLS}
-          ListHeaderComponent={Header}
-          columnWrapperStyle={styles.photoRow}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={()=>fetchProfile(true)}/>
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="images-outline" size={80} color="#C7C7CC" />
-              <Text style={styles.emptyTitle}>No posts yet</Text>
-              <Text style={styles.emptySubtitle}>
-                {isSelf ? 'Share your first photo' : 'No posts to show'}
-              </Text>
-            </View>
-          }
-          contentContainerStyle={styles.listContent}
-        />
+      <FlatList
+        data={posts}
+        numColumns={3}
+        keyExtractor={(item) => item._id}
+        renderItem={renderPostGrid}
+        contentContainerStyle={styles.postsGrid}
+        showsVerticalScrollIndicator={false}
+      />
+    );
+  };
+
+  if (loading && !user) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3797EF" />
+        <Text style={styles.loadingText}>Loading profile...</Text>
       </SafeAreaView>
     );
   }
 
-  /* Events / Calendar in ScrollView */
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.errorContainer}>
+        <Ionicons name="person-outline" size={80} color="#C7C7CC" />
+        <Text style={styles.errorTitle}>Profile not found</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.goBackButton}>
+          <Text style={styles.goBackText}>Go Back</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
       <ScrollView
+        style={styles.scrollView}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={()=>fetchProfile(true)}/>
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => fetchUserProfile(true)}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
+          />
         }
-        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <Header/>
-        {tab === 1 && (
-          <SharedEventsTab navigation={navigation} userId={profile._id} isSelf={isSelf}/>
-        )}
-        {tab === 2 && isSelf && (
-          <CalendarTab navigation={navigation} userId={profile._id}/>
-        )}
+        {renderProfileHeader()}
+
+        {/* Tabs Container */}
+        <View style={styles.tabsContainer}>
+          <Tab.Navigator
+            screenOptions={{
+              tabBarActiveTintColor: '#000000',
+              tabBarInactiveTintColor: '#8E8E93',
+              tabBarIndicatorStyle: {
+                backgroundColor: '#000000',
+                height: 2,
+              },
+              tabBarStyle: {
+                backgroundColor: '#FFFFFF',
+                elevation: 0,
+                shadowOpacity: 0,
+                borderBottomWidth: 0.5,
+                borderBottomColor: '#E1E1E1',
+              },
+              tabBarLabelStyle: {
+                fontSize: 14,
+                fontWeight: '600',
+                textTransform: 'none',
+              },
+              tabBarPressColor: 'transparent',
+            }}
+          >
+            <Tab.Screen
+              name="Posts"
+              component={PostsTab}
+              options={{
+                tabBarIcon: ({ color }) => (
+                  <Ionicons name="grid-outline" size={20} color={color} />
+                ),
+              }}
+            />
+            
+            <Tab.Screen
+              name="Calendar"
+              children={() => (
+                <CalendarTab navigation={navigation} userId={userId} />
+              )}
+              options={{
+                tabBarIcon: ({ color }) => (
+                  <Ionicons name="calendar-outline" size={20} color={color} />
+                ),
+              }}
+            />
+
+            {/* Past Events Tab - Only visible to self */}
+            {isSelf && (
+              <Tab.Screen
+                name="Past Events"
+                children={() => (
+                  <PastEventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
+                )}
+                options={{
+                  tabBarIcon: ({ color }) => (
+                    <Ionicons name="time-outline" size={20} color={color} />
+                  ),
+                }}
+              />
+            )}
+
+            <Tab.Screen
+              name="Shared Events"
+              children={() => (
+                <SharedEventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
+              )}
+              options={{
+                tabBarIcon: ({ color }) => (
+                  <Ionicons name="share-outline" size={20} color={color} />
+                ),
+              }}
+            />
+          </Tab.Navigator>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-/* ---------------- tiny helpers ---------------- */
-const Stat = ({ n, label, onPress }) => (
-  <TouchableOpacity disabled={!onPress} onPress={onPress} style={styles.statContainer}>
-    <Text style={styles.statNumber}>{n}</Text>
-    <Text style={styles.statLabel}>{label}</Text>
-  </TouchableOpacity>
-);
-
-/* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  headerButton: {
-    padding: 8,
-    marginHorizontal: 8,
-  },
-  headerButtonBackground: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  center: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center',
-    paddingHorizontal: 32,
+    backgroundColor: '#FFFFFF',
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
   },
-  errorText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000',
-    marginTop: 16,
-    marginBottom: 8,
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    backgroundColor: '#FFFFFF',
   },
-  retryButton: {
+  errorTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 32,
+  },
+  goBackButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginTop: 16,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 12,
   },
-  retryText: {
+  goBackText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  headerRightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerButton: {
+    padding: 8,
+    marginHorizontal: 8,
+  },
+  scrollView: {
+    flex: 1,
   },
 
   // Profile Header
   profileHeader: {
     backgroundColor: '#FFFFFF',
-  },
-  profileInfoSection: {
     paddingHorizontal: 20,
     paddingVertical: 20,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
-  
-  // Avatar Section
-  avatarSection: {
+  profileImageSection: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 20,
   },
-  avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 22, // FIXED: Square with rounded corners instead of circular
+  profileImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 22,
     backgroundColor: '#F6F6F6',
+    marginRight: 20,
   },
-  avatarPlaceholder: {
-    width: 90,
-    height: 90,
-    borderRadius: 22, // FIXED: Square with rounded corners
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  usernameSection: {
-    marginLeft: 16,
+  profileInfo: {
     flex: 1,
   },
   username: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     color: '#000000',
     marginBottom: 4,
   },
-  pronouns: {
+  bio: {
     fontSize: 14,
     color: '#8E8E93',
-    marginBottom: 4,
-  },
-  mutualText: {
-    fontSize: 13,
-    color: '#8E8E93',
+    lineHeight: 18,
   },
 
   // Stats
-  statsRow: {
+  statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     marginBottom: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
     backgroundColor: '#F8F9FA',
     borderRadius: 12,
   },
-  statContainer: {
+  statItem: {
     alignItems: 'center',
   },
   statNumber: {
     fontSize: 20,
     fontWeight: '700',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#8E8E93',
+    fontWeight: '500',
   },
 
-  // Bio
-  bioSection: {
-    marginBottom: 20,
-  },
-  bioText: {
-    fontSize: 16,
-    color: '#000000',
-    lineHeight: 22,
-  },
-
-  // Actions
-  actionsSection: {
+  // Action Buttons
+  actionButtons: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
   },
-  primaryButton: {
+  editProfileButton: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#F0F0F0',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
   },
-  primaryButtonText: {
-    color: '#FFFFFF',
+  editProfileButtonText: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#000000',
   },
   followButton: {
+    flex: 1,
     backgroundColor: '#3797EF',
-  },
-  followButtonText: {
-    color: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginRight: 8,
   },
   followingButton: {
     backgroundColor: '#F0F0F0',
     borderWidth: 1,
     borderColor: '#E1E1E1',
   },
-  followingButtonText: {
-    color: '#000000',
-  },
-  secondaryButton: {
-    width: 44,
-    height: 44,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  // Tab Bar
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-    backgroundColor: '#FFFFFF',
-  },
-  tabBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 16,
-    position: 'relative',
-  },
-  tabTxt: {
+  followButtonText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  followingButtonText: {
     color: '#8E8E93',
   },
-  tabTxtActive: {
-    color: '#000000',
-    fontWeight: '600',
-  },
-  tabIndicator: {
-    position: 'absolute',
-    bottom: 0,
-    height: 2,
-    width: '80%',
-    backgroundColor: '#000000',
-    borderRadius: 1,
+  messageButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F0F8FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E1E8F7',
   },
 
-  // Photos Grid
-  listContent: {
-    paddingBottom: 40,
+  // Tabs
+  tabsContainer: {
+    flex: 1,
+    height: 400, // Fixed height for tab navigator
   },
-  scrollContent: {
-    paddingBottom: 40,
+
+  // Posts Grid
+  postsGrid: {
+    padding: 2,
   },
-  photoRow: {
-    justifyContent: 'flex-start',
-    paddingHorizontal: GAP,
+  postThumbnail: {
+    width: (SCREEN_WIDTH - 6) / 3,
+    height: (SCREEN_WIDTH - 6) / 3,
+    margin: 1,
   },
-  photoThumbnail: {
-    width: THUMB,
-    height: THUMB,
-    margin: GAP / 2,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  photoImage: {
+  postImage: {
     width: '100%',
     height: '100%',
     backgroundColor: '#F6F6F6',
   },
 
-  // Empty State
-  emptyContainer: {
+  // Empty States
+  emptyPostsContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
     paddingVertical: 60,
-    paddingHorizontal: 32,
   },
-  emptyTitle: {
+  emptyPostsTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#000',
+    color: '#000000',
     marginTop: 16,
     marginBottom: 8,
+    textAlign: 'center',
   },
-  emptySubtitle: {
-    fontSize: 16,
+  emptyPostsSubtitle: {
+    fontSize: 14,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 22,
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  createPostButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  createPostButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Private Account
+  privateAccountContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 60,
+  },
+  privateAccountTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  privateAccountSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
