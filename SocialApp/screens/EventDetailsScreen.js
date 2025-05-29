@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Enhanced with Privacy System Integration
+// screens/EventDetailsScreen.js - Enhanced with Privacy System Integration (COMPLETE)
 import React, { useEffect, useState, useContext, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet, ScrollView, FlatList,
@@ -67,15 +67,26 @@ export default function EventDetailsScreen() {
             </View>
           </TouchableOpacity>
           {event?.userRelation?.isHost && (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('EditEventScreen', { eventId })}
-              style={styles.headerButton}
-              activeOpacity={0.8}
-            >
-              <View style={styles.headerButtonBackground}>
-                <Ionicons name="create-outline" size={20} color="#000000" />
-              </View>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('EventPrivacyManagerScreen', { eventId })}
+                style={styles.headerButton}
+                activeOpacity={0.8}
+              >
+                <View style={styles.headerButtonBackground}>
+                  <Ionicons name="shield-outline" size={20} color="#000000" />
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('EditEventScreen', { eventId })}
+                style={styles.headerButton}
+                activeOpacity={0.8}
+              >
+                <View style={styles.headerButtonBackground}>
+                  <Ionicons name="create-outline" size={20} color="#000000" />
+                </View>
+              </TouchableOpacity>
+            </>
           )}
         </View>
       ),
@@ -882,4 +893,167 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16}})
+    marginBottom: 16,
+  },
+  photoCount: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '500',
+  },
+  photosList: {
+    paddingLeft: 0,
+  },
+  photoThumbnail: {
+    marginRight: 12,
+  },
+  photoImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 12,
+    backgroundColor: '#F6F6F6',
+  },
+
+  // Action Container
+  actionContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 0.5,
+    borderTopColor: '#E1E1E1',
+  },
+  joinButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3797EF',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  joinButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  attendingButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0F9F0',
+    borderWidth: 2,
+    borderColor: '#34C759',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  attendingButtonText: {
+    color: '#34C759',
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  requestSentButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF8F0',
+    borderWidth: 2,
+    borderColor: '#FF9500',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  requestSentText: {
+    color: '#FF9500',
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  pastEventText: {
+    textAlign: 'center',
+    fontSize: 16,
+    color: '#8E8E93',
+    fontWeight: '500',
+  },
+
+  // Host Actions
+  hostActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  secondaryButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0F8FF',
+    borderWidth: 1,
+    borderColor: '#3797EF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginHorizontal: 4,
+  },
+  secondaryButtonText: {
+    color: '#3797EF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+
+  // Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  modalSendText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+  },
+  modalDescription: {
+    fontSize: 16,
+    color: '#8E8E93',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  eventPreview: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+  },
+  eventPreviewTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  eventPreviewDate: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+});

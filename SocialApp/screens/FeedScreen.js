@@ -1,4 +1,4 @@
-// screens/FeedScreen.js - Fixed header positioning
+// screens/FeedScreen.js - Enhanced with Event Recommendations & Privacy System
 import React, { useLayoutEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import PostsFeed from '../components/PostsFeed';
 import EventsFeed from '../components/EventsFeed';
+import EventRecommendations from '../components/EventRecommendations';
 
 const Tab = createMaterialTopTabNavigator();
 
@@ -40,6 +41,13 @@ export default function FeedScreen({ navigation }) {
               activeOpacity={0.8}
             >
               <Ionicons name="chatbubble-outline" size={24} color="#000" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.headerButton}
+              onPress={() => navigation.navigate('CreatePickerScreen')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add-circle-outline" size={24} color="#000" />
             </TouchableOpacity>
           </View>
         </View>
@@ -96,6 +104,20 @@ export default function FeedScreen({ navigation }) {
             ),
           }}
         />
+        <Tab.Screen 
+          name="Discover" 
+          component={EventRecommendations}
+          options={{
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons 
+                name={focused ? 'star' : 'star-outline'} 
+                size={20} 
+                color={color} 
+                style={{ marginBottom: 2 }}
+              />
+            ),
+          }}
+        />
       </Tab.Navigator>
     </SafeAreaView>
   );
@@ -124,12 +146,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 4, // Reduced top padding
-    paddingBottom: 8, // Reduced bottom padding
-    minHeight: 48, // Reduced minimum height
+    paddingTop: 4,
+    paddingBottom: 8,
+    minHeight: 48,
   },
   headerTitle: {
-    fontSize: 22, // Slightly smaller
+    fontSize: 22,
     fontWeight: '700',
     color: '#000000',
   },
