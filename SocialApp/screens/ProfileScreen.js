@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - Enhanced with Past Events Integration
+// screens/ProfileScreen.js - Redesigned with 3-tab system and improved privacy
 import React, { useEffect, useState, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
@@ -12,10 +12,10 @@ import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
-// Import existing components
-import CalendarTab from '../components/CalendarTab';
+// Import components
 import SharedEventsTab from '../components/SharedEventsTab';
-import PastEventsTab from '../components/PastEventsTab';
+import EventsTab from '../components/EventsTab'; // New combined events component
+import MemoriesTab from '../components/MemoriesTab'; // New memories component
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const Tab = createMaterialTopTabNavigator();
@@ -54,13 +54,22 @@ export default function ProfileScreen() {
       headerRight: () => (
         <View style={styles.headerRightContainer}>
           {isSelf && (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('UserSettingsScreen')}
-              style={styles.headerButton}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="settings-outline" size={24} color="#000000" />
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('EventPrivacySettings')}
+                style={styles.headerButton}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="shield-outline" size={22} color="#000000" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('UserSettingsScreen')}
+                style={styles.headerButton}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="settings-outline" size={24} color="#000000" />
+              </TouchableOpacity>
+            </>
           )}
         </View>
       ),
@@ -148,14 +157,10 @@ export default function ProfileScreen() {
 
         {/* Stats Row */}
         <View style={styles.statsContainer}>
-          <TouchableOpacity
-            style={styles.statItem}
-            onPress={() => navigation.navigate('PostListScreen', { userId, posts })}
-            activeOpacity={0.8}
-          >
+          <View style={styles.statItem}>
             <Text style={styles.statNumber}>{postCount}</Text>
             <Text style={styles.statLabel}>Posts</Text>
-          </TouchableOpacity>
+          </View>
 
           <TouchableOpacity
             style={styles.statItem}
@@ -239,6 +244,12 @@ export default function ProfileScreen() {
         source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
         style={styles.postImage}
       />
+      {/* Show event indicator if post is linked to an event */}
+      {item.event && (
+        <View style={styles.eventIndicator}>
+          <Ionicons name="calendar" size={12} color="#FFFFFF" />
+        </View>
+      )}
     </TouchableOpacity>
   );
 
@@ -357,6 +368,7 @@ export default function ProfileScreen() {
               tabBarPressColor: 'transparent',
             }}
           >
+            {/* Posts Tab - Always visible */}
             <Tab.Screen
               name="Posts"
               component={PostsTab}
@@ -367,10 +379,15 @@ export default function ProfileScreen() {
               }}
             />
             
+            {/* Events Tab - Shows shared events for others, all events for self */}
             <Tab.Screen
-              name="Calendar"
+              name="Events"
               children={() => (
-                <CalendarTab navigation={navigation} userId={userId} />
+                isSelf ? (
+                  <EventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
+                ) : (
+                  <SharedEventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
+                )
               )}
               options={{
                 tabBarIcon: ({ color }) => (
@@ -379,12 +396,13 @@ export default function ProfileScreen() {
               }}
             />
 
-            {/* Past Events Tab - Only visible to self */}
-            {isSelf && (
+            {/* Third tab depends on user type */}
+            {isSelf ? (
+              // For current user: Memories tab (combines past events, photos, stats)
               <Tab.Screen
-                name="Past Events"
+                name="Memories"
                 children={() => (
-                  <PastEventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
+                  <MemoriesTab navigation={navigation} userId={userId} isSelf={isSelf} />
                 )}
                 options={{
                   tabBarIcon: ({ color }) => (
@@ -392,25 +410,94 @@ export default function ProfileScreen() {
                   ),
                 }}
               />
+            ) : (
+              // For other users: Tagged tab (photos they're tagged in)
+              <Tab.Screen
+                name="Tagged"
+                children={() => (
+                  <TaggedTab navigation={navigation} userId={userId} />
+                )}
+                options={{
+                  tabBarIcon: ({ color }) => (
+                    <Ionicons name="person-outline" size={20} color={color} />
+                  ),
+                }}
+              />
             )}
-
-            <Tab.Screen
-              name="Shared Events"
-              children={() => (
-                <SharedEventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
-              )}
-              options={{
-                tabBarIcon: ({ color }) => (
-                  <Ionicons name="share-outline" size={20} color={color} />
-                ),
-              }}
-            />
           </Tab.Navigator>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+// Tagged Tab Component for other users
+const TaggedTab = ({ navigation, userId }) => {
+  const [taggedPosts, setTaggedPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchTaggedPosts();
+  }, [userId]);
+
+  const fetchTaggedPosts = async () => {
+    try {
+      const { data } = await api.get(`/api/profile/${userId}/tagged`);
+      setTaggedPosts(data || []);
+    } catch (error) {
+      console.error('Error fetching tagged posts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderTaggedPost = ({ item }) => (
+    <TouchableOpacity
+      style={styles.postThumbnail}
+      onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
+      activeOpacity={0.9}
+    >
+      <Image
+        source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
+        style={styles.postImage}
+      />
+      <View style={styles.taggedIndicator}>
+        <Ionicons name="person" size={12} color="#FFFFFF" />
+      </View>
+    </TouchableOpacity>
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3797EF" />
+      </View>
+    );
+  }
+
+  if (taggedPosts.length === 0) {
+    return (
+      <View style={styles.emptyPostsContainer}>
+        <Ionicons name="person-outline" size={64} color="#C7C7CC" />
+        <Text style={styles.emptyPostsTitle}>No tagged posts</Text>
+        <Text style={styles.emptyPostsSubtitle}>
+          When they're tagged in photos, they'll appear here.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={taggedPosts}
+      numColumns={3}
+      keyExtractor={(item) => item._id}
+      renderItem={renderTaggedPost}
+      contentContainerStyle={styles.postsGrid}
+      showsVerticalScrollIndicator={false}
+    />
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -459,7 +546,7 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     padding: 8,
-    marginHorizontal: 8,
+    marginHorizontal: 4,
   },
   scrollView: {
     flex: 1,
@@ -576,7 +663,7 @@ const styles = StyleSheet.create({
   // Tabs
   tabsContainer: {
     flex: 1,
-    height: 400, // Fixed height for tab navigator
+    height: 500, // Increased height for better content display
   },
 
   // Posts Grid
@@ -587,11 +674,34 @@ const styles = StyleSheet.create({
     width: (SCREEN_WIDTH - 6) / 3,
     height: (SCREEN_WIDTH - 6) / 3,
     margin: 1,
+    position: 'relative',
   },
   postImage: {
     width: '100%',
     height: '100%',
     backgroundColor: '#F6F6F6',
+  },
+  eventIndicator: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(55, 151, 239, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  taggedIndicator: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(52, 199, 89, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // Empty States

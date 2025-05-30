@@ -397,4 +397,53 @@ router.get('/share/:photoId', async (req, res) => {
   }
 });
 
+
+router.delete('/comment/:photoId/:commentId', protect, async (req, res) => {
+  try {
+    const { photoId, commentId } = req.params;
+    const photo = await Photo.findById(photoId);
+
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Find the comment
+    const comment = photo.comments.id(commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Check if user can delete this comment
+    const isCommentOwner = String(comment.user) === String(req.user._id);
+    const isPostOwner = String(photo.user) === String(req.user._id);
+    
+    if (!isCommentOwner && !isPostOwner) {
+      return res.status(403).json({ message: 'Not authorized to delete this comment' });
+    }
+
+    // Remove the comment
+    photo.comments.pull(commentId);
+    await photo.save();
+
+    // Return updated photo with populated comments
+    const updatedPhoto = await Photo.findById(photoId)
+      .populate('user', 'username')
+      .populate('event', 'title')
+      .populate({
+        path: 'comments.user',
+        select: 'username profilePicture',
+      });
+
+    res.status(200).json({ 
+      message: 'Comment deleted successfully',
+      photo: updatedPhoto 
+    });
+
+  } catch (error) {
+    console.error('Delete comment error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 module.exports = router;
