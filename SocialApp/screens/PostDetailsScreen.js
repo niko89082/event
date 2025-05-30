@@ -1,4 +1,4 @@
-// screens/PostDetailsScreen.js - Improved Layout & Event Linking
+// screens/PostDetailsScreen.js - Complete Implementation
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -44,14 +44,16 @@ export default function PostDetailsScreen() {
   const fetchPost = async () => {
     try {
       setLoading(true);
+      console.log('🟡 Fetching post:', postId);
       const { data } = await api.get(`/api/photos/${postId}`);
+      console.log('🟢 Post data received:', data);
       setPost(data);
       setCaption(data.caption || '');
       setSelectedEvent(data.event?._id || null);
       setIsLiked(data.likes?.includes(currentUser?._id) || false);
       setLikeCount(data.likes?.length || 0);
     } catch (e) {
-      console.error(e.response?.data || e);
+      console.error('❌ Post fetch error:', e.response?.data || e);
       Alert.alert('Error', 'Unable to load post.');
       navigation.goBack();
     } finally { 
@@ -63,10 +65,12 @@ export default function PostDetailsScreen() {
   const fetchUserEvents = async () => {
     try {
       setEventsLoading(true);
+      console.log('🟡 Fetching user events...');
+      
       // Get user's attending events + hosted events
       const [attendingRes, hostedRes] = await Promise.all([
-        api.get(`/api/events?attendee=${currentUser._id}`),
-        api.get(`/api/events?host=${currentUser._id}`)
+        api.get(`/api/events?attendee=${currentUser._id}&limit=50`),
+        api.get(`/api/events?host=${currentUser._id}&limit=50`)
       ]);
 
       const attending = attendingRes.data.events || attendingRes.data || [];
@@ -83,9 +87,10 @@ export default function PostDetailsScreen() {
         new Date(b.time) - new Date(a.time)
       );
 
+      console.log('🟢 Found events:', sortedEvents.length);
       setUserEvents(sortedEvents);
     } catch (e) {
-      console.error('Error fetching events:', e);
+      console.error('❌ Error fetching events:', e);
     } finally {
       setEventsLoading(false);
     }
@@ -106,10 +111,12 @@ export default function PostDetailsScreen() {
     }
   };
 
-  const sharePost = () => navigation.navigate('SelectChatScreen', {
-    shareType: 'post',
-    shareId: postId,
-  });
+  const sharePost = () => {
+    navigation.navigate('SelectChatScreen', {
+      shareType: 'post',
+      shareId: postId,
+    });
+  };
 
   const showPostOptions = () => {
     if (!isOwner) return;
@@ -178,6 +185,48 @@ export default function PostDetailsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              await api.delete(`/api/photos/${postId}`);
+              Alert.alert('Success', 'Post deleted successfully');
+              navigation.goBack();
+            } catch (e) {
+              console.error(e.response?.data || e);
+              Alert.alert('Error', 'Delete failed.');
+            }
+          }
+        },
+      ]
+    );
+  };
+
+  const postComment = async () => {
+    if (!newComment.trim()) return;
+    
+    try {
+      setCommentsLoading(true);
+      const { data } = await api.post(`/api/photos/comment/${postId}`, { 
+        text: newComment.trim() 
+      });
+      setPost(data);
+      setNewComment('');
+    } catch (e) { 
+      console.error('Comment error:', e.response?.data || e);
+      Alert.alert('Error', 'Failed to post comment');
+    } finally {
+      setCommentsLoading(false);
+    }
+  };
+
+  const handleDeleteComment = (commentId) => {
+    Alert.alert(
+      'Delete Comment',
+      'Are you sure you want to delete this comment?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
               await api.delete(`/api/photos/comment/${postId}/${commentId}`);
               // Update local state
               setPost(prevPost => ({
@@ -208,7 +257,7 @@ export default function PostDetailsScreen() {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: options,
-          destructiveButtonIndex: options.length - 2,
+          destructiveButtonIndex: options.length - 2 >= 0 ? options.length - 2 : -1,
           cancelButtonIndex: options.length - 1,
         },
         (buttonIndex) => {

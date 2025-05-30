@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - Instagram-style Smooth Scrolling
+// screens/ProfileScreen.js - True Instagram-style Scrolling
 import React, { useEffect, useState, useContext, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -12,15 +12,12 @@ import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
-// Import simplified components
+// Import components
 import EventsTab from '../components/EventsTab';
 import SharedEventsTab from '../components/SharedEventsTab';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const Tab = createMaterialTopTabNavigator();
-
-// Constants for Instagram-like behavior
-const HEADER_HEIGHT = 300; // Height of profile info section
 
 export default function ProfileScreen() {
   const { params } = useRoute();
@@ -37,10 +34,6 @@ export default function ProfileScreen() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [hasRequested, setHasRequested] = useState(false);
   const [activeTab, setActiveTab] = useState('Posts');
-
-  // Animation values for Instagram-like scrolling
-  const scrollY = useRef(new Animated.Value(0)).current;
-  const listRefTab = useRef(null);
 
   // Set up navigation header
   useEffect(() => {
@@ -279,65 +272,68 @@ export default function ProfileScreen() {
     </TouchableOpacity>
   );
 
-  const renderTabContent = () => {
-    if (activeTab === 'Posts') {
-      if (!user.isPublic && !isSelf && !isFollowing) {
-        return (
-          <View style={styles.privateAccountContainer}>
-            <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
-            <Text style={styles.privateAccountTitle}>This account is private</Text>
-            <Text style={styles.privateAccountSubtitle}>
-              Follow this account to see their posts
-            </Text>
-          </View>
-        );
-      }
-
-      if (posts.length === 0) {
-        return (
-          <View style={styles.emptyPostsContainer}>
-            <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
-            <Text style={styles.emptyPostsTitle}>
-              {isSelf ? 'Share your first post' : 'No posts yet'}
-            </Text>
-            <Text style={styles.emptyPostsSubtitle}>
-              {isSelf
-                ? 'When you share photos, they\'ll appear on your profile.'
-                : 'When they share photos, they\'ll appear here.'
-              }
-            </Text>
-            {isSelf && (
-              <TouchableOpacity
-                style={styles.createPostButton}
-                onPress={() => navigation.navigate('CreatePickerScreen')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.createPostButtonText}>Create Post</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        );
-      }
-
-      return posts;
-    } else {
-      // Events tab content
-      return [];
+  const renderPostsContent = () => {
+    if (!user.isPublic && !isSelf && !isFollowing) {
+      return (
+        <View style={styles.privateAccountContainer}>
+          <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.privateAccountTitle}>This account is private</Text>
+          <Text style={styles.privateAccountSubtitle}>
+            Follow this account to see their posts
+          </Text>
+        </View>
+      );
     }
+
+    if (posts.length === 0) {
+      return (
+        <View style={styles.emptyPostsContainer}>
+          <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.emptyPostsTitle}>
+            {isSelf ? 'Share your first post' : 'No posts yet'}
+          </Text>
+          <Text style={styles.emptyPostsSubtitle}>
+            {isSelf
+              ? 'When you share photos, they\'ll appear on your profile.'
+              : 'When they share photos, they\'ll appear here.'
+            }
+          </Text>
+          {isSelf && (
+            <TouchableOpacity
+              style={styles.createPostButton}
+              onPress={() => navigation.navigate('CreatePickerScreen')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.createPostButtonText}>Create Post</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      );
+    }
+
+    return posts;
   };
 
-  const renderContent = ({ item, index }) => {
-    if (activeTab === 'Posts') {
-      return renderPostGrid({ item });
-    }
-    return null;
+  const renderEventsContent = () => {
+    return (
+      <View style={styles.eventsTabContainer}>
+        {isSelf ? (
+          <EventsTab 
+            navigation={navigation} 
+            userId={userId} 
+            isSelf={isSelf}
+            currentUserId={currentUser?._id}
+          />
+        ) : (
+          <SharedEventsTab 
+            navigation={navigation} 
+            userId={userId} 
+            isSelf={isSelf} 
+          />
+        )}
+      </View>
+    );
   };
-
-  const getItemLayout = (data, index) => ({
-    length: (SCREEN_WIDTH - 6) / 3,
-    offset: Math.floor(index / 3) * (SCREEN_WIDTH - 6) / 3,
-    index,
-  });
 
   if (loading && !user) {
     return (
@@ -360,38 +356,17 @@ export default function ProfileScreen() {
     );
   }
 
-  const tabContent = renderTabContent();
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-      {activeTab === 'Events' ? (
-        // Events tab uses its own scrolling component
-        <View style={styles.eventsContainer}>
-          {renderProfileHeader()}
-          {renderTabBar()}
-          {isSelf ? (
-            <EventsTab 
-              navigation={navigation} 
-              userId={userId} 
-              isSelf={isSelf}
-              currentUserId={currentUser?._id}
-            />
-          ) : (
-            <SharedEventsTab 
-              navigation={navigation} 
-              userId={userId} 
-              isSelf={isSelf} 
-            />
-          )}
-        </View>
-      ) : (
-        // Posts tab uses Instagram-style FlatList
+  // For Posts tab - use FlatList for Instagram-like scrolling
+  if (activeTab === 'Posts') {
+    const postsData = renderPostsContent();
+    
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        
         <FlatList
-          ref={listRefTab}
-          data={Array.isArray(tabContent) ? tabContent : []}
-          renderItem={renderContent}
+          data={Array.isArray(postsData) ? postsData : []}
+          renderItem={renderPostGrid}
           keyExtractor={(item) => item._id}
           numColumns={3}
           ListHeaderComponent={() => (
@@ -400,10 +375,8 @@ export default function ProfileScreen() {
               {renderTabBar()}
             </View>
           )}
-          ListEmptyComponent={() => tabContent}
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
+          ListEmptyComponent={() => (
+            Array.isArray(postsData) ? null : postsData
           )}
           refreshControl={
             <RefreshControl
@@ -414,11 +387,41 @@ export default function ProfileScreen() {
             />
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={Array.isArray(tabContent) && tabContent.length > 0 ? styles.postsGrid : {}}
-          getItemLayout={Array.isArray(tabContent) ? getItemLayout : undefined}
+          contentContainerStyle={
+            Array.isArray(postsData) && postsData.length > 0 ? styles.postsGrid : {}
+          }
           scrollEventThrottle={16}
         />
-      )}
+      </SafeAreaView>
+    );
+  }
+
+  // For Events tab - separate structure with its own scrolling
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
+      <FlatList
+        data={[]} // Empty data array, using ListHeaderComponent for content
+        renderItem={() => null}
+        ListHeaderComponent={() => (
+          <View>
+            {renderProfileHeader()}
+            {renderTabBar()}
+            {renderEventsContent()}
+          </View>
+        )}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => fetchUserProfile(true)}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+      />
     </SafeAreaView>
   );
 }
@@ -597,11 +600,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#000000',
   },
 
-  // Events Container
-  eventsContainer: {
-    flex: 1,
-  },
-
   // Posts Grid
   postsGrid: {
     padding: 2,
@@ -627,6 +625,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(55, 151, 239, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+
+  // Events Tab Container
+  eventsTabContainer: {
+    minHeight: 400, // Ensure enough height for events content
+    backgroundColor: '#F8F9FA',
   },
 
   // Empty States
