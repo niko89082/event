@@ -1,10 +1,10 @@
-// screens/PostDetailsScreen.js - Updated with better UI and comment management
+// screens/PostDetailsScreen.js - Improved Layout & Event Linking
 import React, { useState, useEffect, useContext } from 'react';
 import {
-  View, Text, Image, StyleSheet, Button, TouchableOpacity,
+  View, Text, Image, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, FlatList,
   SafeAreaView, StatusBar, KeyboardAvoidingView, Platform,
-  Dimensions, ActionSheetIOS
+  Dimensions, ActionSheetIOS, ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -27,10 +27,9 @@ export default function PostDetailsScreen() {
   /* ─── edit modal state ───────────────────────────────────── */
   const [showEdit, setShowEdit] = useState(false);
   const [caption, setCaption] = useState('');
-  const [events, setEvents] = useState([]);
-  const [evPage, setEvPage] = useState(1);
-  const [evEnd, setEvEnd] = useState(false);
-  const [selEvent, setSelEv] = useState(null);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [userEvents, setUserEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   /* ─── comment state ──────────────────────────────────────── */
   const [newComment, setNewComment] = useState('');
@@ -38,7 +37,9 @@ export default function PostDetailsScreen() {
   const [likeCount, setLikeCount] = useState(0);
 
   /* ─── fetch post ─────────────────────────────────────────── */
-  useEffect(() => { if (postId) fetchPost(); }, [postId]);
+  useEffect(() => { 
+    if (postId) fetchPost(); 
+  }, [postId]);
 
   const fetchPost = async () => {
     try {
@@ -46,7 +47,7 @@ export default function PostDetailsScreen() {
       const { data } = await api.get(`/api/photos/${postId}`);
       setPost(data);
       setCaption(data.caption || '');
-      setSelEv(data.event?._id || null);
+      setSelectedEvent(data.event?._id || null);
       setIsLiked(data.likes?.includes(currentUser?._id) || false);
       setLikeCount(data.likes?.length || 0);
     } catch (e) {
@@ -58,17 +59,35 @@ export default function PostDetailsScreen() {
     }
   };
 
-  /* ─── fetch attended events (last-10-days first) ─────────── */
-  const fetchEvents = async (page = 1) => {
+  /* ─── fetch user's events for linking ───────────────────── */
+  const fetchUserEvents = async () => {
     try {
-      const { data } = await api.get(`/api/events/my-photo-events?page=${page}`);
-      if (page === 1) setEvents(data || []);
-      else setEvents(p => [...p, ...(data || [])]);
+      setEventsLoading(true);
+      // Get user's attending events + hosted events
+      const [attendingRes, hostedRes] = await Promise.all([
+        api.get(`/api/events?attendee=${currentUser._id}`),
+        api.get(`/api/events?host=${currentUser._id}`)
+      ]);
 
-      if (!data || data.length < 10) setEvEnd(true);
-      setEvPage(page);
+      const attending = attendingRes.data.events || attendingRes.data || [];
+      const hosted = hostedRes.data.events || hostedRes.data || [];
+
+      // Combine and remove duplicates
+      const allEvents = [...hosted, ...attending];
+      const uniqueEvents = allEvents.filter((event, index, self) => 
+        index === self.findIndex(e => e._id === event._id)
+      );
+
+      // Sort by date (most recent first)
+      const sortedEvents = uniqueEvents.sort((a, b) => 
+        new Date(b.time) - new Date(a.time)
+      );
+
+      setUserEvents(sortedEvents);
     } catch (e) {
-      console.error('fetch events:', e.response?.data || e);
+      console.error('Error fetching events:', e);
+    } finally {
+      setEventsLoading(false);
     }
   };
 
@@ -92,10 +111,54 @@ export default function PostDetailsScreen() {
     shareId: postId,
   });
 
+  const showPostOptions = () => {
+    if (!isOwner) return;
+
+    const options = ['Edit Post', 'Delete Post', 'Cancel'];
+    
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: options,
+          destructiveButtonIndex: 1,
+          cancelButtonIndex: 2,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) {
+            setShowEdit(true);
+            fetchUserEvents();
+          } else if (buttonIndex === 1) {
+            handleDeletePost();
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Post Options',
+        'Choose an action',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Edit Post', onPress: () => { setShowEdit(true); fetchUserEvents(); } },
+          { text: 'Delete Post', style: 'destructive', onPress: handleDeletePost }
+        ]
+      );
+    }
+  };
+
   const saveEdit = async () => {
     try {
-      await api.put(`/api/photos/${postId}`, { caption, eventId: selEvent });
-      setPost(p => ({ ...p, caption, event: selEvent ? { _id: selEvent } : null }));
+      await api.put(`/api/photos/${postId}`, { 
+        caption, 
+        eventId: selectedEvent 
+      });
+      
+      // Update local state
+      setPost(prev => ({ 
+        ...prev, 
+        caption, 
+        event: selectedEvent ? { _id: selectedEvent } : null 
+      }));
+      
       setShowEdit(false);
       Alert.alert('Success', 'Post updated successfully');
     } catch (e) {
@@ -108,48 +171,6 @@ export default function PostDetailsScreen() {
     Alert.alert(
       'Delete Post',
       'This action cannot be undone. Are you sure?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete(`/api/photos/${postId}`);
-              Alert.alert('Success', 'Post deleted successfully');
-              navigation.goBack();
-            } catch (e) {
-              console.error(e.response?.data || e);
-              Alert.alert('Error', 'Delete failed.');
-            }
-          }
-        },
-      ]
-    );
-  };
-
-  const postComment = async () => {
-    if (!newComment.trim()) return;
-    
-    try {
-      setCommentsLoading(true);
-      const { data } = await api.post(`/api/photos/comment/${postId}`, { 
-        text: newComment.trim() 
-      });
-      setPost(data);
-      setNewComment('');
-    } catch (e) { 
-      console.error('Comment error:', e.response?.data || e);
-      Alert.alert('Error', 'Failed to post comment');
-    } finally {
-      setCommentsLoading(false);
-    }
-  };
-
-  const handleDeleteComment = (commentId) => {
-    Alert.alert(
-      'Delete Comment',
-      'Are you sure you want to delete this comment?',
       [
         { text: 'Cancel', style: 'cancel' },
         { 
@@ -177,11 +198,7 @@ export default function PostDetailsScreen() {
     const isCommentOwner = comment.user?._id === currentUser?._id;
     const options = [];
     
-    if (isCommentOwner) {
-      options.push('Delete Comment');
-    }
-    
-    if (isOwner && !isCommentOwner) {
+    if (isCommentOwner || isOwner) {
       options.push('Delete Comment');
     }
     
@@ -201,7 +218,6 @@ export default function PostDetailsScreen() {
         }
       );
     } else {
-      // For Android, show Alert
       Alert.alert(
         'Comment Options',
         'What would you like to do?',
@@ -225,7 +241,7 @@ export default function PostDetailsScreen() {
       <View style={styles.commentItem}>
         <TouchableOpacity
           onPress={() => navigation.navigate('ProfileScreen', { userId: comment.user?._id })}
-          style={styles.commentAvatar}
+          style={styles.commentAvatarContainer}
         >
           <Image
             source={{
@@ -233,7 +249,7 @@ export default function PostDetailsScreen() {
                 ? `http://${API_BASE_URL}:3000${comment.user.profilePicture}`
                 : 'https://placehold.co/32x32.png?text=👤'
             }}
-            style={styles.avatarImage}
+            style={styles.commentAvatar}
           />
         </TouchableOpacity>
         
@@ -282,6 +298,19 @@ export default function PostDetailsScreen() {
             <Ionicons name="image-outline" size={64} color="#C7C7CC" />
           </View>
         )}
+        
+        {/* Three dots in top right corner */}
+        {isOwner && (
+          <TouchableOpacity 
+            style={styles.optionsButton}
+            onPress={showPostOptions}
+            activeOpacity={0.8}
+          >
+            <View style={styles.optionsButtonBackground}>
+              <Ionicons name="ellipsis-horizontal" size={20} color="#000000" />
+            </View>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Post Actions */}
@@ -295,29 +324,16 @@ export default function PostDetailsScreen() {
             />
           </TouchableOpacity>
           
+          {/* Like count next to heart */}
+          {likeCount > 0 && (
+            <Text style={styles.likeCount}>{likeCount}</Text>
+          )}
+          
           <TouchableOpacity onPress={sharePost} style={styles.actionButton}>
             <Ionicons name="share-outline" size={24} color="#000000" />
           </TouchableOpacity>
         </View>
-
-        {isOwner && (
-          <TouchableOpacity 
-            onPress={() => { setShowEdit(true); fetchEvents(1); }}
-            style={styles.actionButton}
-          >
-            <Ionicons name="ellipsis-horizontal" size={24} color="#000000" />
-          </TouchableOpacity>
-        )}
       </View>
-
-      {/* Like Count */}
-      {likeCount > 0 && (
-        <TouchableOpacity style={styles.likesContainer}>
-          <Text style={styles.likesText}>
-            {likeCount} {likeCount === 1 ? 'like' : 'likes'}
-          </Text>
-        </TouchableOpacity>
-      )}
 
       {/* Caption and Meta */}
       <View style={styles.captionContainer}>
@@ -330,21 +346,22 @@ export default function PostDetailsScreen() {
               source={{
                 uri: post.user?.profilePicture
                   ? `http://${API_BASE_URL}:3000${post.user.profilePicture}`
-                  : 'https://placehold.co/32x32.png?text=👤'
+                  : 'https://placehold.co/40x40.png?text=👤'
               }}
               style={styles.authorAvatar}
             />
-            <Text style={styles.authorUsername}>{post.user?.username || 'Unknown'}</Text>
+            <View style={styles.authorTextContainer}>
+              <Text style={styles.authorUsername}>{post.user?.username || 'Unknown'}</Text>
+              <Text style={styles.postTime}>
+                {new Date(post.uploadDate).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </Text>
+            </View>
           </TouchableOpacity>
-          
-          <Text style={styles.postTime}>
-            {new Date(post.uploadDate).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })}
-          </Text>
         </View>
 
         {post.caption && (
@@ -471,7 +488,7 @@ export default function PostDetailsScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* Edit Modal */}
+      {/* Improved Edit Modal */}
       <Modal transparent visible={showEdit} animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
@@ -485,7 +502,7 @@ export default function PostDetailsScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.modalContent}>
+            <ScrollView style={styles.modalContent}>
               <Text style={styles.modalLabel}>Caption</Text>
               <TextInput
                 multiline
@@ -497,44 +514,59 @@ export default function PostDetailsScreen() {
               />
 
               <Text style={styles.modalLabel}>Link to Event</Text>
-              {events.length === 0 ? (
+              <Text style={styles.modalSubLabel}>
+                Link this post to an event you've attended or hosted
+              </Text>
+              
+              {eventsLoading ? (
+                <ActivityIndicator size="small" color="#3797EF" style={styles.eventsLoader} />
+              ) : userEvents.length === 0 ? (
                 <Text style={styles.noEventsText}>
                   No events available to link
                 </Text>
               ) : (
-                <FlatList
-                  data={events}
-                  keyExtractor={e => e._id}
-                  renderItem={({ item }) => (
+                <View style={styles.eventsList}>
+                  {/* No Event Option */}
+                  <TouchableOpacity
+                    style={styles.eventOption}
+                    onPress={() => setSelectedEvent(null)}
+                  >
+                    <Ionicons
+                      name={selectedEvent === null ? 'radio-button-on' : 'radio-button-off'}
+                      size={20}
+                      color="#3797EF"
+                    />
+                    <View style={styles.eventOptionContent}>
+                      <Text style={styles.eventOptionTitle}>No Event</Text>
+                      <Text style={styles.eventOptionDate}>Don't link to any event</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* User Events */}
+                  {userEvents.map((event) => (
                     <TouchableOpacity
+                      key={event._id}
                       style={styles.eventOption}
-                      onPress={() => setSelEv(selEvent === item._id ? null : item._id)}
+                      onPress={() => setSelectedEvent(selectedEvent === event._id ? null : event._id)}
                     >
                       <Ionicons
-                        name={selEvent === item._id ? 'radio-button-on' : 'radio-button-off'}
+                        name={selectedEvent === event._id ? 'radio-button-on' : 'radio-button-off'}
                         size={20}
                         color="#3797EF"
                       />
                       <View style={styles.eventOptionContent}>
-                        <Text style={styles.eventOptionTitle}>{item.title}</Text>
+                        <Text style={styles.eventOptionTitle}>{event.title}</Text>
                         <Text style={styles.eventOptionDate}>
-                          {new Date(item.time).toLocaleDateString()}
+                          {new Date(event.time).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                          })}
                         </Text>
                       </View>
                     </TouchableOpacity>
-                  )}
-                  style={styles.eventsList}
-                  maxHeight={200}
-                />
-              )}
-
-              {!evEnd && events.length > 0 && (
-                <TouchableOpacity
-                  onPress={() => fetchEvents(evPage + 1)}
-                  style={styles.loadMoreButton}
-                >
-                  <Text style={styles.loadMoreText}>Load More Events</Text>
-                </TouchableOpacity>
+                  ))}
+                </View>
               )}
 
               <TouchableOpacity
@@ -544,7 +576,7 @@ export default function PostDetailsScreen() {
                 <Ionicons name="trash-outline" size={20} color="#FF3B30" />
                 <Text style={styles.deleteButtonText}>Delete Post</Text>
               </TouchableOpacity>
-            </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -631,6 +663,7 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 1,
     backgroundColor: '#F6F6F6',
+    position: 'relative',
   },
   postImage: {
     width: '100%',
@@ -641,6 +674,25 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  optionsButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    zIndex: 1,
+  },
+  optionsButtonBackground: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
 
   // Actions
@@ -653,21 +705,17 @@ const styles = StyleSheet.create({
   },
   leftActions: {
     flexDirection: 'row',
+    alignItems: 'center',
   },
   actionButton: {
     marginRight: 16,
     padding: 4,
   },
-
-  // Likes
-  likesContainer: {
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  likesText: {
-    fontSize: 14,
+  likeCount: {
+    fontSize: 16,
     fontWeight: '600',
     color: '#000000',
+    marginRight: 16,
   },
 
   // Caption
@@ -676,29 +724,31 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   authorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   authorInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   authorAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    marginRight: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 10, // Squared with curved edges
+    marginRight: 12,
+    backgroundColor: '#F6F6F6',
+  },
+  authorTextContainer: {
+    flex: 1,
   },
   authorUsername: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
     color: '#000000',
   },
   postTime: {
     fontSize: 12,
     color: '#8E8E93',
+    marginTop: 2,
   },
   captionText: {
     fontSize: 14,
@@ -738,13 +788,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     alignItems: 'flex-start',
   },
-  commentAvatar: {
+  commentAvatarContainer: {
     marginRight: 12,
   },
-  avatarImage: {
+  commentAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 8, // Squared with curved edges
+    backgroundColor: '#F6F6F6',
   },
   commentContent: {
     flex: 1,
@@ -817,8 +868,9 @@ const styles = StyleSheet.create({
   inputAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 8, // Squared with curved edges
     marginRight: 12,
+    backgroundColor: '#F6F6F6',
   },
   commentInput: {
     flex: 1,
@@ -878,6 +930,7 @@ const styles = StyleSheet.create({
     color: '#3797EF',
   },
   modalContent: {
+    flex: 1,
     padding: 20,
   },
   modalLabel: {
@@ -885,6 +938,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000000',
     marginBottom: 8,
+  },
+  modalSubLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 16,
   },
   modalInput: {
     borderWidth: 1,
@@ -894,22 +952,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     minHeight: 80,
     textAlignVertical: 'top',
-    marginBottom: 20,
+    marginBottom: 24,
+  },
+  eventsLoader: {
+    marginVertical: 20,
   },
   noEventsText: {
     fontSize: 14,
     color: '#8E8E93',
     fontStyle: 'italic',
     marginBottom: 20,
+    textAlign: 'center',
   },
   eventsList: {
-    maxHeight: 200,
-    marginBottom: 12,
+    marginBottom: 20,
   },
   eventOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    marginBottom: 8,
   },
   eventOptionContent: {
     marginLeft: 12,
@@ -923,16 +988,7 @@ const styles = StyleSheet.create({
   eventOptionDate: {
     fontSize: 12,
     color: '#8E8E93',
-  },
-  loadMoreButton: {
-    alignItems: 'center',
-    paddingVertical: 8,
-    marginBottom: 20,
-  },
-  loadMoreText: {
-    fontSize: 14,
-    color: '#3797EF',
-    fontWeight: '500',
+    marginTop: 2,
   },
   deleteButton: {
     flexDirection: 'row',

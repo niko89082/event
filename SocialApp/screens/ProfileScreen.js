@@ -1,9 +1,9 @@
-// screens/ProfileScreen.js - Redesigned with 3-tab system and improved privacy
-import React, { useEffect, useState, useContext } from 'react';
+// screens/ProfileScreen.js - Instagram-style Smooth Scrolling
+import React, { useEffect, useState, useContext, useRef } from 'react';
 import {
-  View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
+  View, Text, Image, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, SafeAreaView, StatusBar, Dimensions,
-  FlatList, RefreshControl
+  FlatList, RefreshControl, Animated
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -12,13 +12,15 @@ import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
-// Import components
+// Import simplified components
+import EventsTab from '../components/EventsTab';
 import SharedEventsTab from '../components/SharedEventsTab';
-import EventsTab from '../components/EventsTab'; // New combined events component
-import MemoriesTab from '../components/MemoriesTab'; // New memories component
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const Tab = createMaterialTopTabNavigator();
+
+// Constants for Instagram-like behavior
+const HEADER_HEIGHT = 300; // Height of profile info section
 
 export default function ProfileScreen() {
   const { params } = useRoute();
@@ -34,6 +36,11 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [hasRequested, setHasRequested] = useState(false);
+  const [activeTab, setActiveTab] = useState('Posts');
+
+  // Animation values for Instagram-like scrolling
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const listRefTab = useRef(null);
 
   // Set up navigation header
   useEffect(() => {
@@ -54,22 +61,13 @@ export default function ProfileScreen() {
       headerRight: () => (
         <View style={styles.headerRightContainer}>
           {isSelf && (
-            <>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('EventPrivacySettings')}
-                style={styles.headerButton}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="shield-outline" size={22} color="#000000" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('UserSettingsScreen')}
-                style={styles.headerButton}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="settings-outline" size={24} color="#000000" />
-              </TouchableOpacity>
-            </>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('UserSettingsScreen')}
+              style={styles.headerButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="settings-outline" size={24} color="#000000" />
+            </TouchableOpacity>
           )}
         </View>
       ),
@@ -103,6 +101,8 @@ export default function ProfileScreen() {
         navigation.goBack();
       } else if (error.response?.status === 403) {
         Alert.alert('Private Account', 'This account is private.');
+      } else if (error.response?.status === 401) {
+        Alert.alert('Authentication Error', 'Please log in again.');
       }
     } finally {
       setLoading(false);
@@ -234,6 +234,33 @@ export default function ProfileScreen() {
     );
   };
 
+  const renderTabBar = () => (
+    <View style={styles.tabBarContainer}>
+      <TouchableOpacity
+        style={[styles.tabBarItem, activeTab === 'Posts' && styles.activeTabBarItem]}
+        onPress={() => setActiveTab('Posts')}
+        activeOpacity={0.8}
+      >
+        <Ionicons 
+          name="grid-outline" 
+          size={24} 
+          color={activeTab === 'Posts' ? '#000000' : '#8E8E93'} 
+        />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.tabBarItem, activeTab === 'Events' && styles.activeTabBarItem]}
+        onPress={() => setActiveTab('Events')}
+        activeOpacity={0.8}
+      >
+        <Ionicons 
+          name="calendar-outline" 
+          size={24} 
+          color={activeTab === 'Events' ? '#000000' : '#8E8E93'} 
+        />
+      </TouchableOpacity>
+    </View>
+  );
+
   const renderPostGrid = ({ item }) => (
     <TouchableOpacity
       style={styles.postThumbnail}
@@ -244,7 +271,6 @@ export default function ProfileScreen() {
         source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
         style={styles.postImage}
       />
-      {/* Show event indicator if post is linked to an event */}
       {item.event && (
         <View style={styles.eventIndicator}>
           <Ionicons name="calendar" size={12} color="#FFFFFF" />
@@ -253,56 +279,65 @@ export default function ProfileScreen() {
     </TouchableOpacity>
   );
 
-  const PostsTab = () => {
-    if (!user.isPublic && !isSelf && !isFollowing) {
-      return (
-        <View style={styles.privateAccountContainer}>
-          <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
-          <Text style={styles.privateAccountTitle}>This account is private</Text>
-          <Text style={styles.privateAccountSubtitle}>
-            Follow this account to see their posts
-          </Text>
-        </View>
-      );
-    }
+  const renderTabContent = () => {
+    if (activeTab === 'Posts') {
+      if (!user.isPublic && !isSelf && !isFollowing) {
+        return (
+          <View style={styles.privateAccountContainer}>
+            <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
+            <Text style={styles.privateAccountTitle}>This account is private</Text>
+            <Text style={styles.privateAccountSubtitle}>
+              Follow this account to see their posts
+            </Text>
+          </View>
+        );
+      }
 
-    if (posts.length === 0) {
-      return (
-        <View style={styles.emptyPostsContainer}>
-          <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
-          <Text style={styles.emptyPostsTitle}>
-            {isSelf ? 'Share your first post' : 'No posts yet'}
-          </Text>
-          <Text style={styles.emptyPostsSubtitle}>
-            {isSelf
-              ? 'When you share photos, they\'ll appear on your profile.'
-              : 'When they share photos, they\'ll appear here.'
-            }
-          </Text>
-          {isSelf && (
-            <TouchableOpacity
-              style={styles.createPostButton}
-              onPress={() => navigation.navigate('CreatePickerScreen')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.createPostButtonText}>Create Post</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      );
-    }
+      if (posts.length === 0) {
+        return (
+          <View style={styles.emptyPostsContainer}>
+            <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
+            <Text style={styles.emptyPostsTitle}>
+              {isSelf ? 'Share your first post' : 'No posts yet'}
+            </Text>
+            <Text style={styles.emptyPostsSubtitle}>
+              {isSelf
+                ? 'When you share photos, they\'ll appear on your profile.'
+                : 'When they share photos, they\'ll appear here.'
+              }
+            </Text>
+            {isSelf && (
+              <TouchableOpacity
+                style={styles.createPostButton}
+                onPress={() => navigation.navigate('CreatePickerScreen')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.createPostButtonText}>Create Post</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        );
+      }
 
-    return (
-      <FlatList
-        data={posts}
-        numColumns={3}
-        keyExtractor={(item) => item._id}
-        renderItem={renderPostGrid}
-        contentContainerStyle={styles.postsGrid}
-        showsVerticalScrollIndicator={false}
-      />
-    );
+      return posts;
+    } else {
+      // Events tab content
+      return [];
+    }
   };
+
+  const renderContent = ({ item, index }) => {
+    if (activeTab === 'Posts') {
+      return renderPostGrid({ item });
+    }
+    return null;
+  };
+
+  const getItemLayout = (data, index) => ({
+    length: (SCREEN_WIDTH - 6) / 3,
+    offset: Math.floor(index / 3) * (SCREEN_WIDTH - 6) / 3,
+    index,
+  });
 
   if (loading && !user) {
     return (
@@ -325,179 +360,68 @@ export default function ProfileScreen() {
     );
   }
 
+  const tabContent = renderTabContent();
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      <ScrollView
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => fetchUserProfile(true)}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-          />
-        }
-        showsVerticalScrollIndicator={false}
-      >
-        {renderProfileHeader()}
-
-        {/* Tabs Container */}
-        <View style={styles.tabsContainer}>
-          <Tab.Navigator
-            screenOptions={{
-              tabBarActiveTintColor: '#000000',
-              tabBarInactiveTintColor: '#8E8E93',
-              tabBarIndicatorStyle: {
-                backgroundColor: '#000000',
-                height: 2,
-              },
-              tabBarStyle: {
-                backgroundColor: '#FFFFFF',
-                elevation: 0,
-                shadowOpacity: 0,
-                borderBottomWidth: 0.5,
-                borderBottomColor: '#E1E1E1',
-              },
-              tabBarLabelStyle: {
-                fontSize: 14,
-                fontWeight: '600',
-                textTransform: 'none',
-              },
-              tabBarPressColor: 'transparent',
-            }}
-          >
-            {/* Posts Tab - Always visible */}
-            <Tab.Screen
-              name="Posts"
-              component={PostsTab}
-              options={{
-                tabBarIcon: ({ color }) => (
-                  <Ionicons name="grid-outline" size={20} color={color} />
-                ),
-              }}
+      {activeTab === 'Events' ? (
+        // Events tab uses its own scrolling component
+        <View style={styles.eventsContainer}>
+          {renderProfileHeader()}
+          {renderTabBar()}
+          {isSelf ? (
+            <EventsTab 
+              navigation={navigation} 
+              userId={userId} 
+              isSelf={isSelf}
+              currentUserId={currentUser?._id}
             />
-            
-            {/* Events Tab - Shows shared events for others, all events for self */}
-            <Tab.Screen
-              name="Events"
-              children={() => (
-                isSelf ? (
-                  <EventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
-                ) : (
-                  <SharedEventsTab navigation={navigation} userId={userId} isSelf={isSelf} />
-                )
-              )}
-              options={{
-                tabBarIcon: ({ color }) => (
-                  <Ionicons name="calendar-outline" size={20} color={color} />
-                ),
-              }}
+          ) : (
+            <SharedEventsTab 
+              navigation={navigation} 
+              userId={userId} 
+              isSelf={isSelf} 
             />
-
-            {/* Third tab depends on user type */}
-            {isSelf ? (
-              // For current user: Memories tab (combines past events, photos, stats)
-              <Tab.Screen
-                name="Memories"
-                children={() => (
-                  <MemoriesTab navigation={navigation} userId={userId} isSelf={isSelf} />
-                )}
-                options={{
-                  tabBarIcon: ({ color }) => (
-                    <Ionicons name="time-outline" size={20} color={color} />
-                  ),
-                }}
-              />
-            ) : (
-              // For other users: Tagged tab (photos they're tagged in)
-              <Tab.Screen
-                name="Tagged"
-                children={() => (
-                  <TaggedTab navigation={navigation} userId={userId} />
-                )}
-                options={{
-                  tabBarIcon: ({ color }) => (
-                    <Ionicons name="person-outline" size={20} color={color} />
-                  ),
-                }}
-              />
-            )}
-          </Tab.Navigator>
+          )}
         </View>
-      </ScrollView>
+      ) : (
+        // Posts tab uses Instagram-style FlatList
+        <FlatList
+          ref={listRefTab}
+          data={Array.isArray(tabContent) ? tabContent : []}
+          renderItem={renderContent}
+          keyExtractor={(item) => item._id}
+          numColumns={3}
+          ListHeaderComponent={() => (
+            <View>
+              {renderProfileHeader()}
+              {renderTabBar()}
+            </View>
+          )}
+          ListEmptyComponent={() => tabContent}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: false }
+          )}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchUserProfile(true)}
+              tintColor="#3797EF"
+              colors={["#3797EF"]}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={Array.isArray(tabContent) && tabContent.length > 0 ? styles.postsGrid : {}}
+          getItemLayout={Array.isArray(tabContent) ? getItemLayout : undefined}
+          scrollEventThrottle={16}
+        />
+      )}
     </SafeAreaView>
   );
 }
-
-// Tagged Tab Component for other users
-const TaggedTab = ({ navigation, userId }) => {
-  const [taggedPosts, setTaggedPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchTaggedPosts();
-  }, [userId]);
-
-  const fetchTaggedPosts = async () => {
-    try {
-      const { data } = await api.get(`/api/profile/${userId}/tagged`);
-      setTaggedPosts(data || []);
-    } catch (error) {
-      console.error('Error fetching tagged posts:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderTaggedPost = ({ item }) => (
-    <TouchableOpacity
-      style={styles.postThumbnail}
-      onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
-      activeOpacity={0.9}
-    >
-      <Image
-        source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
-        style={styles.postImage}
-      />
-      <View style={styles.taggedIndicator}>
-        <Ionicons name="person" size={12} color="#FFFFFF" />
-      </View>
-    </TouchableOpacity>
-  );
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3797EF" />
-      </View>
-    );
-  }
-
-  if (taggedPosts.length === 0) {
-    return (
-      <View style={styles.emptyPostsContainer}>
-        <Ionicons name="person-outline" size={64} color="#C7C7CC" />
-        <Text style={styles.emptyPostsTitle}>No tagged posts</Text>
-        <Text style={styles.emptyPostsSubtitle}>
-          When they're tagged in photos, they'll appear here.
-        </Text>
-      </View>
-    );
-  }
-
-  return (
-    <FlatList
-      data={taggedPosts}
-      numColumns={3}
-      keyExtractor={(item) => item._id}
-      renderItem={renderTaggedPost}
-      contentContainerStyle={styles.postsGrid}
-      showsVerticalScrollIndicator={false}
-    />
-  );
-};
 
 const styles = StyleSheet.create({
   container: {
@@ -548,17 +472,12 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 4,
   },
-  scrollView: {
-    flex: 1,
-  },
 
   // Profile Header
   profileHeader: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,
     paddingVertical: 20,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
   },
   profileImageSection: {
     flexDirection: 'row',
@@ -660,10 +579,27 @@ const styles = StyleSheet.create({
     borderColor: '#E1E8F7',
   },
 
-  // Tabs
-  tabsContainer: {
+  // Tab Bar
+  tabBarContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  tabBarItem: {
     flex: 1,
-    height: 500, // Increased height for better content display
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTabBarItem: {
+    borderBottomColor: '#000000',
+  },
+
+  // Events Container
+  eventsContainer: {
+    flex: 1,
   },
 
   // Posts Grid
@@ -692,17 +628,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  taggedIndicator: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(52, 199, 89, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
 
   // Empty States
   emptyPostsContainer: {
@@ -710,7 +635,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingVertical: 60,
+    paddingVertical: 100,
   },
   emptyPostsTitle: {
     fontSize: 20,
@@ -745,7 +670,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingVertical: 60,
+    paddingVertical: 100,
   },
   privateAccountTitle: {
     fontSize: 18,

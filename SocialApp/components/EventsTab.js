@@ -1,42 +1,33 @@
-// components/EventsTab.js - Combined Events View for Current User
+// components/EventsTab.js - Updated for Current User (Shared + Past Events)
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Alert, Modal
+  ActivityIndicator, RefreshControl, Alert, Modal, ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import EventCard from './EventCard';
+import PastEventsTab from './PastEventsTab'; // Import the existing past events component
 
-const EVENT_FILTERS = [
-  { key: 'all', label: 'All Events', icon: 'calendar-outline' },
-  { key: 'upcoming', label: 'Upcoming', icon: 'time-outline' },
-  { key: 'hosted', label: 'Hosting', icon: 'star-outline' },
-  { key: 'attending', label: 'Attending', icon: 'checkmark-circle-outline' },
-  { key: 'shared', label: 'Shared', icon: 'share-outline' }
+const EVENT_SECTIONS = [
+  { key: 'shared', label: 'Shared Events', icon: 'share-outline' },
+  { key: 'past', label: 'Past Events', icon: 'time-outline' }
 ];
 
 export default function EventsTab({ navigation, userId, isSelf, currentUserId }) {
-  const [events, setEvents] = useState([]);
+  const [activeSection, setActiveSection] = useState('shared');
+  const [sharedEvents, setSharedEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [showFilters, setShowFilters] = useState(false);
-  const [stats, setStats] = useState({
-    total: 0,
-    upcoming: 0,
-    hosted: 0,
-    attending: 0,
-    shared: 0
-  });
+  const [showManageModal, setShowManageModal] = useState(false);
 
   useEffect(() => {
-    if (isSelf) {
-      fetchUserEvents();
+    if (isSelf && activeSection === 'shared') {
+      fetchSharedEvents();
     }
-  }, [activeFilter, isSelf]);
+  }, [activeSection, isSelf]);
 
-  const fetchUserEvents = async (isRefresh = false) => {
+  const fetchSharedEvents = async (isRefresh = false) => {
     try {
       if (isRefresh) {
         setRefreshing(true);
@@ -44,49 +35,38 @@ export default function EventsTab({ navigation, userId, isSelf, currentUserId })
         setLoading(true);
       }
 
-      let endpoint = '';
-      const now = new Date().toISOString();
+      // Get user's shared events
+      const { data } = await api.get(`/api/profile/${userId}/shared-events`);
+      const shared = data.sharedEvents || [];
 
-      switch (activeFilter) {
-        case 'upcoming':
-          endpoint = `/api/events?userId=${userId}&upcoming=true`;
-          break;
-        case 'hosted':
-          endpoint = `/api/events?host=${userId}`;
-          break;
-        case 'attending':
-          endpoint = `/api/events?attendee=${userId}`;
-          break;
-        case 'shared':
-          endpoint = `/api/profile/${userId}/shared-events`;
-          break;
-        default:
-          endpoint = `/api/events?userId=${userId}`;
-      }
+      // Get user's upcoming hosted events (with visibility controls)
+      const upcomingResponse = await api.get(`/api/events?host=${userId}&upcoming=true`);
+      const upcomingHosted = upcomingResponse.data.events || upcomingResponse.data || [];
 
-      const { data } = await api.get(endpoint);
-      
-      let eventsList = [];
-      if (activeFilter === 'shared') {
-        eventsList = data.sharedEvents || [];
-      } else {
-        eventsList = data.events || data || [];
-      }
+      // Combine shared events + upcoming hosted events
+      // Remove duplicates (in case hosted event is also shared)
+      const sharedIds = new Set(shared.map(e => e._id));
+      const uniqueUpcoming = upcomingHosted.filter(e => !sharedIds.has(e._id));
 
-      // Add user relationship metadata
-      const eventsWithMeta = eventsList.map(event => ({
+      // Mark events as shared or hosted
+      const markedShared = shared.map(event => ({
         ...event,
-        userRelation: {
-          isHost: String(event.host?._id || event.host) === String(userId),
-          isAttending: event.attendees?.includes(userId) || false,
-          isShared: event.isShared || false
-        }
+        isSharedEvent: true,
+        isHostedEvent: String(event.host?._id || event.host) === String(userId)
       }));
 
-      setEvents(eventsWithMeta);
-      
-      // Calculate stats
-      calculateStats(eventsWithMeta);
+      const markedHosted = uniqueUpcoming.map(event => ({
+        ...event,
+        isSharedEvent: false,
+        isHostedEvent: true,
+        canHide: true // Show hide option for hosted events
+      }));
+
+      const allEvents = [...markedShared, ...markedHosted].sort(
+        (a, b) => new Date(a.time) - new Date(b.time)
+      );
+
+      setSharedEvents(allEvents);
 
     } catch (error) {
       console.error('Error fetching events:', error);
@@ -97,35 +77,25 @@ export default function EventsTab({ navigation, userId, isSelf, currentUserId })
     }
   };
 
-  const calculateStats = (eventsList) => {
-    const now = new Date();
-    const newStats = {
-      total: eventsList.length,
-      upcoming: eventsList.filter(e => new Date(e.time) > now).length,
-      hosted: eventsList.filter(e => e.userRelation?.isHost).length,
-      attending: eventsList.filter(e => e.userRelation?.isAttending && !e.userRelation?.isHost).length,
-      shared: eventsList.filter(e => e.userRelation?.isShared).length
-    };
-    setStats(newStats);
-  };
-
   const handleEventAction = async (event, action) => {
     try {
       switch (action) {
-        case 'attend':
-          await api.post(`/api/events/attend/${event._id}`);
-          break;
-        case 'leave':
-          await api.delete(`/api/events/attend/${event._id}`);
-          break;
         case 'share':
-          await toggleEventSharing(event._id, !event.userRelation?.isShared);
+          await toggleEventSharing(event._id, !event.isSharedEvent);
           break;
         case 'hide':
           await hideEventFromProfile(event._id);
           break;
+        case 'edit':
+          navigation.navigate('EditEventScreen', { eventId: event._id });
+          return;
+        case 'attendees':
+          navigation.navigate('AttendeeListScreen', { eventId: event._id });
+          return;
       }
-      fetchUserEvents(true);
+      
+      // Refresh the list after action
+      fetchSharedEvents(true);
     } catch (error) {
       console.error('Event action error:', error);
       Alert.alert('Error', 'Failed to perform action');
@@ -153,287 +123,296 @@ export default function EventsTab({ navigation, userId, isSelf, currentUserId })
 
   const hideEventFromProfile = async (eventId) => {
     try {
-      await api.put(`/api/events/${eventId}/visibility`, { showOnProfile: false });
+      // This would require a new API endpoint to hide events from profile
+      await api.put(`/api/events/${eventId}/profile-visibility`, { showOnProfile: false });
     } catch (error) {
       throw error;
     }
   };
 
-  const renderFilterBar = () => (
-    <View style={styles.filterBar}>
-      <View style={styles.activeFilterContainer}>
-        <View style={styles.activeFilter}>
+  const renderSectionTabs = () => (
+    <View style={styles.sectionTabs}>
+      {EVENT_SECTIONS.map(section => (
+        <TouchableOpacity
+          key={section.key}
+          style={[
+            styles.sectionTab,
+            activeSection === section.key && styles.activeSectionTab
+          ]}
+          onPress={() => setActiveSection(section.key)}
+          activeOpacity={0.8}
+        >
           <Ionicons 
-            name={EVENT_FILTERS.find(f => f.key === activeFilter)?.icon || 'calendar-outline'} 
-            size={16} 
-            color="#3797EF" 
+            name={section.icon} 
+            size={18} 
+            color={activeSection === section.key ? '#FFFFFF' : '#8E8E93'} 
           />
-          <Text style={styles.activeFilterText}>
-            {EVENT_FILTERS.find(f => f.key === activeFilter)?.label}
+          <Text style={[
+            styles.sectionTabText,
+            activeSection === section.key && styles.activeSectionTabText
+          ]}>
+            {section.label}
           </Text>
-          <Text style={styles.filterCount}>({stats[activeFilter] || stats.total})</Text>
-        </View>
-      </View>
-      
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  const renderManageButton = () => (
+    <View style={styles.manageContainer}>
       <TouchableOpacity
-        style={styles.filterButton}
-        onPress={() => setShowFilters(true)}
+        style={styles.manageButton}
+        onPress={() => setShowManageModal(true)}
         activeOpacity={0.8}
       >
-        <Ionicons name="options-outline" size={20} color="#3797EF" />
+        <Ionicons name="settings-outline" size={18} color="#3797EF" />
+        <Text style={styles.manageButtonText}>Manage Events</Text>
       </TouchableOpacity>
     </View>
   );
 
-  const renderFiltersModal = () => (
+  const renderManageModal = () => (
     <Modal
-      visible={showFilters}
+      visible={showManageModal}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={() => setShowFilters(false)}
+      onRequestClose={() => setShowManageModal(false)}
     >
-      <View style={styles.filtersContainer}>
-        <View style={styles.filtersHeader}>
-          <TouchableOpacity onPress={() => setShowFilters(false)}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.filtersTitle}>Filter Events</Text>
-          <TouchableOpacity onPress={() => setShowFilters(false)}>
-            <Text style={styles.doneText}>Done</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.filtersContent}>
-          {EVENT_FILTERS.map(filter => (
-            <TouchableOpacity
-              key={filter.key}
-              style={[
-                styles.filterOption,
-                activeFilter === filter.key && styles.selectedFilterOption
-              ]}
-              onPress={() => {
-                setActiveFilter(filter.key);
-                setShowFilters(false);
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons 
-                name={filter.icon} 
-                size={20} 
-                color={activeFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
-              />
-              <Text style={[
-                styles.filterOptionText,
-                activeFilter === filter.key && styles.selectedFilterOptionText
-              ]}>
-                {filter.label}
-              </Text>
-              <Text style={[
-                styles.filterOptionCount,
-                activeFilter === filter.key && styles.selectedFilterOptionText
-              ]}>
-                {stats[filter.key] || (filter.key === 'all' ? stats.total : 0)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={styles.quickActions}>
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Manage Events</Text>
           <TouchableOpacity
-            style={styles.quickAction}
-            onPress={() => {
-              setShowFilters(false);
-              navigation.navigate('CreateEventScreen');
-            }}
-            activeOpacity={0.8}
+            onPress={() => setShowManageModal(false)}
+            style={styles.modalClose}
           >
-            <Ionicons name="add-circle-outline" size={24} color="#3797EF" />
-            <Text style={styles.quickActionText}>Create Event</Text>
+            <Ionicons name="close" size={24} color="#8E8E93" />
           </TouchableOpacity>
-
+        </View>
+        
+        <ScrollView style={styles.modalContent}>
           <TouchableOpacity
-            style={styles.quickAction}
+            style={styles.manageOption}
             onPress={() => {
-              setShowFilters(false);
+              setShowManageModal(false);
               navigation.navigate('SelectShareableEventsScreen', { userId });
             }}
             activeOpacity={0.8}
           >
-            <Ionicons name="share-outline" size={24} color="#3797EF" />
-            <Text style={styles.quickActionText}>Manage Sharing</Text>
+            <View style={styles.manageOptionIcon}>
+              <Ionicons name="share-outline" size={24} color="#3797EF" />
+            </View>
+            <View style={styles.manageOptionContent}>
+              <Text style={styles.manageOptionTitle}>Share Events</Text>
+              <Text style={styles.manageOptionSubtitle}>
+                Choose which events appear publicly on your profile
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
           </TouchableOpacity>
-        </View>
+
+          <TouchableOpacity
+            style={styles.manageOption}
+            onPress={() => {
+              setShowManageModal(false);
+              navigation.navigate('EventVisibilitySettings', { userId });
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.manageOptionIcon}>
+              <Ionicons name="eye-outline" size={24} color="#FF9500" />
+            </View>
+            <View style={styles.manageOptionContent}>
+              <Text style={styles.manageOptionTitle}>Event Visibility</Text>
+              <Text style={styles.manageOptionSubtitle}>
+                Control how your hosted events appear to others
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.manageOption}
+            onPress={() => {
+              setShowManageModal(false);
+              navigation.navigate('CreateEventScreen');
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.manageOptionIcon}>
+              <Ionicons name="add-circle-outline" size={24} color="#34C759" />
+            </View>
+            <View style={styles.manageOptionContent}>
+              <Text style={styles.manageOptionTitle}>Create New Event</Text>
+              <Text style={styles.manageOptionSubtitle}>
+                Host a new event for your community
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+          </TouchableOpacity>
+        </ScrollView>
       </View>
     </Modal>
   );
 
-  const renderEventItem = ({ item }) => (
+  const renderSharedEventItem = ({ item }) => (
     <View style={styles.eventWrapper}>
       <EventCard
         event={item}
-        currentUserId={userId}
+        currentUserId={currentUserId}
         navigation={navigation}
-        onAttend={() => handleEventAction(item, 'attend')}
-        showActions={true}
+        onAttend={() => {}} // No attend action needed for own events
+        showActions={false}
       />
       
-      {/* Event Management Actions for hosted events */}
-      {item.userRelation?.isHost && (
-        <View style={styles.eventActions}>
+      {/* Event Management Actions */}
+      <View style={styles.eventActions}>
+        {/* Share/Unshare Toggle */}
+        <TouchableOpacity
+          style={[
+            styles.eventAction,
+            item.isSharedEvent && styles.eventActionActive
+          ]}
+          onPress={() => handleEventAction(item, 'share')}
+          activeOpacity={0.8}
+        >
+          <Ionicons 
+            name={item.isSharedEvent ? "eye" : "eye-off"} 
+            size={16} 
+            color={item.isSharedEvent ? "#34C759" : "#8E8E93"} 
+          />
+          <Text style={[
+            styles.eventActionText,
+            item.isSharedEvent && styles.eventActionTextActive
+          ]}>
+            {item.isSharedEvent ? 'Shared' : 'Share'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Edit (for hosted events) */}
+        {item.isHostedEvent && (
           <TouchableOpacity
             style={styles.eventAction}
-            onPress={() => navigation.navigate('EditEventScreen', { eventId: item._id })}
+            onPress={() => handleEventAction(item, 'edit')}
             activeOpacity={0.8}
           >
             <Ionicons name="create-outline" size={16} color="#3797EF" />
             <Text style={styles.eventActionText}>Edit</Text>
           </TouchableOpacity>
+        )}
 
+        {/* Attendees (for hosted events) */}
+        {item.isHostedEvent && (
           <TouchableOpacity
             style={styles.eventAction}
-            onPress={() => handleEventAction(item, 'share')}
-            activeOpacity={0.8}
-          >
-            <Ionicons 
-              name={item.userRelation?.isShared ? "eye" : "eye-off"} 
-              size={16} 
-              color={item.userRelation?.isShared ? "#34C759" : "#8E8E93"} 
-            />
-            <Text style={[
-              styles.eventActionText,
-              item.userRelation?.isShared && styles.eventActionTextActive
-            ]}>
-              {item.userRelation?.isShared ? 'Shared' : 'Share'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.eventAction}
-            onPress={() => navigation.navigate('AttendeeListScreen', { eventId: item._id })}
+            onPress={() => handleEventAction(item, 'attendees')}
             activeOpacity={0.8}
           >
             <Ionicons name="people-outline" size={16} color="#3797EF" />
-            <Text style={styles.eventActionText}>Attendees</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Actions for attending events */}
-      {item.userRelation?.isAttending && !item.userRelation?.isHost && (
-        <View style={styles.eventActions}>
-          <TouchableOpacity
-            style={styles.eventAction}
-            onPress={() => handleEventAction(item, 'leave')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="exit-outline" size={16} color="#FF3B30" />
-            <Text style={[styles.eventActionText, { color: '#FF3B30' }]}>Leave</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.eventAction}
-            onPress={() => handleEventAction(item, 'share')}
-            activeOpacity={0.8}
-          >
-            <Ionicons 
-              name={item.userRelation?.isShared ? "eye" : "eye-off"} 
-              size={16} 
-              color={item.userRelation?.isShared ? "#34C759" : "#8E8E93"} 
-            />
-            <Text style={[
-              styles.eventActionText,
-              item.userRelation?.isShared && styles.eventActionTextActive
-            ]}>
-              {item.userRelation?.isShared ? 'Shared' : 'Share'}
+            <Text style={styles.eventActionText}>
+              {item.attendees?.length || 0}
             </Text>
           </TouchableOpacity>
-        </View>
-      )}
+        )}
+
+        {/* Hide (for hosted events that aren't shared) */}
+        {item.canHide && !item.isSharedEvent && (
+          <TouchableOpacity
+            style={styles.eventAction}
+            onPress={() => handleEventAction(item, 'hide')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="eye-off-outline" size={16} color="#FF3B30" />
+            <Text style={[styles.eventActionText, { color: '#FF3B30' }]}>Hide</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 
-  const renderEmptyState = () => {
-    const filter = EVENT_FILTERS.find(f => f.key === activeFilter);
-    
-    return (
-      <View style={styles.emptyState}>
-        <View style={styles.emptyIconContainer}>
-          <Ionicons name={filter?.icon || 'calendar-outline'} size={64} color="#C7C7CC" />
+  const renderSharedEventsContent = () => {
+    if (loading) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading events...</Text>
         </View>
-        <Text style={styles.emptyTitle}>
-          {activeFilter === 'hosted' && 'No hosted events'}
-          {activeFilter === 'attending' && 'No attending events'}
-          {activeFilter === 'upcoming' && 'No upcoming events'}
-          {activeFilter === 'shared' && 'No shared events'}
-          {activeFilter === 'all' && 'No events yet'}
-        </Text>
-        <Text style={styles.emptySubtitle}>
-          {activeFilter === 'hosted' && 'Events you create will appear here'}
-          {activeFilter === 'attending' && 'Events you join will appear here'}
-          {activeFilter === 'upcoming' && 'Your future events will appear here'}
-          {activeFilter === 'shared' && 'Events you choose to share publicly will appear here'}
-          {activeFilter === 'all' && 'Your events and activities will appear here'}
-        </Text>
-        
-        {(activeFilter === 'all' || activeFilter === 'hosted') && (
-          <TouchableOpacity
-            style={styles.createEventButton}
-            onPress={() => navigation.navigate('CreateEventScreen')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="add" size={20} color="#FFFFFF" />
-            <Text style={styles.createEventButtonText}>Create Event</Text>
-          </TouchableOpacity>
-        )}
+      );
+    }
 
-        {activeFilter === 'shared' && (
-          <TouchableOpacity
-            style={styles.manageButton}
-            onPress={() => navigation.navigate('SelectShareableEventsScreen', { userId })}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="settings" size={20} color="#3797EF" />
-            <Text style={styles.manageButtonText}>Manage Sharing</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
+    if (sharedEvents.length === 0) {
+      return (
+        <View style={styles.emptyState}>
+          <View style={styles.emptyIconContainer}>
+            <Ionicons name="share-outline" size={64} color="#C7C7CC" />
+          </View>
+          <Text style={styles.emptyTitle}>No shared events</Text>
+          <Text style={styles.emptySubtitle}>
+            Choose which events to display publicly on your profile, or create your first event.
+          </Text>
+          
+          <View style={styles.emptyActions}>
+            <TouchableOpacity
+              style={styles.primaryEmptyButton}
+              onPress={() => navigation.navigate('SelectShareableEventsScreen', { userId })}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="share" size={20} color="#FFFFFF" />
+              <Text style={styles.primaryEmptyButtonText}>Share Events</Text>
+            </TouchableOpacity>
 
-  if (loading) {
+            <TouchableOpacity
+              style={styles.secondaryEmptyButton}
+              onPress={() => navigation.navigate('CreateEventScreen')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add" size={20} color="#3797EF" />
+              <Text style={styles.secondaryEmptyButtonText}>Create Event</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3797EF" />
-        <Text style={styles.loadingText}>Loading events...</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      {renderFilterBar()}
-      
       <FlatList
-        data={events}
+        data={sharedEvents}
         keyExtractor={item => item._id}
-        renderItem={renderEventItem}
-        ListEmptyComponent={renderEmptyState}
+        renderItem={renderSharedEventItem}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => fetchUserEvents(true)}
+            onRefresh={() => fetchSharedEvents(true)}
             tintColor="#3797EF"
             colors={["#3797EF"]}
           />
         }
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.listContainer,
-          events.length === 0 && styles.emptyListContainer
-        ]}
+        contentContainerStyle={styles.listContainer}
       />
+    );
+  };
 
-      {renderFiltersModal()}
+  if (!isSelf) {
+    return null; // This component is only for the current user
+  }
+
+  return (
+    <View style={styles.container}>
+      {renderSectionTabs()}
+      {renderManageButton()}
+      
+      {activeSection === 'shared' ? (
+        renderSharedEventsContent()
+      ) : (
+        // Use the existing PastEventsTab component
+        <PastEventsTab 
+          navigation={navigation} 
+          userId={userId} 
+          isSelf={isSelf} 
+        />
+      )}
+
+      {renderManageModal()}
     </View>
   );
 }
@@ -455,51 +434,68 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
 
-  // Filter Bar
-  filterBar: {
+  // Section Tabs
+  sectionTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
+    padding: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  sectionTab: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  activeSectionTab: {
+    backgroundColor: '#3797EF',
+  },
+  sectionTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#8E8E93',
+    marginLeft: 8,
+  },
+  activeSectionTabText: {
+    color: '#FFFFFF',
+  },
+
+  // Manage Button
+  manageContainer: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
   },
-  activeFilterContainer: {
-    flex: 1,
-  },
-  activeFilter: {
+  manageButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#F0F8FF',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    alignSelf: 'flex-start',
+    borderRadius: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#E1E8F7',
   },
-  activeFilterText: {
+  manageButtonText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#3797EF',
     marginLeft: 8,
   },
-  filterCount: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginLeft: 4,
-  },
-  filterButton: {
-    padding: 8,
-    borderRadius: 8,
-  },
 
   // Events List
   listContainer: {
+    paddingHorizontal: 16,
     paddingBottom: 20,
-  },
-  emptyListContainer: {
-    flexGrow: 1,
   },
   eventWrapper: {
     marginBottom: 8,
@@ -507,7 +503,6 @@ const styles = StyleSheet.create({
   eventActions: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
     paddingHorizontal: 16,
     paddingVertical: 12,
     marginTop: -8,
@@ -525,23 +520,29 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  eventActionActive: {
+    backgroundColor: '#F0F9F0',
+    borderColor: '#34C759',
   },
   eventActionText: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#3797EF',
+    color: '#8E8E93',
     marginLeft: 6,
   },
   eventActionTextActive: {
     color: '#34C759',
   },
 
-  // Filters Modal
-  filtersContainer: {
+  // Manage Modal
+  modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  filtersHeader: {
+  modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -550,71 +551,49 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  cancelText: {
-    fontSize: 16,
-    color: '#8E8E93',
-  },
-  filtersTitle: {
+  modalTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#000000',
   },
-  doneText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3797EF',
+  modalClose: {
+    padding: 8,
   },
-  filtersContent: {
+  modalContent: {
     flex: 1,
     paddingHorizontal: 20,
     paddingTop: 20,
   },
-  filterOption: {
+  manageOption: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    marginBottom: 8,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
   },
-  selectedFilterOption: {
-    backgroundColor: '#3797EF',
+  manageOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
   },
-  filterOptionText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000000',
-    marginLeft: 12,
+  manageOptionContent: {
     flex: 1,
   },
-  selectedFilterOptionText: {
-    color: '#FFFFFF',
-  },
-  filterOptionCount: {
-    fontSize: 14,
+  manageOptionTitle: {
+    fontSize: 16,
     fontWeight: '600',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  manageOptionSubtitle: {
+    fontSize: 14,
     color: '#8E8E93',
-  },
-
-  // Quick Actions
-  quickActions: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    borderTopWidth: 0.5,
-    borderTopColor: '#E1E1E1',
-    justifyContent: 'space-around',
-  },
-  quickAction: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  quickActionText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#3797EF',
-    marginTop: 8,
+    lineHeight: 18,
   },
 
   // Empty State
@@ -647,7 +626,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 32,
   },
-  createEventButton: {
+  emptyActions: {
+    gap: 12,
+    alignItems: 'center',
+  },
+  primaryEmptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#3797EF',
@@ -660,13 +643,13 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  createEventButtonText: {
+  primaryEmptyButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 8,
   },
-  manageButton: {
+  secondaryEmptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0F8FF',
@@ -676,7 +659,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
   },
-  manageButtonText: {
+  secondaryEmptyButtonText: {
     color: '#3797EF',
     fontSize: 16,
     fontWeight: '600',
