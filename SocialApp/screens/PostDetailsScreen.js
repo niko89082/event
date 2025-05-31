@@ -1,4 +1,4 @@
-// screens/PostDetailsScreen.js - Complete Implementation
+// screens/PostDetailsScreen.js - Fixed Original Implementation
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -100,6 +100,29 @@ export default function PostDetailsScreen() {
   const isOwner = post?.user?._id === currentUser?._id;
   const imgPath = post?.paths?.[0] || null;
   const imgURL = imgPath ? `http://${API_BASE_URL}:3000${imgPath}` : null;
+
+  // Helper function to get profile picture URL with better error handling
+  const getProfilePictureUrl = (user) => {
+    if (!user) {
+      return 'https://placehold.co/40x40.png?text=👤';
+    }
+
+    if (!user.profilePicture) {
+      return 'https://placehold.co/40x40.png?text=👤';
+    }
+    
+    // Handle both relative and absolute URLs
+    if (user.profilePicture.startsWith('http')) {
+      return user.profilePicture;
+    }
+    
+    // Ensure the path starts with /
+    const path = user.profilePicture.startsWith('/') 
+      ? user.profilePicture 
+      : `/${user.profilePicture}`;
+    
+    return `http://${API_BASE_URL}:3000${path}`;
+  };
 
   const handleLike = async () => {
     try {
@@ -293,12 +316,11 @@ export default function PostDetailsScreen() {
           style={styles.commentAvatarContainer}
         >
           <Image
-            source={{
-              uri: comment.user?.profilePicture
-                ? `http://${API_BASE_URL}:3000${comment.user.profilePicture}`
-                : 'https://placehold.co/32x32.png?text=👤'
-            }}
+            source={{ uri: getProfilePictureUrl(comment.user) }}
             style={styles.commentAvatar}
+            onError={(error) => {
+              console.log('Comment avatar load error:', error);
+            }}
           />
         </TouchableOpacity>
         
@@ -347,19 +369,6 @@ export default function PostDetailsScreen() {
             <Ionicons name="image-outline" size={64} color="#C7C7CC" />
           </View>
         )}
-        
-        {/* Three dots in top right corner */}
-        {isOwner && (
-          <TouchableOpacity 
-            style={styles.optionsButton}
-            onPress={showPostOptions}
-            activeOpacity={0.8}
-          >
-            <View style={styles.optionsButtonBackground}>
-              <Ionicons name="ellipsis-horizontal" size={20} color="#000000" />
-            </View>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* Post Actions */}
@@ -392,12 +401,11 @@ export default function PostDetailsScreen() {
             style={styles.authorInfo}
           >
             <Image
-              source={{
-                uri: post.user?.profilePicture
-                  ? `http://${API_BASE_URL}:3000${post.user.profilePicture}`
-                  : 'https://placehold.co/40x40.png?text=👤'
-              }}
+              source={{ uri: getProfilePictureUrl(post.user) }}
               style={styles.authorAvatar}
+              onError={(error) => {
+                console.log('Author avatar load error:', error);
+              }}
             />
             <View style={styles.authorTextContainer}>
               <Text style={styles.authorUsername}>{post.user?.username || 'Unknown'}</Text>
@@ -473,7 +481,16 @@ export default function PostDetailsScreen() {
           <Ionicons name="chevron-back" size={28} color="#000000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Post</Text>
-        <View style={styles.headerSpacer} />
+        <View style={styles.headerRight}>
+          {isOwner && (
+            <TouchableOpacity
+              onPress={showPostOptions}
+              style={styles.headerButton}
+            >
+              <Ionicons name="ellipsis-horizontal" size={24} color="#000000" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <KeyboardAvoidingView 
@@ -500,12 +517,11 @@ export default function PostDetailsScreen() {
         {/* Comment Input */}
         <View style={styles.commentInputContainer}>
           <Image
-            source={{
-              uri: currentUser?.profilePicture
-                ? `http://${API_BASE_URL}:3000${currentUser.profilePicture}`
-                : 'https://placehold.co/32x32.png?text=👤'
-            }}
+            source={{ uri: getProfilePictureUrl(currentUser) }}
             style={styles.inputAvatar}
+            onError={(error) => {
+              console.log('Input avatar load error:', error);
+            }}
           />
           <TextInput
             value={newComment}
@@ -537,7 +553,7 @@ export default function PostDetailsScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* Improved Edit Modal */}
+      {/* Edit Modal */}
       <Modal transparent visible={showEdit} animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
@@ -677,6 +693,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 0.5,
@@ -686,14 +703,13 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   headerTitle: {
-    flex: 1,
     fontSize: 18,
     fontWeight: '700',
     color: '#000000',
-    textAlign: 'center',
   },
-  headerSpacer: {
-    width: 36,
+  headerRight: {
+    minWidth: 36,
+    alignItems: 'flex-end',
   },
 
   // Content
@@ -723,25 +739,6 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  optionsButton: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    zIndex: 1,
-  },
-  optionsButtonBackground: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
 
   // Actions
@@ -782,7 +779,7 @@ const styles = StyleSheet.create({
   authorAvatar: {
     width: 40,
     height: 40,
-    borderRadius: 10, // Squared with curved edges
+    borderRadius: 10,
     marginRight: 12,
     backgroundColor: '#F6F6F6',
   },
@@ -843,7 +840,7 @@ const styles = StyleSheet.create({
   commentAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 8, // Squared with curved edges
+    borderRadius: 8,
     backgroundColor: '#F6F6F6',
   },
   commentContent: {
@@ -917,7 +914,7 @@ const styles = StyleSheet.create({
   inputAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 8, // Squared with curved edges
+    borderRadius: 8,
     marginRight: 12,
     backgroundColor: '#F6F6F6',
   },
