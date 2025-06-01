@@ -1,9 +1,9 @@
-// screens/ProfileScreen.js - Reworked with Unified Scrolling
+// screens/ProfileScreen.js - Updated with Proper Event Management
 import React, { useEffect, useState, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, SafeAreaView, StatusBar, Dimensions,
-  FlatList, RefreshControl
+  FlatList, RefreshControl, Modal, ScrollView
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,6 +12,16 @@ import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Event filter options for the Events tab
+const EVENT_FILTERS = [
+  { key: 'all', label: 'All Events', icon: 'calendar-outline' },
+  { key: 'upcoming', label: 'Upcoming', icon: 'arrow-up-circle-outline' },
+  { key: 'past', label: 'Past', icon: 'time-outline' },
+  { key: 'hosted', label: 'Hosted', icon: 'star-outline' },
+  { key: 'attending', label: 'Attending', icon: 'checkmark-circle-outline' },
+  { key: 'shared', label: 'Shared', icon: 'eye-outline' }
+];
 
 export default function ProfileScreen() {
   const { params } = useRoute();
@@ -24,6 +34,7 @@ export default function ProfileScreen() {
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
   const [events, setEvents] = useState([]);
+  const [filteredEvents, setFilteredEvents] = useState([]);
   const [sharedEventIds, setSharedEventIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -31,6 +42,9 @@ export default function ProfileScreen() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [hasRequested, setHasRequested] = useState(false);
   const [activeTab, setActiveTab] = useState('Posts');
+  const [eventFilter, setEventFilter] = useState('all');
+  const [showEventFilters, setShowEventFilters] = useState(false);
+  const [showManageModal, setShowManageModal] = useState(false);
 
   // Set up navigation header
   useEffect(() => {
@@ -69,6 +83,11 @@ export default function ProfileScreen() {
       fetchUserProfile();
     }, [userId])
   );
+
+  // Apply event filter whenever events or filter changes
+  useEffect(() => {
+    applyEventFilter();
+  }, [events, eventFilter, sharedEventIds]);
 
   const fetchUserProfile = async (isRefresh = false) => {
     try {
@@ -112,24 +131,26 @@ export default function ProfileScreen() {
       if (isSelf) {
         // For current user: get ALL events they're involved in
         const [attendingRes, hostedRes, sharedRes] = await Promise.all([
-          // Get events user is attending (including past events)
+          // Get events user is attending
           api.get(`/api/events`, { 
             params: { 
               attendee: userId, 
               limit: 200,
               includePast: true 
             }
-          }),
-          // Get events user is hosting (including past events)
+          }).catch(() => ({ data: { events: [] } })),
+          
+          // Get events user is hosting
           api.get(`/api/events`, { 
             params: { 
               host: userId, 
               limit: 200,
               includePast: true 
             }
-          }),
+          }).catch(() => ({ data: { events: [] } })),
+          
           // Get currently shared/featured events
-          api.get(`/api/profile/${userId}/shared-events`)
+          api.get(`/api/profile/${userId}/shared-events`).catch(() => ({ data: { sharedEvents: [] } }))
         ]);
 
         const attending = attendingRes.data.events || attendingRes.data || [];
@@ -144,16 +165,21 @@ export default function ProfileScreen() {
           index === self.findIndex(e => e._id === event._id)
         );
 
-        // Sort by date (most recent first, including past events)
-        const sortedEvents = uniqueEvents.sort((a, b) => 
-          new Date(b.time) - new Date(a.time)
-        );
+        // Sort by date (upcoming first, then past events in reverse chronological order)
+        const now = new Date();
+        const upcomingEvents = uniqueEvents.filter(e => new Date(e.time) >= now);
+        const pastEvents = uniqueEvents.filter(e => new Date(e.time) < now);
+        
+        upcomingEvents.sort((a, b) => new Date(a.time) - new Date(b.time));
+        pastEvents.sort((a, b) => new Date(b.time) - new Date(a.time));
+        
+        const sortedEvents = [...upcomingEvents, ...pastEvents];
 
         // Mark events with additional metadata
         const eventsWithMetadata = sortedEvents.map(event => {
           const isHost = String(event.host?._id || event.host) === String(userId);
           const isAttending = event.attendees?.some(a => String(a._id || a) === String(userId));
-          const isPast = new Date(event.time) < new Date();
+          const isPast = new Date(event.time) < now;
           
           return {
             ...event,
@@ -185,45 +211,38 @@ export default function ProfileScreen() {
 
     } catch (error) {
       console.error('Error fetching events:', error);
-      // Try alternative API endpoints if the first ones fail
-      if (isSelf) {
-        try {
-          console.log('🟡 Trying alternative approach...');
-          // Fallback: get user profile data which includes attending events
-          const profileRes = await api.get(`/api/profile/${userId}`);
-          const user = profileRes.data;
-          
-          // Get hosted events from user's created events
-          const hostedRes = await api.get(`/api/events?host=${userId}`);
-          const hosted = hostedRes.data.events || hostedRes.data || [];
-          
-          // Combine attending events from profile and hosted events
-          const attending = user.attendingEvents || [];
-          const allEvents = [...hosted, ...attending];
-          
-          // Remove duplicates and add metadata
-          const uniqueEvents = allEvents.filter((event, index, self) => 
-            index === self.findIndex(e => e._id === event._id)
-          );
-          
-          const eventsWithMetadata = uniqueEvents.map(event => ({
-            ...event,
-            isHost: String(event.host?._id || event.host) === String(userId),
-            isAttending: true,
-            isPast: new Date(event.time) < new Date(),
-            relationshipType: String(event.host?._id || event.host) === String(userId) ? 'host' : 'attendee'
-          }));
-          
-          setEvents(eventsWithMetadata);
-          console.log('🟢 Fallback successful:', eventsWithMetadata.length);
-        } catch (fallbackError) {
-          console.error('Fallback also failed:', fallbackError);
-          setEvents([]);
-        }
-      }
+      setEvents([]);
     } finally {
       setEventsLoading(false);
     }
+  };
+
+  const applyEventFilter = () => {
+    let filtered = [...events];
+    const now = new Date();
+
+    switch (eventFilter) {
+      case 'upcoming':
+        filtered = events.filter(e => new Date(e.time) >= now);
+        break;
+      case 'past':
+        filtered = events.filter(e => new Date(e.time) < now);
+        break;
+      case 'hosted':
+        filtered = events.filter(e => e.isHost);
+        break;
+      case 'attending':
+        filtered = events.filter(e => !e.isHost && e.isAttending);
+        break;
+      case 'shared':
+        filtered = events.filter(e => sharedEventIds.has(e._id));
+        break;
+      default: // 'all'
+        // Keep all events
+        break;
+    }
+
+    setFilteredEvents(filtered);
   };
 
   const handleFollow = async () => {
@@ -278,6 +297,15 @@ export default function ProfileScreen() {
       // Revert local state on error
       fetchUserEvents();
     }
+  };
+
+  const handleManageSharedEvents = () => {
+    setShowManageModal(false);
+    navigation.navigate('SelectShareableEventsScreen', { 
+      userId,
+      currentSharedIds: Array.from(sharedEventIds),
+      allEvents: events
+    });
   };
 
   const renderProfileHeader = () => {
@@ -412,6 +440,136 @@ export default function ProfileScreen() {
     </View>
   );
 
+  const renderEventFilterBar = () => {
+    if (activeTab !== 'Events' || !isSelf) return null;
+
+    const activeFilter = EVENT_FILTERS.find(f => f.key === eventFilter);
+
+    return (
+      <View style={styles.eventFilterBar}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.eventFilterContent}
+        >
+          {EVENT_FILTERS.map(filter => (
+            <TouchableOpacity
+              key={filter.key}
+              style={[
+                styles.eventFilterChip,
+                eventFilter === filter.key && styles.eventFilterChipActive
+              ]}
+              onPress={() => setEventFilter(filter.key)}
+              activeOpacity={0.8}
+            >
+              <Ionicons 
+                name={filter.icon} 
+                size={16} 
+                color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
+              />
+              <Text style={[
+                styles.eventFilterChipText,
+                eventFilter === filter.key && styles.eventFilterChipTextActive
+              ]}>
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {isSelf && (
+          <TouchableOpacity
+            style={styles.manageEventsButton}
+            onPress={() => setShowManageModal(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="settings-outline" size={18} color="#3797EF" />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  const renderManageModal = () => (
+    <Modal
+      visible={showManageModal}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => setShowManageModal(false)}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Manage Events</Text>
+          <TouchableOpacity
+            onPress={() => setShowManageModal(false)}
+            style={styles.modalClose}
+          >
+            <Ionicons name="close" size={24} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+        
+        <ScrollView style={styles.modalContent}>
+          <TouchableOpacity
+            style={styles.manageOption}
+            onPress={handleManageSharedEvents}
+            activeOpacity={0.8}
+          >
+            <View style={styles.manageOptionIcon}>
+              <Ionicons name="eye-outline" size={24} color="#3797EF" />
+            </View>
+            <View style={styles.manageOptionContent}>
+              <Text style={styles.manageOptionTitle}>Manage Shared Events</Text>
+              <Text style={styles.manageOptionSubtitle}>
+                Choose which events appear publicly on your profile
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.manageOption}
+            onPress={() => {
+              setShowManageModal(false);
+              navigation.navigate('CreateEventScreen');
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.manageOptionIcon}>
+              <Ionicons name="add-circle-outline" size={24} color="#34C759" />
+            </View>
+            <View style={styles.manageOptionContent}>
+              <Text style={styles.manageOptionTitle}>Create New Event</Text>
+              <Text style={styles.manageOptionSubtitle}>
+                Host a new event for your community
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.manageOption}
+            onPress={() => {
+              setShowManageModal(false);
+              navigation.navigate('EventListScreen');
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.manageOptionIcon}>
+              <Ionicons name="compass-outline" size={24} color="#FF9500" />
+            </View>
+            <View style={styles.manageOptionContent}>
+              <Text style={styles.manageOptionTitle}>Discover Events</Text>
+              <Text style={styles.manageOptionSubtitle}>
+                Find and join events in your area
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+
   const renderPostGrid = ({ item }) => (
     <TouchableOpacity
       style={styles.postThumbnail}
@@ -433,7 +591,7 @@ export default function ProfileScreen() {
   const renderEventCard = ({ item: event }) => {
     const eventDate = new Date(event.time);
     const isPast = eventDate < new Date();
-    const isFeatured = sharedEventIds.has(event._id);
+    const isShared = sharedEventIds.has(event._id);
     const coverImage = event.coverImage 
       ? `http://${API_BASE_URL}:3000${event.coverImage}` 
       : null;
@@ -478,9 +636,9 @@ export default function ProfileScreen() {
                 </View>
               )}
 
-              {/* Featured Indicator */}
-              {isFeatured && (
-                <View style={styles.featuredBadge}>
+              {/* Shared Indicator */}
+              {isShared && (
+                <View style={styles.sharedBadge}>
                   <Ionicons name="eye" size={12} color="#FFFFFF" />
                 </View>
               )}
@@ -497,6 +655,7 @@ export default function ProfileScreen() {
                 <Ionicons name="calendar-outline" size={14} color="#8E8E93" />
                 <Text style={styles.eventMetaText}>
                   {eventDate.toLocaleDateString('en-US', {
+                    weekday: 'short',
                     month: 'short',
                     day: 'numeric',
                     year: eventDate.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
@@ -523,49 +682,47 @@ export default function ProfileScreen() {
 
               {/* Event Category */}
               {event.category && (
-                <View style={styles.eventMetaRow}>
-                  <Ionicons name="pricetag-outline" size={14} color="#8E8E93" />
-                  <Text style={styles.eventMetaText}>
-                    {event.category}
-                  </Text>
+                <View style={styles.categoryTag}>
+                  <Text style={styles.categoryTagText}>{event.category}</Text>
                 </View>
               )}
             </View>
           </View>
         </TouchableOpacity>
 
-        {/* Feature/Share Control (only for self) */}
+        {/* Event Actions (only for self) */}
         {isSelf && (
           <View style={styles.eventActions}>
             <TouchableOpacity
               style={[
-                styles.featureToggle,
-                isFeatured && styles.featureToggleActive
+                styles.shareToggle,
+                isShared && styles.shareToggleActive
               ]}
               onPress={() => toggleEventSharing(event._id)}
               activeOpacity={0.8}
             >
               <Ionicons 
-                name={isFeatured ? "eye" : "eye-off"} 
+                name={isShared ? "eye" : "eye-off"} 
                 size={16} 
-                color={isFeatured ? "#FFFFFF" : "#8E8E93"} 
+                color={isShared ? "#FFFFFF" : "#8E8E93"} 
               />
               <Text style={[
-                styles.featureToggleText,
-                isFeatured && styles.featureToggleTextActive
+                styles.shareToggleText,
+                isShared && styles.shareToggleTextActive
               ]}>
-                {isFeatured ? 'Featured' : 'Feature'}
+                {isShared ? 'Shared' : 'Share'}
               </Text>
             </TouchableOpacity>
 
             {/* Edit button for hosted events */}
-            {event.isHost && (
+            {event.isHost && !isPast && (
               <TouchableOpacity
                 style={styles.editEventButton}
                 onPress={() => navigation.navigate('EditEventScreen', { eventId: event._id })}
                 activeOpacity={0.8}
               >
                 <Ionicons name="create-outline" size={16} color="#3797EF" />
+                <Text style={styles.editEventButtonText}>Edit</Text>
               </TouchableOpacity>
             )}
 
@@ -593,7 +750,7 @@ export default function ProfileScreen() {
       if (eventsLoading) {
         return 'loading';
       }
-      return events;
+      return isSelf ? filteredEvents : events;
     }
   };
 
@@ -622,28 +779,37 @@ export default function ProfileScreen() {
     }
 
     if (Array.isArray(contentData) && contentData.length === 0) {
+      const isEventsTab = activeTab === 'Events';
+      const hasFilter = isEventsTab && eventFilter !== 'all';
+      
       return (
         <View style={styles.emptyContainer}>
           <Ionicons 
-            name={activeTab === 'Posts' ? "camera-outline" : "calendar-outline"} 
+            name={isEventsTab ? "calendar-outline" : "camera-outline"} 
             size={64} 
             color="#C7C7CC" 
           />
           <Text style={styles.emptyTitle}>
-            {activeTab === 'Posts' 
-              ? (isSelf ? 'Share your first post' : 'No posts yet')
-              : (isSelf ? 'No events found' : 'No featured events')
+            {isEventsTab 
+              ? (hasFilter 
+                  ? `No ${eventFilter} events`
+                  : (isSelf ? 'No events found' : 'No shared events')
+                )
+              : (isSelf ? 'Share your first post' : 'No posts yet')
             }
           </Text>
           <Text style={styles.emptySubtitle}>
-            {activeTab === 'Posts'
-              ? (isSelf 
+            {isEventsTab
+              ? (hasFilter
+                  ? `You don't have any ${eventFilter} events yet.`
+                  : (isSelf 
+                      ? 'Join or host events to see them here. You can share events on your profile for others to see.'
+                      : 'This user hasn\'t shared any events publicly yet.'
+                    )
+                )
+              : (isSelf 
                   ? 'When you share photos, they\'ll appear on your profile.'
                   : 'When they share photos, they\'ll appear here.'
-                )
-              : (isSelf
-                  ? 'Join or host events to see them here. You can feature events on your profile to share them publicly.'
-                  : 'This user hasn\'t featured any events publicly yet.'
                 )
             }
           </Text>
@@ -651,12 +817,12 @@ export default function ProfileScreen() {
             <TouchableOpacity
               style={styles.createButton}
               onPress={() => navigation.navigate(
-                activeTab === 'Posts' ? 'CreatePickerScreen' : 'CreateEventScreen'
+                isEventsTab ? 'CreateEventScreen' : 'CreatePickerScreen'
               )}
               activeOpacity={0.8}
             >
               <Text style={styles.createButtonText}>
-                {activeTab === 'Posts' ? 'Create Post' : 'Create Event'}
+                {isEventsTab ? 'Create Event' : 'Create Post'}
               </Text>
             </TouchableOpacity>
           )}
@@ -706,6 +872,7 @@ export default function ProfileScreen() {
           <View>
             {renderProfileHeader()}
             {renderTabBar()}
+            {renderEventFilterBar()}
           </View>
         )}
         ListEmptyComponent={() => (
@@ -726,6 +893,8 @@ export default function ProfileScreen() {
         }
         scrollEventThrottle={16}
       />
+
+      {renderManageModal()}
     </SafeAreaView>
   );
 }
@@ -904,6 +1073,47 @@ const styles = StyleSheet.create({
     borderBottomColor: '#000000',
   },
 
+  // Event Filter Bar
+  eventFilterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  eventFilterContent: {
+    paddingHorizontal: 16,
+  },
+  eventFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  eventFilterChipActive: {
+    backgroundColor: '#3797EF',
+    borderColor: '#3797EF',
+  },
+  eventFilterChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#8E8E93',
+    marginLeft: 4,
+  },
+  eventFilterChipTextActive: {
+    color: '#FFFFFF',
+  },
+  manageEventsButton: {
+    padding: 12,
+    marginRight: 8,
+  },
+
   // Posts Grid
   postsGrid: {
     padding: 2,
@@ -1006,11 +1216,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 3,
   },
-  featuredBadge: {
+  sharedBadge: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#34C759',
+    backgroundColor: '#3797EF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1038,6 +1248,19 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
+  categoryTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F0F8FF',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 8,
+  },
+  categoryTagText: {
+    fontSize: 11,
+    color: '#3797EF',
+    fontWeight: '600',
+  },
 
   // Event Actions
   eventActions: {
@@ -1049,7 +1272,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F0F0F0',
   },
-  featureToggle: {
+  shareToggle: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1062,29 +1285,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginRight: 8,
   },
-  featureToggleActive: {
-    backgroundColor: '#34C759',
-    borderColor: '#34C759',
+  shareToggleActive: {
+    backgroundColor: '#3797EF',
+    borderColor: '#3797EF',
   },
-  featureToggleText: {
+  shareToggleText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#8E8E93',
     marginLeft: 6,
   },
-  featureToggleTextActive: {
+  shareToggleTextActive: {
     color: '#FFFFFF',
   },
   editEventButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#F0F8FF',
     borderWidth: 1,
     borderColor: '#E1E8F7',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     marginRight: 8,
+  },
+  editEventButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#3797EF',
+    marginLeft: 4,
   },
   viewEventButton: {
     width: 40,
@@ -1161,5 +1390,64 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 20,
+  },
+
+  // Manage Modal
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  modalClose: {
+    padding: 8,
+  },
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+  },
+  manageOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+  },
+  manageOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  manageOptionContent: {
+    flex: 1,
+  },
+  manageOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  manageOptionSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    lineHeight: 18,
   },
 });
