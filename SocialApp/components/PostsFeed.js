@@ -1,37 +1,41 @@
-// components/PostsFeed.js
-import React, { useEffect, useState, useContext } from 'react';
+// components/EnhancedPostsFeed.js - NEW enhanced posts feed
+import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle } from 'react';
 import {
   View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text,
 } from 'react-native';
-import api             from '../services/api';
-import PostItem        from './PostItem';
+import api from '../services/api';
+import PostItem from './PostItem';
 import { AuthContext } from '../services/AuthContext';
 
-export default function PostsFeed({ navigation }) {
+const EnhancedPostsFeed = forwardRef(({ navigation, refreshing: externalRefreshing, onRefresh: externalOnRefresh }, ref) => {
   const { currentUser } = useContext(AuthContext);
-  const uid             = currentUser?._id;
+  const uid = currentUser?._id;
 
-  const [data, setData]         = useState([]);
-  const [page, setPage]         = useState(1);
-  const [pages, setPages]       = useState(1);
-  const [loading, setLoading]   = useState(true);
+  const [data, setData] = useState([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   useEffect(() => { 
     fetchPage(1); 
   }, []);
 
+  // Expose refresh method to parent
+  useImperativeHandle(ref, () => ({
+    refresh: () => fetchPage(1, true)
+  }));
+
   const fetchPage = async (pageNum, isRefresh = false) => {
     try {
       isRefresh ? setRefreshing(true) : setLoading(true);
-      console.log('🟡 [PostsFeed] fetching page', pageNum);
+      console.log('🟡 [EnhancedPostsFeed] fetching page', pageNum);
       
-      const res = await api.get(`/api/feed?page=${pageNum}&limit=12`);
-      console.log('🟢 PostsFeed response:', res.status, 'items:', res.data.feed?.length);
+      const res = await api.get(`/api/feed/posts?page=${pageNum}&limit=12`);
+      console.log('🟢 EnhancedPostsFeed response:', res.status, 'posts:', res.data.posts?.length);
 
-      // Filter only posts (items with uploadDate)
-      const posts = (res.data.feed || []).filter(item => item.uploadDate);
-      console.log('🟡 Filtered posts:', posts.length);
+      const posts = res.data.posts || [];
 
       if (pageNum === 1) {
         setData(posts);
@@ -40,10 +44,11 @@ export default function PostsFeed({ navigation }) {
       }
       
       setPage(res.data.page || pageNum);
-      setPages(res.data.totalPages || 1);
+      setTotalPages(res.data.totalPages || 1);
+      setHasMore(res.data.hasMore || false);
       
     } catch (error) {
-      console.log('❌ [PostsFeed] error:', error.response?.data || error.message);
+      console.log('❌ [EnhancedPostsFeed] error:', error.response?.data || error.message);
       if (pageNum === 1) setData([]);
     } finally {
       isRefresh ? setRefreshing(false) : setLoading(false);
@@ -55,16 +60,21 @@ export default function PostsFeed({ navigation }) {
   };
 
   const renderPost = ({ item }) => (
-    <PostItem  
-      post={item} 
-      currentUserId={uid} 
-      navigation={navigation}
-      onDeletePost={handleDeletePost}
-    />
+    <View style={styles.postWrapper}>
+      <PostItem  
+        post={item} 
+        currentUserId={uid} 
+        navigation={navigation}
+        onDeletePost={handleDeletePost}
+        // Pass event context props
+        showEventContext={item.source === 'event_attendee'}
+        eventContextSource={item.source}
+      />
+    </View>
   );
 
   const handleLoadMore = () => {
-    if (page < pages && !loading) {
+    if (hasMore && !loading && page < totalPages) {
       fetchPage(page + 1);
     }
   };
@@ -87,7 +97,7 @@ export default function PostsFeed({ navigation }) {
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyTitle}>No posts yet</Text>
         <Text style={styles.emptySubtitle}>
-          Follow some people to see their posts here
+          Follow some people to see their posts here, or attend events to see posts from other attendees
         </Text>
       </View>
     );
@@ -103,23 +113,28 @@ export default function PostsFeed({ navigation }) {
         onEndReachedThreshold={0.4}
         refreshControl={
           <RefreshControl 
-            refreshing={refreshing} 
+            refreshing={refreshing || externalRefreshing}
             onRefresh={handleRefresh}
             tintColor="#3797EF"
             colors={["#3797EF"]}
           />
         }
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={data.length === 0 ? styles.emptyList : undefined}
+        contentContainerStyle={data.length === 0 ? styles.emptyList : styles.listContent}
       />
     </View>
   );
-}
+});
+
+export default EnhancedPostsFeed;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  postWrapper: {
+    marginBottom: 0, // PostItem already has margin
   },
   loadingContainer: {
     flex: 1,
@@ -151,5 +166,8 @@ const styles = StyleSheet.create({
   },
   emptyList: {
     flexGrow: 1,
+  },
+  listContent: {
+    paddingBottom: 20,
   },
 });

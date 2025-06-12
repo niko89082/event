@@ -1,4 +1,4 @@
-// components/PostItem.js - Fixed with double-tap to heart and proper navigation
+// components/EnhancedPostItem.js - Enhanced PostItem with event context
 import React, { useState, useMemo, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet,
@@ -25,13 +25,15 @@ const niceDate = (iso) => {
 };
 /* ------------------------------------------------------------------ */
 
-export default function PostItem({
+export default function EnhancedPostItem({
   post,
   currentUserId,
   hideUserInfo   = false,
   navigation,
   onDeletePost,
   disableEventLink = false,
+  showEventContext = false, // NEW: Show event context
+  eventContextSource = null, // NEW: Source type ('friend' or 'event_attendee')
 }) {
   /* ---- image url -------------------------------------------------- */
   const first  = post.paths?.[0] ? `/${post.paths[0].replace(/^\/?/,'')}` : '';
@@ -147,6 +149,26 @@ export default function PostItem({
     ? caption 
     : caption.substring(0, 100) + '...';
 
+  // NEW: Event context rendering
+  const renderEventContext = () => {
+    if (!showEventContext || !post.event || eventContextSource === 'friend') {
+      return null;
+    }
+
+    return (
+      <TouchableOpacity 
+        style={styles.eventContext}
+        onPress={openEvent}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="calendar-outline" size={12} color="#3797EF" />
+        <Text style={styles.eventContextText}>
+          from {post.event.title}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   /* ---- render ----------------------------------------------------- */
   return (
     <View style={styles.postContainer}>
@@ -162,7 +184,10 @@ export default function PostItem({
             />
             <View style={styles.userDetails}>
               <Text style={styles.username}>{post.user.username}</Text>
-              {post.event && (
+              {/* NEW: Event context */}
+              {renderEventContext()}
+              {/* Existing event location (for friend posts) */}
+              {post.event && eventContextSource === 'friend' && (
                 <Text style={styles.eventLocation}>{post.event.title}</Text>
               )}
             </View>
@@ -273,8 +298,8 @@ export default function PostItem({
       {/* ---------- timestamp ---------- */}
       <Text style={styles.timestamp}>{stamp}</Text>
 
-      {/* ---------- linked event ---------- */}
-      {post.event && !disableEventLink && (
+      {/* ---------- linked event (for friend posts) ---------- */}
+      {post.event && !disableEventLink && eventContextSource === 'friend' && (
         <TouchableOpacity onPress={openEvent} style={styles.eventLink} activeOpacity={0.8}>
           <Ionicons name="calendar-outline" size={16} color="#3797EF" />
           <Text style={styles.eventLinkText}>{post.event.title}</Text>
@@ -354,6 +379,20 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginTop: 1,
   },
+  
+  // NEW: Event context styles
+  eventContext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  eventContextText: {
+    fontSize: 12,
+    color: '#3797EF',
+    marginLeft: 4,
+    fontWeight: '500',
+  },
+  
   moreButton: {
     padding: 5,
   },

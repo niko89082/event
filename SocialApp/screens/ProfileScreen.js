@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - Updated with Proper Event Management
+// screens/ProfileScreen.js - Updated with QR Code Access
 import React, { useEffect, useState, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -65,13 +65,22 @@ export default function ProfileScreen() {
       headerRight: () => (
         <View style={styles.headerRightContainer}>
           {isSelf && (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('UserSettingsScreen')}
-              style={styles.headerButton}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="settings-outline" size={24} color="#000000" />
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('QrScreen')}
+                style={styles.headerButton}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="qr-code-outline" size={24} color="#000000" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('UserSettingsScreen')}
+                style={styles.headerButton}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="settings-outline" size={24} color="#000000" />
+              </TouchableOpacity>
+            </>
           )}
         </View>
       ),
@@ -371,13 +380,23 @@ export default function ProfileScreen() {
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
           {isSelf ? (
-            <TouchableOpacity
-              style={styles.editProfileButton}
-              onPress={() => navigation.navigate('EditProfileScreen')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.editProfileButtonText}>Edit Profile</Text>
-            </TouchableOpacity>
+            <View style={styles.selfActionButtons}>
+              <TouchableOpacity
+                style={styles.editProfileButton}
+                onPress={() => navigation.navigate('EditProfileScreen')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.qrCodeButton}
+                onPress={() => navigation.navigate('QrScreen')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="qr-code" size={20} color="#667eea" />
+              </TouchableOpacity>
+            </View>
           ) : (
             <>
               <TouchableOpacity
@@ -1011,17 +1030,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  selfActionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
   editProfileButton: {
     flex: 1,
     backgroundColor: '#F0F0F0',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
+    marginRight: 8,
   },
   editProfileButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
+  },
+  qrCodeButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F0F8FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E1E8F7',
   },
   followButton: {
     flex: 1,

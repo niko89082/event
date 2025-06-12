@@ -185,10 +185,70 @@ router.post('/create-from-group/:groupId', protect, upload.single('coverImage'),
 router.get('/', protect, async (req, res) => {
   try {
     const { 
-      location, radius, interests, includeSecret,
-      limit = 20, skip = 0 
+      host,
+      attendee, 
+      location, 
+      radius, 
+      interests, 
+      includeSecret,
+      includePast = 'false',
+      limit = 20, 
+      skip = 0 
     } = req.query;
 
+    // If specific user filters are provided, handle them
+    if (host || attendee) {
+      let query = {};
+      
+      if (host) {
+        query.host = host;
+      }
+      
+      if (attendee) {
+        query.attendees = attendee;
+        // If both host and attendee are the same, get all user's events
+        if (host === attendee) {
+          query = {
+            $or: [
+              { host: attendee },
+              { attendees: attendee }
+            ]
+          };
+        }
+      }
+
+      // Add time filter
+      if (includePast !== 'true') {
+        query.time = { $gte: new Date() };
+      }
+
+      // Check if requesting user can see these events
+      const requestingUserId = req.user._id;
+      const targetUserId = host || attendee;
+      const isOwnEvents = String(requestingUserId) === String(targetUserId);
+
+      if (!isOwnEvents) {
+        // Apply privacy filtering for other users' events
+        const visibleEvents = await EventPrivacyService.getVisibleEvents(requestingUserId, {
+          hostFilter: targetUserId,
+          limit: parseInt(limit),
+          skip: parseInt(skip)
+        });
+        return res.json({ events: visibleEvents });
+      }
+
+      // For own events, return all with metadata
+      const events = await Event.find(query)
+        .populate('host', 'username profilePicture')
+        .populate('attendees', 'username')
+        .sort({ time: includePast === 'true' ? -1 : 1 })
+        .limit(parseInt(limit))
+        .skip(parseInt(skip));
+
+      return res.json({ events });
+    }
+
+    // Default behavior - get recommended/visible events
     const options = {
       limit: parseInt(limit),
       skip: parseInt(skip),
@@ -209,7 +269,8 @@ router.get('/', protect, async (req, res) => {
     }
 
     const events = await EventPrivacyService.getVisibleEvents(req.user._id, options);
-    res.json(events);
+    res.json({ events });
+
   } catch (e) { 
     console.error('Get events error:', e);
     res.status(500).json({ message: 'Server error' }); 
@@ -839,6 +900,292 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
   }
 });
 
+router.get('/user/:userId', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { 
+      type = 'all', // 'hosted', 'attending', 'shared', 'all'
+      includePast = 'false',
+      limit = 50,
+      skip = 0 
+    } = req.query;
 
+    const currentUserId = req.user._id;
+    const isOwnProfile = String(userId) === String(currentUserId);
+
+    // Build query based on type
+    let query = {};
+    
+    switch (type) {
+      case 'hosted':
+        query.host = userId;
+        break;
+      case 'attending':
+        query.attendees = userId;
+        query.host = { $ne: userId }; // Exclude hosted events
+        break;
+      case 'shared':
+        // For shared events, we need to get the user's shared event IDs first
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        
+        const sharedEventIds = user.sharedEvents || [];
+        query._id = { $in: sharedEventIds };
+        break;
+      default: // 'all'
+        query.$or = [
+          { host: userId },
+          { attendees: userId }
+        ];
+    }
+
+    // Add time filter
+    if (includePast !== 'true') {
+      query.time = { $gte: new Date() };
+    }
+
+    // Check privacy permissions
+    if (!isOwnProfile) {
+      // For other users, only show public events they can see
+      const permission = await EventPrivacyService.getVisibleEvents(currentUserId, {
+        hostFilter: userId,
+        limit: parseInt(limit),
+        skip: parseInt(skip)
+      });
+      
+      return res.json({
+        events: permission,
+        total: permission.length,
+        isOwnProfile: false
+      });
+    }
+
+    // For own profile, get all events with metadata
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username')
+      .sort({ time: includePast === 'true' ? -1 : 1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip));
+
+    // Add metadata about user's relationship to each event
+    const eventsWithMetadata = events.map(event => {
+      const isHost = String(event.host._id) === String(userId);
+      const isAttending = event.attendees.some(a => String(a._id) === String(userId));
+      const isPast = new Date(event.time) < new Date();
+      
+      return {
+        ...event.toObject(),
+        isHost,
+        isAttending,
+        isPast,
+        relationshipType: isHost ? 'host' : 'attendee'
+      };
+    });
+
+    res.json({
+      events: eventsWithMetadata,
+      total: eventsWithMetadata.length,
+      isOwnProfile: true
+    });
+
+  } catch (error) {
+    console.error('Get user events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+router.get('/following-events', protect, async (req, res) => {
+  const page = +req.query.page || 1;
+  const limit = +req.query.limit || 10;
+  const skip = (page - 1) * limit;
+
+  try {
+    const viewer = await User.findById(req.user._id)
+      .select('following')
+      .populate('following', '_id');
+
+    if (!viewer) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const followingIds = viewer.following.map(u => u._id);
+
+    if (followingIds.length === 0) {
+      return res.json({
+        events: [],
+        page,
+        totalPages: 0,
+        hasMore: false
+      });
+    }
+
+    // Get future events from people you follow - simplified query
+    const query = {
+      host: { $in: followingIds },
+      time: { $gte: new Date() },
+      isPublic: true // Use simple isPublic field for now
+    };
+
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username')
+      .sort({ time: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const totalEvents = await Event.countDocuments(query);
+
+    res.json({
+      events,
+      page,
+      totalPages: Math.ceil(totalEvents / limit),
+      hasMore: skip + limit < totalEvents
+    });
+
+  } catch (err) {
+    console.error('Following events error:', err);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+router.get('/following-events', protect, async (req, res) => {
+  console.log('🟡 Following events endpoint hit');
+  const page = +req.query.page || 1;
+  const limit = +req.query.limit || 10;
+  const skip = (page - 1) * limit;
+
+  try {
+    console.log('🟡 User ID:', req.user._id);
+    
+    const viewer = await User.findById(req.user._id).select('following');
+    
+    if (!viewer) {
+      console.log('❌ User not found');
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log('🟡 User following count:', viewer.following?.length || 0);
+    const followingIds = viewer.following || [];
+
+    if (followingIds.length === 0) {
+      console.log('🟡 No following users, returning empty');
+      return res.json({
+        events: [],
+        page: 1,
+        totalPages: 0,
+        hasMore: false
+      });
+    }
+
+    // Simple query for events from people you follow
+    const query = {
+      host: { $in: followingIds },
+      time: { $gte: new Date() }
+    };
+
+    console.log('🟡 Query:', JSON.stringify(query));
+
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .sort({ time: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    console.log('🟡 Found events:', events.length);
+
+    const totalEvents = await Event.countDocuments(query);
+
+    const response = {
+      events,
+      page,
+      totalPages: Math.ceil(totalEvents / limit),
+      hasMore: skip + limit < totalEvents
+    };
+
+    console.log('🟢 Sending response:', { eventsCount: events.length, page, totalPages: response.totalPages });
+    res.json(response);
+
+  } catch (err) {
+    console.error('❌ Following events error:', err);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// Enhanced Posts Feed Route (ADD THIS ROUTE to routes/feed.js OR here)
+router.get('/feed/posts', protect, async (req, res) => {
+  console.log('🟡 Enhanced posts endpoint hit');
+  const page = +req.query.page || 1;
+  const limit = +req.query.limit || 10;
+  const skip = (page - 1) * limit;
+  
+  try {
+    const viewer = await User.findById(req.user._id).select('following');
+    
+    if (!viewer) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const followingIds = viewer.following || [];
+    console.log('🟡 Following count for posts:', followingIds.length);
+
+    if (followingIds.length === 0) {
+      return res.json({
+        posts: [],
+        page: 1,
+        totalPages: 0,
+        hasMore: false
+      });
+    }
+
+    // Get posts from friends
+    const posts = await Photo.find({
+      user: { $in: followingIds }
+    })
+    .populate('user', 'username profilePicture')
+    .populate('event', 'title time location')
+    .sort({ uploadDate: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+    console.log('🟡 Found posts:', posts.length);
+
+    // Add source field
+    const postsWithSource = posts.map(post => ({
+      ...post,
+      source: 'friend'
+    }));
+
+    const totalPosts = await Photo.countDocuments({
+      user: { $in: followingIds }
+    });
+    
+    const response = {
+      posts: postsWithSource,
+      page,
+      totalPages: Math.ceil(totalPosts / limit),
+      hasMore: skip + limit < totalPosts
+    };
+
+    console.log('🟢 Sending posts response:', { postsCount: posts.length, page });
+    res.json(response);
+
+  } catch (err) {
+    console.error('❌ Enhanced posts error:', err);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
 
 module.exports = router;

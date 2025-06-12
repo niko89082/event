@@ -1,9 +1,9 @@
+// routes/auth.js - Updated without QR code generation
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { check, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
-const QRCode = require('qrcode');
 const nodemailer = require('nodemailer');
 const protect = require('../middleware/auth');
 const rateLimit = require('express-rate-limit');
@@ -18,7 +18,7 @@ const authLimiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.'
 });
 
-// Signup Route
+// Signup Route - Simplified without QR generation
 router.post(
   '/signup',
   authLimiter,
@@ -26,7 +26,6 @@ router.post(
     check('username', 'Username is required').not().isEmpty(),
     check('email', 'Please include a valid email').isEmail(),
     check('password', 'Password must be at least 6 characters').isLength({ min: 6 }),
-   // check('dateOfBirth', 'Please include a valid date of birth in the format YYYY-MM-DD').isDate(),
   ],
   async (req, res) => {
     
@@ -35,7 +34,7 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { username, email, password, gender, /*dateOfBirth*/ } = req.body;
+    const { username, email, password, gender } = req.body;
 
     try {
       const existingUser = await User.findOne({ email });
@@ -43,22 +42,38 @@ router.post(
         return res.status(400).json({ message: 'User already exists' });
       }
       
+      // Check if username is taken
+      const existingUsername = await User.findOne({ username });
+      if (existingUsername) {
+        return res.status(400).json({ message: 'Username already taken' });
+      }
+
       let user = new User({
         username,
         email,
         password, 
         gender,
-       // dateOfBirth,
       });
-      const generatedCode = await QRCode.toDataURL(user._id.toString());
-      user.qrCode = generatedCode;
+
+      // shareCode will be automatically generated in pre-save middleware
       await user.save();
      
       const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
         expiresIn: '1h',
       });
 
-      res.status(201).json({ token, user });
+      // Return user without password
+      const userResponse = {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        shareCode: user.shareCode,
+        isPublic: user.isPublic,
+        profilePicture: user.profilePicture,
+        bio: user.bio
+      };
+
+      res.status(201).json({ token, user: userResponse });
     } catch (error) {
       console.error(error); 
       res.status(500).json({ message: 'Server error', error: error.message });
@@ -105,7 +120,7 @@ router.post(
         await user.save();
 
         // Send the 2FA code via email
-        const transporter = nodemailer.createTransport({
+        const transporter = nodemailer.createTransporter({
           service: 'gmail',
           auth: {
             user: process.env.EMAIL,
@@ -132,7 +147,19 @@ router.post(
         const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
           expiresIn: '1h',
         });
-        res.status(200).json({ token, user });
+
+        // Return user without password
+        const userResponse = {
+          _id: user._id,
+          username: user.username,
+          email: user.email,
+          shareCode: user.shareCode,
+          isPublic: user.isPublic,
+          profilePicture: user.profilePicture,
+          bio: user.bio
+        };
+
+        res.status(200).json({ token, user: userResponse });
       }
     } catch (error) {
       res.status(500).json({ message: 'Server error' });
@@ -158,7 +185,18 @@ router.post('/verify-2fa', protect, async (req, res) => {
       expiresIn: '1h',
     });
 
-    res.status(200).json({ token, user });
+    // Return user without password
+    const userResponse = {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      shareCode: user.shareCode,
+      isPublic: user.isPublic,
+      profilePicture: user.profilePicture,
+      bio: user.bio
+    };
+
+    res.status(200).json({ token, user: userResponse });
   } catch (error) {
     res.status (500).json({ message: 'Server error' });
   }
@@ -175,7 +213,7 @@ router.get('/user/:id', protect, async (req, res) => {
       return res.status(200).json(JSON.parse(user));
     } else {
       try {
-        const user = await User.findById(userId);
+        const user = await User.findById(userId).select('-password');
 
         if (!user) {
           return res.status(404).json({ message: 'User not found' });
@@ -205,7 +243,7 @@ router.post('/forgot-password', async (req, res) => {
 
     const resetURL = `http://localhost:3000/reset-password/${resetToken}`;
 
-    const transporter = nodemailer.createTransport({
+    const transporter = nodemailer.createTransporter({
       service: 'Gmail',
       auth: {
         user: process.env.EMAIL_USERNAME,

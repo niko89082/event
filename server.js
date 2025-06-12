@@ -25,6 +25,7 @@ const profileRoutes = require('./routes/profile');
 const followRoutes = require('./routes/follow');
 const usersRoutes = require('./routes/users');
 const memoryRoutes = require('./routes/memories');
+const qrRoutes = require('./routes/qr');
 
 // Import middleware and models
 const protect = require('./middleware/auth');
@@ -257,7 +258,7 @@ app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);
 app.use('/api/memories', memoryRoutes);
 app.use('/api/users', usersRoutes);
-
+app.use('/api/qr', qrRoutes);
 // Legacy routes for backward compatibility (WITHOUT /api prefix)
 app.use('/auth', authRoutes);
 app.use('/events', eventRoutes);
@@ -396,16 +397,6 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log('🚀 Server Status:');
-  console.log(`   ✅ Running on port ${PORT}`);
-  console.log(`   ✅ Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   ✅ MongoDB: Connected`);
-  console.log('🔧 Features:');
-  console.log('   ✅ Event Privacy System');
-  console.log('   ✅ Smart Recommendations');
-  console.log('   ✅ Real-time Updates');
-  console.log('   ✅ Location-based Discovery');
-  console.log('   ✅ Weather Integration Ready');
   console.log(`📡 WebSocket: Enabled`);
   console.log(`🔗 API Base: http://localhost:${PORT}/api`);
 });

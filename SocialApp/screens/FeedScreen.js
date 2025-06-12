@@ -1,33 +1,39 @@
-// screens/FeedScreen.js - Enhanced with Event Recommendations & Privacy System
-import React, { useLayoutEffect } from 'react';
+// screens/FeedScreen.js - Updated home structure with proper header and pull-to-refresh
+import React, { useLayoutEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import PostsFeed from '../components/PostsFeed';
-import EventsFeed from '../components/EventsFeed';
-import EventRecommendations from '../components/EventRecommendations';
+import EnhancedPostsFeed from '../components/PostsFeed';
+import EventsHub from '../components/EventsHub';
 
 const Tab = createMaterialTopTabNavigator();
 
 export default function FeedScreen({ navigation }) {
-  const insets = useSafeAreaInsets();
+  const [refreshing, setRefreshing] = useState(false);
+  const postsRef = useRef(null);
+  const eventsRef = useRef(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: false, // We'll create our own header for better control
+      headerShown: false, // We'll create our own header
     });
   }, [navigation]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    // Trigger refresh on active tab components
+    setRefreshing(false);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Custom header with proper positioning */}
-      <View style={styles.customHeader}>
+      {/* Custom Header */}
+      <View style={styles.header}>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>Social</Text>
-          <View style={styles.headerRightContainer}>
+          <View style={styles.headerButtons}>
             <TouchableOpacity 
               style={styles.headerButton}
               onPress={() => navigation.navigate('SearchScreen')}
@@ -37,14 +43,14 @@ export default function FeedScreen({ navigation }) {
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.headerButton}
-              onPress={() => navigation.navigate('Chat')}
+              onPress={() => navigation.navigate('ChatTab')}
               activeOpacity={0.8}
             >
               <Ionicons name="chatbubble-outline" size={24} color="#000" />
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.headerButton}
-              onPress={() => navigation.navigate('CreatePickerScreen')}
+              onPress={() => navigation.navigate('Create')}
               activeOpacity={0.8}
             >
               <Ionicons name="add-circle-outline" size={24} color="#000" />
@@ -53,6 +59,7 @@ export default function FeedScreen({ navigation }) {
         </View>
       </View>
 
+      {/* Tab Navigator */}
       <Tab.Navigator
         screenOptions={{
           tabBarActiveTintColor: '#000000',
@@ -65,7 +72,7 @@ export default function FeedScreen({ navigation }) {
             backgroundColor: '#FFFFFF',
             elevation: 0,
             shadowOpacity: 0,
-            borderBottomWidth: 0.33,
+            borderBottomWidth: 0.5,
             borderBottomColor: '#E1E1E1',
           },
           tabBarLabelStyle: {
@@ -78,46 +85,46 @@ export default function FeedScreen({ navigation }) {
       >
         <Tab.Screen 
           name="Posts" 
-          component={PostsFeed}
           options={{
             tabBarIcon: ({ color, focused }) => (
               <Ionicons 
                 name={focused ? 'grid' : 'grid-outline'} 
                 size={20} 
                 color={color} 
-                style={{ marginBottom: 2 }}
               />
             ),
           }}
-        />
+        >
+          {(props) => (
+            <EnhancedPostsFeed 
+              {...props} 
+              ref={postsRef}
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+            />
+          )}
+        </Tab.Screen>
         <Tab.Screen 
           name="Events" 
-          component={EventsFeed}
           options={{
             tabBarIcon: ({ color, focused }) => (
               <Ionicons 
                 name={focused ? 'calendar' : 'calendar-outline'} 
                 size={20} 
                 color={color} 
-                style={{ marginBottom: 2 }}
               />
             ),
           }}
-        />
-        <Tab.Screen 
-          name="Discover" 
-          component={EventRecommendations}
-          options={{
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons 
-                name={focused ? 'star' : 'star-outline'} 
-                size={20} 
-                color={color} 
-                style={{ marginBottom: 2 }}
-              />
-            ),
-          }}
-        />
+        >
+          {(props) => (
+            <EventsHub 
+              {...props} 
+              ref={eventsRef}
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+            />
+          )}
+        </Tab.Screen>
       </Tab.Navigator>
     </SafeAreaView>
   );
@@ -128,41 +135,38 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  customHeader: {
+  
+  // Custom Header
+  header: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.33,
+    borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
+    paddingTop: 8,
+    paddingBottom: 12,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowRadius: 4,
     elevation: 2,
   },
   headerContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 8,
-    minHeight: 48,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: '700',
     color: '#000000',
   },
-  headerRightContainer: {
+  headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   headerButton: {
     padding: 8,
     marginLeft: 8,
-    borderRadius: 8,
-    backgroundColor: 'transparent',
+    borderRadius: 20,
   },
 });

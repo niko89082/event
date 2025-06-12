@@ -381,4 +381,111 @@ router.get('/:userId/attended-events', protect, async (req, res) => {
     return res.status(500).json({ message: 'Server error' });
   }
 });
+
+
+router.get('/:userId/shared-events', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id;
+    const isOwnProfile = String(userId) === String(currentUserId);
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if user can view this profile
+    if (!isOwnProfile && !user.isPublic) {
+      // Check if current user follows this user
+      const isFollowing = user.followers.some(f => String(f) === String(currentUserId));
+      if (!isFollowing) {
+        return res.status(403).json({ message: 'This account is private' });
+      }
+    }
+
+    // Get shared events with full details
+    const sharedEventIds = user.sharedEvents || [];
+    
+    if (sharedEventIds.length === 0) {
+      return res.json({ sharedEvents: [] });
+    }
+
+    const sharedEvents = await Event.find({
+      _id: { $in: sharedEventIds }
+    })
+    .populate('host', 'username profilePicture')
+    .populate('attendees', 'username')
+    .sort({ time: 1 }); // Sort by upcoming first
+
+    // Filter out events that the requesting user shouldn't see due to privacy
+    let visibleEvents = sharedEvents;
+    
+    if (!isOwnProfile) {
+      visibleEvents = [];
+      for (const event of sharedEvents) {
+        const canView = await EventPrivacyService.checkPermission(
+          currentUserId, 
+          event._id, 
+          'view'
+        );
+        if (canView.allowed) {
+          visibleEvents.push(event);
+        }
+      }
+    }
+
+    res.json({ sharedEvents: visibleEvents });
+
+  } catch (error) {
+    console.error('Get shared events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update shared events list
+router.put('/:userId/shared-events', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { eventIds } = req.body;
+    
+    // Only allow users to update their own shared events
+    if (String(userId) !== String(req.user._id)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    // Validate that all events exist and user has access to them
+    if (eventIds && eventIds.length > 0) {
+      const events = await Event.find({ _id: { $in: eventIds } });
+      
+      for (const event of events) {
+        const isHost = String(event.host) === String(userId);
+        const isAttending = event.attendees.some(a => String(a) === String(userId));
+        
+        if (!isHost && !isAttending) {
+          return res.status(400).json({ 
+            message: 'You can only share events you are hosting or attending' 
+          });
+        }
+      }
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.sharedEvents = eventIds || [];
+    await user.save();
+
+    res.json({
+      message: 'Shared events updated successfully',
+      sharedEvents: user.sharedEvents
+    });
+
+  } catch (error) {
+    console.error('Update shared events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;
