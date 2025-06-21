@@ -1,11 +1,12 @@
-// screens/CreatePickerScreen.js - Fixed with proper navigation
+// screens/CreatePickerScreen.js - Updated with Memory option
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, SafeAreaView, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 const OPTIONS = [
-  { key:'event', label:'Event',  desc:'Create an event for others to join',          icon:'calendar' },
-  { key:'photo', label:'Photo',  desc:'Share photos and moments',  icon:'image'    },
+  { key:'event', label:'Event', desc:'Create an event for others to join', icon:'calendar' },
+  { key:'photo', label:'Photo', desc:'Share photos and moments', icon:'image' },
+  { key:'memory', label:'Memory', desc:'Create a shared memory with friends', icon:'images' }, // NEW
 ];
 
 export default function CreatePickerScreen({ navigation }) {
@@ -47,6 +48,10 @@ export default function CreatePickerScreen({ navigation }) {
     if (key === 'photo') {
       // Navigate to CreatePostScreen (global screen)  
       navigation.navigate('CreatePostScreen');
+    }
+    if (key === 'memory') {
+      // Navigate to new CreateMemoryScreen (global screen)
+      navigation.navigate('CreateMemoryScreen');
     }
   };
 

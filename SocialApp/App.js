@@ -23,10 +23,6 @@ import CreateEventScreen from './screens/CreateEventScreen';
 import CreatePostScreen from './screens/CreatePostScreen';
 import CreatePickerScreen from './screens/CreatePickerScreen';
 import PostPublishedScreen from './screens/PostPublishedScreen';
-import ChatScreen from './screens/ChatScreen';
-import NewChatScreen from './screens/NewChatScreen';
-import SelectChatScreen from './screens/SelectChatScreen';
-import ChatInfoScreen from './screens/ChatInfoScreen';
 import QrScreen from './screens/QrScreen';
 import QrScanScreen from './screens/QrScanScreen';
 import AttendeeListScreen from './screens/AttendeeListScreen';
@@ -194,26 +190,6 @@ function RootNavigator() {
           <RootStack.Screen
             name="PostPublished"
             component={PostPublishedScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="ChatScreen"
-            component={ChatScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="NewChatScreen"
-            component={NewChatScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="SelectChatScreen"
-            component={SelectChatScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="ChatInfoScreen"
-            component={ChatInfoScreen}
             options={{ headerShown: false }}
           />
           <RootStack.Screen

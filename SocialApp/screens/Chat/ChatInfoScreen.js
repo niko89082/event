@@ -5,12 +5,12 @@ import {
   ScrollView, SafeAreaView, StatusBar, Alert, Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import api from '../services/api';
-import { AuthContext } from '../services/AuthContext';
+import api from '../../services/api';
+import { AuthContext } from '../../services/AuthContext';
 import { API_BASE_URL } from '@env';
-import UserProfileRow from '../components/UserProfileRow';
-import SharedPostSnippet from '../components/SharedPostSnippet';
-import SharedEventSnippet from '../components/SharedEventSnippet';
+import UserProfileRow from '../../components/UserProfileRow';
+import SharedPostSnippet from '../../components/SharedPostSnippet';
+import SharedEventSnippet from '../../components/SharedEventSnippet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 

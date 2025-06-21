@@ -10,8 +10,8 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { io } from 'socket.io-client';
 import { Ionicons } from '@expo/vector-icons';
-import api from '../services/api';
-import { AuthContext } from '../services/AuthContext';
+import api from '../../services/api';
+import { AuthContext } from '../../services/AuthContext';
 import { API_BASE_URL } from '@env';
 
 /* ── helpers ─────────────────────────────────────────────── */

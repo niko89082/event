@@ -7,7 +7,6 @@ import { Ionicons } from '@expo/vector-icons';
 // Tab Screens
 import FeedScreen from '../screens/FeedScreen';
 import EventListScreen from '../screens/EventListScreen';
-import ConversationListScreen from '../screens/ConversationListScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
@@ -16,19 +15,6 @@ import CreatePickerScreen from '../screens/CreatePickerScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
-
-// FIXED: Chat Stack Navigator to handle conversation screens properly
-function ChatStackNavigator() {
-  return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen 
-        name="ConversationList" 
-        component={ConversationListScreen}
-        options={{ headerShown: false }}
-      />
-    </Stack.Navigator>
-  );
-}
 
 // Profile Stack Navigator (for the Profile tab)
 function ProfileStackNavigator() {
@@ -85,9 +71,6 @@ export default function MainTabNavigator({ onLogout }) {
             case 'Create':
               iconName = focused ? 'add-circle' : 'add-circle-outline';
               break;
-            case 'Chat':
-              iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
-              break;
             case 'Notifications':
               iconName = focused ? 'notifications' : 'notifications-outline';
               break;
@@ -142,14 +125,6 @@ export default function MainTabNavigator({ onLogout }) {
         }}
       />
       
-      {/* FIXED: Chat tab with proper stack navigator */}
-      <Tab.Screen 
-        name="Chat" 
-        component={ChatStackNavigator}
-        options={{
-          tabBarLabel: 'Messages',
-        }}
-      />
       
       <Tab.Screen 
         name="Notifications" 

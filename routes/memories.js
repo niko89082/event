@@ -1,12 +1,14 @@
-const express       = require('express');
-const multer        = require('multer');
-const path          = require('path');
-const fs            = require('fs');
-const protect       = require('../middleware/auth');
+// routes/memories.js - Updated for standalone memories
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const protect = require('../middleware/auth');
 
-const Memory        = require('../models/Memory');
-const MemoryPhoto   = require('../models/MemoryPhoto');
-const Conversation  = require('../models/Conversation');
+const Memory = require('../models/Memory');
+const MemoryPhoto = require('../models/MemoryPhoto');
+const User = require('../models/User');
+const Notification = require('../models/Notification');
 
 const router = express.Router();
 
@@ -17,199 +19,328 @@ if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true });
 /* ── Multer config ────────────────────────────────────────────────── */
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, memoryDir),
-  filename:    (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+  filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
-const upload = multer({ storage });
-
-/* helper: confirm user is participant in conversation */
-async function ensureParticipant(conversationId, userId) {
-  const convo = await Conversation.findById(conversationId);
-  if (!convo) return { ok: false, msg: 'Conversation not found' };
-  const ok = convo.participants.some((p) => p.toString() === userId.toString());
-  return ok ? { ok: true, convo } : { ok: false, msg: 'Not authorized' };
-}
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
 
 /* ───────────────────────────────────────────────────────────────────
-   POST /memories/conversation/:conversationId
+   POST /api/memories - Create new memory with participants
 ──────────────────────────────────────────────────────────────────── */
-router.post('/conversation/:conversationId', protect, async (req, res) => {
+router.post('/', protect, async (req, res) => {
   try {
-    const { conversationId } = req.params;
-    const check = await ensureParticipant(conversationId, req.user._id);
-    if (!check.ok) return res.status(401).json({ message: check.msg });
+    const { title, description, participantIds, isPrivate } = req.body;
+
+    if (!title?.trim()) {
+      return res.status(400).json({ message: 'Title is required' });
+    }
+
+    if (participantIds && participantIds.length > 15) {
+      return res.status(400).json({ message: 'Maximum 15 participants allowed' });
+    }
+
+    // Validate participant IDs exist
+    const validParticipants = [];
+    if (participantIds && participantIds.length > 0) {
+      const users = await User.find({ _id: { $in: participantIds } }).select('_id');
+      validParticipants.push(...users.map(u => u._id));
+    }
+
+    // Always include creator as participant
+    if (!validParticipants.some(p => p.toString() === req.user._id.toString())) {
+      validParticipants.push(req.user._id);
+    }
 
     const memory = await Memory.create({
-      title: req.body.title,
-      date:  req.body.date || Date.now(),
-      conversation: conversationId,
+      title: title.trim(),
+      description: description?.trim() || '',
       createdBy: req.user._id,
+      participants: validParticipants,
+      isPrivate: isPrivate || false,
     });
 
-    res.status(201).json({ memory });
+    // Create notifications for participants (excluding creator)
+    const notificationPromises = validParticipants
+      .filter(p => p.toString() !== req.user._id.toString())
+      .map(participantId => 
+        Notification.create({
+          user: participantId,
+          sender: req.user._id,
+          type: 'memory_invitation',
+          message: `${req.user.username} added you to a memory: "${title}"`,
+          meta: { memoryId: memory._id }
+        })
+      );
+
+    await Promise.all(notificationPromises);
+
+    const populatedMemory = await Memory.findById(memory._id)
+      .populate('createdBy', 'username profilePicture')
+      .populate('participants', 'username profilePicture');
+
+    res.status(201).json({ memory: populatedMemory });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error creating memory:', err);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: err.message 
+    });
   }
 });
 
 /* ───────────────────────────────────────────────────────────────────
-   GET /memories/conversation/:conversationId
+   GET /api/memories/user/:userId - Get memories for a user
 ──────────────────────────────────────────────────────────────────── */
-router.get('/conversation/:conversationId', protect, async (req, res) => {
+router.get('/user/:userId?', protect, async (req, res) => {
   try {
-    const { conversationId } = req.params;
-    const check = await ensureParticipant(conversationId, req.user._id);
-    if (!check.ok) return res.status(401).json({ message: check.msg });
+    const userId = req.params.userId || req.user._id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
 
-    const memories = await Memory.find({ conversation: conversationId })
-      .populate('createdBy', 'username')
+    // Find memories where user is creator or participant
+    const query = {
+      $or: [
+        { createdBy: userId },
+        { participants: userId }
+      ]
+    };
+
+    // If viewing other user's memories, only show non-private ones
+    if (userId.toString() !== req.user._id.toString()) {
+      query.isPrivate = false;
+    }
+
+    const memories = await Memory.find(query)
+      .populate('createdBy', 'username profilePicture')
+      .populate('participants', 'username profilePicture')
       .populate({
         path: 'photos',
-        populate: [
-          { path: 'user', select: 'username' },
-          { path: 'comments.user', select: 'username' },
-        ],
+        options: { limit: 3 }, // Only first 3 photos for preview
+        populate: { path: 'user', select: 'username' }
       })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
-    res.json({ memories });
+    const totalMemories = await Memory.countDocuments(query);
+
+    res.json({
+      memories,
+      page,
+      totalPages: Math.ceil(totalMemories / limit),
+      hasMore: skip + limit < totalMemories
+    });
   } catch (err) {
-    console.error(err);
+    console.error('Error fetching user memories:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
 /* ───────────────────────────────────────────────────────────────────
-   GET /memories/:memoryId
+   GET /api/memories/:memoryId - Get single memory with all photos
 ──────────────────────────────────────────────────────────────────── */
 router.get('/:memoryId', protect, async (req, res) => {
   try {
     const memory = await Memory.findById(req.params.memoryId)
-      .populate('createdBy', 'username')
+      .populate('createdBy', 'username profilePicture')
+      .populate('participants', 'username profilePicture')
       .populate({
         path: 'photos',
         populate: [
-          { path: 'user', select: 'username' },
+          { path: 'user', select: 'username profilePicture' },
           { path: 'comments.user', select: 'username' },
         ],
       });
 
-    if (!memory) return res.status(404).json({ message: 'Memory not found' });
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
 
-    const check = await ensureParticipant(memory.conversation, req.user._id);
-    if (!check.ok) return res.status(401).json({ message: check.msg });
+    // Check if user has access to this memory
+    if (!memory.isParticipant(req.user._id)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
 
     res.json({ memory });
   } catch (err) {
-    console.error(err);
+    console.error('Error fetching memory:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
 /* ───────────────────────────────────────────────────────────────────
-   POST /memories/:memoryId/photo
+   POST /api/memories/:memoryId/photos - Add photo to memory
 ──────────────────────────────────────────────────────────────────── */
-router.post('/:memoryId/photo', protect, upload.single('photo'), async (req, res) => {
+router.post('/:memoryId/photos', protect, upload.single('photo'), async (req, res) => {
   try {
     const memory = await Memory.findById(req.params.memoryId);
-    if (!memory) return res.status(404).json({ message: 'Memory not found' });
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
 
-    const check = await ensureParticipant(memory.conversation, req.user._id);
-    if (!check.ok) return res.status(401).json({ message: check.msg });
+    // Check if user is a participant
+    if (!memory.isParticipant(req.user._id)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No photo uploaded' });
+    }
 
     const relPath = `/uploads/memory-photos/${req.file.filename}`;
 
     const photo = await MemoryPhoto.create({
-      user:   req.user._id,
+      user: req.user._id,
       memory: memory._id,
-      path:   relPath,
+      path: relPath,
     });
 
     memory.photos.push(photo._id);
+    memory.updatedAt = new Date();
     await memory.save();
 
-    const populated = await Memory.findById(memory._id)
-      .populate('createdBy', 'username')
+    // Notify other participants about new photo
+    const notificationPromises = memory.participants
+      .filter(p => p.toString() !== req.user._id.toString())
+      .map(participantId => 
+        Notification.create({
+          user: participantId,
+          sender: req.user._id,
+          type: 'memory_photo_added',
+          message: `${req.user.username} added a photo to "${memory.title}"`,
+          meta: { memoryId: memory._id, photoId: photo._id }
+        })
+      );
+
+    await Promise.all(notificationPromises);
+
+    const populatedMemory = await Memory.findById(memory._id)
+      .populate('createdBy', 'username profilePicture')
+      .populate('participants', 'username profilePicture')
       .populate({
         path: 'photos',
         populate: [
-          { path: 'user', select: 'username' },
+          { path: 'user', select: 'username profilePicture' },
           { path: 'comments.user', select: 'username' },
         ],
       });
 
-    res.status(201).json({ memory: populated });
+    res.status(201).json({ memory: populatedMemory });
   } catch (err) {
-    console.error(err);
+    console.error('Error adding photo to memory:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
 /* ───────────────────────────────────────────────────────────────────
-   POST /memories/:memoryId/photo/:photoId/comment
+   PUT /api/memories/:memoryId/participants - Add/remove participants
 ──────────────────────────────────────────────────────────────────── */
-router.post('/:memoryId/photo/:photoId/comment', protect, async (req, res) => {
+router.put('/:memoryId/participants', protect, async (req, res) => {
   try {
-    const memory   = await Memory.findById(req.params.memoryId);
-    if (!memory) return res.status(404).json({ message: 'Memory not found' });
+    const { participantIds } = req.body;
+    const memory = await Memory.findById(req.params.memoryId);
 
-    const check = await ensureParticipant(memory.conversation, req.user._id);
-    if (!check.ok) return res.status(401).json({ message: check.msg });
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
 
-    if (!memory.photos.includes(req.params.photoId))
-      return res.status(400).json({ message: 'Photo not in this memory' });
+    // Only creator can modify participants
+    if (memory.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only memory creator can modify participants' });
+    }
 
-    const photo = await MemoryPhoto.findById(req.params.photoId);
-    if (!photo) return res.status(404).json({ message: 'Photo not found' });
+    if (participantIds.length > 15) {
+      return res.status(400).json({ message: 'Maximum 15 participants allowed' });
+    }
 
-    photo.comments.push({ user: req.user._id, text: req.body.text });
-    await photo.save();
+    // Validate participant IDs
+    const users = await User.find({ _id: { $in: participantIds } }).select('_id');
+    const validParticipants = users.map(u => u._id);
 
-    const populated = await MemoryPhoto.findById(photo._id)
-      .populate('user', 'username')
-      .populate('comments.user', 'username');
+    // Always include creator
+    if (!validParticipants.some(p => p.toString() === req.user._id.toString())) {
+      validParticipants.push(req.user._id);
+    }
 
-    res.status(201).json({ photo: populated });
+    memory.participants = validParticipants;
+    memory.updatedAt = new Date();
+    await memory.save();
+
+    const populatedMemory = await Memory.findById(memory._id)
+      .populate('createdBy', 'username profilePicture')
+      .populate('participants', 'username profilePicture');
+
+    res.json({ memory: populatedMemory });
   } catch (err) {
-    console.error(err);
+    console.error('Error updating participants:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
 /* ───────────────────────────────────────────────────────────────────
-   POST /memories/:memoryId/photo/:photoId/like  (toggle)
+   DELETE /api/memories/:memoryId - Delete memory (creator only)
 ──────────────────────────────────────────────────────────────────── */
-router.post('/:memoryId/photo/:photoId/like', protect, async (req, res) => {
+router.delete('/:memoryId', protect, async (req, res) => {
   try {
     const memory = await Memory.findById(req.params.memoryId);
-    if (!memory) return res.status(404).json({ message: 'Memory not found' });
 
-    const check = await ensureParticipant(memory.conversation, req.user._id);
-    if (!check.ok) return res.status(401).json({ message: check.msg });
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
 
-    if (!memory.photos.includes(req.params.photoId))
-      return res.status(400).json({ message: 'Photo not in memory' });
+    // Only creator can delete
+    if (memory.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only memory creator can delete this memory' });
+    }
 
-    const photo = await MemoryPhoto.findById(req.params.photoId);
-    if (!photo) return res.status(404).json({ message: 'Photo not found' });
+    // Delete associated photos and files
+    const photos = await MemoryPhoto.find({ memory: memory._id });
+    for (const photo of photos) {
+      try {
+        const filePath = path.join(__dirname, '..', photo.path);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (err) {
+        console.error('Error deleting photo file:', err);
+      }
+    }
 
-    const idx = photo.likes.findIndex(
-      (u) => u.toString() === req.user._id.toString()
-    );
-    if (idx > -1) photo.likes.splice(idx, 1);
-    else          photo.likes.push(req.user._id);
+    await MemoryPhoto.deleteMany({ memory: memory._id });
+    await Memory.findByIdAndDelete(memory._id);
 
-    await photo.save();
-
-    const populated = await MemoryPhoto.findById(photo._id)
-      .populate('user', 'username')
-      .populate('comments.user', 'username');
-
-    res.json({ photo: populated });
+    res.json({ message: 'Memory deleted successfully' });
   } catch (err) {
-    console.error(err);
+    console.error('Error deleting memory:', err);
     res.status(500).json({ message: 'Server error' });
   }
+});
+
+/* ───────────────────────────────────────────────────────────────────
+   Legacy routes for backward compatibility (can be removed later)
+──────────────────────────────────────────────────────────────────── */
+
+// Legacy conversation-based creation (for existing chat functionality)
+router.post('/conversation/:conversationId', protect, async (req, res) => {
+  res.status(410).json({ 
+    message: 'This endpoint is deprecated. Use POST /api/memories instead.' 
+  });
+});
+
+router.get('/conversation/:conversationId', protect, async (req, res) => {
+  res.status(410).json({ 
+    message: 'This endpoint is deprecated. Use GET /api/memories/user/:userId instead.' 
+  });
 });
 
 module.exports = router;

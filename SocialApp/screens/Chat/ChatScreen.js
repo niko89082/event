@@ -12,12 +12,12 @@ import { io } from 'socket.io-client';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@env';
 
-import api from '../services/api';
-import { AuthContext } from '../services/AuthContext';
-import SharedPostSnippet from '../components/SharedPostSnippet';
-import SharedEventSnippet from '../components/SharedEventSnippet';
-import SharedMemorySnippet from '../components/SharedMemorySnippet';
-import SharedProfileSnippet from '../components/SharedProfileSnippet';
+import api from '../../services/api';
+import { AuthContext } from '../../services/AuthContext';
+import SharedPostSnippet from '../../components/SharedPostSnippet';
+import SharedEventSnippet from '../../components/SharedEventSnippet';
+import SharedMemorySnippet from '../../components/SharedMemorySnippet';
+import SharedProfileSnippet from '../../components/SharedProfileSnippet';
 
 const defaultPfp = 'https://placehold.co/48x48.png?text=%F0%9F%91%A4';
 
