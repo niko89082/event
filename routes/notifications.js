@@ -1,74 +1,76 @@
-// routes/notifications.js
+// routes/notifications.js - In-app notifications API
 const express = require('express');
-const Notification = require('../models/Notification');
 const protect = require('../middleware/auth');
+const notificationService = require('../services/notificationService');
 
 const router = express.Router();
 
-// Create a notification
-router.post('/create', protect, async (req, res) => {
-  const { userId, type, message } = req.body;
-
-  try {
-    const notification = new Notification({
-      user: userId,
-      type,
-      message,
-    });
-
-    await notification.save();
-    res.status(201).json(notification);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Get notifications for a user
+/* ───────────────────────────────────────────────────────────────────
+   GET /api/notifications - Get user notifications
+──────────────────────────────────────────────────────────────────── */
 router.get('/', protect, async (req, res) => {
   try {
-    const notifications = await Notification.find({ user: req.user._id });
-    res.status(200).json(notifications);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+    const result = await notificationService.getUserNotifications(
+      req.user._id, 
+      page, 
+      limit
+    );
+
+    res.json(result);
   } catch (error) {
+    console.error('Error fetching notifications:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Mark notification as read
-router.put('/:id/read', protect, async (req, res) => {
+/* ───────────────────────────────────────────────────────────────────
+   PATCH /api/notifications/:id/read - Mark notification as read
+──────────────────────────────────────────────────────────────────── */
+router.patch('/:id/read', protect, async (req, res) => {
   try {
-    const notification = await Notification.findById(req.params.id);
+    const notification = await notificationService.markAsRead(
+      req.params.id, 
+      req.user._id
+    );
 
     if (!notification) {
       return res.status(404).json({ message: 'Notification not found' });
     }
 
-    if (notification.user.toString() !== req.user._id.toString()) {
-      return res.status(401).json({ message: 'User not authorized' });
-    }
-
-    notification.isRead = true;
-    await notification.save();
-
-    res.status(200).json(notification);
+    res.json({ success: true, notification });
   } catch (error) {
+    console.error('Error marking notification as read:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-//delete notification
-router.delete('/:id', protect, async (req, res) => {
+/* ───────────────────────────────────────────────────────────────────
+   PATCH /api/notifications/read-all - Mark all notifications as read
+──────────────────────────────────────────────────────────────────── */
+router.patch('/read-all', protect, async (req, res) => {
   try {
-      const notification = await Notification.findById(req.params.id);
-      if (!notification) {
-          return res.status(404).json({ message: 'Notification not found' });
-      }
-      if (notification.user.toString() !== req.user._id.toString()) {
-          return res.status(401).json({ message: 'Unauthorized' });
-      }
-      await notification.remove();
-      res.status(200).json({ message: 'Notification deleted' });
+    await notificationService.markAllAsRead(req.user._id);
+    res.json({ success: true });
   } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+    console.error('Error marking all notifications as read:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
+
+/* ───────────────────────────────────────────────────────────────────
+   GET /api/notifications/unread-count - Get unread count
+──────────────────────────────────────────────────────────────────── */
+router.get('/unread-count', protect, async (req, res) => {
+  try {
+    const result = await notificationService.getUserNotifications(req.user._id, 1, 1);
+    res.json({ count: result.unreadCount });
+  } catch (error) {
+    console.error('Error fetching unread count:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;

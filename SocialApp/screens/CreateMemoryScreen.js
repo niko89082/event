@@ -10,7 +10,7 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
 
-const defaultPfp = require('../assets/default-pfp.png');
+const defaultPfp = require('../assets/icon.png');
 
 export default function CreateMemoryScreen({ navigation }) {
   const { currentUser } = useContext(AuthContext);

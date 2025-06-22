@@ -14,6 +14,8 @@ const fs = require('fs');
 
 // Import routes
 const authRoutes = require('./routes/auth');
+const memoryRoutes = require('./routes/memories');
+const notificationRoutes = require('./routes/notifications');
 const eventRoutes = require('./routes/events');
 const photoRoutes = require('./routes/photos');
 const messageRoutes = require('./routes/messages');
@@ -267,6 +269,8 @@ app.use('/notifications', notificationRoutes);
 app.use('/profile', profileRoutes);
 app.use('/follow', followRoutes);
 app.use('/users', usersRoutes);
+app.use('/api/memories', memoryRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // ********************************
 // 6) EVENT PRIVACY SYSTEM API ENDPOINTS

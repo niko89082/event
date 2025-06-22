@@ -1,4 +1,4 @@
-// navigation/MainTabNavigator.js - Updated with proper Chat tab setup
+// navigation/MainTabNavigator.js - Updated with only 3 tabs
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -6,12 +6,14 @@ import { Ionicons } from '@expo/vector-icons';
 
 // Tab Screens
 import FeedScreen from '../screens/FeedScreen';
-import EventListScreen from '../screens/EventListScreen';
-import NotificationScreen from '../screens/NotificationScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
 // Create Screens
 import CreatePickerScreen from '../screens/CreatePickerScreen';
+import CreateEventScreen from '../screens/CreateEventScreen';
+import CreatePostScreen from '../screens/CreatePostScreen';
+import CreateMemoryScreen from '../screens/CreateMemoryScreen';
+import PostPublishedScreen from '../screens/PostPublishedScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -30,26 +32,15 @@ function ProfileStackNavigator() {
   );
 }
 
-// Events Stack Navigator
-function EventsStackNavigator() {
-  return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen 
-        name="EventList" 
-        component={EventListScreen}
-      />
-    </Stack.Navigator>
-  );
-}
-
 // Create Stack Navigator
 function CreateStackNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen 
-        name="CreatePicker" 
-        component={CreatePickerScreen}
-      />
+      <Stack.Screen name="CreatePicker" component={CreatePickerScreen} />
+      <Stack.Screen name="CreateEvent" component={CreateEventScreen} options={{ headerShown: true, title: 'New Event' }} />
+      <Stack.Screen name="CreatePost" component={CreatePostScreen} />
+      <Stack.Screen name="CreateMemory" component={CreateMemoryScreen} options={{ headerShown: true }} />
+      <Stack.Screen name="PostPublished" component={PostPublishedScreen} options={{ gestureEnabled: false }} />
     </Stack.Navigator>
   );
 }
@@ -65,14 +56,8 @@ export default function MainTabNavigator({ onLogout }) {
             case 'Feed':
               iconName = focused ? 'home' : 'home-outline';
               break;
-            case 'Events':
-              iconName = focused ? 'calendar' : 'calendar-outline';
-              break;
             case 'Create':
               iconName = focused ? 'add-circle' : 'add-circle-outline';
-              break;
-            case 'Notifications':
-              iconName = focused ? 'notifications' : 'notifications-outline';
               break;
             case 'Profile':
               iconName = focused ? 'person' : 'person-outline';
@@ -110,27 +95,10 @@ export default function MainTabNavigator({ onLogout }) {
       />
       
       <Tab.Screen 
-        name="Events" 
-        component={EventsStackNavigator}
-        options={{
-          tabBarLabel: 'Events',
-        }}
-      />
-      
-      <Tab.Screen 
         name="Create" 
         component={CreateStackNavigator}
         options={{
           tabBarLabel: 'Create',
-        }}
-      />
-      
-      
-      <Tab.Screen 
-        name="Notifications" 
-        component={NotificationScreen}
-        options={{
-          tabBarLabel: 'Activity',
         }}
       />
       

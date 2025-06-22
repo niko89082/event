@@ -12,6 +12,8 @@ import MainTabNavigator from './navigation/MainTabNavigator';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Global Screens (accessible from anywhere)
+
+import CreateMemoryScreen from './screens/CreateMemoryScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import FollowListScreen from './screens/FollowListScreen';
 import UserSettingsScreen from './screens/UserSettingsScreen';
@@ -115,6 +117,11 @@ function RootNavigator() {
           <RootStack.Screen
             name="ProfileScreen"
             component={ProfileScreen}
+            options={{ headerShown: false }}
+          />
+          <RootStack.Screen
+            name="CreateMemoryScreen"
+            component={CreateMemoryScreen}
             options={{ headerShown: false }}
           />
           <RootStack.Screen

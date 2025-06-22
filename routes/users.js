@@ -56,37 +56,34 @@ router.get('/:userId/following', protect, async (req, res) => {
     console.log(e);
   }
 });
+// routes/users.js - Update search endpoint
 router.get('/search', protect, async (req, res) => {
   try {
-    const { q } = req.query;
+    const { q, limit = 20 } = req.query;
     
-    if (!q || q.trim().length < 1) {
-      return res.status(400).json({ message: 'Search query too short' });
+    let users;
+    
+    if (q && q.trim().length > 0) {
+      // Use text search index for performance
+      users = await User.find(
+        { $text: { $search: q.trim() } },
+        { score: { $meta: 'textScore' } }
+      )
+      .select('username fullName profilePicture bio followers following')
+      .sort({ score: { $meta: 'textScore' } })
+      .limit(parseInt(limit));
+    } else {
+      // Return recent users when no search query
+      users = await User.find({})
+        .select('username fullName profilePicture bio followers following')
+        .sort({ createdAt: -1 })
+        .limit(parseInt(limit));
     }
 
-    const searchQuery = q.trim();
-    
-    // Search by username, fullName, or email (case insensitive)
-    const users = await User.find({
-      $and: [
-        { _id: { $ne: req.user._id } }, // Exclude current user
-        {
-          $or: [
-            { username: { $regex: searchQuery, $options: 'i' } },
-            { fullName: { $regex: searchQuery, $options: 'i' } },
-            { email: { $regex: searchQuery, $options: 'i' } }
-          ]
-        }
-      ]
-    })
-    .select('username fullName email profilePicture')
-    .limit(50)
-    .sort({ username: 1 });
-
-    res.json(users);
+    res.json({ users });
   } catch (error) {
-    console.error('Search users error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('User search error:', error);
+    res.status(500).json({ message: 'Search failed' });
   }
 });
 

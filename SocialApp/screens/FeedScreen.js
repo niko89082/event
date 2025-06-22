@@ -1,4 +1,4 @@
-// screens/FeedScreen.js - Updated home structure with proper header and pull-to-refresh
+// screens/FeedScreen.js - Updated with notifications button, no chat button
 import React, { useLayoutEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -25,6 +25,14 @@ export default function FeedScreen({ navigation }) {
     setRefreshing(false);
   };
 
+  function PostsFeed({ navigation }) {
+    return <EnhancedPostsFeed navigation={navigation} ref={postsRef} />;
+  }
+
+  function EventsFeed({ navigation }) {
+    return <EventsHub navigation={navigation} ref={eventsRef} />;
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -43,36 +51,29 @@ export default function FeedScreen({ navigation }) {
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.headerButton}
-              onPress={() => navigation.navigate('ChatTab')}
+              onPress={() => navigation.navigate('NotificationScreen')}
               activeOpacity={0.8}
             >
-              <Ionicons name="chatbubble-outline" size={24} color="#000" />
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={() => navigation.navigate('Create')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="add-circle-outline" size={24} color="#000" />
+              <Ionicons name="notifications-outline" size={24} color="#000" />
             </TouchableOpacity>
           </View>
         </View>
       </View>
 
-      {/* Tab Navigator */}
+      {/* Tab Navigator for Posts and Events */}
       <Tab.Navigator
         screenOptions={{
-          tabBarActiveTintColor: '#000000',
+          tabBarActiveTintColor: '#3797EF', // Changed to blue
           tabBarInactiveTintColor: '#8E8E93',
           tabBarIndicatorStyle: {
-            backgroundColor: '#000000',
+            backgroundColor: '#3797EF', // Changed to blue
             height: 2,
           },
           tabBarStyle: {
             backgroundColor: '#FFFFFF',
             elevation: 0,
             shadowOpacity: 0,
-            borderBottomWidth: 0.5,
+            borderBottomWidth: 0.33,
             borderBottomColor: '#E1E1E1',
           },
           tabBarLabelStyle: {
@@ -80,51 +81,19 @@ export default function FeedScreen({ navigation }) {
             fontWeight: '600',
             textTransform: 'none',
           },
-          tabBarPressColor: 'transparent',
+          tabBarShowIcon: false, // Remove icons, only show text
         }}
       >
         <Tab.Screen 
           name="Posts" 
-          options={{
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons 
-                name={focused ? 'grid' : 'grid-outline'} 
-                size={20} 
-                color={color} 
-              />
-            ),
-          }}
-        >
-          {(props) => (
-            <EnhancedPostsFeed 
-              {...props} 
-              ref={postsRef}
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-            />
-          )}
-        </Tab.Screen>
+          component={PostsFeed}
+          initialParams={{ navigation }}
+        />
         <Tab.Screen 
           name="Events" 
-          options={{
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons 
-                name={focused ? 'calendar' : 'calendar-outline'} 
-                size={20} 
-                color={color} 
-              />
-            ),
-          }}
-        >
-          {(props) => (
-            <EventsHub 
-              {...props} 
-              ref={eventsRef}
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-            />
-          )}
-        </Tab.Screen>
+          component={EventsFeed}
+          initialParams={{ navigation }}
+        />
       </Tab.Navigator>
     </SafeAreaView>
   );
@@ -135,28 +104,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  
-  // Custom Header
   header: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
+    borderBottomWidth: 0.33,
     borderBottomColor: '#E1E1E1',
-    paddingTop: 8,
-    paddingBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
     color: '#000000',
   },
@@ -165,8 +126,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerButton: {
+    marginLeft: 16,
     padding: 8,
-    marginLeft: 8,
     borderRadius: 20,
+  },
+  tabContent: {
+    flex: 1,
   },
 });
