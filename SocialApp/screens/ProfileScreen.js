@@ -1,5 +1,5 @@
-// screens/ProfileScreen.js - Updated with QR Code Access
-import React, { useEffect, useState, useContext } from 'react';
+// screens/ProfileScreen.js - Merged version with seamless tabs and full functionality
+import React, { useEffect, useState, useContext, useCallback } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, SafeAreaView, StatusBar, Dimensions,
@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { TabView, TabBar, SceneMap } from 'react-native-tab-view';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
@@ -31,6 +32,7 @@ export default function ProfileScreen() {
   const userId = params?.userId || currentUser?._id;
   const isSelf = userId === currentUser?._id;
 
+  // Core state
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
   const [events, setEvents] = useState([]);
@@ -41,10 +43,15 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [hasRequested, setHasRequested] = useState(false);
-  const [activeTab, setActiveTab] = useState('Posts');
   const [eventFilter, setEventFilter] = useState('all');
-  const [showEventFilters, setShowEventFilters] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
+
+  // TabView state
+  const [index, setIndex] = useState(0);
+  const routes = [
+    { key: 'posts', title: 'Posts' },
+    { key: 'events', title: 'Events' }
+  ];
 
   // Set up navigation header
   useEffect(() => {
@@ -98,6 +105,13 @@ export default function ProfileScreen() {
     applyEventFilter();
   }, [events, eventFilter, sharedEventIds]);
 
+  // Load events when switching to Events tab
+  useEffect(() => {
+    if (index === 1 && events.length === 0) {
+      fetchUserEvents();
+    }
+  }, [index]);
+
   const fetchUserProfile = async (isRefresh = false) => {
     try {
       if (isRefresh) {
@@ -112,8 +126,8 @@ export default function ProfileScreen() {
       setIsFollowing(data.isFollowing || false);
       setHasRequested(data.hasRequested || false);
 
-      // Fetch events when switching to Events tab or if it's already active
-      if (activeTab === 'Events') {
+      // If we're on Events tab, also refresh events
+      if (index === 1) {
         await fetchUserEvents();
       }
 
@@ -273,15 +287,6 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleTabChange = async (tabName) => {
-    setActiveTab(tabName);
-    
-    // Fetch events when switching to Events tab
-    if (tabName === 'Events' && events.length === 0) {
-      await fetchUserEvents();
-    }
-  };
-
   const toggleEventSharing = async (eventId) => {
     try {
       const currentSharedIds = Array.from(sharedEventIds);
@@ -308,16 +313,18 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleManageSharedEvents = () => {
-    setShowManageModal(false);
-    navigation.navigate('SelectShareableEventsScreen', { 
-      userId,
-      currentSharedIds: Array.from(sharedEventIds),
-      allEvents: events
-    });
-  };
+  // Handle pull-to-refresh for entire screen
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchUserProfile(true);
+    if (index === 1) {
+      await fetchUserEvents();
+    }
+    setRefreshing(false);
+  }, [index]);
 
-  const renderProfileHeader = () => {
+  // Profile Header Component
+  const ProfileHeader = () => {
     if (!user) return null;
 
     const avatar = user.profilePicture
@@ -432,71 +439,110 @@ export default function ProfileScreen() {
     );
   };
 
-  const renderTabBar = () => (
-    <View style={styles.tabBarContainer}>
+  // Posts Scene
+  const PostsScene = () => {
+    const renderPostGrid = ({ item }) => (
       <TouchableOpacity
-        style={[styles.tabBarItem, activeTab === 'Posts' && styles.activeTabBarItem]}
-        onPress={() => handleTabChange('Posts')}
-        activeOpacity={0.8}
+        style={styles.postThumbnail}
+        onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
+        activeOpacity={0.9}
       >
-        <Ionicons 
-          name="grid-outline" 
-          size={24} 
-          color={activeTab === 'Posts' ? '#000000' : '#8E8E93'} 
+        <Image
+          source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
+          style={styles.postImage}
         />
+        {item.event && (
+          <View style={styles.eventIndicator}>
+            <Ionicons name="calendar" size={12} color="#FFFFFF" />
+          </View>
+        )}
       </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.tabBarItem, activeTab === 'Events' && styles.activeTabBarItem]}
-        onPress={() => handleTabChange('Events')}
-        activeOpacity={0.8}
-      >
-        <Ionicons 
-          name="calendar-outline" 
-          size={24} 
-          color={activeTab === 'Events' ? '#000000' : '#8E8E93'} 
-        />
-      </TouchableOpacity>
-    </View>
-  );
+    );
 
-  const renderEventFilterBar = () => {
-    if (activeTab !== 'Events' || !isSelf) return null;
-
-    const activeFilter = EVENT_FILTERS.find(f => f.key === eventFilter);
+    if (!user?.isPublic && !isSelf && !isFollowing) {
+      return (
+        <View style={styles.privateAccountContainer}>
+          <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.privateAccountTitle}>This account is private</Text>
+          <Text style={styles.privateAccountSubtitle}>
+            Follow this account to see their content
+          </Text>
+        </View>
+      );
+    }
 
     return (
-      <View style={styles.eventFilterBar}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.eventFilterContent}
-        >
-          {EVENT_FILTERS.map(filter => (
-            <TouchableOpacity
-              key={filter.key}
-              style={[
-                styles.eventFilterChip,
-                eventFilter === filter.key && styles.eventFilterChipActive
-              ]}
-              onPress={() => setEventFilter(filter.key)}
-              activeOpacity={0.8}
-            >
-              <Ionicons 
-                name={filter.icon} 
-                size={16} 
-                color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
-              />
-              <Text style={[
-                styles.eventFilterChipText,
-                eventFilter === filter.key && styles.eventFilterChipTextActive
-              ]}>
-                {filter.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+      <FlatList
+        data={posts}
+        renderItem={renderPostGrid}
+        keyExtractor={(item) => item._id}
+        numColumns={3}
+        ListEmptyComponent={() => (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
+            <Text style={styles.emptyTitle}>
+              {isSelf ? 'Share your first post' : 'No posts yet'}
+            </Text>
+            <Text style={styles.emptySubtitle}>
+              {isSelf 
+                ? 'When you share photos, they\'ll appear on your profile.'
+                : 'When they share photos, they\'ll appear here.'
+              }
+            </Text>
+            {isSelf && (
+              <TouchableOpacity
+                style={styles.createButton}
+                onPress={() => navigation.navigate('CreatePickerScreen')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.createButtonText}>Create Post</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={posts.length > 0 ? styles.postsGrid : { flex: 1 }}
+      />
+    );
+  };
 
-        {isSelf && (
+  // Events Scene
+  const EventsScene = () => {
+    const renderEventFilterBar = () => {
+      if (!isSelf) return null;
+
+      return (
+        <View style={styles.eventFilterBar}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.eventFilterContent}
+          >
+            {EVENT_FILTERS.map(filter => (
+              <TouchableOpacity
+                key={filter.key}
+                style={[
+                  styles.eventFilterChip,
+                  eventFilter === filter.key && styles.eventFilterChipActive
+                ]}
+                onPress={() => setEventFilter(filter.key)}
+                activeOpacity={0.8}
+              >
+                <Ionicons 
+                  name={filter.icon} 
+                  size={16} 
+                  color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
+                />
+                <Text style={[
+                  styles.eventFilterChipText,
+                  eventFilter === filter.key && styles.eventFilterChipTextActive
+                ]}>
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
           <TouchableOpacity
             style={styles.manageEventsButton}
             onPress={() => setShowManageModal(true)}
@@ -504,10 +550,212 @@ export default function ProfileScreen() {
           >
             <Ionicons name="settings-outline" size={18} color="#3797EF" />
           </TouchableOpacity>
+        </View>
+      );
+    };
+
+    const renderEventCard = ({ item: event }) => {
+      const eventDate = new Date(event.time);
+      const isPast = eventDate < new Date();
+      const isShared = sharedEventIds.has(event._id);
+      const coverImage = event.coverImage 
+        ? `http://${API_BASE_URL}:3000${event.coverImage}` 
+        : null;
+
+      return (
+        <View style={styles.eventCard}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
+            activeOpacity={0.95}
+          >
+            <View style={styles.eventImageContainer}>
+              {coverImage ? (
+                <Image source={{ uri: coverImage }} style={styles.eventImage} />
+              ) : (
+                <View style={styles.eventImagePlaceholder}>
+                  <Ionicons name="calendar-outline" size={32} color="#C7C7CC" />
+                </View>
+              )}
+              
+              {/* Event Status Badges */}
+              <View style={styles.eventBadgesContainer}>
+                {/* Host/Attending Badge */}
+                <View style={[
+                  styles.eventStatusBadge,
+                  event.isHost ? styles.hostBadge : styles.attendingBadge
+                ]}>
+                  <Ionicons 
+                    name={event.isHost ? "star" : "checkmark"} 
+                    size={12} 
+                    color="#FFFFFF" 
+                  />
+                  <Text style={styles.eventStatusBadgeText}>
+                    {event.isHost ? 'Host' : 'Going'}
+                  </Text>
+                </View>
+
+                {/* Past Event Indicator */}
+                {isPast && (
+                  <View style={styles.pastEventBadge}>
+                    <Ionicons name="time" size={12} color="#FFFFFF" />
+                    <Text style={styles.pastEventBadgeText}>Past</Text>
+                  </View>
+                )}
+
+                {/* Shared Indicator */}
+                {isShared && (
+                  <View style={styles.sharedBadge}>
+                    <Ionicons name="eye" size={12} color="#FFFFFF" />
+                  </View>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.eventContent}>
+              <Text style={styles.eventTitle} numberOfLines={2}>
+                {event.title}
+              </Text>
+              
+              <View style={styles.eventMeta}>
+                <View style={styles.eventMetaRow}>
+                  <Ionicons name="calendar-outline" size={14} color="#8E8E93" />
+                  <Text style={styles.eventMetaText}>
+                    {eventDate.toLocaleDateString('en-US', {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                      year: eventDate.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
+                    })}
+                    {isPast && ' (Past)'}
+                  </Text>
+                </View>
+                
+                <View style={styles.eventMetaRow}>
+                  <Ionicons name="location-outline" size={14} color="#8E8E93" />
+                  <Text style={styles.eventMetaText} numberOfLines={1}>
+                    {event.location}
+                  </Text>
+                </View>
+
+                {event.attendees && event.attendees.length > 0 && (
+                  <View style={styles.eventMetaRow}>
+                    <Ionicons name="people-outline" size={14} color="#8E8E93" />
+                    <Text style={styles.eventMetaText}>
+                      {event.attendees.length} {event.attendees.length === 1 ? 'person' : 'people'}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Event Category */}
+                {event.category && (
+                  <View style={styles.categoryTag}>
+                    <Text style={styles.categoryTagText}>{event.category}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          {/* Event Actions (only for self) */}
+          {isSelf && (
+            <View style={styles.eventActions}>
+              <TouchableOpacity
+                style={[
+                  styles.shareToggle,
+                  isShared && styles.shareToggleActive
+                ]}
+                onPress={() => toggleEventSharing(event._id)}
+                activeOpacity={0.8}
+              >
+                <Ionicons 
+                  name={isShared ? "eye" : "eye-off"} 
+                  size={16} 
+                  color={isShared ? "#FFFFFF" : "#8E8E93"} 
+                />
+                <Text style={[
+                  styles.shareToggleText,
+                  isShared && styles.shareToggleTextActive
+                ]}>
+                  {isShared ? 'Shared' : 'Share'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Edit button for hosted events */}
+              {event.isHost && !isPast && (
+                <TouchableOpacity
+                  style={styles.editEventButton}
+                  onPress={() => navigation.navigate('EditEventScreen', { eventId: event._id })}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="create-outline" size={16} color="#3797EF" />
+                  <Text style={styles.editEventButtonText}>Edit</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* View Details button */}
+              <TouchableOpacity
+                style={styles.viewEventButton}
+                onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="arrow-forward-outline" size={16} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      );
+    };
+
+    if (eventsLoading) {
+      return (
+        <View style={styles.loadingEventsContainer}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading events...</Text>
+        </View>
+      );
+    }
+
+    const dataToShow = isSelf ? filteredEvents : events;
+
+    return (
+      <FlatList
+        data={dataToShow}
+        renderItem={renderEventCard}
+        keyExtractor={(item) => item._id}
+        ListHeaderComponent={renderEventFilterBar}
+        ListEmptyComponent={() => (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
+            <Text style={styles.emptyTitle}>
+              {isSelf ? 'No events found' : 'No shared events'}
+            </Text>
+            <Text style={styles.emptySubtitle}>
+              {isSelf 
+                ? 'Join or host events to see them here. You can share events on your profile for others to see.'
+                : 'This user hasn\'t shared any events publicly yet.'
+              }
+            </Text>
+            {isSelf && (
+              <TouchableOpacity
+                style={styles.createButton}
+                onPress={() => navigation.navigate('CreateEventScreen')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.createButtonText}>Create Event</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
-      </View>
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={dataToShow.length > 0 ? styles.eventsGrid : { flex: 1 }}
+      />
     );
   };
+
+  const renderScene = SceneMap({
+    posts: PostsScene,
+    events: EventsScene,
+  });
 
   const renderManageModal = () => (
     <Modal
@@ -530,7 +778,14 @@ export default function ProfileScreen() {
         <ScrollView style={styles.modalContent}>
           <TouchableOpacity
             style={styles.manageOption}
-            onPress={handleManageSharedEvents}
+            onPress={() => {
+              setShowManageModal(false);
+              navigation.navigate('SelectShareableEventsScreen', { 
+                userId,
+                currentSharedIds: Array.from(sharedEventIds),
+                allEvents: events
+              });
+            }}
             activeOpacity={0.8}
           >
             <View style={styles.manageOptionIcon}>
@@ -589,269 +844,6 @@ export default function ProfileScreen() {
     </Modal>
   );
 
-  const renderPostGrid = ({ item }) => (
-    <TouchableOpacity
-      style={styles.postThumbnail}
-      onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
-      activeOpacity={0.9}
-    >
-      <Image
-        source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
-        style={styles.postImage}
-      />
-      {item.event && (
-        <View style={styles.eventIndicator}>
-          <Ionicons name="calendar" size={12} color="#FFFFFF" />
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-
-  const renderEventCard = ({ item: event }) => {
-    const eventDate = new Date(event.time);
-    const isPast = eventDate < new Date();
-    const isShared = sharedEventIds.has(event._id);
-    const coverImage = event.coverImage 
-      ? `http://${API_BASE_URL}:3000${event.coverImage}` 
-      : null;
-
-    return (
-      <View style={styles.eventCard}>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
-          activeOpacity={0.95}
-        >
-          <View style={styles.eventImageContainer}>
-            {coverImage ? (
-              <Image source={{ uri: coverImage }} style={styles.eventImage} />
-            ) : (
-              <View style={styles.eventImagePlaceholder}>
-                <Ionicons name="calendar-outline" size={32} color="#C7C7CC" />
-              </View>
-            )}
-            
-            {/* Event Status Badges */}
-            <View style={styles.eventBadgesContainer}>
-              {/* Host/Attending Badge */}
-              <View style={[
-                styles.eventStatusBadge,
-                event.isHost ? styles.hostBadge : styles.attendingBadge
-              ]}>
-                <Ionicons 
-                  name={event.isHost ? "star" : "checkmark"} 
-                  size={12} 
-                  color="#FFFFFF" 
-                />
-                <Text style={styles.eventStatusBadgeText}>
-                  {event.isHost ? 'Host' : 'Going'}
-                </Text>
-              </View>
-
-              {/* Past Event Indicator */}
-              {isPast && (
-                <View style={styles.pastEventBadge}>
-                  <Ionicons name="time" size={12} color="#FFFFFF" />
-                  <Text style={styles.pastEventBadgeText}>Past</Text>
-                </View>
-              )}
-
-              {/* Shared Indicator */}
-              {isShared && (
-                <View style={styles.sharedBadge}>
-                  <Ionicons name="eye" size={12} color="#FFFFFF" />
-                </View>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.eventContent}>
-            <Text style={styles.eventTitle} numberOfLines={2}>
-              {event.title}
-            </Text>
-            
-            <View style={styles.eventMeta}>
-              <View style={styles.eventMetaRow}>
-                <Ionicons name="calendar-outline" size={14} color="#8E8E93" />
-                <Text style={styles.eventMetaText}>
-                  {eventDate.toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    year: eventDate.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
-                  })}
-                  {isPast && ' (Past)'}
-                </Text>
-              </View>
-              
-              <View style={styles.eventMetaRow}>
-                <Ionicons name="location-outline" size={14} color="#8E8E93" />
-                <Text style={styles.eventMetaText} numberOfLines={1}>
-                  {event.location}
-                </Text>
-              </View>
-
-              {event.attendees && event.attendees.length > 0 && (
-                <View style={styles.eventMetaRow}>
-                  <Ionicons name="people-outline" size={14} color="#8E8E93" />
-                  <Text style={styles.eventMetaText}>
-                    {event.attendees.length} {event.attendees.length === 1 ? 'person' : 'people'}
-                  </Text>
-                </View>
-              )}
-
-              {/* Event Category */}
-              {event.category && (
-                <View style={styles.categoryTag}>
-                  <Text style={styles.categoryTagText}>{event.category}</Text>
-                </View>
-              )}
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* Event Actions (only for self) */}
-        {isSelf && (
-          <View style={styles.eventActions}>
-            <TouchableOpacity
-              style={[
-                styles.shareToggle,
-                isShared && styles.shareToggleActive
-              ]}
-              onPress={() => toggleEventSharing(event._id)}
-              activeOpacity={0.8}
-            >
-              <Ionicons 
-                name={isShared ? "eye" : "eye-off"} 
-                size={16} 
-                color={isShared ? "#FFFFFF" : "#8E8E93"} 
-              />
-              <Text style={[
-                styles.shareToggleText,
-                isShared && styles.shareToggleTextActive
-              ]}>
-                {isShared ? 'Shared' : 'Share'}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Edit button for hosted events */}
-            {event.isHost && !isPast && (
-              <TouchableOpacity
-                style={styles.editEventButton}
-                onPress={() => navigation.navigate('EditEventScreen', { eventId: event._id })}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="create-outline" size={16} color="#3797EF" />
-                <Text style={styles.editEventButtonText}>Edit</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* View Details button */}
-            <TouchableOpacity
-              style={styles.viewEventButton}
-              onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="arrow-forward-outline" size={16} color="#8E8E93" />
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  const getContentData = () => {
-    if (activeTab === 'Posts') {
-      if (!user?.isPublic && !isSelf && !isFollowing) {
-        return 'private';
-      }
-      return posts;
-    } else {
-      if (eventsLoading) {
-        return 'loading';
-      }
-      return isSelf ? filteredEvents : events;
-    }
-  };
-
-  const renderContent = () => {
-    const contentData = getContentData();
-
-    if (contentData === 'private') {
-      return (
-        <View style={styles.privateAccountContainer}>
-          <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
-          <Text style={styles.privateAccountTitle}>This account is private</Text>
-          <Text style={styles.privateAccountSubtitle}>
-            Follow this account to see their content
-          </Text>
-        </View>
-      );
-    }
-
-    if (contentData === 'loading') {
-      return (
-        <View style={styles.loadingEventsContainer}>
-          <ActivityIndicator size="large" color="#3797EF" />
-          <Text style={styles.loadingText}>Loading events...</Text>
-        </View>
-      );
-    }
-
-    if (Array.isArray(contentData) && contentData.length === 0) {
-      const isEventsTab = activeTab === 'Events';
-      const hasFilter = isEventsTab && eventFilter !== 'all';
-      
-      return (
-        <View style={styles.emptyContainer}>
-          <Ionicons 
-            name={isEventsTab ? "calendar-outline" : "camera-outline"} 
-            size={64} 
-            color="#C7C7CC" 
-          />
-          <Text style={styles.emptyTitle}>
-            {isEventsTab 
-              ? (hasFilter 
-                  ? `No ${eventFilter} events`
-                  : (isSelf ? 'No events found' : 'No shared events')
-                )
-              : (isSelf ? 'Share your first post' : 'No posts yet')
-            }
-          </Text>
-          <Text style={styles.emptySubtitle}>
-            {isEventsTab
-              ? (hasFilter
-                  ? `You don't have any ${eventFilter} events yet.`
-                  : (isSelf 
-                      ? 'Join or host events to see them here. You can share events on your profile for others to see.'
-                      : 'This user hasn\'t shared any events publicly yet.'
-                    )
-                )
-              : (isSelf 
-                  ? 'When you share photos, they\'ll appear on your profile.'
-                  : 'When they share photos, they\'ll appear here.'
-                )
-            }
-          </Text>
-          {isSelf && (
-            <TouchableOpacity
-              style={styles.createButton}
-              onPress={() => navigation.navigate(
-                isEventsTab ? 'CreateEventScreen' : 'CreatePickerScreen'
-              )}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.createButtonText}>
-                {isEventsTab ? 'Create Event' : 'Create Post'}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      );
-    }
-
-    return contentData;
-  };
-
   if (loading && !user) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
@@ -873,45 +865,62 @@ export default function ProfileScreen() {
     );
   }
 
-  const contentData = renderContent();
-  const isPostsGrid = activeTab === 'Posts' && Array.isArray(contentData);
-  const isEventsGrid = activeTab === 'Events' && Array.isArray(contentData);
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      <FlatList
-        data={isPostsGrid ? contentData : (isEventsGrid ? contentData : [])}
-        renderItem={isPostsGrid ? renderPostGrid : renderEventCard}
-        keyExtractor={(item) => item._id}
-        numColumns={isPostsGrid ? 3 : 1}
-        key={`${activeTab}-${isPostsGrid ? 3 : 1}`} // Force re-render when switching tabs
-        ListHeaderComponent={() => (
-          <View>
-            {renderProfileHeader()}
-            {renderTabBar()}
-            {renderEventFilterBar()}
-          </View>
-        )}
-        ListEmptyComponent={() => (
-          !Array.isArray(contentData) ? contentData : null
-        )}
+      {/* Full screen scroll view with pull-to-refresh */}
+      <ScrollView
+        style={{ flex: 1 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => fetchUserProfile(true)}
+            onRefresh={onRefresh}
             tintColor="#3797EF"
             colors={["#3797EF"]}
           />
         }
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={
-          isPostsGrid && contentData.length > 0 ? styles.postsGrid : 
-          isEventsGrid ? styles.eventsGrid : {}
-        }
         scrollEventThrottle={16}
-      />
+      >
+        {/* Fixed Profile Header */}
+        <ProfileHeader />
+
+        {/* TabView for Posts/Events */}
+        <View style={{ height: SCREEN_WIDTH * 1.2, minHeight: 500 }}>
+          <TabView
+            navigationState={{ index, routes }}
+            renderScene={renderScene}
+            onIndexChange={setIndex}
+            initialLayout={{ width: SCREEN_WIDTH }}
+            lazy
+            renderLazyPlaceholder={() => (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#3797EF" />
+              </View>
+            )}
+            renderTabBar={(props) => (
+              <TabBar
+                {...props}
+                indicatorStyle={styles.tabIndicator}
+                style={styles.tabBar}
+                labelStyle={styles.tabLabel}
+                activeColor="#000000"
+                inactiveColor="#8E8E93"
+                renderIcon={({ route, focused }) => (
+                  <Ionicons 
+                    name={route.key === 'posts' ? 'grid-outline' : 'calendar-outline'} 
+                    size={24} 
+                    color={focused ? '#000000' : '#8E8E93'} 
+                  />
+                )}
+                showIcon={true}
+                showLabel={false}
+              />
+            )}
+          />
+        </View>
+      </ScrollView>
 
       {renderManageModal()}
     </SafeAreaView>
@@ -1091,21 +1100,21 @@ const styles = StyleSheet.create({
   },
 
   // Tab Bar
-  tabBarContainer: {
-    flexDirection: 'row',
+  tabBar: {
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
+    elevation: 0,
+    shadowOpacity: 0,
   },
-  tabBarItem: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+  tabIndicator: {
+    backgroundColor: '#000000',
+    height: 2,
   },
-  activeTabBarItem: {
-    borderBottomColor: '#000000',
+  tabLabel: {
+    fontWeight: '600',
+    textTransform: 'none',
+    fontSize: 16,
   },
 
   // Event Filter Bar
