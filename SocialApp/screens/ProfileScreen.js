@@ -180,67 +180,82 @@ export default function ProfileScreen() {
   };
 
   const fetchUserEvents = async () => {
-    try {
-      setEventsLoading(true);
-      console.log('📅 Fetching events for userId:', userId);
-      
-      const { data } = await api.get(`/api/users/${userId}/events`);
-      console.log('📅 Events received:', data.events?.length || 0);
-      setEvents(data.events || []);
-      
-      // Fetch shared event IDs if viewing self
-      if (isSelf) {
-        try {
-          const sharedResponse = await api.get('/api/users/shared-events');
-          setSharedEventIds(new Set(sharedResponse.data.eventIds || []));
-          console.log('👁️ Shared events:', sharedResponse.data.eventIds?.length || 0);
-        } catch (sharedError) {
-          console.error('Error fetching shared events:', sharedError);
-        }
+  try {
+    setEventsLoading(true);
+    console.log('📅 Fetching events for userId:', userId);
+    
+    // FIXED: Use the proper endpoint with sorting
+    const { data } = await api.get(`/api/users/${userId}/events`, {
+      params: {
+        includePast: 'true', // Include both past and future events
+        limit: 200,
+        type: 'all' // Get all events (hosted + attending)
       }
-      
-    } catch (error) {
-      console.error('❌ Error fetching events:', error);
-      if (error.response?.status !== 404) {
-        Alert.alert('Error', 'Failed to load events');
+    });
+    
+    console.log('📅 Events received:', data.events?.length || 0);
+    
+    // Events are already sorted by the backend (most recent first)
+    setEvents(data.events || []);
+    
+    // Fetch shared event IDs if viewing self
+    if (isSelf) {
+      try {
+        const sharedResponse = await api.get('/api/users/shared-events');
+        setSharedEventIds(new Set(sharedResponse.data.eventIds || []));
+        console.log('👁️ Shared events:', sharedResponse.data.eventIds?.length || 0);
+      } catch (sharedError) {
+        console.error('Error fetching shared events:', sharedError);
       }
-    } finally {
-      setEventsLoading(false);
     }
-  };
-
-  const applyEventFilter = () => {
-    if (!Array.isArray(events)) {
-      setFilteredEvents([]);
-      return;
+    
+  } catch (error) {
+    console.error('❌ Error fetching events:', error);
+    if (error.response?.status !== 404) {
+      Alert.alert('Error', 'Failed to load events');
     }
+  } finally {
+    setEventsLoading(false);
+  }
+};
 
-    let filtered = [...events];
-    const now = new Date();
+// ENHANCED: Apply event filter with better logic
+const applyEventFilter = () => {
+  if (!Array.isArray(events)) {
+    setFilteredEvents([]);
+    return;
+  }
 
-    switch (eventFilter) {
-      case 'upcoming':
-        filtered = events.filter(e => new Date(e.time) > now);
-        break;
-      case 'past':
-        filtered = events.filter(e => new Date(e.time) <= now);
-        break;
-      case 'hosted':
-        filtered = events.filter(e => e.isHost);
-        break;
-      case 'attending':
-        filtered = events.filter(e => e.isAttending && !e.isHost);
-        break;
-      case 'shared':
-        filtered = events.filter(e => sharedEventIds.has(e._id));
-        break;
-      default: // 'all'
-        break;
-    }
+  let filtered = [...events];
+  const now = new Date();
 
-    setFilteredEvents(filtered);
-  };
+  switch (eventFilter) {
+    case 'upcoming':
+      filtered = events.filter(e => new Date(e.time) > now);
+      // Sort upcoming events by soonest first
+      filtered.sort((a, b) => new Date(a.time) - new Date(b.time));
+      break;
+    case 'past':
+      filtered = events.filter(e => new Date(e.time) <= now);
+      // Sort past events by most recent first
+      filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
+      break;
+    case 'hosted':
+      filtered = events.filter(e => e.isHost);
+      break;
+    case 'attending':
+      filtered = events.filter(e => e.isAttending && !e.isHost);
+      break;
+    case 'shared':
+      filtered = events.filter(e => sharedEventIds.has(e._id));
+      break;
+    default: // 'all'
+      // Keep the backend sorting (most recent first)
+      break;
+  }
 
+  setFilteredEvents(filtered);
+};
   const handleTabSwitch = async (tab) => {
     setActiveTab(tab);
     if (tab === 'Events' && events.length === 0) {
@@ -292,7 +307,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const renderProfileHeader = () => (
+const renderProfileHeader = () => (
     <View style={styles.profileHeader}>
       <View style={styles.profileImageSection}>
         <Image
@@ -310,7 +325,7 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Stats - FIXED: Now shows correct follower counts */}
+      {/* Stats - FIXED: Pass correct 'mode' parameter */}
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
           <Text style={styles.statNumber}>{posts.length}</Text>
@@ -319,19 +334,21 @@ export default function ProfileScreen() {
         <TouchableOpacity
           style={styles.statItem}
           onPress={() => navigation.navigate('FollowListScreen', { 
-            userId, type: 'followers' 
+            userId, 
+            mode: 'followers' // FIXED: was 'type'
           })}
         >
-          <Text style={styles.statNumber}>{user?.followersCount || 0}</Text>
+          <Text style={styles.statNumber}>{user?.followersCount || user?.followers?.length || 0}</Text>
           <Text style={styles.statLabel}>Followers</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.statItem}
           onPress={() => navigation.navigate('FollowListScreen', { 
-            userId, type: 'following' 
+            userId, 
+            mode: 'following' // FIXED: was 'type'
           })}
         >
-          <Text style={styles.statNumber}>{user?.followingCount || 0}</Text>
+          <Text style={styles.statNumber}>{user?.followingCount || user?.following?.length || 0}</Text>
           <Text style={styles.statLabel}>Following</Text>
         </TouchableOpacity>
       </View>

@@ -1,4 +1,4 @@
-// screens/FeedScreen.js - Fixed with proper refresh and navigation
+// SocialApp/screens/FeedScreen.js - FIXED: Restore pull-to-refresh functionality
 import React, { useLayoutEffect, useState, useRef } from 'react';
 import { 
   View, 
@@ -8,19 +8,17 @@ import {
   StatusBar, 
   SafeAreaView,
   Alert,
-  RefreshControl,
-  ScrollView
 } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import EnhancedPostsFeed from '../components/PostsFeed';
+import PostsFeed from '../components/PostsFeed';
 import EventsHub from '../components/EventsHub';
 
 const Tab = createMaterialTopTabNavigator();
 
 export default function FeedScreen({ navigation }) {
-  const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('Posts');
+  const [refreshing, setRefreshing] = useState(false);
   const postsRef = useRef(null);
   const eventsRef = useRef(null);
 
@@ -30,80 +28,64 @@ export default function FeedScreen({ navigation }) {
     });
   }, [navigation]);
 
-  const handleRefresh = async () => {
+  const handleNotificationPress = () => {
+    try {
+      navigation.navigate('NotificationScreen');
+    } catch (error) {
+      console.warn('NotificationScreen not found in current navigator');
+      Alert.alert(
+        'Feature Coming Soon',
+        'Notifications feature is currently being updated. Please check back later.',
+        [{ text: 'OK', style: 'default' }]
+      );
+    }
+  };
+
+  const handleSearchPress = () => {
+    try {
+      navigation.navigate('SearchScreen');
+    } catch (error) {
+      // Try through parent navigator
+      navigation.getParent()?.navigate('SearchScreen');
+    }
+  };
+
+  // FIXED: Enhanced refresh handling for both tabs
+  const handleGlobalRefresh = async () => {
     setRefreshing(true);
     try {
-      // Refresh the active tab
       if (activeTab === 'Posts' && postsRef.current?.refresh) {
         await postsRef.current.refresh();
       } else if (activeTab === 'Events' && eventsRef.current?.refresh) {
         await eventsRef.current.refresh();
       }
     } catch (error) {
-      console.error('Refresh error:', error);
+      console.error('Global refresh error:', error);
     } finally {
       setRefreshing(false);
     }
   };
 
-  const handleNotificationPress = () => {
-    // Check if NotificationScreen exists in navigation
-    try {
-      navigation.navigate('NotificationScreen');
-    } catch (error) {
-      // If NotificationScreen is not in current stack, try other approaches
-      console.warn('NotificationScreen not found in current navigator');
-      
-      // Try to navigate through main app navigation
-      try {
-        navigation.getParent()?.navigate('NotificationScreen');
-      } catch (parentError) {
-        // Show alert or handle gracefully
-        Alert.alert(
-          'Feature Coming Soon',
-          'Notifications feature is currently being updated. Please check back later.',
-          [{ text: 'OK', style: 'default' }]
-        );
-      }
-    }
-  };
-
-  // Create custom tab components that support refresh
-  function PostsFeed({ navigation, jumpTo }) {
+  // FIXED: Tab components with proper refresh support
+  function PostsTabScreen({ navigation }) {
     return (
-      <ScrollView
-        style={{ flex: 1 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-          />
-        }
-        scrollEventThrottle={16}
-      >
-        <EnhancedPostsFeed navigation={navigation} ref={postsRef} />
-      </ScrollView>
+      <PostsFeed 
+        navigation={navigation} 
+        ref={postsRef}
+        refreshing={refreshing}
+        onRefresh={handleGlobalRefresh}
+      />
     );
   }
 
-  function EventsFeed({ navigation, jumpTo }) {
+  function EventsTabScreen({ navigation }) {
     return (
-      <ScrollView
-        style={{ flex: 1 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-          />
-        }
-        scrollEventThrottle={16}
-      >
-        <EventsHub navigation={navigation} ref={eventsRef} />
-      </ScrollView>
+      <EventsHub 
+        navigation={navigation} 
+        ref={eventsRef}
+        refreshing={refreshing}
+        onRefresh={handleGlobalRefresh}
+      />
     );
   }
 
@@ -118,7 +100,7 @@ export default function FeedScreen({ navigation }) {
           <View style={styles.headerButtons}>
             <TouchableOpacity 
               style={styles.headerButton}
-              onPress={() => navigation.navigate('SearchScreen')}
+              onPress={handleSearchPress}
               activeOpacity={0.8}
             >
               <Ionicons name="search-outline" size={24} color="#000" />
@@ -154,8 +136,13 @@ export default function FeedScreen({ navigation }) {
             fontSize: 16,
             fontWeight: '600',
             textTransform: 'none',
+            marginTop: 0,
+            marginBottom: 0,
           },
           tabBarPressColor: '#F2F2F7',
+          tabBarContentContainerStyle: {
+            paddingHorizontal: 16,
+          },
         }}
         screenListeners={{
           state: (e) => {
@@ -171,14 +158,14 @@ export default function FeedScreen({ navigation }) {
       >
         <Tab.Screen 
           name="Posts" 
-          children={(props) => <PostsFeed {...props} />}
+          component={PostsTabScreen}
           options={{
             tabBarLabel: 'Posts',
           }}
         />
         <Tab.Screen 
           name="Events" 
-          children={(props) => <EventsFeed {...props} />}
+          component={EventsTabScreen}
           options={{
             tabBarLabel: 'Events',
           }}
@@ -198,7 +185,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 8,
+    paddingBottom: 12,
   },
   headerContent: {
     flexDirection: 'row',
@@ -213,7 +201,7 @@ const styles = StyleSheet.create({
   headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 8,
   },
   headerButton: {
     padding: 8,
