@@ -1,4 +1,4 @@
-// navigation/ProfileStack.js
+// navigation/ProfileStack.js - FIXED NAVIGATION SETUP
 import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 
@@ -8,32 +8,98 @@ import UserSettingsScreen            from '../screens/UserSettingsScreen';
 import SelectShareableEventsScreen   from '../screens/SelectShareableEventsScreen';
 import EditProfileScreen             from '../screens/EditProfileScreen';
 import PostDetailsScreen             from '../screens/PostDetailsScreen';
-import QrScreen                      from '../screens/QrScreen';   // <- keeps QR button working
+import QrScreen                      from '../screens/QrScreen';
 
 const Stack = createStackNavigator();
 
 export default function ProfileStack({ onLogout }) {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {[
-        /* ---- main profile ---- */
-        <Stack.Screen
-          key="ProfileScreen"
-          name="ProfileScreen"
-          // we need render-prop style here to pass onLogout if you require it later
-          children={(props) => <ProfileScreen {...props} onLogout={onLogout} />}
-        />,
+    <Stack.Navigator 
+      screenOptions={{ 
+        // FIXED: Always show header, ProfileScreen will handle its own header setup
+        headerShown: true,
+        headerStyle: {
+          backgroundColor: '#FFFFFF',
+          shadowOpacity: 0,
+          elevation: 0,
+          borderBottomWidth: 0.5,
+          borderBottomColor: '#E1E1E1',
+        },
+        headerTitleStyle: {
+          fontWeight: '700',
+          fontSize: 18,
+          color: '#000000',
+        },
+        headerTintColor: '#000000',
+        headerBackTitleVisible: false,
+      }}
+    >
+      {/* Main Profile Screen - Let it handle its own header */}
+      <Stack.Screen
+        name="ProfileScreen"
+        options={{
+          // FIXED: Let ProfileScreen handle its own header completely
+          headerShown: true,
+        }}
+      >
+        {(props) => <ProfileScreen {...props} onLogout={onLogout} />}
+      </Stack.Screen>
 
-        /* ---- people & settings ---- */
-        <Stack.Screen key="FollowList"        name="FollowListScreen"         component={FollowListScreen}        />,
-        <Stack.Screen key="UserSettings"      name="UserSettingsScreen"       component={UserSettingsScreen}      />,
-        <Stack.Screen key="ShareableEvents"   name="SelectShareableEventsScreen" component={SelectShareableEventsScreen} />,
-        <Stack.Screen key="EditProfile"       name="EditProfileScreen"        component={EditProfileScreen}       />,
+      {/* People & Settings Screens */}
+      <Stack.Screen 
+        name="FollowListScreen" 
+        component={FollowListScreen}
+        options={{
+          title: 'Connections',
+          headerShown: true,
+        }}
+      />
+      
+      <Stack.Screen 
+        name="UserSettingsScreen" 
+        component={UserSettingsScreen}
+        options={{
+          title: 'Settings',
+          headerShown: true,
+        }}
+      />
+      
+      <Stack.Screen 
+        name="SelectShareableEventsScreen" 
+        component={SelectShareableEventsScreen}
+        options={{
+          title: 'Share Events',
+          headerShown: true,
+        }}
+      />
+      
+      <Stack.Screen 
+        name="EditProfileScreen" 
+        component={EditProfileScreen}
+        options={{
+          title: 'Edit Profile',
+          headerShown: true,
+        }}
+      />
 
-        /* ---- content drill-downs ---- */
-        <Stack.Screen key="PostDetails"       name="PostDetailsScreen"        component={PostDetailsScreen}       />,
-        <Stack.Screen key="QrScreen"          name="QrScreen"                 component={QrScreen}                />,
-      ]}
+      {/* Content Detail Screens */}
+      <Stack.Screen 
+        name="PostDetailsScreen" 
+        component={PostDetailsScreen}
+        options={{
+          title: 'Post',
+          headerShown: true,
+        }}
+      />
+      
+      <Stack.Screen 
+        name="QrScreen" 
+        component={QrScreen}
+        options={{
+          // QrScreen has its own custom header
+          headerShown: false,
+        }}
+      />
     </Stack.Navigator>
   );
 }

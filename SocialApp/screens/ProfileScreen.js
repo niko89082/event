@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - Updated with QR Code Access
+// screens/ProfileScreen.js - FIXED NAVIGATION ISSUE
 import React, { useEffect, useState, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -29,7 +29,8 @@ export default function ProfileScreen() {
   const { currentUser } = useContext(AuthContext);
 
   const userId = params?.userId || currentUser?._id;
-  const isSelf = userId === currentUser?._id;
+  // FIXED: Better logic for determining if this is self profile
+  const isSelf = !params?.userId || userId === currentUser?._id;
 
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -46,10 +47,19 @@ export default function ProfileScreen() {
   const [showEventFilters, setShowEventFilters] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
 
-  // Set up navigation header
+  // FIXED: Set up navigation header with proper dependencies
   useEffect(() => {
+    console.log('🔧 Setting up navigation header:', { 
+      isSelf, 
+      userId, 
+      currentUserId: currentUser?._id,
+      hasParams: !!params?.userId,
+      username: user?.username 
+    });
+
     navigation.setOptions({
       title: isSelf ? 'Profile' : user?.username || 'Profile',
+      headerShown: true, // FIXED: Always show header
       headerStyle: {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
@@ -62,33 +72,59 @@ export default function ProfileScreen() {
         fontSize: 18,
         color: '#000000',
       },
-      headerRight: () => (
-        <View style={styles.headerRightContainer}>
-          {isSelf && (
-            <>
+      headerRight: () => {
+        // FIXED: Always render header buttons for self, regardless of navigation path
+        if (isSelf) {
+          console.log('🎯 Rendering header buttons for self profile');
+          return (
+            <View style={styles.headerRightContainer}>
               <TouchableOpacity
-                onPress={() => navigation.navigate('QrScreen')}
+                onPress={() => {
+                  console.log('🔗 QR button pressed, navigating to QrScreen');
+                  navigation.navigate('QrScreen');
+                }}
                 style={styles.headerButton}
                 activeOpacity={0.7}
               >
                 <Ionicons name="qr-code-outline" size={24} color="#000000" />
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => navigation.navigate('UserSettingsScreen')}
+                onPress={() => {
+                  console.log('⚙️ Settings button pressed, navigating to UserSettingsScreen');
+                  navigation.navigate('UserSettingsScreen');
+                }}
                 style={styles.headerButton}
                 activeOpacity={0.7}
               >
                 <Ionicons name="settings-outline" size={24} color="#000000" />
               </TouchableOpacity>
-            </>
-          )}
-        </View>
-      ),
+            </View>
+          );
+        }
+        console.log('❌ Not showing header buttons - not self profile');
+        return null;
+      },
+      headerLeft: () => {
+        // Only show back button if we have userId param (came from another profile)
+        if (params?.userId) {
+          return (
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={styles.headerButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-back" size={26} color="#000000" />
+            </TouchableOpacity>
+          );
+        }
+        return null;
+      },
     });
-  }, [navigation, isSelf, user]);
+  }, [navigation, isSelf, user?.username, params?.userId, currentUser?._id]);
 
   useFocusEffect(
     React.useCallback(() => {
+      console.log('🔄 Screen focused, fetching profile for userId:', userId);
       fetchUserProfile();
     }, [userId])
   );
@@ -106,7 +142,15 @@ export default function ProfileScreen() {
         setLoading(true);
       }
 
+      console.log('📡 Fetching profile data for userId:', userId);
       const { data } = await api.get(`/api/profile/${userId}`);
+      console.log('✅ Profile data received:', { 
+        username: data.username, 
+        isPublic: data.isPublic,
+        followersCount: data.followersCount,
+        followingCount: data.followingCount 
+      });
+      
       setUser(data);
       setPosts(data.photos || []);
       setIsFollowing(data.isFollowing || false);
@@ -118,7 +162,7 @@ export default function ProfileScreen() {
       }
 
     } catch (error) {
-      console.error('Error fetching profile:', error);
+      console.error('❌ Error fetching profile:', error);
       if (error.response?.status === 404) {
         Alert.alert('Error', 'User not found');
         navigation.goBack();
@@ -126,6 +170,8 @@ export default function ProfileScreen() {
         Alert.alert('Private Account', 'This account is private.');
       } else if (error.response?.status === 401) {
         Alert.alert('Authentication Error', 'Please log in again.');
+      } else {
+        Alert.alert('Error', 'Failed to load profile');
       }
     } finally {
       setLoading(false);
@@ -136,122 +182,70 @@ export default function ProfileScreen() {
   const fetchUserEvents = async () => {
     try {
       setEventsLoading(true);
-
+      console.log('📅 Fetching events for userId:', userId);
+      
+      const { data } = await api.get(`/api/users/${userId}/events`);
+      console.log('📅 Events received:', data.events?.length || 0);
+      setEvents(data.events || []);
+      
+      // Fetch shared event IDs if viewing self
       if (isSelf) {
-        // For current user: get ALL events they're involved in
-        const [attendingRes, hostedRes, sharedRes] = await Promise.all([
-          // Get events user is attending
-          api.get(`/api/events`, { 
-            params: { 
-              attendee: userId, 
-              limit: 200,
-              includePast: true 
-            }
-          }).catch(() => ({ data: { events: [] } })),
-          
-          // Get events user is hosting
-          api.get(`/api/events`, { 
-            params: { 
-              host: userId, 
-              limit: 200,
-              includePast: true 
-            }
-          }).catch(() => ({ data: { events: [] } })),
-          
-          // Get currently shared/featured events
-          api.get(`/api/profile/${userId}/shared-events`).catch(() => ({ data: { sharedEvents: [] } }))
-        ]);
-
-        const attending = attendingRes.data.events || attendingRes.data || [];
-        const hosted = hostedRes.data.events || hostedRes.data || [];
-        const shared = sharedRes.data.sharedEvents || [];
-
-        console.log('🟡 Events fetched:', { attending: attending.length, hosted: hosted.length, shared: shared.length });
-
-        // Combine and remove duplicates
-        const allEvents = [...hosted, ...attending];
-        const uniqueEvents = allEvents.filter((event, index, self) => 
-          index === self.findIndex(e => e._id === event._id)
-        );
-
-        // Sort by date (upcoming first, then past events in reverse chronological order)
-        const now = new Date();
-        const upcomingEvents = uniqueEvents.filter(e => new Date(e.time) >= now);
-        const pastEvents = uniqueEvents.filter(e => new Date(e.time) < now);
-        
-        upcomingEvents.sort((a, b) => new Date(a.time) - new Date(b.time));
-        pastEvents.sort((a, b) => new Date(b.time) - new Date(a.time));
-        
-        const sortedEvents = [...upcomingEvents, ...pastEvents];
-
-        // Mark events with additional metadata
-        const eventsWithMetadata = sortedEvents.map(event => {
-          const isHost = String(event.host?._id || event.host) === String(userId);
-          const isAttending = event.attendees?.some(a => String(a._id || a) === String(userId));
-          const isPast = new Date(event.time) < now;
-          
-          return {
-            ...event,
-            isHost,
-            isAttending,
-            isPast,
-            relationshipType: isHost ? 'host' : 'attendee'
-          };
-        });
-
-        console.log('🟢 Events processed:', eventsWithMetadata.length);
-        setEvents(eventsWithMetadata);
-        setSharedEventIds(new Set(shared.map(e => e._id)));
-
-      } else {
-        // For other users: only get their shared public events
-        const { data } = await api.get(`/api/profile/${userId}/shared-events`);
-        const shared = data.sharedEvents || [];
-        
-        const eventsWithMetadata = shared.map(event => ({
-          ...event,
-          isHost: String(event.host?._id || event.host) === String(userId),
-          isShared: true,
-          isPast: new Date(event.time) < new Date()
-        }));
-
-        setEvents(eventsWithMetadata);
+        try {
+          const sharedResponse = await api.get('/api/users/shared-events');
+          setSharedEventIds(new Set(sharedResponse.data.eventIds || []));
+          console.log('👁️ Shared events:', sharedResponse.data.eventIds?.length || 0);
+        } catch (sharedError) {
+          console.error('Error fetching shared events:', sharedError);
+        }
       }
-
+      
     } catch (error) {
-      console.error('Error fetching events:', error);
-      setEvents([]);
+      console.error('❌ Error fetching events:', error);
+      if (error.response?.status !== 404) {
+        Alert.alert('Error', 'Failed to load events');
+      }
     } finally {
       setEventsLoading(false);
     }
   };
 
   const applyEventFilter = () => {
+    if (!Array.isArray(events)) {
+      setFilteredEvents([]);
+      return;
+    }
+
     let filtered = [...events];
     const now = new Date();
 
     switch (eventFilter) {
       case 'upcoming':
-        filtered = events.filter(e => new Date(e.time) >= now);
+        filtered = events.filter(e => new Date(e.time) > now);
         break;
       case 'past':
-        filtered = events.filter(e => new Date(e.time) < now);
+        filtered = events.filter(e => new Date(e.time) <= now);
         break;
       case 'hosted':
         filtered = events.filter(e => e.isHost);
         break;
       case 'attending':
-        filtered = events.filter(e => !e.isHost && e.isAttending);
+        filtered = events.filter(e => e.isAttending && !e.isHost);
         break;
       case 'shared':
         filtered = events.filter(e => sharedEventIds.has(e._id));
         break;
       default: // 'all'
-        // Keep all events
         break;
     }
 
     setFilteredEvents(filtered);
+  };
+
+  const handleTabSwitch = async (tab) => {
+    setActiveTab(tab);
+    if (tab === 'Events' && events.length === 0) {
+      await fetchUserEvents();
+    }
   };
 
   const handleFollow = async () => {
@@ -259,9 +253,12 @@ export default function ProfileScreen() {
       if (isFollowing) {
         await api.delete(`/api/follow/unfollow/${userId}`);
         setIsFollowing(false);
+      } else if (hasRequested) {
+        await api.delete(`/api/follow/cancel/${userId}`);
+        setHasRequested(false);
       } else {
-        const { data } = await api.post(`/api/follow/follow/${userId}`);
-        if (data.requestSent) {
+        const response = await api.post(`/api/follow/follow/${userId}`);
+        if (response.data.requested) {
           setHasRequested(true);
         } else {
           setIsFollowing(true);
@@ -269,214 +266,152 @@ export default function ProfileScreen() {
       }
     } catch (error) {
       console.error('Follow error:', error);
-      Alert.alert('Error', 'Unable to follow/unfollow user');
+      Alert.alert('Error', 'Failed to update follow status');
     }
   };
 
-  const handleTabChange = async (tabName) => {
-    setActiveTab(tabName);
-    
-    // Fetch events when switching to Events tab
-    if (tabName === 'Events' && events.length === 0) {
-      await fetchUserEvents();
-    }
-  };
-
-  const toggleEventSharing = async (eventId) => {
+  const toggleEventShare = async (eventId) => {
     try {
-      const currentSharedIds = Array.from(sharedEventIds);
-      let newSharedIds;
-
-      if (sharedEventIds.has(eventId)) {
-        // Remove from shared
-        newSharedIds = currentSharedIds.filter(id => id !== eventId);
-        setSharedEventIds(new Set(newSharedIds));
+      const isCurrentlyShared = sharedEventIds.has(eventId);
+      
+      if (isCurrentlyShared) {
+        await api.delete(`/api/users/shared-events/${eventId}`);
+        setSharedEventIds(prev => {
+          const updated = new Set(prev);
+          updated.delete(eventId);
+          return updated;
+        });
       } else {
-        // Add to shared
-        newSharedIds = [...currentSharedIds, eventId];
-        setSharedEventIds(new Set(newSharedIds));
+        await api.post(`/api/users/shared-events/${eventId}`);
+        setSharedEventIds(prev => new Set([...prev, eventId]));
       }
-
-      // Update on server
-      await api.put(`/api/profile/${userId}/shared-events`, { eventIds: newSharedIds });
-
+      
     } catch (error) {
-      console.error('Error toggling event sharing:', error);
+      console.error('Error toggling event share:', error);
       Alert.alert('Error', 'Failed to update event sharing');
-      // Revert local state on error
-      fetchUserEvents();
     }
   };
 
-  const handleManageSharedEvents = () => {
-    setShowManageModal(false);
-    navigation.navigate('SelectShareableEventsScreen', { 
-      userId,
-      currentSharedIds: Array.from(sharedEventIds),
-      allEvents: events
-    });
-  };
-
-  const renderProfileHeader = () => {
-    if (!user) return null;
-
-    const avatar = user.profilePicture
-      ? `http://${API_BASE_URL}:3000${user.profilePicture}`
-      : 'https://placehold.co/120x120.png?text=👤';
-
-    const followerCount = user.followers?.length || 0;
-    const followingCount = user.following?.length || 0;
-    const postCount = posts.length;
-
-    return (
-      <View style={styles.profileHeader}>
-        {/* Profile Image and Basic Info */}
-        <View style={styles.profileImageSection}>
-          <Image source={{ uri: avatar }} style={styles.profileImage} />
-          <View style={styles.profileInfo}>
-            <Text style={styles.username}>{user.username}</Text>
-            {user.bio && (
-              <Text style={styles.bio} numberOfLines={3}>
-                {user.bio}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Stats Row */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{postCount}</Text>
-            <Text style={styles.statLabel}>Posts</Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.statItem}
-            onPress={() => navigation.navigate('FollowListScreen', {
-              userId,
-              mode: 'followers'
-            })}
-            activeOpacity={0.8}
-            disabled={!user.isPublic && !isSelf && !isFollowing}
-          >
-            <Text style={styles.statNumber}>{followerCount}</Text>
-            <Text style={styles.statLabel}>Followers</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.statItem}
-            onPress={() => navigation.navigate('FollowListScreen', {
-              userId,
-              mode: 'following'
-            })}
-            activeOpacity={0.8}
-            disabled={!user.isPublic && !isSelf && !isFollowing}
-          >
-            <Text style={styles.statNumber}>{followingCount}</Text>
-            <Text style={styles.statLabel}>Following</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Action Buttons */}
-        <View style={styles.actionButtons}>
-          {isSelf ? (
-            <View style={styles.selfActionButtons}>
-              <TouchableOpacity
-                style={styles.editProfileButton}
-                onPress={() => navigation.navigate('EditProfileScreen')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.editProfileButtonText}>Edit Profile</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.qrCodeButton}
-                onPress={() => navigation.navigate('QrScreen')}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="qr-code" size={20} color="#667eea" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              <TouchableOpacity
-                style={[
-                  styles.followButton,
-                  (isFollowing || hasRequested) && styles.followingButton
-                ]}
-                onPress={handleFollow}
-                activeOpacity={0.8}
-              >
-                <Text style={[
-                  styles.followButtonText,
-                  (isFollowing || hasRequested) && styles.followingButtonText
-                ]}>
-                  {hasRequested ? 'Requested' : isFollowing ? 'Following' : 'Follow'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.messageButton}
-                onPress={() => navigation.navigate('ChatScreen', {
-                  recipientId: userId,
-                  headerUser: user
-                })}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="chatbubble-outline" size={20} color="#3797EF" />
-              </TouchableOpacity>
-            </>
-          )}
+  const renderProfileHeader = () => (
+    <View style={styles.profileHeader}>
+      <View style={styles.profileImageSection}>
+        <Image
+          source={{
+            uri: user?.profilePicture
+              ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+              : 'https://placehold.co/88x88.png?text=👤'
+          }}
+          style={styles.profileImage}
+        />
+        
+        <View style={styles.profileInfo}>
+          <Text style={styles.username}>{user?.username}</Text>
+          {user?.bio && <Text style={styles.bio}>{user.bio}</Text>}
         </View>
       </View>
-    );
-  };
+
+      {/* Stats - FIXED: Now shows correct follower counts */}
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{posts.length}</Text>
+          <Text style={styles.statLabel}>Posts</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.statItem}
+          onPress={() => navigation.navigate('FollowListScreen', { 
+            userId, type: 'followers' 
+          })}
+        >
+          <Text style={styles.statNumber}>{user?.followersCount || 0}</Text>
+          <Text style={styles.statLabel}>Followers</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.statItem}
+          onPress={() => navigation.navigate('FollowListScreen', { 
+            userId, type: 'following' 
+          })}
+        >
+          <Text style={styles.statNumber}>{user?.followingCount || 0}</Text>
+          <Text style={styles.statLabel}>Following</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Action Buttons */}
+      <View style={styles.actionButtons}>
+        {isSelf ? (
+          <View style={styles.selfActionButtons}>
+            <TouchableOpacity
+              style={styles.editProfileButton}
+              onPress={() => navigation.navigate('EditProfileScreen')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.shareEventsButton}
+              onPress={() => setShowManageModal(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="calendar-outline" size={18} color="#3797EF" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[
+              styles.followButton,
+              (isFollowing || hasRequested) && styles.followingButton
+            ]}
+            onPress={handleFollow}
+            activeOpacity={0.8}
+          >
+            <Text style={[
+              styles.followButtonText,
+              (isFollowing || hasRequested) && styles.followingButtonText
+            ]}>
+              {hasRequested ? 'Requested' : isFollowing ? 'Following' : 'Follow'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
 
   const renderTabBar = () => (
-    <View style={styles.tabBarContainer}>
-      <TouchableOpacity
-        style={[styles.tabBarItem, activeTab === 'Posts' && styles.activeTabBarItem]}
-        onPress={() => handleTabChange('Posts')}
-        activeOpacity={0.8}
-      >
-        <Ionicons 
-          name="grid-outline" 
-          size={24} 
-          color={activeTab === 'Posts' ? '#000000' : '#8E8E93'} 
-        />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.tabBarItem, activeTab === 'Events' && styles.activeTabBarItem]}
-        onPress={() => handleTabChange('Events')}
-        activeOpacity={0.8}
-      >
-        <Ionicons 
-          name="calendar-outline" 
-          size={24} 
-          color={activeTab === 'Events' ? '#000000' : '#8E8E93'} 
-        />
-      </TouchableOpacity>
+    <View style={styles.tabBar}>
+      {['Posts', 'Events'].map((tab) => (
+        <TouchableOpacity
+          key={tab}
+          style={[styles.tab, activeTab === tab && styles.activeTab]}
+          onPress={() => handleTabSwitch(tab)}
+          activeOpacity={0.8}
+        >
+          <Ionicons 
+            name={tab === 'Posts' ? 'grid-outline' : 'calendar-outline'} 
+            size={24} 
+            color={activeTab === tab ? '#000000' : '#8E8E93'} 
+          />
+        </TouchableOpacity>
+      ))}
     </View>
   );
 
   const renderEventFilterBar = () => {
     if (activeTab !== 'Events' || !isSelf) return null;
 
-    const activeFilter = EVENT_FILTERS.find(f => f.key === eventFilter);
-
     return (
       <View style={styles.eventFilterBar}>
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.eventFilterContent}
+          contentContainerStyle={styles.eventFilters}
         >
-          {EVENT_FILTERS.map(filter => (
+          {EVENT_FILTERS.map((filter) => (
             <TouchableOpacity
               key={filter.key}
               style={[
-                styles.eventFilterChip,
-                eventFilter === filter.key && styles.eventFilterChipActive
+                styles.eventFilterButton,
+                eventFilter === filter.key && styles.eventFilterButtonActive
               ]}
               onPress={() => setEventFilter(filter.key)}
               activeOpacity={0.8}
@@ -487,237 +422,85 @@ export default function ProfileScreen() {
                 color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
               />
               <Text style={[
-                styles.eventFilterChipText,
-                eventFilter === filter.key && styles.eventFilterChipTextActive
+                styles.eventFilterText,
+                eventFilter === filter.key && styles.eventFilterTextActive
               ]}>
                 {filter.label}
               </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
-
-        {isSelf && (
-          <TouchableOpacity
-            style={styles.manageEventsButton}
-            onPress={() => setShowManageModal(true)}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="settings-outline" size={18} color="#3797EF" />
-          </TouchableOpacity>
-        )}
       </View>
     );
   };
 
-  const renderManageModal = () => (
-    <Modal
-      visible={showManageModal}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={() => setShowManageModal(false)}
-    >
-      <View style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Manage Events</Text>
-          <TouchableOpacity
-            onPress={() => setShowManageModal(false)}
-            style={styles.modalClose}
-          >
-            <Ionicons name="close" size={24} color="#8E8E93" />
-          </TouchableOpacity>
-        </View>
-        
-        <ScrollView style={styles.modalContent}>
-          <TouchableOpacity
-            style={styles.manageOption}
-            onPress={handleManageSharedEvents}
-            activeOpacity={0.8}
-          >
-            <View style={styles.manageOptionIcon}>
-              <Ionicons name="eye-outline" size={24} color="#3797EF" />
-            </View>
-            <View style={styles.manageOptionContent}>
-              <Text style={styles.manageOptionTitle}>Manage Shared Events</Text>
-              <Text style={styles.manageOptionSubtitle}>
-                Choose which events appear publicly on your profile
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.manageOption}
-            onPress={() => {
-              setShowManageModal(false);
-              navigation.navigate('CreateEventScreen');
-            }}
-            activeOpacity={0.8}
-          >
-            <View style={styles.manageOptionIcon}>
-              <Ionicons name="add-circle-outline" size={24} color="#34C759" />
-            </View>
-            <View style={styles.manageOptionContent}>
-              <Text style={styles.manageOptionTitle}>Create New Event</Text>
-              <Text style={styles.manageOptionSubtitle}>
-                Host a new event for your community
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.manageOption}
-            onPress={() => {
-              setShowManageModal(false);
-              navigation.navigate('EventListScreen');
-            }}
-            activeOpacity={0.8}
-          >
-            <View style={styles.manageOptionIcon}>
-              <Ionicons name="compass-outline" size={24} color="#FF9500" />
-            </View>
-            <View style={styles.manageOptionContent}>
-              <Text style={styles.manageOptionTitle}>Discover Events</Text>
-              <Text style={styles.manageOptionSubtitle}>
-                Find and join events in your area
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-
   const renderPostGrid = ({ item }) => (
     <TouchableOpacity
-      style={styles.postThumbnail}
+      style={styles.postGridItem}
       onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
-      activeOpacity={0.9}
+      activeOpacity={0.8}
     >
       <Image
         source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
-        style={styles.postImage}
+        style={styles.postGridImage}
       />
-      {item.event && (
-        <View style={styles.eventIndicator}>
-          <Ionicons name="calendar" size={12} color="#FFFFFF" />
-        </View>
-      )}
     </TouchableOpacity>
   );
 
   const renderEventCard = ({ item: event }) => {
-    const eventDate = new Date(event.time);
-    const isPast = eventDate < new Date();
     const isShared = sharedEventIds.has(event._id);
-    const coverImage = event.coverImage 
-      ? `http://${API_BASE_URL}:3000${event.coverImage}` 
-      : null;
+    const isPast = new Date(event.time) <= new Date();
 
     return (
       <View style={styles.eventCard}>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
-          activeOpacity={0.95}
-        >
-          <View style={styles.eventImageContainer}>
-            {coverImage ? (
-              <Image source={{ uri: coverImage }} style={styles.eventImage} />
-            ) : (
-              <View style={styles.eventImagePlaceholder}>
-                <Ionicons name="calendar-outline" size={32} color="#C7C7CC" />
-              </View>
-            )}
-            
-            {/* Event Status Badges */}
-            <View style={styles.eventBadgesContainer}>
-              {/* Host/Attending Badge */}
-              <View style={[
-                styles.eventStatusBadge,
-                event.isHost ? styles.hostBadge : styles.attendingBadge
-              ]}>
-                <Ionicons 
-                  name={event.isHost ? "star" : "checkmark"} 
-                  size={12} 
-                  color="#FFFFFF" 
-                />
-                <Text style={styles.eventStatusBadgeText}>
-                  {event.isHost ? 'Host' : 'Going'}
-                </Text>
-              </View>
-
-              {/* Past Event Indicator */}
-              {isPast && (
-                <View style={styles.pastEventBadge}>
-                  <Ionicons name="time" size={12} color="#FFFFFF" />
-                  <Text style={styles.pastEventBadgeText}>Past</Text>
-                </View>
-              )}
-
-              {/* Shared Indicator */}
-              {isShared && (
-                <View style={styles.sharedBadge}>
-                  <Ionicons name="eye" size={12} color="#FFFFFF" />
-                </View>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.eventContent}>
-            <Text style={styles.eventTitle} numberOfLines={2}>
-              {event.title}
+        {/* Event Cover */}
+        <View style={styles.eventCoverContainer}>
+          <Image
+            source={{
+              uri: event.coverImage
+                ? `http://${API_BASE_URL}:3000${event.coverImage}`
+                : 'https://placehold.co/400x200.png?text=Event'
+            }}
+            style={styles.eventCover}
+          />
+          
+          {/* Event Status Badge */}
+          <View style={styles.eventStatusBadge}>
+            <Text style={styles.eventStatusText}>
+              {isPast ? 'Past' : 'Upcoming'}
             </Text>
-            
-            <View style={styles.eventMeta}>
-              <View style={styles.eventMetaRow}>
-                <Ionicons name="calendar-outline" size={14} color="#8E8E93" />
-                <Text style={styles.eventMetaText}>
-                  {eventDate.toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    year: eventDate.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
-                  })}
-                  {isPast && ' (Past)'}
-                </Text>
-              </View>
-              
-              <View style={styles.eventMetaRow}>
-                <Ionicons name="location-outline" size={14} color="#8E8E93" />
-                <Text style={styles.eventMetaText} numberOfLines={1}>
-                  {event.location}
-                </Text>
-              </View>
-
-              {event.attendees && event.attendees.length > 0 && (
-                <View style={styles.eventMetaRow}>
-                  <Ionicons name="people-outline" size={14} color="#8E8E93" />
-                  <Text style={styles.eventMetaText}>
-                    {event.attendees.length} {event.attendees.length === 1 ? 'person' : 'people'}
-                  </Text>
-                </View>
-              )}
-
-              {/* Event Category */}
-              {event.category && (
-                <View style={styles.categoryTag}>
-                  <Text style={styles.categoryTagText}>{event.category}</Text>
-                </View>
-              )}
-            </View>
           </View>
-        </TouchableOpacity>
+        </View>
+
+        {/* Event Info */}
+        <View style={styles.eventInfo}>
+          <Text style={styles.eventTitle}>{event.title}</Text>
+          <Text style={styles.eventDate}>
+            {new Date(event.time).toLocaleDateString()} at{' '}
+            {new Date(event.time).toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            })}
+          </Text>
+          <Text style={styles.eventLocation}>{event.location}</Text>
+          
+          {event.description && (
+            <Text style={styles.eventDescription} numberOfLines={2}>
+              {event.description}
+            </Text>
+          )}
+        </View>
 
         {/* Event Actions (only for self) */}
         {isSelf && (
           <View style={styles.eventActions}>
+            {/* Share Toggle */}
             <TouchableOpacity
               style={[
-                styles.shareToggle,
-                isShared && styles.shareToggleActive
+                styles.shareToggleButton,
+                isShared && styles.shareToggleButtonActive
               ]}
-              onPress={() => toggleEventSharing(event._id)}
+              onPress={() => toggleEventShare(event._id)}
               activeOpacity={0.8}
             >
               <Ionicons 
@@ -758,6 +541,55 @@ export default function ProfileScreen() {
       </View>
     );
   };
+
+  // 🎯 FIX #3: REMOVED NAVIGATION TO MISSING SCREEN
+  const renderManageModal = () => (
+    <Modal
+      visible={showManageModal}
+      animationType="slide"
+      presentationStyle="pageSheet"
+    >
+      <SafeAreaView style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <TouchableOpacity onPress={() => setShowManageModal(false)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>Manage Events</Text>
+          <View style={styles.modalPlaceholder} />
+        </View>
+        
+        <View style={styles.modalContent}>
+          <View style={styles.modalOption}>
+            <Ionicons name="eye-outline" size={24} color="#3797EF" />
+            <View style={styles.modalOptionContent}>
+              <Text style={styles.modalOptionTitle}>Event Sharing</Text>
+              <Text style={styles.modalOptionDescription}>
+                Use the share toggle on each event card to control which events appear on your profile
+              </Text>
+            </View>
+          </View>
+          
+          <View style={styles.modalOption}>
+            <Ionicons name="calendar-outline" size={24} color="#3797EF" />
+            <View style={styles.modalOptionContent}>
+              <Text style={styles.modalOptionTitle}>Event Filters</Text>
+              <Text style={styles.modalOptionDescription}>
+                Switch between All, Upcoming, Past, Hosted, Attending, and Shared events
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.modalCloseButton}
+            onPress={() => setShowManageModal(false)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.modalCloseButtonText}>Got it!</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
 
   const getContentData = () => {
     if (activeTab === 'Posts') {
@@ -1038,33 +870,31 @@ const styles = StyleSheet.create({
   editProfileButton: {
     flex: 1,
     backgroundColor: '#F0F0F0',
-    borderRadius: 12,
     paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
     alignItems: 'center',
-    marginRight: 8,
+    marginRight: 12,
   },
   editProfileButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
   },
-  qrCodeButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F0F8FF',
+  shareEventsButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E1E8F7',
   },
   followButton: {
     flex: 1,
     backgroundColor: '#3797EF',
-    borderRadius: 12,
     paddingVertical: 12,
+    borderRadius: 8,
     alignItems: 'center',
-    marginRight: 8,
   },
   followingButton: {
     backgroundColor: '#F0F0F0',
@@ -1077,258 +907,156 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   followingButtonText: {
-    color: '#8E8E93',
-  },
-  messageButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F0F8FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E1E8F7',
+    color: '#000000',
   },
 
   // Tab Bar
-  tabBarContainer: {
+  tabBar: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  tabBarItem: {
+  tab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 16,
     alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    justifyContent: 'center',
   },
-  activeTabBarItem: {
+  activeTab: {
+    borderBottomWidth: 2,
     borderBottomColor: '#000000',
   },
 
   // Event Filter Bar
   eventFilterBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingVertical: 12,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  eventFilterContent: {
-    paddingHorizontal: 16,
+  eventFilters: {
+    paddingHorizontal: 20,
+    gap: 12,
   },
-  eventFilterChip: {
+  eventFilterButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
+    backgroundColor: '#F0F0F0',
+    gap: 6,
   },
-  eventFilterChipActive: {
+  eventFilterButtonActive: {
     backgroundColor: '#3797EF',
-    borderColor: '#3797EF',
   },
-  eventFilterChipText: {
-    fontSize: 12,
+  eventFilterText: {
+    fontSize: 14,
     fontWeight: '500',
     color: '#8E8E93',
-    marginLeft: 4,
   },
-  eventFilterChipTextActive: {
+  eventFilterTextActive: {
     color: '#FFFFFF',
-  },
-  manageEventsButton: {
-    padding: 12,
-    marginRight: 8,
   },
 
   // Posts Grid
   postsGrid: {
-    padding: 2,
+    paddingBottom: 40,
   },
-  postThumbnail: {
-    width: (SCREEN_WIDTH - 6) / 3,
-    height: (SCREEN_WIDTH - 6) / 3,
-    margin: 1,
-    position: 'relative',
+  postGridItem: {
+    width: SCREEN_WIDTH / 3,
+    height: SCREEN_WIDTH / 3,
+    padding: 1,
   },
-  postImage: {
-    width: '100%',
-    height: '100%',
+  postGridImage: {
+    flex: 1,
     backgroundColor: '#F6F6F6',
-  },
-  eventIndicator: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(55, 151, 239, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 
   // Events Grid
   eventsGrid: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 20,
+    paddingBottom: 40,
   },
-
-  // Event Cards
   eventCard: {
+    marginHorizontal: 20,
+    marginVertical: 8,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 3,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
   },
-  eventImageContainer: {
-    height: 140,
+  eventCoverContainer: {
     position: 'relative',
   },
-  eventImage: {
+  eventCover: {
     width: '100%',
-    height: '100%',
+    height: 160,
     backgroundColor: '#F6F6F6',
-  },
-  eventImagePlaceholder: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#F6F6F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  eventBadgesContainer: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    flexDirection: 'row',
-    gap: 8,
   },
   eventStatusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingHorizontal: 8,
     paddingVertical: 4,
+    borderRadius: 6,
   },
-  hostBadge: {
-    backgroundColor: '#FF9500',
-  },
-  attendingBadge: {
-    backgroundColor: '#34C759',
-  },
-  eventStatusBadgeText: {
+  eventStatusText: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '600',
-    marginLeft: 4,
   },
-  pastEventBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(142, 142, 147, 0.8)',
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  pastEventBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '600',
-    marginLeft: 3,
-  },
-  sharedBadge: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#3797EF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  eventContent: {
+  eventInfo: {
     padding: 16,
   },
   eventTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
     color: '#000000',
-    lineHeight: 20,
-    marginBottom: 12,
+    marginBottom: 4,
   },
-  eventMeta: {
-    marginBottom: 12,
-  },
-  eventMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  eventMetaText: {
-    fontSize: 13,
-    color: '#8E8E93',
-    marginLeft: 8,
-    flex: 1,
-  },
-  categoryTag: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#F0F8FF',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginTop: 8,
-  },
-  categoryTagText: {
-    fontSize: 11,
+  eventDate: {
+    fontSize: 14,
     color: '#3797EF',
-    fontWeight: '600',
+    fontWeight: '500',
+    marginBottom: 2,
   },
-
-  // Event Actions
+  eventLocation: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 8,
+  },
+  eventDescription: {
+    fontSize: 14,
+    color: '#000000',
+    lineHeight: 18,
+  },
   eventActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+    paddingBottom: 16,
+    gap: 8,
   },
-  shareToggle: {
-    flex: 1,
+  shareToggleButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginRight: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F0F0F0',
+    gap: 4,
   },
-  shareToggleActive: {
+  shareToggleButtonActive: {
     backgroundColor: '#3797EF',
-    borderColor: '#3797EF',
   },
   shareToggleText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '500',
     color: '#8E8E93',
-    marginLeft: 6,
   },
   shareToggleTextActive: {
     color: '#FFFFFF',
@@ -1336,98 +1064,90 @@ const styles = StyleSheet.create({
   editEventButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F8FF',
-    borderWidth: 1,
-    borderColor: '#E1E8F7',
-    borderRadius: 10,
-    paddingVertical: 8,
     paddingHorizontal: 12,
-    marginRight: 8,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F0F0F0',
+    gap: 4,
   },
   editEventButtonText: {
     fontSize: 12,
     fontWeight: '500',
     color: '#3797EF',
-    marginLeft: 4,
   },
   viewEventButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
+    marginLeft: 'auto',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
   },
 
-  // Loading Events
+  // Empty States
+  privateAccountContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 40,
+  },
+  privateAccountTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    marginTop: 20,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  privateAccountSubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
   loadingEventsContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 100,
+    paddingVertical: 80,
   },
-
-  // Empty States
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 80,
     paddingHorizontal: 40,
-    paddingVertical: 100,
   },
   emptyTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#000000',
-    marginTop: 16,
+    marginTop: 20,
     marginBottom: 8,
     textAlign: 'center',
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
     marginBottom: 24,
   },
   createButton: {
     backgroundColor: '#3797EF',
     paddingHorizontal: 24,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 8,
   },
   createButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
   },
 
-  // Private Account
-  privateAccountContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingVertical: 100,
-  },
-  privateAccountTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
-    marginTop: 16,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  privateAccountSubtitle: {
-    fontSize: 14,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-
-  // Manage Modal
+  // Modal - FIXED: No longer navigates to missing screen
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -1441,813 +1161,55 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
+  modalCancelText: {
+    fontSize: 16,
+    color: '#3797EF',
+  },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#000000',
   },
-  modalClose: {
-    padding: 8,
+  modalPlaceholder: {
+    width: 50,
   },
   modalContent: {
     flex: 1,
-    paddingHorizontal: 20,
     paddingTop: 20,
   },
-  manageOption: {
+  modalOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
-  manageOptionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  manageOptionContent: {
+  modalOptionContent: {
     flex: 1,
+    marginLeft: 16,
   },
-  manageOptionTitle: {
+  modalOptionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  manageOptionSubtitle: {
+  modalOptionDescription: {
     fontSize: 14,
     color: '#8E8E93',
-    lineHeight: 18,
+  },
+  modalCloseButton: {
+    backgroundColor: '#3797EF',
+    marginHorizontal: 20,
+    marginTop: 20,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalCloseButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
-
-
-// // screens/ProfileScreen.js - Fixed header button issue
-// import React, { useEffect, useState, useContext, useCallback } from 'react';
-// import {
-//   View, Text, Image, StyleSheet, TouchableOpacity,
-//   ActivityIndicator, Alert, SafeAreaView, StatusBar, Dimensions,
-//   FlatList, RefreshControl, Modal, ScrollView
-// } from 'react-native';
-// import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
-// import { Ionicons } from '@expo/vector-icons';
-// import { TabView, TabBar, SceneMap } from 'react-native-tab-view';
-// import { AuthContext } from '../services/AuthContext';
-// import api from '../services/api';
-// import { API_BASE_URL } from '@env';
-
-// const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-// // Event filter options for the Events tab
-// const EVENT_FILTERS = [
-//   { key: 'all', label: 'All Events', icon: 'calendar-outline' },
-//   { key: 'upcoming', label: 'Upcoming', icon: 'arrow-up-circle-outline' },
-//   { key: 'past', label: 'Past', icon: 'time-outline' },
-//   { key: 'hosted', label: 'Hosted', icon: 'star-outline' },
-//   { key: 'attending', label: 'Attending', icon: 'checkmark-circle-outline' },
-//   { key: 'shared', label: 'Shared', icon: 'eye-outline' }
-// ];
-
-// export default function ProfileScreen() {
-//   const { params } = useRoute();
-//   const navigation = useNavigation();
-//   const { currentUser } = useContext(AuthContext);
-
-//   const userId = params?.userId || currentUser?._id;
-//   const isSelf = !params?.userId || userId === currentUser?._id; // Fix: Properly detect self
-
-//   // Core state
-//   const [user, setUser] = useState(null);
-//   const [posts, setPosts] = useState([]);
-//   const [events, setEvents] = useState([]);
-//   const [filteredEvents, setFilteredEvents] = useState([]);
-//   const [sharedEventIds, setSharedEventIds] = useState(new Set());
-//   const [loading, setLoading] = useState(true);
-//   const [eventsLoading, setEventsLoading] = useState(false);
-//   const [refreshing, setRefreshing] = useState(false);
-//   const [isFollowing, setIsFollowing] = useState(false);
-//   const [hasRequested, setHasRequested] = useState(false);
-//   const [eventFilter, setEventFilter] = useState('all');
-//   const [showManageModal, setShowManageModal] = useState(false);
-
-//   // TabView state
-//   const [index, setIndex] = useState(0);
-//   const routes = [
-//     { key: 'posts', title: 'Posts' },
-//     { key: 'events', title: 'Events' }
-//   ];
-
-//   // Set up navigation header - Fixed to always show for self
-//   useEffect(() => {
-//     console.log('Setting up header:', { isSelf, userId, currentUserId: currentUser?._id });
-    
-//     navigation.setOptions({
-//       title: isSelf ? 'Profile' : user?.username || 'Profile',
-//       headerShown: true, // Always show header
-//       headerStyle: {
-//         backgroundColor: '#FFFFFF',
-//         shadowOpacity: 0,
-//         elevation: 0,
-//         borderBottomWidth: 0.5,
-//         borderBottomColor: '#E1E1E1',
-//       },
-//       headerTitleStyle: {
-//         fontWeight: '700',
-//         fontSize: 18,
-//         color: '#000000',
-//       },
-//       headerRight: () => {
-//         // Always render header buttons for self, regardless of navigation path
-//         if (isSelf) {
-//           return (
-//             <View style={styles.headerRightContainer}>
-//               <TouchableOpacity
-//                 onPress={() => navigation.navigate('QrScreen')}
-//                 style={styles.headerButton}
-//                 activeOpacity={0.7}
-//               >
-//                 <Ionicons name="qr-code-outline" size={24} color="#000000" />
-//               </TouchableOpacity>
-//               <TouchableOpacity
-//                 onPress={() => navigation.navigate('UserSettingsScreen')}
-//                 style={styles.headerButton}
-//                 activeOpacity={0.7}
-//               >
-//                 <Ionicons name="settings-outline" size={24} color="#000000" />
-//               </TouchableOpacity>
-//             </View>
-//           );
-//         }
-//         return null;
-//       },
-//       headerLeft: () => {
-//         // Only show back button if we have userId param (came from another profile)
-//         if (params?.userId) {
-//           return (
-//             <TouchableOpacity
-//               onPress={() => navigation.goBack()}
-//               style={styles.headerButton}
-//               activeOpacity={0.7}
-//             >
-//               <Ionicons name="chevron-back" size={26} color="#000000" />
-//             </TouchableOpacity>
-//           );
-//         }
-//         return null;
-//       },
-//     });
-//   }, [navigation, isSelf, user, params?.userId]);
-
-//   useFocusEffect(
-//     React.useCallback(() => {
-//       fetchUserProfile();
-//     }, [userId])
-//   );
-
-//   // Apply event filter whenever events or filter changes
-//   useEffect(() => {
-//     applyEventFilter();
-//   }, [events, eventFilter, sharedEventIds]);
-
-//   // Load events when switching to Events tab
-//   useEffect(() => {
-//     if (index === 1 && events.length === 0) {
-//       fetchUserEvents();
-//     }
-//   }, [index]);
-
-//   const fetchUserProfile = async (isRefresh = false) => {
-//     try {
-//       if (isRefresh) {
-//         setRefreshing(true);
-//       } else {
-//         setLoading(true);
-//       }
-
-//       const { data } = await api.get(`/api/profile/${userId}`);
-//       setUser(data);
-//       setPosts(data.photos || []);
-//       setIsFollowing(data.isFollowing || false);
-//       setHasRequested(data.hasRequested || false);
-
-//       // If we're on Events tab, also refresh events
-//       if (index === 1) {
-//         await fetchUserEvents();
-//       }
-
-//     } catch (error) {
-//       console.error('Error fetching profile:', error);
-//       if (error.response?.status === 404) {
-//         Alert.alert('Error', 'User not found');
-//         navigation.goBack();
-//       } else if (error.response?.status === 403) {
-//         Alert.alert('Private Account', 'This account is private.');
-//       } else if (error.response?.status === 401) {
-//         Alert.alert('Authentication Error', 'Please log in again.');
-//       }
-//     } finally {
-//       setLoading(false);
-//       setRefreshing(false);
-//     }
-//   };
-
-//   const fetchUserEvents = async () => {
-//     try {
-//       setEventsLoading(true);
-//       const { data } = await api.get(`/api/events/user/${userId}?includePast=true`);
-//       setEvents(data.events || []);
-      
-//       // Get shared events if it's own profile
-//       if (isSelf && user?.sharedEvents) {
-//         setSharedEventIds(new Set(user.sharedEvents));
-//       }
-//     } catch (error) {
-//       console.error('Error fetching events:', error);
-//       setEvents([]);
-//     } finally {
-//       setEventsLoading(false);
-//     }
-//   };
-
-//   const applyEventFilter = () => {
-//     if (!events.length) {
-//       setFilteredEvents([]);
-//       return;
-//     }
-
-//     let filtered = events;
-//     const now = new Date();
-
-//     switch (eventFilter) {
-//       case 'upcoming':
-//         filtered = events.filter(e => new Date(e.time) > now);
-//         break;
-//       case 'past':
-//         filtered = events.filter(e => new Date(e.time) <= now);
-//         break;
-//       case 'hosted':
-//         filtered = events.filter(e => e.isHost);
-//         break;
-//       case 'attending':
-//         filtered = events.filter(e => e.isAttending && !e.isHost);
-//         break;
-//       case 'shared':
-//         filtered = events.filter(e => sharedEventIds.has(e._id));
-//         break;
-//       default: // 'all'
-//         break;
-//     }
-
-//     setFilteredEvents(filtered);
-//   };
-
-//   const handleFollow = async () => {
-//     try {
-//       if (isFollowing) {
-//         await api.delete(`/api/follow/unfollow/${userId}`);
-//         setIsFollowing(false);
-//       } else if (hasRequested) {
-//         await api.delete(`/api/follow/cancel/${userId}`);
-//         setHasRequested(false);
-//       } else {
-//         const response = await api.post(`/api/follow/follow/${userId}`);
-//         if (response.data.requested) {
-//           setHasRequested(true);
-//         } else {
-//           setIsFollowing(true);
-//         }
-//       }
-//     } catch (error) {
-//       console.error('Follow error:', error);
-//       Alert.alert('Error', 'Failed to update follow status');
-//     }
-//   };
-
-//   const onRefresh = () => {
-//     fetchUserProfile(true);
-//   };
-
-//   if (loading) {
-//     return (
-//       <SafeAreaView style={styles.loadingContainer}>
-//         <ActivityIndicator size="large" color="#3797EF" />
-//       </SafeAreaView>
-//     );
-//   }
-
-//   if (!user) {
-//     return (
-//       <SafeAreaView style={styles.errorContainer}>
-//         <Ionicons name="person-outline" size={80} color="#C7C7CC" />
-//         <Text style={styles.errorTitle}>Profile not found</Text>
-//         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.goBackButton}>
-//           <Text style={styles.goBackText}>Go Back</Text>
-//         </TouchableOpacity>
-//       </SafeAreaView>
-//     );
-//   }
-
-//   // Profile Header Component
-//   const ProfileHeader = () => (
-//     <View style={styles.headerContainer}>
-//       <View style={styles.profileInfo}>
-//         <Image
-//           source={{
-//             uri: user.profilePicture
-//               ? `http://${API_BASE_URL}:3000${user.profilePicture}`
-//               : 'https://placehold.co/120x120.png?text=👤'
-//           }}
-//           style={styles.profileImage}
-//         />
-        
-//         <View style={styles.userInfo}>
-//           <Text style={styles.username}>{user.username}</Text>
-//           {user.bio && <Text style={styles.bio}>{user.bio}</Text>}
-          
-//           <View style={styles.statsContainer}>
-//             <View style={styles.statItem}>
-//               <Text style={styles.statNumber}>{posts.length}</Text>
-//               <Text style={styles.statLabel}>Posts</Text>
-//             </View>
-//             <TouchableOpacity
-//               style={styles.statItem}
-//               onPress={() => navigation.navigate('FollowListScreen', { 
-//                 userId, type: 'followers' 
-//               })}
-//             >
-//               <Text style={styles.statNumber}>{user.followersCount || 0}</Text>
-//               <Text style={styles.statLabel}>Followers</Text>
-//             </TouchableOpacity>
-//             <TouchableOpacity
-//               style={styles.statItem}
-//               onPress={() => navigation.navigate('FollowListScreen', { 
-//                 userId, type: 'following' 
-//               })}
-//             >
-//               <Text style={styles.statNumber}>{user.followingCount || 0}</Text>
-//               <Text style={styles.statLabel}>Following</Text>
-//             </TouchableOpacity>
-//           </View>
-//         </View>
-//       </View>
-
-//       {/* Action Buttons */}
-//       <View style={styles.actionButtonsContainer}>
-//         {isSelf ? (
-//           <View style={styles.selfActionButtons}>
-//             <TouchableOpacity
-//               style={styles.editProfileButton}
-//               onPress={() => navigation.navigate('EditProfileScreen')}
-//               activeOpacity={0.8}
-//             >
-//               <Text style={styles.editProfileButtonText}>Edit Profile</Text>
-//             </TouchableOpacity>
-            
-//             <TouchableOpacity
-//               style={styles.qrCodeButton}
-//               onPress={() => navigation.navigate('QrScreen')}
-//               activeOpacity={0.8}
-//             >
-//               <Ionicons name="qr-code" size={20} color="#667eea" />
-//             </TouchableOpacity>
-//           </View>
-//         ) : (
-//           <>
-//             <TouchableOpacity
-//               style={[
-//                 styles.followButton,
-//                 (isFollowing || hasRequested) && styles.followingButton
-//               ]}
-//               onPress={handleFollow}
-//               activeOpacity={0.8}
-//             >
-//               <Text style={[
-//                 styles.followButtonText,
-//                 (isFollowing || hasRequested) && styles.followingButtonText
-//               ]}>
-//                 {hasRequested ? 'Requested' : isFollowing ? 'Following' : 'Follow'}
-//               </Text>
-//             </TouchableOpacity>
-//           </>
-//         )}
-//       </View>
-//     </View>
-//   );
-
-//   // Posts Tab Component
-//   const PostsTab = () => (
-//     <FlatList
-//       data={posts}
-//       numColumns={3}
-//       keyExtractor={item => item._id}
-//       renderItem={({ item }) => (
-//         <TouchableOpacity
-//           style={styles.postItem}
-//           onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
-//         >
-//           <Image
-//             source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
-//             style={styles.postImage}
-//           />
-//         </TouchableOpacity>
-//       )}
-//       contentContainerStyle={posts.length === 0 ? styles.emptyContainer : undefined}
-//       ListEmptyComponent={() => (
-//         <View style={styles.emptyContainer}>
-//           <Ionicons name="camera-outline" size={64} color="#C7C7CC" />
-//           <Text style={styles.emptyTitle}>No Posts Yet</Text>
-//           <Text style={styles.emptySubtitle}>
-//             {isSelf ? 'Share your first photo!' : 'No posts to show.'}
-//           </Text>
-//         </View>
-//       )}
-//     />
-//   );
-
-//   // Events Tab Component  
-//   const EventsTab = () => (
-//     <View style={styles.eventsTabContainer}>
-//       {isSelf && (
-//         <ScrollView
-//           horizontal
-//           showsHorizontalScrollIndicator={false}
-//           style={styles.filterScrollView}
-//           contentContainerStyle={styles.filterContainer}
-//         >
-//           {EVENT_FILTERS.map(filter => (
-//             <TouchableOpacity
-//               key={filter.key}
-//               style={[
-//                 styles.filterButton,
-//                 eventFilter === filter.key && styles.activeFilterButton
-//               ]}
-//               onPress={() => setEventFilter(filter.key)}
-//             >
-//               <Ionicons
-//                 name={filter.icon}
-//                 size={16}
-//                 color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'}
-//               />
-//               <Text style={[
-//                 styles.filterButtonText,
-//                 eventFilter === filter.key && styles.activeFilterButtonText
-//               ]}>
-//                 {filter.label}
-//               </Text>
-//             </TouchableOpacity>
-//           ))}
-//         </ScrollView>
-//       )}
-      
-//       <FlatList
-//         data={filteredEvents}
-//         keyExtractor={item => item._id}
-//         renderItem={({ item }) => (
-//           <TouchableOpacity
-//             style={styles.eventItem}
-//             onPress={() => navigation.navigate('EventDetailsScreen', { eventId: item._id })}
-//           >
-//             <View style={styles.eventInfo}>
-//               <Text style={styles.eventTitle}>{item.title}</Text>
-//               <Text style={styles.eventDate}>
-//                 {new Date(item.time).toLocaleDateString()}
-//               </Text>
-//               <Text style={styles.eventLocation}>{item.location}</Text>
-//             </View>
-//           </TouchableOpacity>
-//         )}
-//         contentContainerStyle={filteredEvents.length === 0 ? styles.emptyContainer : undefined}
-//         ListEmptyComponent={() => (
-//           <View style={styles.emptyContainer}>
-//             <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
-//             <Text style={styles.emptyTitle}>No Events</Text>
-//             <Text style={styles.emptySubtitle}>
-//               {isSelf ? 'Create or join events to see them here.' : 'No events to show.'}
-//             </Text>
-//           </View>
-//         )}
-//       />
-//     </View>
-//   );
-
-//   const renderScene = ({ route }) => {
-//     switch (route.key) {
-//       case 'posts':
-//         return <PostsTab />;
-//       case 'events':
-//         return <EventsTab />;
-//       default:
-//         return null;
-//     }
-//   };
-
-//   return (
-//     <SafeAreaView style={styles.container}>
-//       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-//       {/* Full screen scroll view with pull-to-refresh */}
-//       <ScrollView
-//         style={{ flex: 1 }}
-//         refreshControl={
-//           <RefreshControl
-//             refreshing={refreshing}
-//             onRefresh={onRefresh}
-//             tintColor="#3797EF"
-//             colors={["#3797EF"]}
-//           />
-//         }
-//         showsVerticalScrollIndicator={false}
-//         scrollEventThrottle={16}
-//       >
-//         {/* Fixed Profile Header */}
-//         <ProfileHeader />
-
-//         {/* TabView for Posts/Events */}
-//         <View style={{ height: SCREEN_WIDTH * 1.2, minHeight: 500 }}>
-//           <TabView
-//             navigationState={{ index, routes }}
-//             renderScene={renderScene}
-//             onIndexChange={setIndex}
-//             initialLayout={{ width: SCREEN_WIDTH }}
-//             lazy
-//             renderLazyPlaceholder={() => (
-//               <View style={styles.loadingContainer}>
-//                 <ActivityIndicator size="large" color="#3797EF" />
-//               </View>
-//             )}
-//             renderTabBar={(props) => (
-//               <TabBar
-//                 {...props}
-//                 indicatorStyle={styles.tabIndicator}
-//                 style={styles.tabBar}
-//                 labelStyle={styles.tabLabel}
-//                 activeColor="#000000"
-//                 inactiveColor="#8E8E93"
-//                 renderIcon={({ route, focused }) => (
-//                   <Ionicons 
-//                     name={route.key === 'posts' ? 'grid-outline' : 'calendar-outline'} 
-//                     size={24} 
-//                     color={focused ? '#000000' : '#8E8E93'} 
-//                   />
-//                 )}
-//               />
-//             )}
-//           />
-//         </View>
-//       </ScrollView>
-//     </SafeAreaView>
-//   );
-// }
-
-// const styles = StyleSheet.create({
-//   container: {
-//     flex: 1,
-//     backgroundColor: '#FFFFFF',
-//   },
-//   loadingContainer: {
-//     flex: 1,
-//     justifyContent: 'center',
-//     alignItems: 'center',
-//     backgroundColor: '#FFFFFF',
-//   },
-//   errorContainer: {
-//     flex: 1,
-//     justifyContent: 'center',
-//     alignItems: 'center',
-//     backgroundColor: '#FFFFFF',
-//     paddingHorizontal: 32,
-//   },
-//   errorTitle: {
-//     fontSize: 18,
-//     fontWeight: '600',
-//     color: '#000000',
-//     marginTop: 16,
-//     marginBottom: 8,
-//   },
-//   goBackButton: {
-//     marginTop: 16,
-//   },
-//   goBackText: {
-//     fontSize: 16,
-//     color: '#3797EF',
-//     fontWeight: '500',
-//   },
-//   headerRightContainer: {
-//     flexDirection: 'row',
-//     alignItems: 'center',
-//     marginRight: 8,
-//   },
-//   headerButton: {
-//     padding: 8,
-//     marginLeft: 8,
-//   },
-//   headerContainer: {
-//     paddingHorizontal: 16,
-//     paddingVertical: 20,
-//     borderBottomWidth: 1,
-//     borderBottomColor: '#E1E1E1',
-//   },
-//   profileInfo: {
-//     flexDirection: 'row',
-//     alignItems: 'flex-start',
-//     marginBottom: 20,
-//   },
-//   profileImage: {
-//     width: 120,
-//     height: 120,
-//     borderRadius: 30, // Square with curved edges
-//     marginRight: 20,
-//   },
-//   userInfo: {
-//     flex: 1,
-//     paddingTop: 8,
-//   },
-//   username: {
-//     fontSize: 24,
-//     fontWeight: '700',
-//     color: '#000000',
-//     marginBottom: 8,
-//   },
-//   bio: {
-//     fontSize: 16,
-//     color: '#000000',
-//     lineHeight: 20,
-//     marginBottom: 16,
-//   },
-//   statsContainer: {
-//     flexDirection: 'row',
-//     justifyContent: 'space-around',
-//   },
-//   statItem: {
-//     alignItems: 'center',
-//     flex: 1,
-//   },
-//   statNumber: {
-//     fontSize: 20,
-//     fontWeight: '700',
-//     color: '#000000',
-//     marginBottom: 4,
-//   },
-//   statLabel: {
-//     fontSize: 14,
-//     color: '#8E8E93',
-//     fontWeight: '500',
-//   },
-//   actionButtonsContainer: {
-//     marginTop: 8,
-//   },
-//   selfActionButtons: {
-//     flexDirection: 'row',
-//     alignItems: 'center',
-//     gap: 12,
-//   },
-//   editProfileButton: {
-//     flex: 1,
-//     backgroundColor: '#F2F2F7',
-//     paddingVertical: 12,
-//     borderRadius: 8,
-//     alignItems: 'center',
-//   },
-//   editProfileButtonText: {
-//     fontSize: 16,
-//     fontWeight: '600',
-//     color: '#000000',
-//   },
-//   qrCodeButton: {
-//     backgroundColor: '#F2F2F7',
-//     paddingHorizontal: 16,
-//     paddingVertical: 12,
-//     borderRadius: 8,
-//     alignItems: 'center',
-//     justifyContent: 'center',
-//   },
-//   followButton: {
-//     backgroundColor: '#3797EF',
-//     paddingVertical: 12,
-//     borderRadius: 8,
-//     alignItems: 'center',
-//   },
-//   followingButton: {
-//     backgroundColor: '#F2F2F7',
-//     borderWidth: 1,
-//     borderColor: '#E1E1E1',
-//   },
-//   followButtonText: {
-//     fontSize: 16,
-//     fontWeight: '600',
-//     color: '#FFFFFF',
-//   },
-//   followingButtonText: {
-//     color: '#000000',
-//   },
-//   tabBar: {
-//     backgroundColor: '#FFFFFF',
-//     elevation: 0,
-//     shadowOpacity: 0,
-//     borderBottomWidth: 1,
-//     borderBottomColor: '#E1E1E1',
-//   },
-//   tabIndicator: {
-//     backgroundColor: '#000000',
-//     height: 2,
-//   },
-//   tabLabel: {
-//     fontSize: 16,
-//     fontWeight: '600',
-//     textTransform: 'none',
-//     marginLeft: 8,
-//   },
-//   eventsTabContainer: {
-//     flex: 1,
-//   },
-//   filterScrollView: {
-//     maxHeight: 60,
-//   },
-//   filterContainer: {
-//     paddingHorizontal: 16,
-//     paddingVertical: 12,
-//     gap: 12,
-//   },
-//   filterButton: {
-//     flexDirection: 'row',
-//     alignItems: 'center',
-//     paddingHorizontal: 16,
-//     paddingVertical: 8,
-//     borderRadius: 20,
-//     backgroundColor: '#F2F2F7',
-//     gap: 6,
-//   },
-//   activeFilterButton: {
-//     backgroundColor: '#3797EF',
-//   },
-//   filterButtonText: {
-//     fontSize: 14,
-//     fontWeight: '500',
-//     color: '#8E8E93',
-//   },
-//   activeFilterButtonText: {
-//     color: '#FFFFFF',
-//   },
-//   postItem: {
-//     width: SCREEN_WIDTH / 3 - 1,
-//     height: SCREEN_WIDTH / 3 - 1,
-//     margin: 0.5,
-//   },
-//   postImage: {
-//     width: '100%',
-//     height: '100%',
-//   },
-//   eventItem: {
-//     backgroundColor: '#FFFFFF',
-//     padding: 16,
-//     marginHorizontal: 16,
-//     marginVertical: 4,
-//     borderRadius: 12,
-//     borderWidth: 1,
-//     borderColor: '#E1E1E1',
-//   },
-//   eventInfo: {
-//     flex: 1,
-//   },
-//   eventTitle: {
-//     fontSize: 16,
-//     fontWeight: '600',
-//     color: '#000000',
-//     marginBottom: 4,
-//   },
-//   eventDate: {
-//     fontSize: 14,
-//     color: '#8E8E93',
-//     marginBottom: 2,
-//   },
-//   eventLocation: {
-//     fontSize: 14,
-//     color: '#8E8E93',
-//   },
-//   emptyContainer: {
-//     flex: 1,
-//     justifyContent: 'center',
-//     alignItems: 'center',
-//     paddingHorizontal: 32,
-//     paddingVertical: 64,
-//   },
-//   emptyTitle: {
-//     fontSize: 20,
-//     fontWeight: '600',
-//     color: '#000000',
-//     marginTop: 16,
-//     marginBottom: 8,
-//   },
-//   emptySubtitle: {
-//     fontSize: 16,
-//     color: '#8E8E93',
-//     textAlign: 'center',
-//     lineHeight: 22,
-//   },
-// });
