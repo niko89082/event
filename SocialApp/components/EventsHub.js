@@ -1,158 +1,243 @@
-// components/EventsHub.js - NEW events discovery hub
-import React, { useState, useContext } from 'react';
+// components/EventsHub.js - Enhanced with all tabs restored
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  ScrollView,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
-import RecommendedEventsFeed from './RecommendedEventsFeed';
-import NearbyEventsFeed from './NearbyEventsFeed';
-import CategoryEventsBrowser from './CategoryEventsBrowser';
-import UserEventsList from './UserEventsList';
+import EventsFeed from './EventsFeed';
 
 const EVENTS_TABS = [
   { key: 'following', label: 'Following', icon: 'people-outline' },
-  { key: 'for-you', label: 'For You', icon: 'star-outline' },
+  { key: 'discover', label: 'Discover', icon: 'compass-outline' },
   { key: 'nearby', label: 'Nearby', icon: 'location-outline' },
-  { key: 'browse', label: 'Browse', icon: 'grid-outline' },
   { key: 'your-events', label: 'Your Events', icon: 'person-outline' }
 ];
 
-export default function EventsHub({ navigation }) {
+const EventsHub = forwardRef(({ navigation }, ref) => {
   const { currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('following');
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
-  const renderTab = ({ item }) => {
-    const isActive = activeTab === item.key;
+  // Expose refresh method to parent
+  useImperativeHandle(ref, () => ({
+    refresh: handleRefresh
+  }));
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setError(null);
     
-    return (
-      <TouchableOpacity
-        style={[styles.tab, isActive && styles.activeTab]}
-        onPress={() => setActiveTab(item.key)}
-        activeOpacity={0.8}
-      >
-        <Ionicons 
-          name={item.icon} 
-          size={16} 
-          color={isActive ? '#FFFFFF' : '#8E8E93'} 
-        />
-        <Text style={[
-          styles.tabText,
-          isActive && styles.activeTabText
-        ]}>
-          {item.label}
-        </Text>
-      </TouchableOpacity>
-    );
+    try {
+      // Add a small delay to ensure proper refresh
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // The individual feed components will handle their own refresh
+    } catch (error) {
+      console.error('EventsHub refresh error:', error);
+      setError('Failed to refresh events');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
-  const renderTabContent = () => {
+  const renderTabButton = (tabKey, label, icon) => (
+    <TouchableOpacity
+      key={tabKey}
+      style={[
+        styles.tabButton,
+        activeTab === tabKey && styles.activeTabButton
+      ]}
+      onPress={() => setActiveTab(tabKey)}
+      activeOpacity={0.8}
+    >
+      <Ionicons 
+        name={icon} 
+        size={16} 
+        color={activeTab === tabKey ? '#FFFFFF' : '#8E8E93'} 
+      />
+      <Text 
+        style={[
+          styles.tabButtonText,
+          activeTab === tabKey && styles.activeTabButtonText
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const renderContent = () => {
+    if (error) {
+      return (
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorMessage}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={handleRefresh}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     switch (activeTab) {
       case 'following':
         return (
           <FollowingEventsFeed 
             navigation={navigation}
             currentUserId={currentUser?._id}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
           />
         );
-      
-      case 'for-you':
+      case 'discover':
         return (
-          <RecommendedEventsFeed 
+          <EventsFeed 
             navigation={navigation}
             currentUserId={currentUser?._id}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            feedType="discover"
           />
         );
-      
       case 'nearby':
         return (
-          <NearbyEventsFeed 
+          <EventsFeed 
             navigation={navigation}
             currentUserId={currentUser?._id}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            feedType="nearby"
           />
         );
-      
-      case 'browse':
-        return (
-          <CategoryEventsBrowser 
-            navigation={navigation}
-            currentUserId={currentUser?._id}
-          />
-        );
-      
       case 'your-events':
         return (
-          <UserEventsList 
+          <EventsFeed 
             navigation={navigation}
             currentUserId={currentUser?._id}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            feedType="user"
+            userId={currentUser?._id}
           />
         );
-      
       default:
-        return <FollowingEventsFeed navigation={navigation} currentUserId={currentUser?._id} />;
+        return (
+          <FollowingEventsFeed 
+            navigation={navigation}
+            currentUserId={currentUser?._id}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+          />
+        );
     }
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Tab Bar */}
-      <View style={styles.tabBar}>
-        <FlatList
-          data={EVENTS_TABS}
-          renderItem={renderTab}
-          keyExtractor={item => item.key}
-          horizontal
+    <View style={styles.container}>
+      {/* Tab Headers */}
+      <View style={styles.tabContainer}>
+        <ScrollView 
+          horizontal 
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabBarContent}
-        />
+          contentContainerStyle={styles.tabScrollContent}
+        >
+          {EVENTS_TABS.map(tab => renderTabButton(tab.key, tab.label, tab.icon))}
+        </ScrollView>
       </View>
-      
+
       {/* Content */}
-      <View style={styles.content}>
-        {renderTabContent()}
+      <View style={styles.contentContainer}>
+        {renderContent()}
       </View>
-    </SafeAreaView>
+    </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  tabBar: {
+  tabContainer: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
+    borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
   },
-  tabBarContent: {
+  tabScrollContent: {
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  tab: {
+  tabButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginRight: 12,
+    paddingVertical: 8,
     borderRadius: 20,
+    marginRight: 12,
     backgroundColor: '#F8F9FA',
+    gap: 6,
   },
-  activeTab: {
+  activeTabButton: {
     backgroundColor: '#3797EF',
   },
-  tabText: {
+  tabButtonText: {
     fontSize: 14,
     fontWeight: '500',
     color: '#8E8E93',
-    marginLeft: 6,
   },
-  activeTabText: {
+  activeTabButtonText: {
     color: '#FFFFFF',
+    fontWeight: '600',
   },
-  content: {
+  contentContainer: {
     flex: 1,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  errorMessage: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  retryButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 
+export default EventsHub;

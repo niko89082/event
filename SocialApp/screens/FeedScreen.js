@@ -1,6 +1,16 @@
-// screens/FeedScreen.js - Updated with notifications button, no chat button
+// screens/FeedScreen.js - Fixed with proper refresh and navigation
 import React, { useLayoutEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar, SafeAreaView } from 'react-native';
+import { 
+  View, 
+  Text, 
+  TouchableOpacity, 
+  StyleSheet, 
+  StatusBar, 
+  SafeAreaView,
+  Alert,
+  RefreshControl,
+  ScrollView
+} from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import EnhancedPostsFeed from '../components/PostsFeed';
@@ -10,6 +20,7 @@ const Tab = createMaterialTopTabNavigator();
 
 export default function FeedScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState('Posts');
   const postsRef = useRef(null);
   const eventsRef = useRef(null);
 
@@ -21,16 +32,79 @@ export default function FeedScreen({ navigation }) {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    // Trigger refresh on active tab components
-    setRefreshing(false);
+    try {
+      // Refresh the active tab
+      if (activeTab === 'Posts' && postsRef.current?.refresh) {
+        await postsRef.current.refresh();
+      } else if (activeTab === 'Events' && eventsRef.current?.refresh) {
+        await eventsRef.current.refresh();
+      }
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
-  function PostsFeed({ navigation }) {
-    return <EnhancedPostsFeed navigation={navigation} ref={postsRef} />;
+  const handleNotificationPress = () => {
+    // Check if NotificationScreen exists in navigation
+    try {
+      navigation.navigate('NotificationScreen');
+    } catch (error) {
+      // If NotificationScreen is not in current stack, try other approaches
+      console.warn('NotificationScreen not found in current navigator');
+      
+      // Try to navigate through main app navigation
+      try {
+        navigation.getParent()?.navigate('NotificationScreen');
+      } catch (parentError) {
+        // Show alert or handle gracefully
+        Alert.alert(
+          'Feature Coming Soon',
+          'Notifications feature is currently being updated. Please check back later.',
+          [{ text: 'OK', style: 'default' }]
+        );
+      }
+    }
+  };
+
+  // Create custom tab components that support refresh
+  function PostsFeed({ navigation, jumpTo }) {
+    return (
+      <ScrollView
+        style={{ flex: 1 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
+          />
+        }
+        scrollEventThrottle={16}
+      >
+        <EnhancedPostsFeed navigation={navigation} ref={postsRef} />
+      </ScrollView>
+    );
   }
 
-  function EventsFeed({ navigation }) {
-    return <EventsHub navigation={navigation} ref={eventsRef} />;
+  function EventsFeed({ navigation, jumpTo }) {
+    return (
+      <ScrollView
+        style={{ flex: 1 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
+          />
+        }
+        scrollEventThrottle={16}
+      >
+        <EventsHub navigation={navigation} ref={eventsRef} />
+      </ScrollView>
+    );
   }
 
   return (
@@ -51,7 +125,7 @@ export default function FeedScreen({ navigation }) {
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.headerButton}
-              onPress={() => navigation.navigate('NotificationScreen')}
+              onPress={handleNotificationPress}
               activeOpacity={0.8}
             >
               <Ionicons name="notifications-outline" size={24} color="#000" />
@@ -63,17 +137,17 @@ export default function FeedScreen({ navigation }) {
       {/* Tab Navigator for Posts and Events */}
       <Tab.Navigator
         screenOptions={{
-          tabBarActiveTintColor: '#3797EF', // Changed to blue
+          tabBarActiveTintColor: '#3797EF',
           tabBarInactiveTintColor: '#8E8E93',
           tabBarIndicatorStyle: {
-            backgroundColor: '#3797EF', // Changed to blue
+            backgroundColor: '#3797EF',
             height: 2,
           },
           tabBarStyle: {
             backgroundColor: '#FFFFFF',
             elevation: 0,
             shadowOpacity: 0,
-            borderBottomWidth: 0.33,
+            borderBottomWidth: 1,
             borderBottomColor: '#E1E1E1',
           },
           tabBarLabelStyle: {
@@ -81,18 +155,33 @@ export default function FeedScreen({ navigation }) {
             fontWeight: '600',
             textTransform: 'none',
           },
-          tabBarShowIcon: false, // Remove icons, only show text
+          tabBarPressColor: '#F2F2F7',
+        }}
+        screenListeners={{
+          state: (e) => {
+            // Track which tab is active for refresh purposes
+            const state = e.data.state;
+            if (state) {
+              const activeIndex = state.index;
+              const routeName = state.routes[activeIndex].name;
+              setActiveTab(routeName);
+            }
+          },
         }}
       >
         <Tab.Screen 
           name="Posts" 
-          component={PostsFeed}
-          initialParams={{ navigation }}
+          children={(props) => <PostsFeed {...props} />}
+          options={{
+            tabBarLabel: 'Posts',
+          }}
         />
         <Tab.Screen 
           name="Events" 
-          component={EventsFeed}
-          initialParams={{ navigation }}
+          children={(props) => <EventsFeed {...props} />}
+          options={{
+            tabBarLabel: 'Events',
+          }}
         />
       </Tab.Navigator>
     </SafeAreaView>
@@ -106,7 +195,7 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.33,
+    borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -124,13 +213,10 @@ const styles = StyleSheet.create({
   headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 16,
   },
   headerButton: {
-    marginLeft: 16,
     padding: 8,
     borderRadius: 20,
-  },
-  tabContent: {
-    flex: 1,
   },
 });

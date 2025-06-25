@@ -1,166 +1,408 @@
-// screens/AttendeeListScreen.js
-import React, { useEffect, useState, useContext } from 'react';
+
+// screens/AttendeeListScreen.js - Fixed layout and organization
+import React, { useState, useEffect, useContext } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, Alert
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  SafeAreaView,
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
 } from 'react-native';
-import { TouchableOpacity } from 'react-native-gesture-handler';
-import Swipeable from 'react-native-gesture-handler/Swipeable';
-import api from '../services/api';
+import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
+
+import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
+import { API_BASE_URL } from '@env';
 
 export default function AttendeeListScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { eventId } = route.params || {};
-
   const { currentUser } = useContext(AuthContext);
+  const { eventId } = route.params;
+
+  // State
   const [attendees, setAttendees] = useState([]);
-  const [isHostOrCoHost, setIsHostOrCoHost] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [isHost, setIsHost] = useState(false);
+  const [checkedInCount, setCheckedInCount] = useState(0);
 
   useEffect(() => {
-    fetchEventAndAttendees();
+    fetchAttendees();
   }, [eventId]);
 
-  const fetchEventAndAttendees = async () => {
+  const fetchAttendees = async (isRefresh = false) => {
     try {
-      const res = await api.get(`/events/${eventId}`);
-      const eventData = res.data;
-      setAttendees(eventData.attendees || []);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
 
-      // Check if current user is host or co-host
-      const userId = currentUser?._id;
-      const isHost = (eventData.host?._id === userId);
-      const isCoHost = eventData.coHosts?.some((c) => c._id === userId);
-      setIsHostOrCoHost(isHost || isCoHost);
-    } catch (err) {
-      console.error('AttendeeList => error:', err.response?.data || err);
+      // Use the correct endpoint that we fixed in the backend
+      const response = await api.get(`/api/events/${eventId}/attendees`);
+      const data = response.data;
+
+      setAttendees(data.attendees || []);
+      setCheckedInCount(data.checkedInCount || 0);
+      setIsHost(data.canManage || false);
+
+    } catch (error) {
+      console.error('Error fetching attendees:', error);
+      
+      // Handle specific 404 error
+      if (error.response?.status === 404) {
+        Alert.alert('Error', 'Event not found or you do not have permission to view attendees');
+      } else {
+        Alert.alert('Error', 'Failed to load attendees');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // When user taps the row => open their profile
-  const handlePressUser = (userId) => {
-    navigation.navigate('ProfileScreen', { userId });
-  };
-
-  // Called when swiping row => showing "ban" or "remove" button
-  const renderRightActions = (attendee) => {
-    return (
-      <View style={styles.rightActionContainer}>
-        <TouchableOpacity
-          style={styles.redXButton}
-          onPress={() => confirmBanOrRemove(attendee)}
-        >
-          <Text style={styles.redXText}>X</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
-
-  const confirmBanOrRemove = (attendee) => {
+  const handleRemoveAttendee = async (userId) => {
     Alert.alert(
       'Remove Attendee',
-      `Do you want to permanently ban ${attendee.username}, or just remove them?`,
+      'Are you sure you want to remove this person from the event?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
-          style: 'default',
-          onPress: () => banOrRemoveUser(attendee._id, false),
-        },
-        {
-          text: 'Ban Permanently',
           style: 'destructive',
-          onPress: () => banOrRemoveUser(attendee._id, true),
-        },
+          onPress: async () => {
+            try {
+              await api.delete(`/api/events/${eventId}/remove-attendee/${userId}`);
+              // Refresh the list
+              fetchAttendees(true);
+              Alert.alert('Success', 'Attendee removed');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to remove attendee');
+            }
+          }
+        }
       ]
     );
   };
 
-  const banOrRemoveUser = async (userId, banPermanently) => {
+  const handleManualCheckIn = async (userId) => {
     try {
-      await api.post(`/events/${eventId}/banUser`, {
+      await api.post(`/api/events/${eventId}/checkin`, {
         userId,
-        banPermanently
+        manualCheckIn: true
       });
-      Alert.alert(
-        banPermanently ? 'User banned' : 'User removed',
-        banPermanently
-          ? 'User has been banned from this event.'
-          : 'User has been removed from the event.'
-      );
-      // Refresh attendee list
-      fetchEventAndAttendees();
+      
+      // Refresh to show updated status
+      fetchAttendees(true);
+      Alert.alert('Success', 'User checked in manually');
     } catch (error) {
-      console.error('banOrRemoveUser =>', error.response?.data || error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to ban/remove user');
+      console.error('Manual check-in error:', error);
+      Alert.alert('Error', 'Failed to check in user');
     }
   };
 
-  // The row item
-  const renderItem = ({ item }) => {
-    // If NOT host/cohost => no swipe. We'll just do a normal row
-    if (!isHostOrCoHost) {
-      return (
-        <TouchableOpacity onPress={() => handlePressUser(item._id)} style={styles.row}>
-          <Text>{item.username}</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    // Else => host can swipe to show ban button
+  const renderAttendeeItem = ({ item }) => {
+    const isCheckedIn = item.isCheckedIn;
+    
     return (
-      <Swipeable
-        renderRightActions={() => renderRightActions(item)}
-        overshootRight={false}
-      >
-        <TouchableOpacity onPress={() => handlePressUser(item._id)} style={styles.row}>
-          <Text>{item.username}</Text>
+      <View style={styles.attendeeItem}>
+        <TouchableOpacity
+          style={styles.attendeeInfo}
+          onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
+          activeOpacity={0.8}
+        >
+          <Image
+            source={{
+              uri: item.profilePicture
+                ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+                : 'https://placehold.co/48x48.png?text=👤'
+            }}
+            style={styles.profileImage}
+          />
+          
+          <View style={styles.attendeeDetails}>
+            <View style={styles.nameRow}>
+              <Text style={styles.attendeeName}>{item.username}</Text>
+              {isCheckedIn && (
+                <View style={styles.checkMarkContainer}>
+                  <Ionicons name="checkmark-circle" size={20} color="#34C759" />
+                </View>
+              )}
+            </View>
+            {item.bio && (
+              <Text style={styles.attendeeBio} numberOfLines={1}>
+                {item.bio}
+              </Text>
+            )}
+          </View>
         </TouchableOpacity>
-      </Swipeable>
+
+        {/* Host actions */}
+        {isHost && (
+          <View style={styles.hostActions}>
+            {!isCheckedIn && (
+              <TouchableOpacity
+                style={styles.checkInButton}
+                onPress={() => handleManualCheckIn(item._id)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="checkmark" size={16} color="#34C759" />
+              </TouchableOpacity>
+            )}
+            
+            <TouchableOpacity
+              style={styles.removeButton}
+              onPress={() => handleRemoveAttendee(item._id)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="close" size={16} color="#FF3B30" />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     );
   };
 
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <View style={styles.headerStats}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{attendees.length}</Text>
+          <Text style={styles.statLabel}>Attending</Text>
+        </View>
+        {checkedInCount > 0 && (
+          <>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <Text style={[styles.statNumber, styles.checkedInNumber]}>{checkedInCount}</Text>
+              <Text style={styles.statLabel}>Checked In</Text>
+            </View>
+          </>
+        )}
+      </View>
+      
+      {isHost && (
+        <View style={styles.hostNote}>
+          <Ionicons name="information-circle-outline" size={16} color="#3797EF" />
+          <Text style={styles.hostNoteText}>
+            Tap the checkmark to manually check in attendees
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <Ionicons name="people-outline" size={64} color="#C7C7CC" />
+      <Text style={styles.emptyTitle}>No attendees yet</Text>
+      <Text style={styles.emptySubtitle}>
+        People who join this event will appear here
+      </Text>
+    </View>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3797EF" />
+        <Text style={styles.loadingText}>Loading attendees...</Text>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Attendees</Text>
+    <SafeAreaView style={styles.container}>
       <FlatList
         data={attendees}
-        keyExtractor={(item) => item._id}
-        renderItem={renderItem}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        keyExtractor={item => item._id}
+        renderItem={renderAttendeeItem}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmptyState}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => fetchAttendees(true)}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={attendees.length === 0 ? styles.emptyList : styles.list}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  header: { fontSize: 20, marginBottom: 12, fontWeight: 'bold' },
-  row: {
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    backgroundColor: '#fff',
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
   },
-  separator: {
-    height: 1, backgroundColor: '#ccc',
-  },
-  rightActionContainer: {
-    width: 70, // or however wide you want the "ban" area
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
-  redXButton: {
-    width: 40,
-    height: 40,
-    backgroundColor: 'red',
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  list: {
+    paddingBottom: 20,
+  },
+  emptyList: {
+    flexGrow: 1,
+  },
+  
+  // Header
+  header: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
+  },
+  headerStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  checkedInNumber: {
+    color: '#34C759',
+  },
+  statLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '500',
+  },
+  statDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: '#E1E1E1',
+    marginHorizontal: 24,
+  },
+  hostNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F4FF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 8,
+    gap: 8,
+  },
+  hostNoteText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#3797EF',
+    fontWeight: '500',
+  },
+  
+  // Attendee Items
+  attendeeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F2',
+  },
+  attendeeInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  profileImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 12, // Square with curved edges
+    marginRight: 12,
+  },
+  attendeeDetails: {
+    flex: 1,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  attendeeName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    flex: 1,
+  },
+  checkMarkContainer: {
+    marginLeft: 8,
+  },
+  attendeeBio: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  
+  // Host Actions
+  hostActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 12,
+  },
+  checkInButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#34C759',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  redXText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
+  removeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  // Empty State
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });

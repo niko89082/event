@@ -1,3 +1,4 @@
+// App.js - Fixed with proper NotificationScreen navigation
 import React, { useContext, useEffect } from 'react';
 import { View, Text, ActivityIndicator, Alert } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -12,7 +13,6 @@ import MainTabNavigator from './navigation/MainTabNavigator';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Global Screens (accessible from anywhere)
-
 import CreateMemoryScreen from './screens/CreateMemoryScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import FollowListScreen from './screens/FollowListScreen';
@@ -31,7 +31,8 @@ import AttendeeListScreen from './screens/AttendeeListScreen';
 import EditEventScreen from './screens/EditEventScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import MemoryDetailsScreen from './screens/MemoryDetailsScreen';
-import InviteUsersScreen from './screens/InviteUsersScreen'; // NEW
+import InviteUsersScreen from './screens/InviteUsersScreen';
+import NotificationScreen from './screens/NotificationScreen';
 
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
@@ -53,241 +54,243 @@ console.log('🟡 App: Environment loaded', {
 
 const RootStack = createStackNavigator();
 
-function RootNavigator() {
-  const { isAuthenticated, loadingToken, logout } = useContext(AuthContext);
+function AppNavigator({ onLogout }) {
+  const { currentUser, loading } = useContext(AuthContext);
 
-  console.log('🟡 RootNavigator: Rendering with state:', { isAuthenticated, loadingToken });
+  console.log('🟡 App: Current user state', { 
+    hasUser: !!currentUser, 
+    loading,
+    userId: currentUser?._id 
+  });
 
-  if (loadingToken) {
+  if (loading) {
     return (
-      <View style={{
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#FFFFFF'
-      }}>
-        <Text style={{
-          fontSize: 24,
-          fontWeight: '700',
-          color: '#3797EF',
-          marginBottom: 20
-        }}>Social</Text>
-        <ActivityIndicator size="large" color="#3797EF" />
-        <Text style={{
-          marginTop: 16,
-          fontSize: 16,
-          color: '#8E8E93'
-        }}>Loading...</Text>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' }}>
+        <ActivityIndicator size="large" color={palette.primary} />
+        <Text style={{ marginTop: 16, fontSize: 16, color: '#666' }}>Loading...</Text>
       </View>
     );
   }
 
   return (
-    <RootStack.Navigator>
-      {/* If not authenticated => show login/register */}
-      {!isAuthenticated ? (
-        <>
-          <RootStack.Screen
-            name="Login"
-            component={LoginScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="Register"
-            component={RegisterScreen}
-            options={{ headerShown: false }}
-          />
-        </>
-      ) : (
-        // If authenticated => main tabs + all global screens
-        <>
-          <RootStack.Screen
-            name="MainTabs"
-            options={{ headerShown: false }}
-          >
-            {(props) => (
-              <MainTabNavigator
-                {...props}
-                onLogout={logout}
-              />
-            )}
-          </RootStack.Screen>
-
-          {/* GLOBAL SCREENS => can be navigated to from ANYWHERE */}
-          <RootStack.Screen
-            name="ProfileScreen"
-            component={ProfileScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreateMemoryScreen"
-            component={CreateMemoryScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="FollowListScreen"
-            component={FollowListScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="UserSettingsScreen"
-            component={UserSettingsScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="EditProfileScreen"
-            component={EditProfileScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="SearchScreen"
-            component={SearchScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="EventDetailsScreen"
-            component={EventDetailsScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="EventDetails"
-            component={EventDetailsScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="PostDetailsScreen"
-            component={PostDetailsScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreateEventScreen"
-            component={CreateEventScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreateEvent"
-            component={CreateEventScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreatePostScreen"
-            component={CreatePostScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreatePost"
-            component={CreatePostScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreatePickerScreen"
-            component={CreatePickerScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CreatePicker"
-            component={CreatePickerScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="PostPublishedScreen"
-            component={PostPublishedScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="PostPublished"
-            component={PostPublishedScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="QrScreen"
-            component={QrScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="QrScanScreen"
-            component={QrScanScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="AttendeeListScreen"
-            component={AttendeeListScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="EditEventScreen"
-            component={EditEventScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="CalendarScreen"
-            component={CalendarScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="MemoryDetailsScreen"
-            component={MemoryDetailsScreen}
-            options={{ headerShown: false }}
-          />
-          {/* NEW: Invite Users Screen */}
-          <RootStack.Screen
-            name="InviteUsersScreen"
-            component={InviteUsersScreen}
-            options={{ headerShown: false }}
-          />
-        </>
-      )}
-    </RootStack.Navigator>
+    <NavigationContainer>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <RootStack.Navigator screenOptions={{ headerShown: false }}>
+        {currentUser ? (
+          // Authenticated Stack
+          <>
+            <RootStack.Screen
+              name="MainTabs"
+              children={(props) => <MainTabNavigator {...props} onLogout={onLogout} />}
+            />
+            
+            {/* Global Screens - accessible from anywhere in the app */}
+            <RootStack.Screen 
+              name="ProfileScreen" 
+              component={ProfileScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Profile',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="NotificationScreen" 
+              component={NotificationScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Notifications',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="SearchScreen" 
+              component={SearchScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Search',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="EventDetailsScreen" 
+              component={EventDetailsScreen}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen 
+              name="PostDetailsScreen" 
+              component={PostDetailsScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Post',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="CreateEventScreen" 
+              component={CreateEventScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Create Event',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="EditEventScreen" 
+              component={EditEventScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Edit Event',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="CreatePostScreen" 
+              component={CreatePostScreen}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen 
+              name="CreatePickerScreen" 
+              component={CreatePickerScreen}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen 
+              name="PostPublishedScreen" 
+              component={PostPublishedScreen}
+              options={{ headerShown: false, gestureEnabled: false }}
+            />
+            <RootStack.Screen 
+              name="CreateMemoryScreen" 
+              component={CreateMemoryScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Create Memory',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="MemoryDetailsScreen" 
+              component={MemoryDetailsScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Memory',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="QrScreen" 
+              component={QrScreen}
+              options={{ 
+                headerShown: true,
+                title: 'My QR Code',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="QrScanScreen" 
+              component={QrScanScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Scan QR',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="AttendeeListScreen" 
+              component={AttendeeListScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Attendees',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="InviteUsersScreen" 
+              component={InviteUsersScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Invite Friends',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="CalendarScreen" 
+              component={CalendarScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Calendar',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="FollowListScreen" 
+              component={FollowListScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Connections',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="UserSettingsScreen" 
+              component={UserSettingsScreen}
+              options={{ 
+                headerShown: true,
+                title: 'Settings',
+                headerStyle: { backgroundColor: '#FFFFFF' },
+                headerTintColor: '#000000'
+              }}
+            />
+            <RootStack.Screen 
+              name="EditProfileScreen" 
+              component={EditProfileScreen}
+              options={{ headerShown: false }}
+            />
+          </>
+        ) : (
+          // Unauthenticated Stack
+          <>
+            <RootStack.Screen 
+              name="Login" 
+              component={LoginScreen}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen 
+              name="Register" 
+              component={RegisterScreen}
+              options={{ headerShown: false }}
+            />
+          </>
+        )}
+      </RootStack.Navigator>
+    </NavigationContainer>
   );
 }
 
 export default function App() {
-  console.log('🟡 App: Starting application with enhanced event privacy system...');
-
-  // Handle environment errors
-  if (!API_BASE_URL || !PUBLISHABLE_KEY) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
-        <Text style={{ fontSize: 18, fontWeight: '600', color: '#FF3B30', textAlign: 'center' }}>
-          Configuration Error
-        </Text>
-        <Text style={{ marginTop: 16, textAlign: 'center' }}>
-          {!API_BASE_URL && 'API_BASE_URL is missing from .env file\n'}
-          {!PUBLISHABLE_KEY && 'PUBLISHABLE_KEY is missing from .env file'}
-        </Text>
-        <Text style={{ marginTop: 16, fontSize: 12, color: '#8E8E93', textAlign: 'center' }}>
-          Please check your .env file and restart the app
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <ErrorBoundary>
-      <StripeProvider
-        publishableKey={PUBLISHABLE_KEY}
-        merchantDisplayName="Social Events"
-        returnURL="socialapp://stripe-redirect"
-      >
-        <AuthProvider>
-          <SafeAreaProvider>
-            <StatusBar barStyle="dark-content" backgroundColor={palette.bg} />
-            <NavigationContainer
-              onStateChange={(state) => {
-                console.log('🟡 Navigation state changed:', state?.routes?.[0]?.name);
-              }}
-              fallback={
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                  <ActivityIndicator size="large" color="#3797EF" />
-                  <Text style={{ marginTop: 16 }}>Loading Navigation...</Text>
-                </View>
-              }
-            >
-              <RootNavigator />
-            </NavigationContainer>
-          </SafeAreaProvider>
-        </AuthProvider>
-      </StripeProvider>
+      <SafeAreaProvider>
+        <StripeProvider publishableKey={PUBLISHABLE_KEY}>
+          <AuthProvider>
+            <AppNavigator onLogout={() => console.log('Logout requested')} />
+          </AuthProvider>
+        </StripeProvider>
+      </SafeAreaProvider>
     </ErrorBoundary>
   );
 }
