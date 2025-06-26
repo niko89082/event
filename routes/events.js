@@ -17,13 +17,44 @@ const router = express.Router();
 const UP_DIR      = path.join(__dirname, '..', 'uploads');
 const PHOTO_DIR   = path.join(UP_DIR, 'photos');
 const COVER_DIR   = path.join(UP_DIR, 'event-covers');
-[PHOTO_DIR, COVER_DIR].forEach((d) => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive:true }); });
+const COVERS_DIR  = path.join(UP_DIR, 'covers');
+
+// Ensure all directories exist
+[PHOTO_DIR, COVER_DIR, COVERS_DIR].forEach((d) => { 
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); 
+});
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, file.fieldname === 'coverImage' ? COVER_DIR : PHOTO_DIR),
   filename:    (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage });
+
+// Separate cover image storage
+const coverStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, COVERS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'cover-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadCover = multer({
+  storage: coverStorage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept only image files
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
 
 /* helper to coerce booleans coming from multipart/form-data */
 const bool = (v) => v === true || v === 'true';
@@ -41,6 +72,403 @@ paypal.configure({
   'mode': 'sandbox',
   'client_id': process.env.PAYPAL_CLIENT_ID,
   'client_secret': process.env.PAYPAL_CLIENT_SECRET,
+});
+
+// ========================================
+// SPECIFIC ROUTES FIRST (CRITICAL ORDER)
+// ========================================
+
+// Get Events with Following Filter
+router.get('/following-events', protect, async (req, res) => {
+  console.log('🟡 Following events endpoint hit');
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+
+  try {
+    console.log('🟡 User ID:', req.user._id);
+    
+    // Get current user with populated following list
+    const viewer = await User.findById(req.user._id)
+      .select('following')
+      .populate('following', '_id username')
+      .lean();
+    
+    if (!viewer) {
+      console.log('❌ User not found');
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log('🟡 User following count:', viewer.following?.length || 0);
+    const followingIds = (viewer.following || []).map(user => user._id);
+
+    if (followingIds.length === 0) {
+      console.log('🟡 No following users, returning empty');
+      return res.json({
+        events: [],
+        page: 1,
+        totalPages: 0,
+        hasMore: false
+      });
+    }
+
+    // Build query for events from people you follow
+    const query = {
+      host: { $in: followingIds },
+      time: { $gte: new Date() }, // Only future events
+      $or: [
+        { privacyLevel: 'public' },
+        { 
+          privacyLevel: 'friends',
+          host: { $in: followingIds } // Friends can see friends-only events
+        }
+      ]
+    };
+
+    console.log('🟡 Query:', JSON.stringify(query, null, 2));
+
+    // Get events with populated data
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username')
+      .sort({ time: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    console.log('🟡 Found events:', events.length);
+
+    // Add user relationship metadata to each event
+    const eventsWithMetadata = events.map(event => {
+      const isHost = String(event.host._id) === String(req.user._id);
+      const isAttending = event.attendees.some(attendee => 
+        String(attendee._id) === String(req.user._id)
+      );
+      
+      return {
+        ...event,
+        userRelation: {
+          isHost,
+          isAttending,
+          canJoin: !isHost && !isAttending
+        },
+        attendeeCount: event.attendees.length
+      };
+    });
+
+    // Get total count for pagination
+    const totalEvents = await Event.countDocuments(query);
+    const totalPages = Math.ceil(totalEvents / limit);
+    const hasMore = skip + limit < totalEvents;
+
+    const response = {
+      events: eventsWithMetadata,
+      page,
+      totalPages,
+      hasMore,
+      total: totalEvents
+    };
+
+    console.log('🟢 Sending response:', { 
+      eventsCount: eventsWithMetadata.length, 
+      page, 
+      totalPages,
+      hasMore 
+    });
+    
+    res.json(response);
+
+  } catch (err) {
+    console.error('❌ Following events error:', err);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+
+// Enhanced Posts Feed Route
+router.get('/feed/posts', protect, async (req, res) => {
+  console.log('🟡 Enhanced posts endpoint hit');
+  const page = +req.query.page || 1;
+  const limit = +req.query.limit || 10;
+  const skip = (page - 1) * limit;
+  
+  try {
+    const viewer = await User.findById(req.user._id).select('following');
+    
+    if (!viewer) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const followingIds = viewer.following || [];
+    console.log('🟡 Following count for posts:', followingIds.length);
+
+    if (followingIds.length === 0) {
+      return res.json({
+        posts: [],
+        page: 1,
+        totalPages: 0,
+        hasMore: false
+      });
+    }
+
+    // Get posts from friends
+    const posts = await Photo.find({
+      user: { $in: followingIds }
+    })
+    .populate('user', 'username profilePicture')
+    .populate('event', 'title time location')
+    .sort({ uploadDate: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+    console.log('🟡 Found posts:', posts.length);
+
+    // Add source field
+    const postsWithSource = posts.map(post => ({
+      ...post,
+      source: 'friend'
+    }));
+
+    const totalPosts = await Photo.countDocuments({
+      user: { $in: followingIds }
+    });
+    
+    const response = {
+      posts: postsWithSource,
+      page,
+      totalPages: Math.ceil(totalPosts / limit),
+      hasMore: skip + limit < totalPosts
+    };
+
+    console.log('🟢 Sending posts response:', { postsCount: posts.length, page });
+    res.json(response);
+
+  } catch (err) {
+    console.error('❌ Enhanced posts error:', err);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// Get Event Recommendations
+router.get('/recommendations', protect, async (req, res) => {
+  try {
+    const { location, weather, limit = 10 } = req.query;
+    
+    const options = { limit: parseInt(limit) };
+    
+    if (location) {
+      try {
+        options.location = JSON.parse(location);
+      } catch (e) {
+        console.log('Invalid location format');
+      }
+    }
+
+    if (weather) {
+      try {
+        options.weatherData = JSON.parse(weather);
+      } catch (e) {
+        console.log('Invalid weather format');
+      }
+    }
+
+    const recommendations = await EventPrivacyService.getRecommendations(req.user._id, options);
+    res.json(recommendations);
+  } catch (e) {
+    console.error('Get recommendations error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get Friends Activity
+router.get('/friends-activity', protect, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const events = await EventPrivacyService.getFriendsActivity(req.user._id, { 
+      limit: parseInt(limit) 
+    });
+    res.json(events);
+  } catch (e) {
+    console.error('Get friends activity error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get My Photo Events
+router.get('/my-photo-events', protect, async (req, res) => {
+  try {
+    const list = await Event.find({
+      allowPhotos: true,
+      $or: [
+        { attendees: req.user._id }, 
+        { checkedIn: req.user._id },
+        { host: req.user._id } // Include hosted events
+      ]
+    }).select('title time allowPhotos host attendees');
+    res.json(list);
+  } catch (err) {
+    console.error('/my-photo-events =>', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Upload Cover Image
+router.post('/upload-cover', protect, uploadCover.single('coverImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+
+    // Return the file path relative to uploads directory
+    const coverImagePath = `/uploads/covers/${req.file.filename}`;
+    
+    res.json({
+      success: true,
+      coverImage: coverImagePath,
+      filename: req.file.filename
+    });
+
+  } catch (error) {
+    console.error('Cover upload error:', error);
+    res.status(500).json({ 
+      message: 'Failed to upload cover image',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
+  }
+});
+
+// Get User Events
+router.get('/user/:userId', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { 
+      type = 'all', // 'hosted', 'attending', 'shared', 'all'
+      includePast = 'false',
+      limit = 50,
+      skip = 0 
+    } = req.query;
+
+    const currentUserId = req.user._id;
+    const isOwnProfile = String(userId) === String(currentUserId);
+
+    // Build query based on type
+    let query = {};
+    
+    switch (type) {
+      case 'hosted':
+        query.host = userId;
+        break;
+      case 'attending':
+        query.attendees = userId;
+        query.host = { $ne: userId }; // Exclude hosted events
+        break;
+      case 'shared':
+        // For shared events, we need to get the user's shared event IDs first
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        
+        const sharedEventIds = user.sharedEvents || [];
+        query._id = { $in: sharedEventIds };
+        break;
+      default: // 'all'
+        query.$or = [
+          { host: userId },
+          { attendees: userId }
+        ];
+    }
+
+    // Add time filter
+    if (includePast !== 'true') {
+      query.time = { $gte: new Date() };
+    }
+
+    // Check privacy permissions
+    if (!isOwnProfile) {
+      // For other users, only show public events they can see
+      const permission = await EventPrivacyService.getVisibleEvents(currentUserId, {
+        hostFilter: userId,
+        limit: parseInt(limit),
+        skip: parseInt(skip)
+      });
+      
+      return res.json({
+        events: permission,
+        total: permission.length,
+        isOwnProfile: false
+      });
+    }
+
+    // For own profile, get all events with metadata
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username')
+      .sort({ time: includePast === 'true' ? -1 : 1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip));
+
+    // Add metadata about user's relationship to each event
+    const eventsWithMetadata = events.map(event => {
+      const isHost = String(event.host._id) === String(userId);
+      const isAttending = event.attendees.some(a => String(a._id) === String(userId));
+      const isPast = new Date(event.time) < new Date();
+      
+      return {
+        ...event.toObject(),
+        isHost,
+        isAttending,
+        isPast,
+        relationshipType: isHost ? 'host' : 'attendee'
+      };
+    });
+
+    res.json({
+      events: eventsWithMetadata,
+      total: eventsWithMetadata.length,
+      isOwnProfile: true
+    });
+
+  } catch (error) {
+    console.error('Get user events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get User Calendar Events
+router.get('/user/:userId/calendar', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { month, year } = req.query;
+
+    if (userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const user = await User.findById(userId).populate('attendingEvents');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    let events = user.attendingEvents;  
+    if (month && year) {
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 1); 
+      events = events.filter((evt) => {
+        if (!evt.time) return false;
+        const t = new Date(evt.time);
+        return (t >= startDate && t < endDate);
+      });
+    }
+
+    res.json({ events });
+  } catch (error) {
+    console.error('GET /events/user/:userId/calendar error =>', error);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
 // Create Event with Enhanced Privacy
@@ -124,9 +552,13 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
 
     /* geo JSON (optional) */
     if (geo) {
-      const g = JSON.parse(geo);
-      if (Array.isArray(g.coordinates) && g.coordinates.length === 2) {
-        event.geo = g;
+      try {
+        const g = typeof geo === 'string' ? JSON.parse(geo) : geo;
+        if (g && Array.isArray(g.coordinates) && g.coordinates.length === 2) {
+          event.geo = g;
+        }
+      } catch (error) {
+        console.log('Invalid geo format during creation:', error);
       }
     }
 
@@ -277,217 +709,16 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// Get Event Recommendations
-router.get('/recommendations', protect, async (req, res) => {
-  try {
-    const { location, weather, limit = 10 } = req.query;
-    
-    const options = { limit: parseInt(limit) };
-    
-    if (location) {
-      try {
-        options.location = JSON.parse(location);
-      } catch (e) {
-        console.log('Invalid location format');
-      }
-    }
-
-    if (weather) {
-      try {
-        options.weatherData = JSON.parse(weather);
-      } catch (e) {
-        console.log('Invalid weather format');
-      }
-    }
-
-    const recommendations = await EventPrivacyService.getRecommendations(req.user._id, options);
-    res.json(recommendations);
-  } catch (e) {
-    console.error('Get recommendations error:', e);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Get Friends Activity
-router.get('/friends-activity', protect, async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-    const events = await EventPrivacyService.getFriendsActivity(req.user._id, { 
-      limit: parseInt(limit) 
-    });
-    res.json(events);
-  } catch (e) {
-    console.error('Get friends activity error:', e);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Get My Photo Events
-router.get('/my-photo-events', protect, async (req, res) => {
-  try {
-    const list = await Event.find({
-      allowPhotos: true,
-      $or: [{ attendees: req.user._id }, { checkedIn: req.user._id }]
-    }).select('title time allowPhotos');
-    res.json(list);
-  } catch (err) {
-    console.error('/my-photo-events =>', err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Get Event by ID with Privacy Check
-router.get('/:eventId', protect, async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId)
-      .populate('host', 'username profilePicture')
-      .populate('coHosts', 'username')
-      .populate('attendees invitedUsers', 'username')
-      .populate('joinRequests.user', 'username profilePicture')
-      .populate({
-        path: 'photos',
-        populate: { path: 'user', select: 'username isPrivate followers' }
-      });
-
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    // Check if user can view this event
-    const permission = await EventPrivacyService.checkPermission(
-      req.user._id, 
-      req.params.eventId, 
-      'view'
-    );
-
-    if (!permission.allowed) {
-      return res.status(403).json({ message: permission.reason });
-    }
-
-    // Filter sensitive information based on privacy settings
-    const eventObj = event.toObject();
-    
-    // Hide attendee list if not public
-    if (!event.permissions.showAttendeesToPublic && 
-        String(event.host) !== String(req.user._id) &&
-        !event.coHosts.some(c => String(c) === String(req.user._id))) {
-      eventObj.attendees = eventObj.attendees.slice(0, 3); // Show only first 3
-    }
-
-    // Add user's relationship to event
-    eventObj.userRelation = {
-      isHost: String(event.host._id) === String(req.user._id),
-      isCoHost: event.coHosts.some(c => String(c._id) === String(req.user._id)),
-      isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
-      isInvited: event.invitedUsers.some(i => String(i._id) === String(req.user._id)),
-      hasRequestedToJoin: event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id))
-    };
-
-    res.json(eventObj);
-
-  } catch (e) { 
-    console.error('Get event error:', e);
-    res.status(500).json({ message: 'Server error' }); 
-  }
-});
-
-// Update Event with Privacy Controls
-router.put('/:eventId', protect, upload.single('coverImage'), async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    const permission = await EventPrivacyService.checkPermission(
-      req.user._id, 
-      req.params.eventId, 
-      'edit'
-    );
-
-    if (!permission.allowed) {
-      return res.status(403).json({ message: permission.reason });
-    }
-
-    // Update basic fields
-    const basicFields = [
-      'title', 'description', 'category', 'time', 'location', 'maxAttendees',
-      'price', 'allowPhotos', 'allowUploads', 'allowUploadsBeforeStart'
-    ];
-    
-    basicFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        if (field === 'time') {
-          event[field] = new Date(req.body[field]);
-        } else if (field === 'price' || field === 'maxAttendees') {
-          event[field] = parseFloatSafe(req.body[field]);
-        } else if (typeof event[field] === 'boolean') {
-          event[field] = bool(req.body[field]);
-        } else {
-          event[field] = req.body[field];
-        }
-      }
-    });
-
-    // Update privacy settings
-    if (req.body.privacyLevel) {
-      event.privacyLevel = req.body.privacyLevel;
-    }
-
-    if (req.body.permissions) {
-      const permissions = typeof req.body.permissions === 'string' 
-        ? JSON.parse(req.body.permissions) 
-        : req.body.permissions;
-      
-      Object.assign(event.permissions, permissions);
-    }
-
-    // Update discovery fields
-    if (req.body.tags) {
-      event.tags = Array.isArray(req.body.tags) 
-        ? req.body.tags 
-        : req.body.tags.split(',').map(t => t.trim());
-    }
-
-    if (req.body.interests) {
-      event.interests = Array.isArray(req.body.interests)
-        ? req.body.interests
-        : req.body.interests.split(',').map(i => i.trim());
-    }
-
-    if (req.body.weatherDependent !== undefined) {
-      event.weatherDependent = bool(req.body.weatherDependent);
-    }
-
-    // Update location/geo
-    if (req.body.geo) {
-      const g = JSON.parse(req.body.geo);
-      if (Array.isArray(g.coordinates) && g.coordinates.length === 2) {
-        event.geo = g;
-      }
-    }
-
-    // Update cover image
-    if (req.file) {
-      if (event.coverImage) {
-        fs.unlink(path.join(__dirname, '..', event.coverImage), () => {});
-      }
-      event.coverImage = `/uploads/event-covers/${req.file.filename}`;
-    }
-
-    await event.save();
-    res.json(event);
-
-  } catch (e) {
-    console.error('Update event error:', e);
-    res.status(500).json({ message: 'Server error', error: e.message });
-  }
-});
-
 // Attend Event with Privacy Check
 router.post('/attend/:eventId', protect, async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
-    if (Date.now() > new Date(event.time)) {
-      return res.status(400).json({ message: 'Event already started' });
+    // Event is considered over 3 hours after start time
+    const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000);
+    if (Date.now() > eventEndTime) {
+      return res.status(400).json({ message: 'Event has already ended' });
     }
 
     if (event.attendees.includes(req.user._id)) {
@@ -792,42 +1023,11 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
   }
 });
 
-// Get User Calendar Events
-router.get('/user/:userId/calendar', protect, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { month, year } = req.query;
-
-    if (userId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Forbidden' });
-    }
-
-    const user = await User.findById(userId).populate('attendingEvents');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    let events = user.attendingEvents;  
-    if (month && year) {
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 1); 
-      events = events.filter((evt) => {
-        if (!evt.time) return false;
-        const t = new Date(evt.time);
-        return (t >= startDate && t < endDate);
-      });
-    }
-
-    res.json({ events });
-  } catch (error) {
-    console.error('GET /events/user/:userId/calendar error =>', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
 // Check-in endpoint
 router.post('/:eventId/checkin', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { scannedUserId } = req.body;
+    const { scannedUserId, userId, manualCheckIn } = req.body;
 
     const event = await Event.findById(eventId)
       .populate('attendees', '_id username profilePicture')
@@ -848,14 +1048,20 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       });
     }
 
+    // Determine which user to check in
+    const targetUserId = scannedUserId || userId;
+    if (!targetUserId) {
+      return res.status(400).json({ message: 'No user ID provided for check-in' });
+    }
+
     // Find the user doc
-    const user = await User.findById(scannedUserId).select('username profilePicture');
+    const user = await User.findById(targetUserId).select('username profilePicture');
     if (!user) {
-      return res.status(404).json({ message: 'Scanned user not found in system' });
+      return res.status(404).json({ message: 'User not found in system' });
     }
 
     // Check if user is in event.attendees
-    const isAttendee = event.attendees.some((a) => a._id.equals(scannedUserId));
+    const isAttendee = event.attendees.some((a) => a._id.equals(targetUserId));
     if (!isAttendee) {
       return res.json({
         status: 'not_attendee',
@@ -869,7 +1075,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
 
     // If user is an attendee => see if they are already checked in
     const isAlreadyCheckedIn = event.checkedIn.some((id) =>
-      String(id) === String(scannedUserId)
+      String(id) === String(targetUserId)
     );
     if (isAlreadyCheckedIn) {
       return res.json({
@@ -883,7 +1089,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
     }
 
     // Otherwise, add them to checkedIn
-    event.checkedIn.push(scannedUserId);
+    event.checkedIn.push(targetUserId);
     await event.save();
 
     return res.json({
@@ -893,6 +1099,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
         username: user.username,
         profilePicture: user.profilePicture || null,
       },
+      manualCheckIn: manualCheckIn || false
     });
   } catch (err) {
     console.error('Check-in error:', err);
@@ -900,292 +1107,206 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
   }
 });
 
-router.get('/user/:userId', protect, async (req, res) => {
+// Get Event Attendees
+router.get('/:eventId/attendees', protect, async (req, res) => {
   try {
-    const { userId } = req.params;
-    const { 
-      type = 'all', // 'hosted', 'attending', 'shared', 'all'
-      includePast = 'false',
-      limit = 50,
-      skip = 0 
-    } = req.query;
-
-    const currentUserId = req.user._id;
-    const isOwnProfile = String(userId) === String(currentUserId);
-
-    // Build query based on type
-    let query = {};
+    const { eventId } = req.params;
     
-    switch (type) {
-      case 'hosted':
-        query.host = userId;
-        break;
-      case 'attending':
-        query.attendees = userId;
-        query.host = { $ne: userId }; // Exclude hosted events
-        break;
-      case 'shared':
-        // For shared events, we need to get the user's shared event IDs first
-        const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        
-        const sharedEventIds = user.sharedEvents || [];
-        query._id = { $in: sharedEventIds };
-        break;
-      default: // 'all'
-        query.$or = [
-          { host: userId },
-          { attendees: userId }
-        ];
+    const event = await Event.findById(eventId)
+      .populate('attendees', 'username profilePicture bio')
+      .populate('checkedIn', '_id')
+      .populate('host', 'username profilePicture');
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Add time filter
-    if (includePast !== 'true') {
-      query.time = { $gte: new Date() };
+    // Check if user can view attendees
+    const userId = req.user._id;
+    const isHost = String(event.host._id) === String(userId);
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id) === String(userId)
+    );
+
+    // Privacy check - only hosts, attendees, or public events can show attendees
+    if (!isHost && !isAttending && !event.permissions?.showAttendeesToPublic) {
+      return res.status(403).json({ message: 'Not authorized to view attendees' });
     }
 
-    // Check privacy permissions
-    if (!isOwnProfile) {
-      // For other users, only show public events they can see
-      const permission = await EventPrivacyService.getVisibleEvents(currentUserId, {
-        hostFilter: userId,
-        limit: parseInt(limit),
-        skip: parseInt(skip)
-      });
-      
-      return res.json({
-        events: permission,
-        total: permission.length,
-        isOwnProfile: false
-      });
-    }
-
-    // For own profile, get all events with metadata
-    const events = await Event.find(query)
-      .populate('host', 'username profilePicture')
-      .populate('attendees', 'username')
-      .sort({ time: includePast === 'true' ? -1 : 1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip));
-
-    // Add metadata about user's relationship to each event
-    const eventsWithMetadata = events.map(event => {
-      const isHost = String(event.host._id) === String(userId);
-      const isAttending = event.attendees.some(a => String(a._id) === String(userId));
-      const isPast = new Date(event.time) < new Date();
-      
-      return {
-        ...event.toObject(),
-        isHost,
-        isAttending,
-        isPast,
-        relationshipType: isHost ? 'host' : 'attendee'
-      };
-    });
+    // Return attendees with check-in status
+    const attendeesWithStatus = event.attendees.map(attendee => ({
+      _id: attendee._id,
+      username: attendee.username,
+      profilePicture: attendee.profilePicture,
+      bio: attendee.bio,
+      isCheckedIn: event.checkedIn.some(checkedUser => 
+        String(checkedUser._id) === String(attendee._id)
+      )
+    }));
 
     res.json({
-      events: eventsWithMetadata,
-      total: eventsWithMetadata.length,
-      isOwnProfile: true
+      attendees: attendeesWithStatus,
+      checkedInCount: event.checkedIn.length,
+      totalCount: event.attendees.length,
+      canManage: isHost
     });
 
   } catch (error) {
-    console.error('Get user events error:', error);
+    console.error('Get attendees error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
-router.get('/following-events', protect, async (req, res) => {
-  const page = +req.query.page || 1;
-  const limit = +req.query.limit || 10;
-  const skip = (page - 1) * limit;
 
+// ========================================
+// PARAMETERIZED ROUTES LAST (CRITICAL!)
+// ========================================
+
+// Get Event by ID with Privacy Check - MUST BE LAST
+router.get('/:eventId', protect, async (req, res) => {
   try {
-    const viewer = await User.findById(req.user._id)
-      .select('following')
-      .populate('following', '_id');
-
-    if (!viewer) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    const followingIds = viewer.following.map(u => u._id);
-
-    if (followingIds.length === 0) {
-      return res.json({
-        events: [],
-        page,
-        totalPages: 0,
-        hasMore: false
+    const event = await Event.findById(req.params.eventId)
+      .populate('host', 'username profilePicture')
+      .populate('coHosts', 'username')
+      .populate('attendees invitedUsers', 'username')
+      .populate('joinRequests.user', 'username profilePicture')
+      .populate({
+        path: 'photos',
+        populate: { path: 'user', select: 'username isPrivate followers' }
       });
+
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+
+    // Check if user can view this event
+    const permission = await EventPrivacyService.checkPermission(
+      req.user._id, 
+      req.params.eventId, 
+      'view'
+    );
+
+    if (!permission.allowed) {
+      return res.status(403).json({ message: permission.reason });
     }
 
-    // Get future events from people you follow - simplified query
-    const query = {
-      host: { $in: followingIds },
-      time: { $gte: new Date() },
-      isPublic: true // Use simple isPublic field for now
+    // Filter sensitive information based on privacy settings
+    const eventObj = event.toObject();
+    
+    // Hide attendee list if not public
+    if (!event.permissions.showAttendeesToPublic && 
+        String(event.host) !== String(req.user._id) &&
+        !event.coHosts.some(c => String(c) === String(req.user._id))) {
+      eventObj.attendees = eventObj.attendees.slice(0, 3); // Show only first 3
+    }
+
+    // Add user's relationship to event
+    eventObj.userRelation = {
+      isHost: String(event.host._id) === String(req.user._id),
+      isCoHost: event.coHosts.some(c => String(c._id) === String(req.user._id)),
+      isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
+      isInvited: event.invitedUsers.some(i => String(i._id) === String(req.user._id)),
+      hasRequestedToJoin: event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id))
     };
 
-    const events = await Event.find(query)
-      .populate('host', 'username profilePicture')
-      .populate('attendees', 'username')
-      .sort({ time: 1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
+    // Add timing metadata with 3-hour buffer
+    const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000);
+    eventObj.isOver = Date.now() > eventEndTime;
+    eventObj.canCheckIn = Date.now() <= eventEndTime;
 
-    const totalEvents = await Event.countDocuments(query);
+    res.json(eventObj);
 
+  } catch (e) { 
+    console.error('Get event error:', e);
+    res.status(500).json({ message: 'Server error' }); 
+  }
+});
+
+// Update Event with Privacy Controls - MUST BE LAST
+router.post('/:eventId/cover', protect, upload.single('coverImage'), async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    // Find the event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+    
+    // Check if user is the host
+    if (String(event.host) !== String(req.user._id)) {
+      return res.status(403).json({ message: 'Only the host can update the cover image' });
+    }
+    
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(400).json({ message: 'No cover image uploaded' });
+    }
+    
+    // Delete old cover image if it exists
+    if (event.coverImage) {
+      const oldImagePath = path.join(__dirname, '..', event.coverImage);
+      fs.unlink(oldImagePath, (err) => {
+        if (err) console.error('Error deleting old cover image:', err);
+      });
+    }
+    
+    // Update event with new cover image path
+    const coverImagePath = `/uploads/event-covers/${req.file.filename}`;
+    event.coverImage = coverImagePath;
+    await event.save();
+    
     res.json({
-      events,
-      page,
-      totalPages: Math.ceil(totalEvents / limit),
-      hasMore: skip + limit < totalEvents
+      message: 'Cover image updated successfully',
+      coverImage: coverImagePath,
+      event: {
+        _id: event._id,
+        title: event.title,
+        coverImage: event.coverImage
+      }
     });
-
-  } catch (err) {
-    console.error('Following events error:', err);
-    res.status(500).json({ 
-      message: 'Server error', 
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
-    });
+    
+  } catch (error) {
+    console.error('Cover image upload error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
-router.get('/following-events', protect, async (req, res) => {
-  console.log('🟡 Following events endpoint hit');
-  const page = +req.query.page || 1;
-  const limit = +req.query.limit || 10;
-  const skip = (page - 1) * limit;
-
+router.delete('/:eventId/cover', protect, async (req, res) => {
   try {
-    console.log('🟡 User ID:', req.user._id);
+    const { eventId } = req.params;
     
-    const viewer = await User.findById(req.user._id).select('following');
-    
-    if (!viewer) {
-      console.log('❌ User not found');
-      return res.status(404).json({ message: 'User not found' });
+    // Find the event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
     }
-
-    console.log('🟡 User following count:', viewer.following?.length || 0);
-    const followingIds = viewer.following || [];
-
-    if (followingIds.length === 0) {
-      console.log('🟡 No following users, returning empty');
-      return res.json({
-        events: [],
-        page: 1,
-        totalPages: 0,
-        hasMore: false
+    
+    // Check if user is the host
+    if (String(event.host) !== String(req.user._id)) {
+      return res.status(403).json({ message: 'Only the host can remove the cover image' });
+    }
+    
+    // Delete the cover image file if it exists
+    if (event.coverImage) {
+      const imagePath = path.join(__dirname, '..', event.coverImage);
+      fs.unlink(imagePath, (err) => {
+        if (err) console.error('Error deleting cover image file:', err);
       });
     }
-
-    // Simple query for events from people you follow
-    const query = {
-      host: { $in: followingIds },
-      time: { $gte: new Date() }
-    };
-
-    console.log('🟡 Query:', JSON.stringify(query));
-
-    const events = await Event.find(query)
-      .populate('host', 'username profilePicture')
-      .sort({ time: 1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    console.log('🟡 Found events:', events.length);
-
-    const totalEvents = await Event.countDocuments(query);
-
-    const response = {
-      events,
-      page,
-      totalPages: Math.ceil(totalEvents / limit),
-      hasMore: skip + limit < totalEvents
-    };
-
-    console.log('🟢 Sending response:', { eventsCount: events.length, page, totalPages: response.totalPages });
-    res.json(response);
-
-  } catch (err) {
-    console.error('❌ Following events error:', err);
-    res.status(500).json({ 
-      message: 'Server error', 
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-});
-
-// Enhanced Posts Feed Route (ADD THIS ROUTE to routes/feed.js OR here)
-router.get('/feed/posts', protect, async (req, res) => {
-  console.log('🟡 Enhanced posts endpoint hit');
-  const page = +req.query.page || 1;
-  const limit = +req.query.limit || 10;
-  const skip = (page - 1) * limit;
-  
-  try {
-    const viewer = await User.findById(req.user._id).select('following');
     
-    if (!viewer) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    const followingIds = viewer.following || [];
-    console.log('🟡 Following count for posts:', followingIds.length);
-
-    if (followingIds.length === 0) {
-      return res.json({
-        posts: [],
-        page: 1,
-        totalPages: 0,
-        hasMore: false
-      });
-    }
-
-    // Get posts from friends
-    const posts = await Photo.find({
-      user: { $in: followingIds }
-    })
-    .populate('user', 'username profilePicture')
-    .populate('event', 'title time location')
-    .sort({ uploadDate: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean();
-
-    console.log('🟡 Found posts:', posts.length);
-
-    // Add source field
-    const postsWithSource = posts.map(post => ({
-      ...post,
-      source: 'friend'
-    }));
-
-    const totalPosts = await Photo.countDocuments({
-      user: { $in: followingIds }
+    // Remove cover image from event
+    event.coverImage = null;
+    await event.save();
+    
+    res.json({
+      message: 'Cover image removed successfully',
+      event: {
+        _id: event._id,
+        title: event.title,
+        coverImage: null
+      }
     });
     
-    const response = {
-      posts: postsWithSource,
-      page,
-      totalPages: Math.ceil(totalPosts / limit),
-      hasMore: skip + limit < totalPosts
-    };
-
-    console.log('🟢 Sending posts response:', { postsCount: posts.length, page });
-    res.json(response);
-
-  } catch (err) {
-    console.error('❌ Enhanced posts error:', err);
-    res.status(500).json({ 
-      message: 'Server error',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
+  } catch (error) {
+    console.error('Cover image removal error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
-
 module.exports = router;

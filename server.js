@@ -14,12 +14,10 @@ const fs = require('fs');
 
 // Import routes
 const authRoutes = require('./routes/auth');
-const memoryRoutes = require('./routes/memories');
 const notificationRoutes = require('./routes/notifications');
 const eventRoutes = require('./routes/events');
 const photoRoutes = require('./routes/photos');
 const messageRoutes = require('./routes/messages');
-const notificationRoutes = require('./routes/notifications');
 const searchRoutes = require('./routes/search');
 const checkinRoutes = require('./routes/checkin');
 const feedRoutes = require('./routes/feed');

@@ -1,4 +1,4 @@
-// routes/feed.js - Enhanced posts feed endpoint
+// routes/feed.js - ENHANCED: Fixed posts feed with fallback content and debugging
 const express = require('express');
 const Photo = require('../models/Photo');
 const Event = require('../models/Event');
@@ -13,7 +13,7 @@ const recencyScore = (d) => {
   return Math.exp(-hours / 24); // Adjusted for posts vs events
 };
 
-/* ─── Enhanced Posts Feed (NEW) ─── */
+/* ─── Enhanced Posts Feed (FIXED) ─── */
 router.get('/feed/posts', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;
@@ -31,7 +31,11 @@ router.get('/feed/posts', protect, async (req, res) => {
     const followingIds = viewer.following.map(u => u._id);
     const attendingEventIds = viewer.attendingEvents.map(e => e._id);
     
-    console.log(`🟡   following ${followingIds.length}   attending events ${attendingEventIds.length}`);
+    console.log(`🔍 DEBUG INFO:`);
+    console.log(`  - User ID: ${req.user._id}`);
+    console.log(`  - Following count: ${followingIds.length}`);
+    console.log(`  - Following IDs: ${followingIds.slice(0, 5)}${followingIds.length > 5 ? '...' : ''}`);
+    console.log(`  - Attending events: ${attendingEventIds.length}`);
 
     /* 2) Fetch posts from TWO sources -------------------------------------- */
     
@@ -42,7 +46,6 @@ router.get('/feed/posts', protect, async (req, res) => {
     };
     
     // Source 2: PUBLIC posts from other attendees of events you attended
-    // First get all attendees from events you attended
     const eventAttendeesQuery = attendingEventIds.length > 0 ? await Event.find({
       _id: { $in: attendingEventIds }
     }).select('attendees') : [];
@@ -77,7 +80,18 @@ router.get('/feed/posts', protect, async (req, res) => {
         .lean() : []
     ]);
 
-    console.log('🟡   friendPosts', friendPosts.length, 'eventAttendeePosts', eventAttendeePosts.length);
+    // Debug what we found
+    console.log(`🔍 POSTS FOUND:`);
+    console.log(`  - Friend posts: ${friendPosts.length}`);
+    console.log(`  - Event attendee posts: ${eventAttendeePosts.length}`);
+    
+    // Check total posts from friends in DB for debugging
+    if (followingIds.length > 0) {
+      const totalFriendPostsInDB = await Photo.countDocuments({
+        user: { $in: followingIds }
+      });
+      console.log(`  - Total posts from friends in DB: ${totalFriendPostsInDB}`);
+    }
 
     /* 3) Score and merge posts ---------------------------------------------- */
     const allPosts = [];
@@ -108,27 +122,67 @@ router.get('/feed/posts', protect, async (req, res) => {
       });
     });
 
-    /* 4) Sort and paginate -------------------------------------------------- */
+    /* 4) FALLBACK: If no posts from friends/events, show trending content ---- */
+    if (allPosts.length === 0) {
+      console.log(`🟡 No friend posts found, fetching fallback content...`);
+      
+      // Fallback to popular recent posts from last 7 days
+      const fallbackPosts = await Photo.find({
+        visibleInEvent: { $ne: false },
+        uploadDate: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }, // Last 7 days
+        user: { $ne: req.user._id } // Don't show user's own posts
+      })
+      .populate('user', 'username profilePicture')
+      .populate('event', 'title time location')
+      .sort({ likes: -1, uploadDate: -1 })
+      .limit(limit)
+      .lean();
+      
+      console.log(`🟡 Fallback posts found: ${fallbackPosts.length}`);
+      
+      const fallbackWithSource = fallbackPosts.map(post => {
+        const recency = recencyScore(post.uploadDate);
+        const engagement = Math.log10((post.likes?.length || 0) + (post.comments?.length || 0) + 1);
+        const score = recency * 0.3 + engagement * 0.7; // Favor engagement for trending
+        
+        return {
+          ...post,
+          source: 'trending',
+          score
+        };
+      });
+      
+      allPosts.push(...fallbackWithSource);
+    }
+
+    /* 5) Sort and paginate -------------------------------------------------- */
     allPosts.sort((a, b) => b.score - a.score);
     const totalPosts = allPosts.length;
     const paginatedPosts = allPosts.slice(skip, skip + limit);
 
-    console.log('🟢  sending posts len', paginatedPosts.length);
+    console.log(`🟢 Sending posts: ${paginatedPosts.length} (total: ${totalPosts})`);
     
     return res.json({
       posts: paginatedPosts,
       page,
       totalPages: Math.ceil(totalPosts / limit),
-      hasMore: skip + limit < totalPosts
+      hasMore: skip + limit < totalPosts,
+      debug: {
+        friendsCount: followingIds.length,
+        friendPosts: friendPosts.length,
+        eventPosts: eventAttendeePosts.length,
+        fallbackUsed: friendPosts.length + eventAttendeePosts.length === 0,
+        totalInFeed: totalPosts
+      }
     });
 
   } catch (err) {
-    console.error('❌  /feed/posts error', err);
+    console.error('❌ /feed/posts error', err);
     return res.status(500).json({ message: 'Server error' });
   }
 });
 
-/* ─── Following Events Feed (NEW) ─── */
+/* ─── Following Events Feed (EXISTING) ─── */
 router.get('/events/following-events', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;

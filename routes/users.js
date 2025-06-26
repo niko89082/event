@@ -1,8 +1,9 @@
-// routes/users.js (create this file)
+// routes/users.js - FIXED WITH MISSING EVENTS ENDPOINT
 
 const express = require('express');
 const User = require('../models/User');
 const Event = require('../models/Event');
+const Photo = require('../models/Photo');
 const protect = require('../middleware/auth');
 
 const router = express.Router();
@@ -38,52 +39,145 @@ router.get('/recommendations/users', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 router.get('/:userId/followers', protect, async (req, res) => {
   console.log("getting followers");
-  try{
-  const user = await User.findById(req.params.userId).populate('followers', 'username');
-  res.json(user.followers);
-  }catch(e){
+  try {
+    const user = await User.findById(req.params.userId).populate('followers', 'username');
+    res.json(user.followers);
+  } catch (e) {
     console.log(e);
   }
 });
 
 router.get('/:userId/following', protect, async (req, res) => {
-  try{
-  const user = await User.findById(req.params.userId).populate('following', 'username');
-  res.json(user.following);
-  }catch(e){
+  try {
+    const user = await User.findById(req.params.userId).populate('following', 'username');
+    res.json(user.following);
+  } catch (e) {
     console.log(e);
   }
 });
-// routes/users.js - Update search endpoint
-router.get('/search', protect, async (req, res) => {
+
+// 🎯 FIX #1: ADD THE MISSING EVENTS ENDPOINT THAT PROFILESCREEN IS CALLING
+router.get('/:userId/events', protect, async (req, res) => {
   try {
-    const { q, limit = 20 } = req.query;
+    const userId = req.params.userId;
+    const currentUserId = req.user._id;
+    const isOwnProfile = String(userId) === String(currentUserId);
     
-    let users;
+    const { 
+      type = 'all', // 'hosted', 'attending', 'shared', 'all'
+      includePast = 'false',
+      limit = 50,
+      skip = 0 
+    } = req.query;
+
+    console.log(`🟡 Fetching events for user ${userId}, type: ${type}, includePast: ${includePast}`);
+
+    // Build query based on type
+    let query = {};
     
-    if (q && q.trim().length > 0) {
-      // Use text search index for performance
-      users = await User.find(
-        { $text: { $search: q.trim() } },
-        { score: { $meta: 'textScore' } }
-      )
-      .select('username fullName profilePicture bio followers following')
-      .sort({ score: { $meta: 'textScore' } })
-      .limit(parseInt(limit));
-    } else {
-      // Return recent users when no search query
-      users = await User.find({})
-        .select('username fullName profilePicture bio followers following')
-        .sort({ createdAt: -1 })
-        .limit(parseInt(limit));
+    switch (type) {
+      case 'hosted':
+        query.host = userId;
+        break;
+      case 'attending':
+        query.attendees = userId;
+        query.host = { $ne: userId }; // Exclude hosted events
+        break;
+      case 'shared':
+        // For shared events, we need to get the user's shared event IDs first
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        
+        const sharedEventIds = user.sharedEvents || [];
+        query._id = { $in: sharedEventIds };
+        break;
+      default: // 'all'
+        query.$or = [
+          { host: userId },
+          { attendees: userId }
+        ];
     }
 
-    res.json({ users });
+    // Add time filter
+    if (includePast !== 'true') {
+      query.time = { $gte: new Date() };
+    }
+
+    // FIXED: Proper sorting - most recent first for better UX
+    const sortOrder = includePast === 'true' ? { time: -1 } : { time: 1 };
+
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username profilePicture') // Added profilePicture
+      .sort(sortOrder) // FIXED: Proper sorting
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .lean();
+
+    // Add metadata about user's relationship to each event
+    const eventsWithMetadata = events.map(event => {
+      const isHost = String(event.host._id) === String(userId);
+      const isAttending = event.attendees.some(a => String(a._id) === String(userId));
+      const isPast = new Date(event.time) < new Date();
+      
+      return {
+        ...event,
+        isHost,
+        isAttending,
+        isPast,
+        relationshipType: isHost ? 'host' : 'attending'
+      };
+    });
+
+    console.log(`🟢 Found ${eventsWithMetadata.length} events for user ${userId}`);
+
+    return res.json({
+      events: eventsWithMetadata,
+      total: eventsWithMetadata.length,
+      isOwnProfile
+    });
+
   } catch (error) {
-    console.error('User search error:', error);
-    res.status(500).json({ message: 'Search failed' });
+    console.error('Get user events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+router.get('/search', protect, async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || q.trim().length < 1) {
+      return res.status(400).json({ message: 'Search query too short' });
+    }
+
+    const searchQuery = q.trim();
+    
+    // Search by username, fullName, or email (case insensitive)
+    const users = await User.find({
+      $and: [
+        { _id: { $ne: req.user._id } }, // Exclude current user
+        {
+          $or: [
+            { username: { $regex: searchQuery, $options: 'i' } },
+            { fullName: { $regex: searchQuery, $options: 'i' } },
+            { email: { $regex: searchQuery, $options: 'i' } }
+          ]
+        }
+      ]
+    })
+    .select('username fullName email profilePicture')
+    .limit(50)
+    .sort({ username: 1 });
+
+    res.json(users);
+  } catch (error) {
+    console.error('Search users error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
@@ -122,7 +216,101 @@ router.get('/followers', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
-// Add this route to routes/users.js
+
+// Get user's shared events (for the shared events functionality)
+router.get('/shared-events', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    const user = await User.findById(userId)
+      .populate({
+        path: 'sharedEvents',
+        populate: {
+          path: 'host',
+          select: 'username profilePicture'
+        },
+        options: { sort: { time: -1 } } // FIXED: Sort shared events by most recent
+      });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const eventIds = (user.sharedEvents || []).map(event => event._id);
+    
+    res.json({
+      eventIds,
+      sharedEvents: user.sharedEvents || []
+    });
+
+  } catch (error) {
+    console.error('Get shared events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Add/remove event from shared events
+router.post('/shared-events/:eventId', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Ensure user has access to this event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const isHost = String(event.host) === String(req.user._id);
+    const isAttending = event.attendees.some(a => String(a) === String(req.user._id));
+    
+    if (!isHost && !isAttending) {
+      return res.status(403).json({ message: 'You can only share events you are hosting or attending' });
+    }
+
+    // Add to shared events if not already there
+    if (!user.sharedEvents) {
+      user.sharedEvents = [];
+    }
+    
+    if (!user.sharedEvents.includes(eventId)) {
+      user.sharedEvents.push(eventId);
+      await user.save();
+    }
+
+    res.json({ message: 'Event added to shared events' });
+  } catch (error) {
+    console.error('Add shared event error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Remove event from shared events
+router.delete('/shared-events/:eventId', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.sharedEvents) {
+      user.sharedEvents = user.sharedEvents.filter(id => String(id) !== String(eventId));
+      await user.save();
+    }
+
+    res.json({ message: 'Event removed from shared events' });
+  } catch (error) {
+    console.error('Remove shared event error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 // Get user's past events with statistics
 router.get('/past-events', protect, async (req, res) => {
