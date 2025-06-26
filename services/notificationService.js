@@ -1,4 +1,4 @@
-// services/notificationService.js - Basic service without Redis
+// services/notificationService.js - FIXED: Add missing deleteNotification method
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 
@@ -132,6 +132,16 @@ class NotificationService {
       { isRead: true, readAt: new Date() },
       { new: true }
     );
+
+    return notification;
+  }
+
+  // ✅ FIXED: Add missing deleteNotification method
+  async deleteNotification(notificationId, userId) {
+    const notification = await Notification.findOneAndDelete({
+      _id: notificationId, 
+      user: userId
+    });
 
     return notification;
   }

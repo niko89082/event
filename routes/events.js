@@ -9,6 +9,7 @@ const EventPrivacyService = require('../services/eventPrivacyService');
 const paypal = require('paypal-rest-sdk');
 const fs = require('fs');
 const path = require('path');
+const notificationService = require('../services/notificationService'); // Add this import at the top
 require('dotenv').config();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
@@ -315,6 +316,90 @@ router.get('/my-photo-events', protect, async (req, res) => {
     res.json(list);
   } catch (err) {
     console.error('/my-photo-events =>', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ================================
+// FIXED: NOTIFICATION ROUTES MOVED TO TOP
+// ================================
+
+// Get My Event Invites - MUST BE BEFORE /:eventId route
+router.get('/my-invites', protect, async (req, res) => {
+  try {
+    console.log(`📋 Fetching invites for user: ${req.user._id}`);
+    
+    const events = await Event.find({
+      invitedUsers: req.user._id,
+      // Exclude events the user is already attending
+      attendees: { $ne: req.user._id }
+    })
+    .populate('host', 'username profilePicture')
+    .populate('coHosts', 'username profilePicture')
+    .select('title description time location host coHosts invitedUsers price visibility coverImage')
+    .sort({ time: 1 }) // Upcoming events first
+    .lean();
+
+    console.log(`✅ Found ${events.length} event invitations`);
+
+    // Transform to match expected format for NotificationScreen
+    const eventInvites = events.map(event => ({
+      event,
+      invitedAt: new Date(), // Note: You might want to add this field to Event model later
+      status: 'pending'
+    }));
+
+    res.json(eventInvites);
+  } catch (error) {
+    console.error('❌ Get my invites error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get My Join Requests - MUST BE BEFORE /:eventId route  
+router.get('/my-join-requests', protect, async (req, res) => {
+  try {
+    console.log(`📋 Fetching join requests for events hosted by: ${req.user._id}`);
+    
+    const events = await Event.find({
+      $or: [
+        { host: req.user._id },
+        { coHosts: req.user._id }
+      ],
+      'joinRequests.0': { $exists: true } // Only events with join requests
+    })
+    .populate({
+      path: 'joinRequests.user',
+      select: 'username profilePicture'
+    })
+    .select('title joinRequests host coHosts')
+    .lean();
+
+    console.log(`✅ Found ${events.length} events with join requests`);
+
+    // Flatten join requests with event info
+    const joinRequests = [];
+    events.forEach(event => {
+      event.joinRequests.forEach(request => {
+        joinRequests.push({
+          event: {
+            _id: event._id,
+            title: event.title
+          },
+          user: request.user,
+          message: request.message,
+          requestedAt: request.requestedAt || new Date()
+        });
+      });
+    });
+
+    // Sort by most recent
+    joinRequests.sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
+
+    console.log(`✅ Returning ${joinRequests.length} total join requests`);
+    res.json(joinRequests);
+  } catch (error) {
+    console.error('❌ Get my join requests error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -917,7 +1002,12 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     const { eventId } = req.params;
     const { userId, userIds, message } = req.body;
 
-    const event = await Event.findById(eventId);
+    console.log(`📨 Processing invite for event ${eventId} from user ${req.user._id}`);
+
+    const event = await Event.findById(eventId)
+      .populate('host', 'username')
+      .lean();
+    
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
     // Check if user can invite
@@ -934,27 +1024,75 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     // Handle single or multiple invites
     const targetUsers = userIds || [userId];
     const newInvites = [];
+    const notificationsSent = [];
+
+    // Get the full event document for updating
+    const eventDoc = await Event.findById(eventId);
 
     for (const targetUserId of targetUsers) {
-      if (!event.invitedUsers.includes(targetUserId) && 
-          !event.attendees.includes(targetUserId)) {
-        event.invitedUsers.push(targetUserId);
+      // Check if user is not already invited or attending
+      if (!eventDoc.invitedUsers.includes(targetUserId) && 
+          !eventDoc.attendees.includes(targetUserId)) {
+        
+        eventDoc.invitedUsers.push(targetUserId);
         newInvites.push(targetUserId);
+
+        // ✅ FIXED: Actually send notification using NotificationService
+        try {
+          console.log(`📨 Sending notification to user ${targetUserId} for event ${event.title}`);
+          
+          await notificationService.sendEventInvitation(
+            req.user._id,    // hostId (sender)
+            targetUserId,    // guestId (recipient)
+            event           // event object
+          );
+          
+          notificationsSent.push(targetUserId);
+          console.log(`✅ Notification sent successfully to user ${targetUserId}`);
+        } catch (notifError) {
+          console.error(`❌ Failed to send notification to user ${targetUserId}:`, notifError);
+          // Continue with invite even if notification fails
+        }
       }
     }
 
-    await event.save();
+    await eventDoc.save();
 
-    // TODO: Send notifications to invited users
-    // createNotification(targetUserId, 'event-invite', message);
+    console.log(`✅ Successfully invited ${newInvites.length} users, sent ${notificationsSent.length} notifications`);
 
     res.json({ 
       message: `Invited ${newInvites.length} users successfully`,
-      invitedUsers: newInvites
+      invitedUsers: newInvites,
+      notificationsSent: notificationsSent.length,
+      totalInvites: newInvites.length
     });
 
   } catch (e) {
-    console.error('Invite users error:', e);
+    console.error('❌ Invite users error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Decline Event Invite - MUST BE BEFORE /:eventId route
+router.delete('/invite/:eventId', protect, async (req, res) => {
+  try {
+    console.log(`❌ User ${req.user._id} declining invite to event ${req.params.eventId}`);
+    
+    const event = await Event.findById(req.params.eventId);
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+
+    // Remove user from invited users
+    const wasInvited = event.invitedUsers.includes(req.user._id);
+    event.invitedUsers.pull(req.user._id);
+    await event.save();
+
+    if (wasInvited) {
+      console.log(`✅ Successfully declined invitation to ${event.title}`);
+    }
+
+    res.json({ message: 'Event invitation declined' });
+  } catch (error) {
+    console.error('❌ Decline invite error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1268,6 +1406,7 @@ router.post('/:eventId/cover', protect, upload.single('coverImage'), async (req,
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 router.delete('/:eventId/cover', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -1309,4 +1448,5 @@ router.delete('/:eventId/cover', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 module.exports = router;

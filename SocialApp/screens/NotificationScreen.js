@@ -70,39 +70,98 @@ export default function NotificationScreen({ navigation }) {
     }
   }, [isFocused]);
 
-  const fetchAllNotifications = async (isRefresh = false) => {
-    try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
 
-      // Fetch all notification types
-      const [notifRes, followRes, inviteRes, joinRes] = await Promise.all([
-        api.get('/api/notifications'),
-        api.get('/api/follow/my-requests'),
-        api.get('/api/events/my-invites'), // New endpoint for event invites
-        api.get('/api/events/my-join-requests') // New endpoint for join requests to user's events
-      ]);
-
-      setNotifications(notifRes.data || []);
-      setFollowRequests(followRes.data.followRequests || []);
-      setEventInvites(inviteRes.data || []);
-      setJoinRequests(joinRes.data || []);
-
-    } catch (err) {
-      console.error('❌ NotificationScreen: Error fetching data:', err.response?.data || err.message);
-      // Set empty arrays on error to prevent crashes
-      setNotifications([]);
-      setFollowRequests([]);
-      setEventInvites([]);
-      setJoinRequests([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+const fetchAllNotifications = async (isRefresh = false) => {
+  try {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
     }
-  };
+
+    console.log('🔄 Fetching all notifications...');
+
+    // ✅ FIXED: Use Promise.allSettled to prevent cascade failures
+    const results = await Promise.allSettled([
+      api.get('/api/notifications'),
+      api.get('/api/follow/my-requests'),
+      api.get('/api/events/my-invites'),     // Fixed endpoint
+      api.get('/api/events/my-join-requests') // Fixed endpoint
+    ]);
+
+    // Process each result individually with detailed logging
+    const [notifResult, followResult, inviteResult, joinResult] = results;
+
+    // ===== Handle Regular Notifications =====
+    if (notifResult.status === 'fulfilled') {
+      // ✅ FIXED: Handle the correct response format
+      const notificationsData = notifResult.value.data;
+      const notifications = Array.isArray(notificationsData) ? notificationsData : [];
+      setNotifications(notifications);
+      console.log(`✅ Loaded ${notifications.length} regular notifications`);
+    } else {
+      console.error('❌ Failed to load notifications:', notifResult.reason?.response?.data || notifResult.reason?.message);
+      setNotifications([]);
+    }
+
+    // ===== Handle Follow Requests =====
+    if (followResult.status === 'fulfilled') {
+      const followRequests = followResult.value.data?.followRequests || [];
+      setFollowRequests(followRequests);
+      console.log(`✅ Loaded ${followRequests.length} follow requests`);
+    } else {
+      console.error('❌ Failed to load follow requests:', followResult.reason?.response?.data || followResult.reason?.message);
+      setFollowRequests([]);
+    }
+
+    // ===== Handle Event Invites =====
+    if (inviteResult.status === 'fulfilled') {
+      const eventInvites = inviteResult.value.data || [];
+      setEventInvites(eventInvites);
+      console.log(`✅ Loaded ${eventInvites.length} event invitations`);
+    } else {
+      const error = inviteResult.reason;
+      console.error('❌ Failed to load event invites:', error?.response?.data || error?.message);
+      setEventInvites([]);
+    }
+
+    // ===== Handle Join Requests =====
+    if (joinResult.status === 'fulfilled') {
+      const joinRequests = joinResult.value.data || [];
+      setJoinRequests(joinRequests);
+      console.log(`✅ Loaded ${joinRequests.length} join requests`);
+    } else {
+      const error = joinResult.reason;
+      console.error('❌ Failed to load join requests:', error?.response?.data || error?.message);
+      setJoinRequests([]);
+    }
+
+    // ===== Summary Logging =====
+    const notifCount = notifResult.status === 'fulfilled' ? 
+      (Array.isArray(notifResult.value.data) ? notifResult.value.data.length : 0) : 0;
+    const followCount = followResult.status === 'fulfilled' ? 
+      (followResult.value.data?.followRequests || []).length : 0;
+    const inviteCount = inviteResult.status === 'fulfilled' ? 
+      (inviteResult.value.data || []).length : 0;
+    const joinCount = joinResult.status === 'fulfilled' ? 
+      (joinResult.value.data || []).length : 0;
+
+    const totalItems = notifCount + followCount + inviteCount + joinCount;
+    console.log(`🎉 Notification fetch complete! Total items: ${totalItems}`);
+
+  } catch (err) {
+    console.error('❌ Unexpected error in fetchAllNotifications:', err);
+    
+    // Ensure all states are reset on unexpected error
+    setNotifications([]);
+    setFollowRequests([]);
+    setEventInvites([]);
+    setJoinRequests([]);
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
 
   const markAllAsRead = async () => {
     try {
@@ -228,18 +287,27 @@ export default function NotificationScreen({ navigation }) {
     </View>
   );
 
-  const getUnreadCount = (tabKey) => {
+const getUnreadCount = (tabKey) => {
+  try {
     switch (tabKey) {
       case 'requests':
-        return followRequests.length + joinRequests.length;
+        return (followRequests?.length || 0) + (joinRequests?.length || 0);
       case 'invites':
-        return eventInvites.length;
+        return eventInvites?.length || 0;
       case 'all':
-        return notifications.filter(n => !n.isRead).length + followRequests.length + eventInvites.length + joinRequests.length;
+        const unreadNotifications = (notifications || []).filter(n => !n.isRead).length;
+        const followRequestsCount = followRequests?.length || 0;
+        const eventInvitesCount = eventInvites?.length || 0;
+        const joinRequestsCount = joinRequests?.length || 0;
+        return unreadNotifications + followRequestsCount + eventInvitesCount + joinRequestsCount;
       default:
         return 0;
     }
-  };
+  } catch (error) {
+    console.error('Error calculating unread count:', error);
+    return 0;
+  }
+};
 
   const renderFollowRequestItem = ({ item }) => (
     <FollowRequestItem
