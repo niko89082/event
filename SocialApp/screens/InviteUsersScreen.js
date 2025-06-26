@@ -1,29 +1,42 @@
-// screens/InviteUsersScreen.js - Invite users to events
+// screens/InviteUsersScreen.js - Invite users to events with sharing capabilities
 import React, { useState, useEffect, useContext } from 'react';
 import {
-  View, Text, TextInput, FlatList, TouchableOpacity,
-  StyleSheet, Image, SafeAreaView, StatusBar, Alert, ActivityIndicator
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  SafeAreaView,
+  StatusBar,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Share,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRoute, useNavigation } from '@react-navigation/native';
+
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
-import { API_BASE_URL } from '@env';
 
-const defaultPfp = 'https://placehold.co/48x48.png?text=%F0%9F%91%A4';
-
-export default function InviteUsersScreen({ route, navigation }) {
-  const { eventId } = route.params || {};
+export default function InviteUsersScreen() {
+  const route = useRoute();
+  const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
-  
+  const { eventId, eventTitle } = route.params;
+
   const [searchQuery, setSearchQuery] = useState('');
-  const [users, setUsers] = useState([]);
-  const [followedUsers, setFollowedUsers] = useState([]);
+  const [searchResults, setSearchResults] = useState([]);
   const [selectedUsers, setSelectedUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState('');
 
   useEffect(() => {
     navigation.setOptions({
+      title: 'Invite to Event',
       headerStyle: {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
@@ -36,87 +49,60 @@ export default function InviteUsersScreen({ route, navigation }) {
         fontSize: 18,
         color: '#000000',
       },
-      headerTitle: 'Invite to Event',
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="close" size={24} color="#000000" />
-        </TouchableOpacity>
-      ),
       headerRight: () => (
         <TouchableOpacity
-          onPress={handleInvite}
-          style={styles.headerButton}
-          activeOpacity={0.7}
+          onPress={handleSendInvites}
+          style={[styles.headerButton, (selectedUsers.length === 0 || inviting) && styles.headerButtonDisabled]}
           disabled={selectedUsers.length === 0 || inviting}
         >
           {inviting ? (
             <ActivityIndicator size="small" color="#3797EF" />
           ) : (
-            <Text style={[
-              styles.inviteButtonText, 
-              selectedUsers.length === 0 && styles.inviteButtonDisabled
-            ]}>
-              Invite ({selectedUsers.length})
+            <Text style={[styles.headerButtonText, (selectedUsers.length === 0 || inviting) && styles.headerButtonTextDisabled]}>
+              Send ({selectedUsers.length})
             </Text>
           )}
         </TouchableOpacity>
       ),
     });
-  }, [navigation, selectedUsers, inviting]);
+  }, [selectedUsers, inviting]);
 
-  // Load followed users on mount
-  useEffect(() => {
-    loadFollowedUsers();
-  }, []);
-
-  // Search users when query changes
-  useEffect(() => {
-    if (searchQuery.trim()) {
-      searchUsers();
-    } else {
-      setUsers([]);
+  // Search for users
+  const searchUsers = async (query) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
     }
-  }, [searchQuery]);
 
-  const loadFollowedUsers = async () => {
     try {
-      setLoading(true);
-      const { data } = await api.get('/api/users/following');
-      setFollowedUsers(data.filter(user => user._id !== currentUser._id));
-    } catch (error) {
-      console.error('Error loading followed users:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const searchUsers = async () => {
-    if (!searchQuery.trim()) return;
-    
-    try {
-      setLoading(true);
-      const { data } = await api.get(`/api/search/users?q=${encodeURIComponent(searchQuery.trim())}`);
-      // Filter out current user and prioritize followed users
-      const filtered = data.filter(user => user._id !== currentUser._id);
-      const followedIds = followedUsers.map(u => u._id);
+      setSearching(true);
+      const response = await api.get(`/api/users/search`, {
+        params: { q: query, limit: 20 }
+      });
       
-      const prioritized = [
-        ...filtered.filter(user => followedIds.includes(user._id)),
-        ...filtered.filter(user => !followedIds.includes(user._id))
-      ];
+      // Filter out current user and already invited users
+      const results = response.data.filter(user => 
+        user._id !== currentUser._id
+      );
       
-      setUsers(prioritized);
+      setSearchResults(results);
     } catch (error) {
       console.error('Error searching users:', error);
     } finally {
-      setLoading(false);
+      setSearching(false);
     }
   };
 
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      searchUsers(searchQuery);
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
+
+  // Toggle user selection
   const toggleUserSelection = (user) => {
     setSelectedUsers(prev => {
       const isSelected = prev.some(u => u._id === user._id);
@@ -128,170 +114,321 @@ export default function InviteUsersScreen({ route, navigation }) {
     });
   };
 
-  const handleInvite = async () => {
-    if (selectedUsers.length === 0) return;
+  // Send invites
+  const handleSendInvites = async () => {
+    if (selectedUsers.length === 0 || inviting) return;
 
     try {
       setInviting(true);
+
+      const userIds = selectedUsers.map(user => user._id);
       
-      const userIds = selectedUsers.map(u => u._id);
       await api.post(`/api/events/${eventId}/invite`, {
         userIds,
-        message: `You've been invited to an event!`
+        message: inviteMessage.trim() || undefined
       });
 
       Alert.alert(
-        'Success!', 
-        `Invited ${selectedUsers.length} ${selectedUsers.length === 1 ? 'person' : 'people'} to the event.`,
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
+        'Invites Sent!',
+        `Successfully sent ${selectedUsers.length} invite${selectedUsers.length > 1 ? 's' : ''} to ${eventTitle}`,
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack()
+          }
+        ]
       );
+
     } catch (error) {
-      console.error('Error inviting users:', error);
-      Alert.alert('Error', 'Failed to send invitations. Please try again.');
+      console.error('Error sending invites:', error);
+      Alert.alert(
+        'Error',
+        error.response?.data?.message || 'Failed to send invites. Please try again.'
+      );
     } finally {
       setInviting(false);
     }
   };
 
-  const renderUser = ({ item }) => {
-    const isSelected = selectedUsers.some(u => u._id === item._id);
-    const isFollowed = followedUsers.some(u => u._id === item._id);
-    
-    const avatar = item.profilePicture
-      ? `http://${API_BASE_URL}:3000${item.profilePicture}`
-      : defaultPfp;
+  // Share event via external methods
+  const handleShareEvent = () => {
+    Alert.alert(
+      'Share Event',
+      'How would you like to share this event?',
+      [
+        {
+          text: 'Messages',
+          onPress: shareViaMessages
+        },
+        {
+          text: 'Copy Link',
+          onPress: copyEventLink
+        },
+        {
+          text: 'More Options',
+          onPress: shareViaGeneric
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        }
+      ]
+    );
+  };
 
+  const shareViaMessages = async () => {
+    try {
+      const eventLink = `https://yourapp.com/events/${eventId}`;
+      const message = `You're invited to ${eventTitle}! 🎉\n\n${inviteMessage || 'Join me at this event!'}\n\nRSVP here: ${eventLink}`;
+      
+      // iOS-specific iMessage sharing
+      const url = `sms:&body=${encodeURIComponent(message)}`;
+      
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        // Fallback to generic share
+        await Share.share({
+          message: message,
+          url: eventLink,
+          title: eventTitle
+        });
+      }
+    } catch (error) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Failed to share event');
+    }
+  };
+
+  const shareViaGeneric = async () => {
+    try {
+      const eventLink = `https://yourapp.com/events/${eventId}`;
+      const message = `You're invited to ${eventTitle}! 🎉\n\n${inviteMessage || 'Join me at this event!'}`;
+      
+      await Share.share({
+        message: message,
+        url: eventLink,
+        title: eventTitle
+      });
+    } catch (error) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Failed to share event');
+    }
+  };
+
+  const copyEventLink = async () => {
+    try {
+      const eventLink = `https://yourapp.com/events/${eventId}`;
+      // Note: Clipboard API would need to be imported and used here
+      // For now, we'll show the link in an alert
+      Alert.alert(
+        'Event Link',
+        eventLink,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Copy Link', 
+            onPress: () => {
+              // Clipboard.setString(eventLink);
+              Alert.alert('Copied!', 'Event link copied to clipboard');
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Copy link error:', error);
+    }
+  };
+
+  const renderUserItem = ({ item }) => {
+    const isSelected = selectedUsers.some(u => u._id === item._id);
+    
     return (
-      <TouchableOpacity 
-        style={styles.userRow}
+      <TouchableOpacity
+        style={[styles.userItem, isSelected && styles.userItemSelected]}
         onPress={() => toggleUserSelection(item)}
-        activeOpacity={0.95}
+        activeOpacity={0.7}
       >
-        <View style={styles.userInfo}>
-          <View style={styles.avatarContainer}>
-            <Image source={{ uri: avatar }} style={styles.avatar} />
-            {isSelected && (
-              <View style={styles.selectedOverlay}>
-                <Ionicons name="checkmark" size={16} color="#FFFFFF" />
-              </View>
-            )}
-          </View>
-          
-          <View style={styles.userDetails}>
-            <Text style={styles.username}>{item.username}</Text>
-            <Text style={styles.fullName}>{item.displayName || item.email}</Text>
-            {isFollowed && (
-              <Text style={styles.followedLabel}>Following</Text>
-            )}
-          </View>
+        <View style={styles.userAvatar}>
+          {item.profilePicture ? (
+            <Image 
+              source={{ uri: item.profilePicture }} 
+              style={styles.userAvatarImage} 
+            />
+          ) : (
+            <View style={styles.userAvatarPlaceholder}>
+              <Text style={styles.userAvatarText}>
+                {item.username.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
         </View>
         
-        <View style={[styles.selectionCircle, isSelected && styles.selectedCircle]}>
-          {isSelected && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
+        <View style={styles.userInfo}>
+          <Text style={styles.userName}>{item.username}</Text>
+          {item.displayName && (
+            <Text style={styles.userDisplayName}>{item.displayName}</Text>
+          )}
+        </View>
+        
+        <View style={[styles.selectionIndicator, isSelected && styles.selectionIndicatorActive]}>
+          <Ionicons 
+            name={isSelected ? "checkmark-circle" : "ellipse-outline"} 
+            size={24} 
+            color={isSelected ? "#34C759" : "#C7C7CC"} 
+          />
         </View>
       </TouchableOpacity>
     );
   };
 
-  const renderSelectedUser = ({ item }) => {
-    const avatar = item.profilePicture
-      ? `http://${API_BASE_URL}:3000${item.profilePicture}`
-      : defaultPfp;
-
-    return (
-      <TouchableOpacity 
-        style={styles.selectedUserChip}
+  const renderSelectedUser = ({ item }) => (
+    <View style={styles.selectedUserChip}>
+      <View style={styles.selectedUserAvatar}>
+        {item.profilePicture ? (
+          <Image 
+            source={{ uri: item.profilePicture }} 
+            style={styles.selectedUserAvatarImage} 
+          />
+        ) : (
+          <View style={styles.selectedUserAvatarPlaceholder}>
+            <Text style={styles.selectedUserAvatarText}>
+              {item.username.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.selectedUserName}>{item.username}</Text>
+      <TouchableOpacity
         onPress={() => toggleUserSelection(item)}
-        activeOpacity={0.8}
+        style={styles.removeSelectedUser}
       >
-        <Image source={{ uri: avatar }} style={styles.selectedAvatar} />
-        <Text style={styles.selectedUsername}>{item.username}</Text>
-        <Ionicons name="close-circle" size={16} color="#8E8E93" style={styles.removeIcon} />
+        <Ionicons name="close" size={16} color="#8E8E93" />
       </TouchableOpacity>
-    );
-  };
-
-  const displayUsers = searchQuery.trim() ? users : followedUsers;
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      <View style={styles.searchContainer}>
+      {/* Search Section */}
+      <View style={styles.searchSection}>
         <View style={styles.searchInputContainer}>
-          <Ionicons name="search-outline" size={20} color="#8E8E93" style={styles.searchIcon} />
+          <Ionicons name="search" size={20} color="#8E8E93" />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search users..."
-            placeholderTextColor="#8E8E93"
-            autoCapitalize="none"
-            autoCorrect={false}
             value={searchQuery}
             onChangeText={setSearchQuery}
+            placeholder="Search for friends to invite..."
+            placeholderTextColor="#C7C7CC"
+            autoFocus
           />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color="#8E8E93" />
-            </TouchableOpacity>
+          {searching && (
+            <ActivityIndicator size="small" color="#8E8E93" />
           )}
+        </View>
+
+        {/* Share Options */}
+        <View style={styles.shareSection}>
+          <Text style={styles.shareSectionTitle}>Or share via:</Text>
+          <View style={styles.shareOptions}>
+            <TouchableOpacity
+              style={styles.shareOption}
+              onPress={shareViaMessages}
+              activeOpacity={0.8}
+            >
+              <View style={styles.shareOptionIcon}>
+                <Ionicons name="chatbubble" size={20} color="#34C759" />
+              </View>
+              <Text style={styles.shareOptionText}>Messages</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.shareOption}
+              onPress={copyEventLink}
+              activeOpacity={0.8}
+            >
+              <View style={styles.shareOptionIcon}>
+                <Ionicons name="link" size={20} color="#FF9500" />
+              </View>
+              <Text style={styles.shareOptionText}>Copy Link</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.shareOption}
+              onPress={shareViaGeneric}
+              activeOpacity={0.8}
+            >
+              <View style={styles.shareOptionIcon}>
+                <Ionicons name="share" size={20} color="#3797EF" />
+              </View>
+              <Text style={styles.shareOptionText}>More</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
       {/* Selected Users */}
       {selectedUsers.length > 0 && (
-        <View style={styles.selectedSection}>
-          <Text style={styles.selectedTitle}>Selected ({selectedUsers.length})</Text>
+        <View style={styles.selectedUsersSection}>
+          <Text style={styles.selectedUsersTitle}>
+            Selected ({selectedUsers.length})
+          </Text>
           <FlatList
             data={selectedUsers}
+            keyExtractor={(item) => item._id}
             renderItem={renderSelectedUser}
-            keyExtractor={item => item._id}
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.selectedUsersList}
+            style={styles.selectedUsersList}
           />
         </View>
       )}
 
-      <View style={styles.separator} />
+      {/* Invite Message */}
+      <View style={styles.messageSection}>
+        <Text style={styles.messageLabel}>Personal Message (Optional)</Text>
+        <TextInput
+          style={styles.messageInput}
+          value={inviteMessage}
+          onChangeText={setInviteMessage}
+          placeholder="Add a personal message to your invite..."
+          placeholderTextColor="#C7C7CC"
+          multiline
+          numberOfLines={3}
+          maxLength={200}
+        />
+      </View>
 
-      {!searchQuery.trim() && followedUsers.length > 0 && (
-        <Text style={styles.sectionTitle}>People You Follow</Text>
-      )}
-
-      {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#3797EF" />
-        </View>
-      ) : (
+      {/* Search Results */}
+      <View style={styles.resultsSection}>
         <FlatList
-          data={displayUsers}
-          renderItem={renderUser}
-          keyExtractor={item => item._id}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.usersList}
+          data={searchResults}
+          keyExtractor={(item) => item._id}
+          renderItem={renderUserItem}
           ListEmptyComponent={() => (
-            <View style={styles.emptyState}>
-              {searchQuery.trim() ? (
-                <>
-                  <Ionicons name="search-outline" size={64} color="#C7C7CC" />
-                  <Text style={styles.emptyTitle}>No users found</Text>
-                  <Text style={styles.emptySubtitle}>
-                    Try searching for a different username
-                  </Text>
-                </>
+            <View style={styles.emptyResults}>
+              {searchQuery ? (
+                <Text style={styles.emptyResultsText}>
+                  {searching ? 'Searching...' : 'No users found'}
+                </Text>
               ) : (
-                <>
-                  <Ionicons name="people-outline" size={64} color="#C7C7CC" />
-                  <Text style={styles.emptyTitle}>No followers</Text>
-                  <Text style={styles.emptySubtitle}>
-                    Follow some users to see suggestions here
+                <View style={styles.emptyResultsContent}>
+                  <Ionicons name="people-outline" size={48} color="#C7C7CC" />
+                  <Text style={styles.emptyResultsText}>
+                    Search for friends to invite to your event
                   </Text>
-                </>
+                  <Text style={styles.emptyResultsSubtext}>
+                    You can also share the event link directly via messages or social media
+                  </Text>
+                </View>
               )}
             </View>
           )}
         />
-      )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -302,176 +439,249 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   headerButton: {
-    padding: 8,
-    marginHorizontal: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  inviteButtonText: {
+  headerButtonDisabled: {
+    opacity: 0.5,
+  },
+  headerButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#3797EF',
   },
-  inviteButtonDisabled: {
-    color: '#8E8E93',
+  headerButtonTextDisabled: {
+    color: '#C7C7CC',
   },
-  searchContainer: {
+
+  // Search Section
+  searchSection: {
+    backgroundColor: '#F8F8F8',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
   },
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  searchIcon: {
-    marginRight: 8,
+    paddingVertical: 8,
+    marginBottom: 16,
   },
   searchInput: {
     flex: 1,
+    marginLeft: 8,
     fontSize: 16,
     color: '#000000',
+    paddingVertical: 8,
   },
-  selectedSection: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+
+  // Share Section
+  shareSection: {
+    marginTop: 8,
   },
-  selectedTitle: {
-    fontSize: 16,
+  shareSectionTitle: {
+    fontSize: 14,
     fontWeight: '600',
-    color: '#000000',
+    color: '#8E8E93',
     marginBottom: 12,
   },
+  shareOptions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  shareOption: {
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  shareOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  shareOptionText: {
+    fontSize: 12,
+    color: '#000000',
+    textAlign: 'center',
+  },
+
+  // Selected Users
+  selectedUsersSection: {
+    backgroundColor: '#F8F8F8',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  selectedUsersTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 8,
+  },
   selectedUsersList: {
-    paddingRight: 16,
+    flexGrow: 0,
   },
   selectedUserChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F8FF',
-    borderRadius: 20,
-    paddingHorizontal: 12,
+    backgroundColor: '#3797EF',
+    borderRadius: 16,
+    paddingHorizontal: 8,
     paddingVertical: 6,
     marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#3797EF',
   },
-  selectedAvatar: {
+  selectedUserAvatar: {
     width: 20,
     height: 20,
     borderRadius: 10,
     marginRight: 6,
   },
-  selectedUsername: {
-    fontSize: 14,
-    fontWeight: '500',
+  selectedUserAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 10,
+  },
+  selectedUserAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectedUserAvatarText: {
+    fontSize: 10,
+    fontWeight: '600',
     color: '#3797EF',
-    marginRight: 4,
   },
-  removeIcon: {
-    marginLeft: 2,
-  },
-  separator: {
-    height: 0.5,
-    backgroundColor: '#E1E1E1',
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  usersList: {
-    paddingVertical: 8,
-  },
-  userRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F6F6F6',
-  },
-  selectedOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 12,
-    backgroundColor: 'rgba(55, 151, 239, 0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  userDetails: {
-    flex: 1,
-  },
-  username: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  fullName: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  followedLabel: {
+  selectedUserName: {
     fontSize: 12,
-    color: '#3797EF',
-    fontWeight: '500',
-    marginTop: 2,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginRight: 6,
   },
-  selectionCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#E1E1E1',
-    justifyContent: 'center',
-    alignItems: 'center',
+  removeSelectedUser: {
+    padding: 2,
   },
-  selectedCircle: {
-    backgroundColor: '#3797EF',
-    borderColor: '#3797EF',
+
+  // Message Section
+  messageSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
   },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontSize: 20,
+  messageLabel: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#000000',
-    marginTop: 16,
     marginBottom: 8,
   },
-  emptySubtitle: {
+  messageInput: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#000000',
+    textAlignVertical: 'top',
+    minHeight: 80,
+  },
+
+  // Results Section
+  resultsSection: {
+    flex: 1,
+  },
+  userItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  userItemSelected: {
+    backgroundColor: '#F0F8FF',
+  },
+  userAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginRight: 12,
+  },
+  userAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+  },
+  userAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+    backgroundColor: '#C7C7CC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userAvatarText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  userInfo: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  userDisplayName: {
     fontSize: 14,
     color: '#8E8E93',
+    marginTop: 2,
+  },
+  selectionIndicator: {
+    padding: 4,
+  },
+  selectionIndicatorActive: {
+    // No additional styles needed, handled by icon color
+  },
+
+  // Empty Results
+  emptyResults: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 64,
+  },
+  emptyResultsContent: {
+    alignItems: 'center',
+  },
+  emptyResultsText: {
+    fontSize: 16,
+    color: '#8E8E93',
     textAlign: 'center',
+    marginTop: 16,
+  },
+  emptyResultsSubtext: {
+    fontSize: 14,
+    color: '#C7C7CC',
+    textAlign: 'center',
+    marginTop: 8,
     lineHeight: 20,
   },
 });

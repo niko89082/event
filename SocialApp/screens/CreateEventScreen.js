@@ -1,5 +1,440 @@
-// screens/CreateEventScreen.js - 2-Step Process with Cover Image First
-import React, { useState, useEffect, useRef } from 'react';
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  headerButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  headerButtonDisabled: {
+    opacity: 0.5,
+  },
+  headerButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  headerButtonTextDisabled: {
+    color: '#C7C7CC',
+  },
+
+  // Cover Image
+  coverSection: {
+    height: 200,
+    backgroundColor: '#F6F6F6',
+    position: 'relative',
+  },
+  coverImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  coverPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coverPlaceholderText: {
+    marginTop: 8,
+    fontSize: 16,
+    color: '#C7C7CC',
+    fontWeight: '500',
+  },
+  coverOverlay: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Form
+  formContainer: {
+    padding: 16,
+  },
+  section: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 16,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  textArea: {
+    height: 100,
+    textAlignVertical: 'top',
+  },
+
+  // Date & Time
+  dateTimeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  dateTimeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  dateTimeButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // Location Suggestions
+  suggestionsContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    maxHeight: 200,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  suggestionText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#000000',
+    flex: 1,
+  },
+
+  // Select Button
+  selectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  selectButtonText: {
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // Co-hosts
+  coHostsList: {
+    marginBottom: 16,
+  },
+  coHostItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  coHostInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  coHostAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  coHostAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+  },
+  coHostAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+    backgroundColor: '#3797EF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coHostAvatarText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  coHostDetails: {
+    flex: 1,
+  },
+  coHostName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  coHostRole: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  removeCoHostButton: {
+    padding: 8,
+  },
+  addCoHostButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    borderStyle: 'dashed',
+  },
+  addCoHostButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+
+  // Privacy Settings
+  privacyButton: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  privacyButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  privacyButtonText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  privacyLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  privacyDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+
+  // Permissions
+  permissionsList: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 4,
+  },
+  permissionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  permissionLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // Modals
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 34,
+  },
+  coHostModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '80%',
+    paddingBottom: 34,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+
+  // Category Modal
+  categoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  categoryText: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  categoryTextSelected: {
+    color: '#3797EF',
+    fontWeight: '600',
+  },
+
+  // Privacy Modal
+  privacyOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  privacyOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  privacyOptionText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  privacyOptionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  privacyOptionDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+
+  // Co-host Search
+  searchContainer: {
+    padding: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#000000',
+    paddingVertical: 8,
+  },
+  searchResultsList: {
+    flex: 1,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  searchResultAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginRight: 12,
+  },
+  searchResultAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+  },
+  searchResultAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+    backgroundColor: '#C7C7CC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchResultAvatarText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  searchResultInfo: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  searchResultDisplayName: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  emptySearchResults: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptySearchText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+});// screens/CreateEventScreen.js - Updated with Co-host functionality
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
   Switch, TouchableOpacity, Modal, FlatList, SafeAreaView, StatusBar,
@@ -10,6 +445,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 
 import api from '../services/api';
+import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -53,6 +489,7 @@ const CATEGORIES = [
 
 export default function CreateEventScreen({ navigation, route }) {
   const { groupId } = route.params || {};
+  const { currentUser } = useContext(AuthContext);
 
   // Step management
   const [step, setStep] = useState(1);
@@ -78,1214 +515,755 @@ export default function CreateEventScreen({ navigation, route }) {
   const [permissions, setPermissions] = useState({
     appearInFeed: true,
     appearInSearch: true,
+    canJoin: 'anyone',
+    canShare: 'attendees',
+    canInvite: 'attendees',
     showAttendeesToPublic: true
   });
-  const [allowPhotos, setAllowPhotos] = useState(true);
-  const [allowUploads, setAllowUploads] = useState(true);
-  const [allowUploadsBeforeStart, setAllowUploadsBeforeStart] = useState(true);
 
-  // Modal states
-  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  // Co-hosts management
+  const [coHosts, setCoHosts] = useState([]);
+  const [showCoHostModal, setShowCoHostModal] = useState(false);
+  const [coHostSearchQuery, setCoHostSearchQuery] = useState('');
+  const [coHostSearchResults, setCoHostSearchResults] = useState([]);
+  const [searchingCoHosts, setSearchingCoHosts] = useState(false);
+
+  // UI state
   const [creating, setCreating] = useState(false);
-
-  // Animation
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const progressAnim = useRef(new Animated.Value(0.5)).current;
-
-  useEffect(() => {
-    ImagePicker.requestMediaLibraryPermissionsAsync();
-  }, []);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Animate step transitions and update progress
-    Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: (step - 1) * -SCREEN_WIDTH,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.timing(progressAnim, {
-        toValue: step / 2,
-        duration: 300,
-        useNativeDriver: false,
-      })
-    ]).start();
-  }, [step]);
+    navigation.setOptions({
+      headerStyle: {
+        backgroundColor: '#FFFFFF',
+        shadowOpacity: 0,
+        elevation: 0,
+        borderBottomWidth: 0.5,
+        borderBottomColor: '#E1E1E1',
+      },
+      headerTitleStyle: {
+        fontWeight: '700',
+        fontSize: 18,
+        color: '#000000',
+      },
+      headerTitle: step === 1 ? 'New Event' : 'Event Details',
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={step === 1 ? () => navigation.goBack() : () => setStep(1)}
+          style={styles.headerButton}
+        >
+          <Ionicons name="arrow-back" size={24} color="#000000" />
+        </TouchableOpacity>
+      ),
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={step === 1 ? handleNext : handleCreate}
+          style={[styles.headerButton, (!canProceed() || creating) && styles.headerButtonDisabled]}
+          disabled={!canProceed() || creating}
+        >
+          {creating ? (
+            <ActivityIndicator size="small" color="#3797EF" />
+          ) : (
+            <Text style={[styles.headerButtonText, (!canProceed() || creating) && styles.headerButtonTextDisabled]}>
+              {step === 1 ? 'Next' : 'Create'}
+            </Text>
+          )}
+        </TouchableOpacity>
+      ),
+    });
+  }, [step, title, location, dateTime, creating, coHosts]);
 
-  const goToStep = (newStep) => {
-    if (newStep > step && newStep === 2) {
-      if (!title.trim() || !location.trim()) {
-        Alert.alert('Required Fields', 'Please fill in the title and location to continue.');
-        return;
-      }
-    }
-    setStep(newStep);
-  };
-
-  const onLocQuery = async (txt) => {
-    setLocQuery(txt);
-    if (txt.trim().length < 2) {
-      setSuggestions([]);
+  // Search for potential co-hosts
+  const searchCoHosts = async (query) => {
+    if (!query.trim()) {
+      setCoHostSearchResults([]);
       return;
     }
-    try {
-      const res = await fetchNominatimSuggestions(txt);
-      setSuggestions(res.slice(0, 4)); // Show only 4 suggestions
-    } catch (error) {
-      console.error('Location search error:', error);
-      setSuggestions([]);
-    }
-  };
 
-  const pickSuggestion = (s) => {
-    setLocation(s.display_name);
-    setCoords([Number(s.lon), Number(s.lat)]);
-    setLocQuery(s.display_name);
-    setSuggestions([]);
-  };
-
-  const pickCover = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
-        aspect: [16, 9],
+      setSearchingCoHosts(true);
+      const response = await api.get(`/api/users/search`, {
+        params: { q: query, limit: 10 }
       });
-      if (!result.canceled) {
-        setCover(result.assets[0]);
-      }
+      
+      // Filter out current user and already selected co-hosts
+      const results = response.data.filter(user => 
+        user._id !== currentUser._id && 
+        !coHosts.some(coHost => coHost._id === user._id)
+      );
+      
+      setCoHostSearchResults(results);
     } catch (error) {
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
+      console.error('Error searching co-hosts:', error);
+    } finally {
+      setSearchingCoHosts(false);
     }
   };
 
-  const createEvent = async () => {
-    if (!title.trim() || !location.trim()) {
-      Alert.alert('Missing Information', 'Please fill in the title and location.');
-      return;
-    }
+  // Add co-host
+  const addCoHost = (user) => {
+    setCoHosts(prev => [...prev, user]);
+    setCoHostSearchQuery('');
+    setCoHostSearchResults([]);
+  };
 
-    setCreating(true);
-    
+  // Remove co-host
+  const removeCoHost = (userId) => {
+    setCoHosts(prev => prev.filter(coHost => coHost._id !== userId));
+  };
+
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      searchCoHosts(coHostSearchQuery);
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [coHostSearchQuery]);
+
+  const canProceed = () => {
+    if (step === 1) {
+      return title.trim() && location.trim() && dateTime > new Date();
+    }
+    return true;
+  };
+
+  const handleNext = () => {
+    if (canProceed()) {
+      setStep(2);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!canProceed() || creating) return;
+
     try {
-      const fd = new FormData();
+      setCreating(true);
+
+      const formData = new FormData();
       
       // Basic fields
-      fd.append('title', title);
-      fd.append('description', description);
-      fd.append('category', category);
-      fd.append('time', dateTime.toISOString());
-      fd.append('location', location);
-      if (coords) {
-        fd.append('geo', JSON.stringify({ type: 'Point', coordinates: coords }));
+      formData.append('title', title.trim());
+      formData.append('description', description.trim());
+      formData.append('time', dateTime.toISOString());
+      formData.append('location', location.trim());
+      formData.append('category', category);
+      formData.append('maxAttendees', parseInt(maxAttendees) || 0);
+      formData.append('price', parseFloat(price) || 0);
+      formData.append('privacyLevel', privacyLevel);
+      
+      // Co-hosts
+      formData.append('coHosts', JSON.stringify(coHosts.map(coHost => coHost._id)));
+      
+      // Permissions
+      formData.append('permissions', JSON.stringify(permissions));
+      
+      // Tags
+      if (tags.trim()) {
+        const tagArray = tags.split(',').map(tag => tag.trim()).filter(Boolean);
+        formData.append('tags', JSON.stringify(tagArray));
       }
-      fd.append('maxAttendees', maxAttendees);
-      fd.append('price', price);
-
-      // Privacy settings
-      fd.append('privacyLevel', privacyLevel);
-      fd.append('appearInFeed', permissions.appearInFeed.toString());
-      fd.append('appearInSearch', permissions.appearInSearch.toString());
-      fd.append('showAttendeesToPublic', permissions.showAttendeesToPublic.toString());
-
-      // Discovery fields
-      fd.append('tags', tags);
-
-      // Media settings
-      fd.append('allowPhotos', allowPhotos.toString());
-      fd.append('allowUploads', allowUploads.toString());
-      fd.append('allowUploadsBeforeStart', allowUploadsBeforeStart.toString());
-
-      if (groupId) fd.append('groupId', groupId);
-
+      
+      // Coordinates if available
+      if (coords) {
+        formData.append('coordinates', JSON.stringify(coords));
+      }
+      
+      // Group ID if creating from group
+      if (groupId) {
+        formData.append('groupId', groupId);
+      }
+      
+      // Cover image
       if (cover) {
-        fd.append('coverImage', {
-          uri: cover.uri,
+        formData.append('coverImage', {
+          uri: cover,
           type: 'image/jpeg',
-          name: 'cover.jpg'
+          name: 'cover.jpg',
         });
       }
 
-      const endpoint = groupId 
-        ? `/api/events/create-from-group/${groupId}` 
-        : '/api/events/create';
-      
-      await api.post(endpoint, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      const response = await api.post('/api/events', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
-      
-      Alert.alert('Success!', 'Your event has been created successfully!', [
-        { text: 'OK', onPress: () => navigation.goBack() }
-      ]);
-    } catch (e) {
-      console.error(e.response?.data || e);
-      Alert.alert('Error', e.response?.data?.message || 'Failed to create event. Please try again.');
+
+      Alert.alert(
+        'Success!',
+        'Your event has been created successfully.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              navigation.navigate('EventDetailsScreen', { 
+                eventId: response.data._id 
+              });
+            }
+          }
+        ]
+      );
+
+    } catch (error) {
+      console.error('Event creation error:', error);
+      Alert.alert(
+        'Error',
+        error.response?.data?.message || 'Failed to create event. Please try again.'
+      );
     } finally {
       setCreating(false);
     }
   };
 
-  const renderProgressBar = () => (
-    <View style={styles.progressContainer}>
-      <View style={styles.progressBar}>
-        <Animated.View style={[
-          styles.progressFill,
-          { width: progressAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: ['0%', '100%']
-          })}
-        ]} />
-      </View>
-      <Text style={styles.progressText}>Step {step} of 2</Text>
-    </View>
-  );
+  const pickCoverImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 0.8,
+      });
 
-  const renderStepIndicator = () => (
-    <View style={styles.stepIndicator}>
-      {[1, 2].map((stepNum) => (
-        <View key={stepNum} style={styles.stepIndicatorContainer}>
-          <View style={[
-            styles.stepDot,
-            step >= stepNum && styles.stepDotActive,
-            step === stepNum && styles.stepDotCurrent
-          ]}>
-            {step > stepNum ? (
-              <Ionicons name="checkmark" size={12} color="#FFFFFF" />
-            ) : (
-              <Text style={[
-                styles.stepNumber,
-                step >= stepNum && styles.stepNumberActive
-              ]}>
-                {stepNum}
-              </Text>
-            )}
-          </View>
-          {stepNum < 2 && (
-            <View style={[
-              styles.stepConnector,
-              step > stepNum && styles.stepConnectorActive
-            ]} />
-          )}
-        </View>
-      ))}
-    </View>
-  );
-
-  const renderFormGroup = (label, required = false, help = null, children) => (
-    <View style={styles.formGroup}>
-      <Text style={[styles.formLabel, required && styles.formLabelRequired]}>
-        {label}
-        {required && <Text style={styles.requiredStar}> *</Text>}
-      </Text>
-      {children}
-      {help && <Text style={styles.formHelp}>{help}</Text>}
-    </View>
-  );
-
-  const renderToggle = (label, description, value, onValueChange) => (
-    <View style={styles.toggleContainer}>
-      <View style={styles.toggleContent}>
-        <Text style={styles.toggleLabel}>{label}</Text>
-        <Text style={styles.toggleDesc}>{description}</Text>
-      </View>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: '#E1E1E1', true: '#34C759' }}
-        thumbColor="#FFFFFF"
-        ios_backgroundColor="#E1E1E1"
-      />
-    </View>
-  );
-
-  const renderCategoryGrid = () => (
-    <FlatList
-      data={CATEGORIES}
-      keyExtractor={item => item}
-      numColumns={3}
-      renderItem={({ item }) => (
-        <TouchableOpacity
-          style={[
-            styles.categoryChip,
-            category === item && styles.selectedCategoryChip
-          ]}
-          onPress={() => {
-            setCategory(item);
-            setShowCategoryModal(false);
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={[
-            styles.categoryText,
-            category === item && styles.selectedCategoryText
-          ]}>
-            {item}
-          </Text>
-        </TouchableOpacity>
-      )}
-      scrollEnabled={false}
-      contentContainerStyle={styles.categoryGrid}
-    />
-  );
-
-  const renderPrivacyModal = () => (
-    <Modal
-      visible={showPrivacyModal}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={() => setShowPrivacyModal(false)}
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Privacy Level</Text>
-          <TouchableOpacity 
-            onPress={() => setShowPrivacyModal(false)}
-            style={styles.modalClose}
-          >
-            <Ionicons name="close" size={24} color="#8E8E93" />
-          </TouchableOpacity>
-        </View>
-        
-        <FlatList
-          data={PRIVACY_LEVELS}
-          keyExtractor={item => item.key}
-          renderItem={({ item }) => (
-            <TouchableOpacity 
-              style={[
-                styles.privacyOption,
-                privacyLevel === item.key && styles.selectedPrivacyOption
-              ]}
-              onPress={() => {
-                setPrivacyLevel(item.key);
-                setShowPrivacyModal(false);
-              }}
-              activeOpacity={0.8}
-            >
-              <View style={styles.privacyOptionLeft}>
-                <View style={[styles.privacyOptionIcon, { backgroundColor: item.color + '20' }]}>
-                  <Ionicons name={item.icon} size={24} color={item.color} />
-                </View>
-                <View style={styles.privacyOptionText}>
-                  <Text style={styles.privacyOptionLabel}>{item.label}</Text>
-                  <Text style={styles.privacyOptionDesc}>{item.desc}</Text>
-                </View>
-              </View>
-              {privacyLevel === item.key && (
-                <Ionicons name="checkmark-circle" size={24} color="#34C759" />
-              )}
-            </TouchableOpacity>
-          )}
-          contentContainerStyle={styles.privacyList}
-        />
-      </SafeAreaView>
-    </Modal>
-  );
-
-  const renderCategoryModal = () => (
-    <Modal
-      visible={showCategoryModal}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={() => setShowCategoryModal(false)}
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Select Category</Text>
-          <TouchableOpacity 
-            onPress={() => setShowCategoryModal(false)}
-            style={styles.modalClose}
-          >
-            <Ionicons name="close" size={24} color="#8E8E93" />
-          </TouchableOpacity>
-        </View>
-        
-        <ScrollView contentContainerStyle={styles.modalContent}>
-          {renderCategoryGrid()}
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
-  );
-
-  const getCurrentPrivacy = () => {
-    return PRIVACY_LEVELS.find(p => p.key === privacyLevel) || PRIVACY_LEVELS[0];
+      if (!result.canceled) {
+        setCover(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Image picker error:', error);
+      Alert.alert('Error', 'Failed to pick image');
+    }
   };
 
-  const renderStep1 = () => (
-    <KeyboardAvoidingView 
-      style={styles.stepContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
-    >
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        style={styles.scrollContent}
-        contentContainerStyle={styles.scrollContentContainer}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Cover Image First */}
-        {renderFormGroup('Cover Image', false, null, (
-          <TouchableOpacity
-            style={[styles.coverUpload, cover && styles.coverUploadWithImage]}
-            onPress={pickCover}
-            activeOpacity={0.8}
-          >
-            {cover ? (
-              <>
-                <Image source={{ uri: cover.uri }} style={styles.coverPreview} />
-                <TouchableOpacity
-                  style={styles.removeCoverButton}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    setCover(null);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="close" size={16} color="#FFFFFF" />
-                </TouchableOpacity>
-              </>
-            ) : (
-              <View style={styles.coverUploadContent}>
-                <View style={styles.coverUploadIcon}>
-                  <Ionicons name="camera" size={24} color="#3797EF" />
+  const onDateChange = (event, selectedDate) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      const newDateTime = new Date(dateTime);
+      newDateTime.setFullYear(selectedDate.getFullYear());
+      newDateTime.setMonth(selectedDate.getMonth());
+      newDateTime.setDate(selectedDate.getDate());
+      setDateTime(newDateTime);
+    }
+  };
+
+  const onTimeChange = (event, selectedTime) => {
+    setShowTimePicker(false);
+    if (selectedTime) {
+      const newDateTime = new Date(dateTime);
+      newDateTime.setHours(selectedTime.getHours());
+      newDateTime.setMinutes(selectedTime.getMinutes());
+      setDateTime(newDateTime);
+    }
+  };
+
+  const onLocQuery = async (text) => {
+    setLocQuery(text);
+    if (text.length > 2) {
+      try {
+        const results = await fetchNominatimSuggestions(text);
+        setSuggestions(results.slice(0, 5));
+      } catch (error) {
+        console.error('Location search error:', error);
+        setSuggestions([]);
+      }
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  const selectLocation = (suggestion) => {
+    setLocation(suggestion.display_name);
+    setLocQuery(suggestion.display_name);
+    setCoords([parseFloat(suggestion.lon), parseFloat(suggestion.lat)]);
+    setSuggestions([]);
+  };
+
+  if (step === 1) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <KeyboardAvoidingView 
+          style={styles.container} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+            {/* Cover Image Section */}
+            <TouchableOpacity
+              style={styles.coverSection}
+              onPress={pickCoverImage}
+              activeOpacity={0.9}
+            >
+              {cover ? (
+                <Image source={{ uri: cover }} style={styles.coverImage} />
+              ) : (
+                <View style={styles.coverPlaceholder}>
+                  <Ionicons name="camera" size={48} color="#C7C7CC" />
+                  <Text style={styles.coverPlaceholderText}>Add Cover Photo</Text>
                 </View>
-                <Text style={styles.coverUploadText}>Add Cover Image</Text>
-                <Text style={styles.coverUploadSubtext}>Optional</Text>
+              )}
+              <View style={styles.coverOverlay}>
+                <Ionicons name="camera" size={24} color="#FFFFFF" />
               </View>
-            )}
-          </TouchableOpacity>
-        ))}
-
-        {renderFormGroup('Event Title', true, null, (
-          <TextInput
-            style={styles.formInput}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="What's your event called?"
-            placeholderTextColor="#8E8E93"
-            maxLength={100}
-          />
-        ))}
-
-        {renderFormGroup('Description', false, null, (
-          <TextInput
-            style={[styles.formInput, styles.textArea]}
-            multiline
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Tell people what to expect..."
-            placeholderTextColor="#8E8E93"
-            maxLength={500}
-            textAlignVertical="top"
-          />
-        ))}
-
-        {renderFormGroup('Category', false, null, (
-          <TouchableOpacity
-            style={styles.selector}
-            onPress={() => setShowCategoryModal(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.selectorText}>{category}</Text>
-            <Ionicons name="chevron-down" size={20} color="#8E8E93" />
-          </TouchableOpacity>
-        ))}
-
-        {renderFormGroup('Date & Time', true, null, (
-          <View style={styles.dateTimeContainer}>
-            <TouchableOpacity
-              style={[styles.formInput, styles.dateTimeInput]}
-              onPress={() => setShowDatePicker(true)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="calendar-outline" size={18} color="#3797EF" />
-              <Text style={styles.dateTimeText}>
-                {dateTime.toLocaleDateString()}
-              </Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.formInput, styles.dateTimeInput]}
-              onPress={() => setShowTimePicker(true)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="time-outline" size={18} color="#3797EF" />
-              <Text style={styles.dateTimeText}>
-                {dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ))}
 
-        {renderFormGroup('Location', true, null, (
-          <View style={styles.locationContainer}>
-            <TextInput
-              style={styles.formInput}
-              value={locQuery}
-              onChangeText={onLocQuery}
-              placeholder="Search for a location..."
-              placeholderTextColor="#8E8E93"
-            />
-            {suggestions.length > 0 && (
-              <View style={styles.suggestionsDropdown}>
-                {suggestions.map((suggestion, index) => (
+            <View style={styles.formContainer}>
+              {/* Title */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Event Title *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="What's your event called?"
+                  placeholderTextColor="#C7C7CC"
+                  maxLength={100}
+                />
+              </View>
+
+              {/* Date & Time */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>When *</Text>
+                <View style={styles.dateTimeRow}>
                   <TouchableOpacity
-                    key={suggestion.place_id || index}
-                    onPress={() => pickSuggestion(suggestion)}
-                    style={[
-                      styles.suggestionItem,
-                      index === suggestions.length - 1 && styles.lastSuggestionItem
-                    ]}
-                    activeOpacity={0.8}
+                    style={styles.dateTimeButton}
+                    onPress={() => setShowDatePicker(true)}
                   >
-                    <Ionicons name="location-outline" size={16} color="#8E8E93" />
-                    <Text style={styles.suggestionText} numberOfLines={2}>
-                      {suggestion.display_name}
+                    <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
+                    <Text style={styles.dateTimeButtonText}>
+                      {dateTime.toLocaleDateString()}
                     </Text>
                   </TouchableOpacity>
-                ))}
+
+                  <TouchableOpacity
+                    style={styles.dateTimeButton}
+                    onPress={() => setShowTimePicker(true)}
+                  >
+                    <Ionicons name="time-outline" size={20} color="#8E8E93" />
+                    <Text style={styles.dateTimeButtonText}>
+                      {dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={dateTime}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={onDateChange}
+                    minimumDate={new Date()}
+                  />
+                )}
+
+                {showTimePicker && (
+                  <DateTimePicker
+                    value={dateTime}
+                    mode="time"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={onTimeChange}
+                  />
+                )}
               </View>
-            )}
+
+              {/* Location */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Location *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={locQuery}
+                  onChangeText={onLocQuery}
+                  placeholder="Where is your event?"
+                  placeholderTextColor="#C7C7CC"
+                />
+                
+                {suggestions.length > 0 && (
+                  <View style={styles.suggestionsContainer}>
+                    {suggestions.map((suggestion, index) => (
+                      <TouchableOpacity
+                        key={index}
+                        style={styles.suggestionItem}
+                        onPress={() => selectLocation(suggestion)}
+                      >
+                        <Ionicons name="location-outline" size={16} color="#8E8E93" />
+                        <Text style={styles.suggestionText}>{suggestion.display_name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
+
+              {/* Description */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Description</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={description}
+                  onChangeText={setDescription}
+                  placeholder="Tell people what your event is about..."
+                  placeholderTextColor="#C7C7CC"
+                  multiline
+                  numberOfLines={4}
+                  maxLength={500}
+                />
+              </View>
+
+              {/* Category */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Category</Text>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => setShowCategoryModal(true)}
+                >
+                  <Text style={styles.selectButtonText}>{category}</Text>
+                  <Ionicons name="chevron-down" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {/* Category Modal */}
+        <Modal
+          visible={showCategoryModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowCategoryModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Category</Text>
+                <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
+                  <Ionicons name="close" size={24} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+              <FlatList
+                data={CATEGORIES}
+                keyExtractor={(item) => item}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.categoryItem}
+                    onPress={() => {
+                      setCategory(item);
+                      setShowCategoryModal(false);
+                    }}
+                  >
+                    <Text style={[
+                      styles.categoryText,
+                      category === item && styles.categoryTextSelected
+                    ]}>
+                      {item}
+                    </Text>
+                    {category === item && (
+                      <Ionicons name="checkmark" size={20} color="#3797EF" />
+                    )}
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
           </View>
-        ))}
-      </ScrollView>
+        </Modal>
+      </SafeAreaView>
+    );
+  }
 
-      <View style={styles.stepActionsContainer}>
-        <TouchableOpacity
-          style={[styles.primaryButton, (!title.trim() || !location.trim()) && styles.primaryButtonDisabled]}
-          onPress={() => goToStep(2)}
-          disabled={!title.trim() || !location.trim()}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.primaryButtonText}>Continue</Text>
-          <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
-  );
-
-  const renderStep2 = () => (
-    <KeyboardAvoidingView 
-      style={styles.stepContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
-    >
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        style={styles.scrollContent}
-        contentContainerStyle={styles.scrollContentContainer}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Privacy Settings */}
-        <View style={styles.subsection}>
-          <Text style={styles.subsectionTitle}>Privacy & Visibility</Text>
-          
-          {renderFormGroup('Privacy Level', false, null, (
-            <TouchableOpacity
-              style={styles.privacySelector}
-              onPress={() => setShowPrivacyModal(true)}
-              activeOpacity={0.8}
-            >
-              <View style={styles.privacySelectorLeft}>
-                <View style={[styles.privacySelectorIcon, { backgroundColor: getCurrentPrivacy().color + '20' }]}>
-                  <Ionicons name={getCurrentPrivacy().icon} size={24} color={getCurrentPrivacy().color} />
-                </View>
-                <View style={styles.privacySelectorText}>
-                  <Text style={styles.privacySelectorLabel}>{getCurrentPrivacy().label}</Text>
-                  <Text style={styles.privacySelectorDesc}>{getCurrentPrivacy().desc}</Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
-            </TouchableOpacity>
-          ))}
-
-          {renderToggle(
-            'Appear in Feed',
-            'Show this event in public feeds',
-            permissions.appearInFeed,
-            (value) => setPermissions(prev => ({ ...prev, appearInFeed: value }))
-          )}
-
-          {renderToggle(
-            'Appear in Search',
-            'Allow people to find this event in search',
-            permissions.appearInSearch,
-            (value) => setPermissions(prev => ({ ...prev, appearInSearch: value }))
-          )}
-
-          {renderToggle(
-            'Show Attendees',
-            'Let people see who else is attending',
-            permissions.showAttendeesToPublic,
-            (value) => setPermissions(prev => ({ ...prev, showAttendeesToPublic: value }))
-          )}
-        </View>
-
-        {/* Event Capacity & Pricing */}
-        <View style={styles.subsection}>
-          <Text style={styles.subsectionTitle}>Capacity & Pricing</Text>
-          
-          {renderFormGroup('Maximum Attendees', false, 'Set a limit to manage capacity', (
-            <TextInput
-              style={styles.formInput}
-              keyboardType="numeric"
-              value={maxAttendees}
-              onChangeText={setMaxAttendees}
-              placeholder="How many people can attend?"
-              placeholderTextColor="#8E8E93"
-            />
-          ))}
-
-          {renderFormGroup('Price (USD)', false, 'Leave as 0 for free events', (
-            <TextInput
-              style={styles.formInput}
-              keyboardType="numeric"
-              value={price}
-              onChangeText={setPrice}
-              placeholder="0 for free events"
-              placeholderTextColor="#8E8E93"
-            />
-          ))}
-        </View>
-
-        {/* Tags & Discovery */}
-        <View style={styles.subsection}>
-          <Text style={styles.subsectionTitle}>Tags & Discovery</Text>
-          
-          {renderFormGroup('Tags', false, 'Comma-separated tags to help people find your event', (
-            <TextInput
-              style={styles.formInput}
-              value={tags}
-              onChangeText={setTags}
-              placeholder="music, outdoor, family-friendly..."
-              placeholderTextColor="#8E8E93"
-            />
-          ))}
-        </View>
-
-        {/* Photo Settings */}
-        <View style={styles.subsection}>
-          <Text style={styles.subsectionTitle}>Photo Settings</Text>
-          
-          {renderToggle(
-            'Allow Photos',
-            'Let attendees upload photos during the event',
-            allowPhotos,
-            setAllowPhotos
-          )}
-
-          {renderToggle(
-            'Allow Photo Uploads',
-            'Enable photo sharing for this event',
-            allowUploads,
-            setAllowUploads
-          )}
-
-          {renderToggle(
-            'Allow Pre-event Uploads',
-            'Allow photo uploads before the event starts',
-            allowUploadsBeforeStart,
-            setAllowUploadsBeforeStart
-          )}
-        </View>
-      </ScrollView>
-
-      <View style={styles.stepActionsContainer}>
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => goToStep(1)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="arrow-back" size={20} color="#3797EF" />
-          <Text style={styles.secondaryButtonText}>Back</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.primaryButton, creating && styles.primaryButtonDisabled]}
-          onPress={createEvent}
-          disabled={creating}
-          activeOpacity={0.8}
-        >
-          {creating ? (
-            <>
-              <ActivityIndicator size="small" color="#FFFFFF" />
-              <Text style={styles.primaryButtonText}>Creating...</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.primaryButtonText}>Create Event</Text>
-              <Ionicons name="add-circle" size={20} color="#FFFFFF" />
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
-  );
-
+  // Step 2: Advanced Settings
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="close" size={24} color="#000000" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Event</Text>
-        <View style={styles.headerRight} />
-      </View>
+      <KeyboardAvoidingView 
+        style={styles.container} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          <View style={styles.formContainer}>
+            {/* Co-hosts Section */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Co-hosts</Text>
+              <Text style={styles.sectionDescription}>
+                Add friends to help you manage this event
+              </Text>
 
-      {renderStepIndicator()}
-      {renderProgressBar()}
+              {/* Selected Co-hosts */}
+              {coHosts.length > 0 && (
+                <View style={styles.coHostsList}>
+                  {coHosts.map((coHost) => (
+                    <View key={coHost._id} style={styles.coHostItem}>
+                      <View style={styles.coHostInfo}>
+                        <View style={styles.coHostAvatar}>
+                          {coHost.profilePicture ? (
+                            <Image 
+                              source={{ uri: coHost.profilePicture }} 
+                              style={styles.coHostAvatarImage} 
+                            />
+                          ) : (
+                            <View style={styles.coHostAvatarPlaceholder}>
+                              <Text style={styles.coHostAvatarText}>
+                                {coHost.username.charAt(0).toUpperCase()}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.coHostDetails}>
+                          <Text style={styles.coHostName}>{coHost.username}</Text>
+                          <Text style={styles.coHostRole}>Co-host</Text>
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => removeCoHost(coHost._id)}
+                        style={styles.removeCoHostButton}
+                      >
+                        <Ionicons name="close" size={20} color="#FF3B30" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
 
-      <View style={styles.content}>
-        {step === 1 && renderStep1()}
-        {step === 2 && renderStep2()}
-      </View>
+              {/* Add Co-host Button */}
+              <TouchableOpacity
+                style={styles.addCoHostButton}
+                onPress={() => setShowCoHostModal(true)}
+              >
+                <Ionicons name="person-add-outline" size={20} color="#3797EF" />
+                <Text style={styles.addCoHostButtonText}>Add Co-host</Text>
+              </TouchableOpacity>
+            </View>
 
-      {/* Date Time Pickers */}
-      {showDatePicker && (
-        <DateTimePicker
-          value={dateTime}
-          mode="date"
-          onChange={(event, date) => {
-            setShowDatePicker(false);
-            if (date) setDateTime(date);
-          }}
-          minimumDate={new Date()}
-        />
-      )}
+            {/* Event Settings */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Event Settings</Text>
 
-      {showTimePicker && (
-        <DateTimePicker
-          value={dateTime}
-          mode="time"
-          onChange={(event, date) => {
-            setShowTimePicker(false);
-            if (date) setDateTime(date);
-          }}
-        />
-      )}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Max Attendees</Text>
+                <TextInput
+                  style={styles.input}
+                  value={maxAttendees}
+                  onChangeText={setMaxAttendees}
+                  placeholder="50"
+                  placeholderTextColor="#C7C7CC"
+                  keyboardType="numeric"
+                />
+              </View>
 
-      {/* Modals */}
-      {renderPrivacyModal()}
-      {renderCategoryModal()}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Ticket Price ($)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={price}
+                  onChangeText={setPrice}
+                  placeholder="0.00"
+                  placeholderTextColor="#C7C7CC"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Tags (optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={tags}
+                  onChangeText={setTags}
+                  placeholder="music, party, fun (separated by commas)"
+                  placeholderTextColor="#C7C7CC"
+                />
+              </View>
+            </View>
+
+            {/* Privacy Settings */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Privacy & Permissions</Text>
+
+              <TouchableOpacity
+                style={styles.privacyButton}
+                onPress={() => setShowPrivacyModal(true)}
+              >
+                <View style={styles.privacyButtonContent}>
+                  <Ionicons 
+                    name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+                    size={24} 
+                    color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
+                  />
+                  <View style={styles.privacyButtonText}>
+                    <Text style={styles.privacyLabel}>
+                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
+                    </Text>
+                    <Text style={styles.privacyDesc}>
+                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+                </View>
+              </TouchableOpacity>
+
+              {/* Permission Toggles */}
+              <View style={styles.permissionsList}>
+                <View style={styles.permissionItem}>
+                  <Text style={styles.permissionLabel}>Show in Feed</Text>
+                  <Switch
+                    value={permissions.appearInFeed}
+                    onValueChange={(value) => 
+                      setPermissions(prev => ({ ...prev, appearInFeed: value }))
+                    }
+                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                <View style={styles.permissionItem}>
+                  <Text style={styles.permissionLabel}>Show in Search</Text>
+                  <Switch
+                    value={permissions.appearInSearch}
+                    onValueChange={(value) => 
+                      setPermissions(prev => ({ ...prev, appearInSearch: value }))
+                    }
+                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                <View style={styles.permissionItem}>
+                  <Text style={styles.permissionLabel}>Show Attendee List</Text>
+                  <Switch
+                    value={permissions.showAttendeesToPublic}
+                    onValueChange={(value) => 
+                      setPermissions(prev => ({ ...prev, showAttendeesToPublic: value }))
+                    }
+                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Co-host Search Modal */}
+      <Modal
+        visible={showCoHostModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCoHostModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.coHostModal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Co-host</Text>
+              <TouchableOpacity onPress={() => setShowCoHostModal(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.searchContainer}>
+              <View style={styles.searchInputContainer}>
+                <Ionicons name="search" size={20} color="#8E8E93" />
+                <TextInput
+                  style={styles.searchInput}
+                  value={coHostSearchQuery}
+                  onChangeText={setCoHostSearchQuery}
+                  placeholder="Search for friends..."
+                  placeholderTextColor="#C7C7CC"
+                  autoFocus
+                />
+                {searchingCoHosts && (
+                  <ActivityIndicator size="small" color="#8E8E93" />
+                )}
+              </View>
+            </View>
+
+            <FlatList
+              data={coHostSearchResults}
+              keyExtractor={(item) => item._id}
+              style={styles.searchResultsList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.searchResultItem}
+                  onPress={() => addCoHost(item)}
+                >
+                  <View style={styles.searchResultAvatar}>
+                    {item.profilePicture ? (
+                      <Image 
+                        source={{ uri: item.profilePicture }} 
+                        style={styles.searchResultAvatarImage} 
+                      />
+                    ) : (
+                      <View style={styles.searchResultAvatarPlaceholder}>
+                        <Text style={styles.searchResultAvatarText}>
+                          {item.username.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.searchResultInfo}>
+                    <Text style={styles.searchResultName}>{item.username}</Text>
+                    {item.displayName && (
+                      <Text style={styles.searchResultDisplayName}>{item.displayName}</Text>
+                    )}
+                  </View>
+                  <Ionicons name="add-circle" size={24} color="#3797EF" />
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={() => (
+                <View style={styles.emptySearchResults}>
+                  {coHostSearchQuery ? (
+                    <Text style={styles.emptySearchText}>
+                      {searchingCoHosts ? 'Searching...' : 'No users found'}
+                    </Text>
+                  ) : (
+                    <Text style={styles.emptySearchText}>
+                      Search for friends to add as co-hosts
+                    </Text>
+                  )}
+                </View>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Privacy Level Modal */}
+      <Modal
+        visible={showPrivacyModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPrivacyModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Privacy Level</Text>
+              <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={PRIVACY_LEVELS}
+              keyExtractor={(item) => item.key}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.privacyOption}
+                  onPress={() => {
+                    setPrivacyLevel(item.key);
+                    setShowPrivacyModal(false);
+                  }}
+                >
+                  <View style={styles.privacyOptionContent}>
+                    <Ionicons name={item.icon} size={24} color={item.color} />
+                    <View style={styles.privacyOptionText}>
+                      <Text style={styles.privacyOptionLabel}>{item.label}</Text>
+                      <Text style={styles.privacyOptionDesc}>{item.desc}</Text>
+                    </View>
+                    {privacyLevel === item.key && (
+                      <Ionicons name="checkmark" size={20} color="#3797EF" />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  headerButton: {
-    padding: 4,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  headerRight: {
-    width: 32,
-  },
-
-  // Step Indicator
-  stepIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    backgroundColor: '#F8F9FA',
-  },
-  stepIndicatorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  stepDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E1E1E1',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepDotActive: {
-    backgroundColor: '#3797EF',
-  },
-  stepDotCurrent: {
-    backgroundColor: '#3797EF',
-    transform: [{ scale: 1.1 }],
-  },
-  stepNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
-  },
-  stepNumberActive: {
-    color: '#FFFFFF',
-  },
-  stepConnector: {
-    width: 60,
-    height: 2,
-    backgroundColor: '#E1E1E1',
-    marginHorizontal: 12,
-  },
-  stepConnectorActive: {
-    backgroundColor: '#3797EF',
-  },
-
-  // Progress Bar
-  progressContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    backgroundColor: '#F8F9FA',
-  },
-  progressBar: {
-    width: '100%',
-    height: 2,
-    backgroundColor: '#E1E1E1',
-    borderRadius: 1,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#3797EF',
-    borderRadius: 1,
-  },
-  progressText: {
-    fontSize: 10,
-    color: '#8E8E93',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-
-  // Content
-  content: {
-    flex: 1,
-  },
-  stepContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-  },
-
-  // Scroll Content
-  scrollContent: {
-    flex: 1,
-  },
-  scrollContentContainer: {
-    paddingBottom: 100, // Space for button
-  },
-  
-  // Step Actions
-  stepActionsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 20,
-    right: 20,
-    backgroundColor: '#FFFFFF',
-    paddingTop: 16,
-    paddingBottom: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-  },
-
-  // Subsections
-  subsection: {
-    marginBottom: 24,
-  },
-  subsectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 12,
-  },
-
-  // Form Elements
-  formGroup: {
-    marginBottom: 16,
-  },
-  formLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 6,
-  },
-  formLabelRequired: {
-    // Style for required labels
-  },
-  requiredStar: {
-    color: '#FF3B30',
-  },
-  formInput: {
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    color: '#000000',
-  },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  formHelp: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 4,
-  },
-
-  // DateTime
-  dateTimeContainer: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  dateTimeInput: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  dateTimeText: {
-    fontSize: 16,
-    color: '#000000',
-  },
-
-  // Selector
-  selector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 12,
-    padding: 16,
-  },
-  selectorText: {
-    fontSize: 16,
-    color: '#000000',
-  },
-
-  // Location Container & Dropdown
-  locationContainer: {
-    position: 'relative',
-    zIndex: 1000,
-  },
-  suggestionsDropdown: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderTopWidth: 0,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-    zIndex: 1001,
-  },
-  suggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-    gap: 10,
-  },
-  lastSuggestionItem: {
-    borderBottomWidth: 0,
-  },
-  suggestionText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#000000',
-    lineHeight: 18,
-  },
-
-  // Privacy Selector
-  privacySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 12,
-    padding: 16,
-  },
-  privacySelectorLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  privacySelectorIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  privacySelectorText: {
-    flex: 1,
-  },
-  privacySelectorLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  privacySelectorDesc: {
-    fontSize: 12,
-    color: '#8E8E93',
-  },
-
-  // Category Grid
-  categoryGrid: {
-    paddingHorizontal: 0,
-  },
-  categoryChip: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    margin: 4,
-    alignItems: 'center',
-  },
-  selectedCategoryChip: {
-    backgroundColor: '#3797EF',
-    borderColor: '#3797EF',
-  },
-  categoryText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#000000',
-    textAlign: 'center',
-  },
-  selectedCategoryText: {
-    color: '#FFFFFF',
-  },
-
-  // Toggle
-  toggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  toggleContent: {
-    flex: 1,
-  },
-  toggleLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  toggleDesc: {
-    fontSize: 12,
-    color: '#8E8E93',
-  },
-
-  // Cover Image
-  coverUpload: {
-    backgroundColor: '#F8F9FA',
-    borderWidth: 2,
-    borderColor: '#E1E1E1',
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    height: 140,
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  coverUploadWithImage: {
-    borderStyle: 'solid',
-    borderWidth: 0,
-    padding: 0,
-  },
-  coverPreview: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 12,
-  },
-  removeCoverButton: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  coverUploadContent: {
-    alignItems: 'center',
-  },
-  coverUploadIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F0F8FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  coverUploadText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  coverUploadSubtext: {
-    fontSize: 12,
-    color: '#8E8E93',
-  },
-
-  // Action Buttons
-  stepActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 16,
-  },
-  primaryButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3797EF',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    gap: 8,
-  },
-  primaryButtonDisabled: {
-    backgroundColor: '#C7C7CC',
-  },
-  primaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  secondaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    gap: 8,
-  },
-  secondaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3797EF',
-  },
-
-  // Modal
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  modalClose: {
-    padding: 8,
-  },
-  modalContent: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-  },
-
-  // Privacy Options
-  privacyList: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-  },
-  privacyOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  selectedPrivacyOption: {
-    backgroundColor: '#F0F8FF',
-    borderColor: '#3797EF',
-  },
-  privacyOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  privacyOptionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  privacyOptionText: {
-    flex: 1,
-  },
-  privacyOptionLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  privacyOptionDesc: {
-    fontSize: 12,
-    color: '#8E8E93',
-  },
-});

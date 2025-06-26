@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Updated with host edit functionality and scan features
+// screens/EventDetailsScreen.js - Fixed with original UI design, photos, and new functionality
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -13,6 +13,10 @@ import {
   Modal,
   ActivityIndicator,
   RefreshControl,
+  Share,
+  Linking,
+  FlatList,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -22,6 +26,8 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 export default function EventDetailsScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -30,12 +36,15 @@ export default function EventDetailsScreen() {
 
   // State
   const [event, setEvent] = useState(null);
+  const [eventPhotos, setEventPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [photosLoading, setPhotosLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [requestLoading, setRequestLoading] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [attendeeCount, setAttendeeCount] = useState(0);
   const [permissions, setPermissions] = useState({});
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // Fetch event details
   const fetchEvent = async (isRefresh = false) => {
@@ -62,10 +71,25 @@ export default function EventDetailsScreen() {
     }
   };
 
+  // Fetch event photos
+  const fetchEventPhotos = async () => {
+    try {
+      setPhotosLoading(true);
+      const response = await api.get(`/api/users/event-photos/${eventId}`);
+      setEventPhotos(response.data.photos || []);
+    } catch (error) {
+      console.error('Error fetching event photos:', error);
+      // Don't show error for photos, just fail silently
+    } finally {
+      setPhotosLoading(false);
+    }
+  };
+
   // Refresh on focus
   useFocusEffect(
     React.useCallback(() => {
       fetchEvent();
+      fetchEventPhotos();
     }, [eventId])
   );
 
@@ -116,164 +140,193 @@ export default function EventDetailsScreen() {
     );
   };
 
-  // Send join request with approval
-  const sendJoinRequest = async () => {
+  // Share functionality
+  const handleShare = () => {
+    setShowShareModal(true);
+  };
+
+  const shareViaMessages = async () => {
     try {
-      await api.post(`/api/events/join-request/${eventId}`, {
-        message: 'Would like to join this event'
-      });
-      setShowRequestModal(false);
-      Alert.alert('Request Sent', 'Your join request has been sent to the host');
+      if (!event) return;
+      
+      const eventLink = `https://yourapp.com/events/${eventId}`;
+      const message = `Check out this event: ${event.title}\n\n${event.description}\n\n📅 ${new Date(event.time).toLocaleDateString()}\n📍 ${event.location}\n\nJoin here: ${eventLink}`;
+      
+      // iOS-specific iMessage sharing
+      const url = `sms:&body=${encodeURIComponent(message)}`;
+      
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        // Fallback to generic share
+        await Share.share({
+          message: message,
+          url: eventLink,
+          title: event.title
+        });
+      }
+      setShowShareModal(false);
     } catch (error) {
-      Alert.alert('Error', 'Failed to send join request');
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Failed to share event');
     }
+  };
+
+  const shareViaGeneric = async () => {
+    try {
+      if (!event) return;
+      
+      const eventLink = `https://yourapp.com/events/${eventId}`;
+      const message = `Check out this event: ${event.title}\n\n${event.description}\n\n📅 ${new Date(event.time).toLocaleDateString()}\n📍 ${event.location}`;
+      
+      await Share.share({
+        message: message,
+        url: eventLink,
+        title: event.title
+      });
+      setShowShareModal(false);
+    } catch (error) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Failed to share event');
+    }
+  };
+
+  const copyEventLink = async () => {
+    try {
+      const eventLink = `https://yourapp.com/events/${eventId}`;
+      // Note: Clipboard API would need to be imported and used here
+      Alert.alert(
+        'Event Link',
+        eventLink,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Copy Link', 
+            onPress: () => {
+              Alert.alert('Copied!', 'Event link copied to clipboard');
+            }
+          }
+        ]
+      );
+      setShowShareModal(false);
+    } catch (error) {
+      console.error('Copy link error:', error);
+    }
+  };
+
+  // Navigate to invite users screen
+  const handleInviteUsers = () => {
+    navigation.navigate('InviteUsersScreen', { 
+      eventId,
+      eventTitle: event?.title 
+    });
   };
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3797EF" />
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading event...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   if (!event) {
     return (
-      <SafeAreaView style={styles.errorContainer}>
-        <Text style={styles.errorText}>Event not found</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.goBackText}>Go Back</Text>
-        </TouchableOpacity>
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Event not found</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => fetchEvent()}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
-  // Helper functions for formatting
-  const formattedDate = new Date(event.time).toLocaleDateString('en-US', {
+  const isHost = String(event.host?._id || event.host) === String(currentUser?._id);
+  const isCoHost = event.coHosts?.some(c => String(c._id || c) === String(currentUser?._id));
+  const isAttending = event.attendees?.some(a => String(a._id || a) === String(currentUser?._id));
+  const canInvite = event.canUserInvite?.(currentUser?._id) || isHost || isCoHost;
+  const canShare = permissions.canShare !== 'host-only' || isHost || isCoHost;
+  const isPast = new Date(event.time) <= new Date();
+
+  // Format date and time
+  const eventDate = new Date(event.time);
+  const formattedDate = eventDate.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric',
+    day: 'numeric'
   });
-
-  const formattedTime = new Date(event.time).toLocaleTimeString('en-US', {
+  const formattedTime = eventDate.toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hour12: true
   });
 
-  // Check user relationships
-  const isHost = event.userRelation?.isHost || String(event.host?._id) === String(currentUser?._id);
-  const isCoHost = event.userRelation?.isCoHost;
-  const isAttending = event.userRelation?.isAttending;
-  
-  // Event is considered over 3 hours after start time
-  const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000); // 3 hours after start
-  const isPast = Date.now() > eventEndTime;
-
-  // Join Request Modal Component
-  const RequestModal = () => (
-    <Modal
-      visible={showRequestModal}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setShowRequestModal(false)}
-    >
-      <SafeAreaView style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Request to Join</Text>
-          <Text style={styles.modalText}>
-            This event requires approval from the host.
-            Your request will be sent to the event host.
-          </Text>
-          
-          <View style={styles.eventPreview}>
-            <Text style={styles.eventPreviewTitle}>{event?.title}</Text>
-            <Text style={styles.eventPreviewDate}>
-              {new Date(event?.time).toLocaleDateString()}
-            </Text>
-          </View>
-
-          <View style={styles.modalActions}>
-            <TouchableOpacity
-              style={styles.modalCancelButton}
-              onPress={() => setShowRequestModal(false)}
-            >
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalSendButton}
-              onPress={sendJoinRequest}
-            >
-              <Text style={styles.modalSendText}>Send Request</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </SafeAreaView>
-    </Modal>
-  );
-
-  // Privacy Badge Component
   const renderPrivacyBadge = () => {
-    if (!event?.privacyLevel || event.privacyLevel === 'public') return null;
-
-    const badges = {
-      friends: { icon: 'people', text: 'Friends Only', color: '#34C759' },
-      private: { icon: 'lock-closed', text: 'Private', color: '#FF9500' },
-      secret: { icon: 'eye-off', text: 'Secret', color: '#FF3B30' }
+    const privacyConfig = {
+      public: { icon: 'globe', color: '#34C759', label: 'Public' },
+      friends: { icon: 'people', color: '#3797EF', label: 'Friends' },
+      private: { icon: 'lock-closed', color: '#FF9500', label: 'Private' },
+      secret: { icon: 'eye-off', color: '#FF3B30', label: 'Secret' }
     };
 
-    const badge = badges[event.privacyLevel];
-    if (!badge) return null;
+    const config = privacyConfig[event.privacyLevel] || privacyConfig.public;
 
     return (
-      <View style={[styles.privacyBadge, { backgroundColor: badge.color }]}>
-        <Ionicons name={badge.icon} size={12} color="#FFFFFF" />
-        <Text style={styles.privacyBadgeText}>{badge.text}</Text>
+      <View style={[styles.privacyBadge, { backgroundColor: config.color }]}>
+        <Ionicons name={config.icon} size={12} color="#FFFFFF" />
+        <Text style={styles.privacyBadgeText}>{config.label}</Text>
       </View>
     );
   };
 
-  // Action Button Component
-  const renderActionButton = () => {
-    if (!event) return null;
-
-    if (isPast) {
-      return (
-        <View style={styles.actionContainer}>
-          <Text style={styles.pastEventText}>This event has ended</Text>
-        </View>
-      );
-    }
-
+  const renderActionButtons = () => {
     if (isHost || isCoHost) {
       return (
         <View style={styles.actionContainer}>
-          <View style={styles.hostActions}>
-            {/* Check-In Button - Only for Hosts */}
+          <View style={styles.actionRow}>
             <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => navigation.navigate('QrScanScreen', { eventId })}
+              style={[styles.actionButton, styles.primaryAction]}
+              onPress={() => navigation.navigate('EditEventScreen', { eventId })}
               activeOpacity={0.8}
             >
               <LinearGradient
                 colors={['#3797EF', '#3797EF']}
                 style={styles.gradientButton}
               >
-                <Ionicons name="qr-code" size={20} color="#FFFFFF" />
-                <Text style={styles.primaryButtonText}>Scan Check-In</Text>
+                <Ionicons name="create" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryActionText}>Edit Event</Text>
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* Invite Button */}
-            {permissions.invite && (
+            {canInvite && (
               <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => navigation.navigate('InviteUsersScreen', { eventId })}
+                style={[styles.actionButton, styles.secondaryAction]}
+                onPress={handleInviteUsers}
                 activeOpacity={0.8}
               >
-                <Ionicons name="person-add" size={20} color="#3797EF" />
-                <Text style={styles.secondaryButtonText}>Invite</Text>
+                <Ionicons name="person-add" size={18} color="#3797EF" />
+                <Text style={styles.secondaryActionText}>Invite</Text>
+              </TouchableOpacity>
+            )}
+
+            {canShare && (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.secondaryAction]}
+                onPress={handleShare}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="share" size={18} color="#3797EF" />
+                <Text style={styles.secondaryActionText}>Share</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -281,63 +334,103 @@ export default function EventDetailsScreen() {
       );
     }
 
-    // Regular attendee actions
     if (isAttending) {
       return (
         <View style={styles.actionContainer}>
-          <TouchableOpacity
-            style={styles.leaveButton}
-            onPress={handleLeaveEvent}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.leaveButtonText}>Leave Event</Text>
-          </TouchableOpacity>
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.leaveAction]}
+              onPress={handleLeaveEvent}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.leaveActionText}>Leave Event</Text>
+            </TouchableOpacity>
+
+            {canShare && (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.secondaryAction]}
+                onPress={handleShare}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="share" size={18} color="#3797EF" />
+                <Text style={styles.secondaryActionText}>Share</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       );
     }
 
-    // Non-attendee actions
     return (
       <View style={styles.actionContainer}>
-        <TouchableOpacity
-          style={styles.joinButton}
-          onPress={handleJoinRequest}
-          disabled={requestLoading}
-          activeOpacity={0.8}
-        >
-          <LinearGradient
-            colors={['#3797EF', '#3797EF']}
-            style={styles.gradientButton}
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.primaryAction]}
+            onPress={handleJoinRequest}
+            disabled={requestLoading}
+            activeOpacity={0.8}
           >
-            {requestLoading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="add" size={20} color="#FFFFFF" />
-                <Text style={styles.joinButtonText}>Join Event</Text>
-              </>
-            )}
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={['#3797EF', '#3797EF']}
+              style={styles.gradientButton}
+            >
+              {requestLoading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="add" size={18} color="#FFFFFF" />
+                  <Text style={styles.primaryActionText}>Join Event</Text>
+                </>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {canShare && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.secondaryAction]}
+              onPress={handleShare}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="share" size={18} color="#3797EF" />
+              <Text style={styles.secondaryActionText}>Share</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     );
   };
 
+  const renderPhotoItem = ({ item, index }) => (
+    <TouchableOpacity
+      style={styles.photoItem}
+      onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
+      activeOpacity={0.9}
+    >
+      <Image
+        source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
+        style={styles.photoImage}
+      />
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => fetchEvent(true)}
+            onRefresh={() => {
+              fetchEvent(true);
+              fetchEventPhotos();
+            }}
             tintColor="#3797EF"
           />
         }
       >
-        {/* Cover Image */}
+        {/* Cover Image Header */}
         <View style={styles.coverContainer}>
           {event.coverImage ? (
             <Image
@@ -360,6 +453,17 @@ export default function EventDetailsScreen() {
           >
             <Ionicons name="chevron-back" size={28} color="#FFFFFF" />
           </TouchableOpacity>
+
+          {/* Share Button */}
+          {canShare && (
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShare}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="share" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          )}
 
           {/* Edit Button for Host (Top Right) */}
           {(isHost || isCoHost) && !isPast && (
@@ -408,7 +512,14 @@ export default function EventDetailsScreen() {
                 }}
                 style={styles.hostAvatar}
               />
-              <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
+              <View style={styles.hostDetails}>
+                <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
+                {event.coHosts && event.coHosts.length > 0 && (
+                  <Text style={styles.coHostText}>
+                    Co-hosts: {event.coHosts.map(c => c.username || c).join(', ')}
+                  </Text>
+                )}
+              </View>
             </TouchableOpacity>
           </View>
 
@@ -438,46 +549,108 @@ export default function EventDetailsScreen() {
               style={styles.detailCard}
               onPress={() => navigation.navigate('AttendeeListScreen', { eventId })}
               activeOpacity={0.8}
-              disabled={!event.permissions?.showAttendeesToPublic && !isHost}
+              disabled={!event.permissions?.showAttendeesToPublic && !isHost && !isCoHost}
             >
               <View style={styles.detailCardHeader}>
                 <Ionicons name="people" size={24} color="#3797EF" />
                 <Text style={styles.detailCardTitle}>Who's going</Text>
-                {(event.permissions?.showAttendeesToPublic || isHost) && (
+                {(event.permissions?.showAttendeesToPublic || isHost || isCoHost) && (
                   <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
                 )}
               </View>
               <Text style={styles.detailCardContent}>
                 {attendeeCount} {attendeeCount === 1 ? 'person' : 'people'} attending
               </Text>
-              {event.maxAttendees && (
-                <Text style={styles.detailCardSubContent}>
-                  {event.maxAttendees - attendeeCount} spots remaining
-                </Text>
-              )}
             </TouchableOpacity>
-
-            {/* Price Card (if event has price) */}
-            {event.price > 0 && (
-              <View style={styles.detailCard}>
-                <View style={styles.detailCardHeader}>
-                  <Ionicons name="card" size={24} color="#3797EF" />
-                  <Text style={styles.detailCardTitle}>Price</Text>
-                </View>
-                <Text style={styles.detailCardContent}>
-                  ${event.price}
-                </Text>
-              </View>
-            )}
           </View>
+
+          {/* Event Photos Section */}
+          {eventPhotos.length > 0 && (
+            <View style={styles.photosSection}>
+              <View style={styles.photosSectionHeader}>
+                <Text style={styles.photosSectionTitle}>Photos ({eventPhotos.length})</Text>
+                {eventPhotos.length > 6 && (
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('EventPhotosScreen', { eventId })}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.seeAllPhotosText}>See All</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              
+              <FlatList
+                data={eventPhotos.slice(0, 6)}
+                renderItem={renderPhotoItem}
+                keyExtractor={(item) => item._id}
+                numColumns={3}
+                style={styles.photosGrid}
+                scrollEnabled={false}
+              />
+            </View>
+          )}
+
+          {/* Action Buttons */}
+          {renderActionButtons()}
         </View>
       </ScrollView>
 
-      {/* Action Button */}
-      {renderActionButton()}
+      {/* Share Modal */}
+      <Modal
+        visible={showShareModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowShareModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.shareModal}>
+            <View style={styles.shareModalHeader}>
+              <Text style={styles.shareModalTitle}>Share Event</Text>
+              <TouchableOpacity
+                onPress={() => setShowShareModal(false)}
+                style={styles.closeButton}
+              >
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
 
-      {/* Request Modal */}
-      <RequestModal />
+            <View style={styles.shareOptions}>
+              <TouchableOpacity
+                style={styles.shareOption}
+                onPress={shareViaMessages}
+                activeOpacity={0.8}
+              >
+                <View style={styles.shareOptionIcon}>
+                  <Ionicons name="chatbubble" size={24} color="#34C759" />
+                </View>
+                <Text style={styles.shareOptionText}>Messages</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.shareOption}
+                onPress={shareViaGeneric}
+                activeOpacity={0.8}
+              >
+                <View style={styles.shareOptionIcon}>
+                  <Ionicons name="share" size={24} color="#3797EF" />
+                </View>
+                <Text style={styles.shareOptionText}>Share</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.shareOption}
+                onPress={copyEventLink}
+                activeOpacity={0.8}
+              >
+                <View style={styles.shareOptionIcon}>
+                  <Ionicons name="link" size={24} color="#FF9500" />
+                </View>
+                <Text style={styles.shareOptionText}>Copy Link</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -487,33 +660,37 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  loadingContainer: {
+  centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
   },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 32,
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
   },
   errorText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
+    color: '#FF3B30',
     marginBottom: 16,
   },
-  goBackText: {
-    fontSize: 16,
-    color: '#3797EF',
-    fontWeight: '500',
+  retryButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
   },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // Cover Image
   coverContainer: {
+    height: 280,
     position: 'relative',
-    height: 300,
   },
   coverImage: {
     width: '100%',
@@ -521,51 +698,57 @@ const styles = StyleSheet.create({
   },
   backButton: {
     position: 'absolute',
-    top: 50,
+    top: 44,
     left: 16,
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shareButton: {
+    position: 'absolute',
+    top: 44,
+    right: 60,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editButton: {
+    position: 'absolute',
+    top: 44,
+    right: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   privacyBadge: {
     position: 'absolute',
-    top: 100,
-    right: 16,
+    bottom: 16,
+    left: 16,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    gap: 4,
-  },
-  editButton: {
-    position: 'absolute',
-    top: 50,
-    right: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   privacyBadgeText: {
-    color: '#FFFFFF',
+    marginLeft: 4,
     fontSize: 12,
     fontWeight: '600',
+    color: '#FFFFFF',
   },
+
+  // Content
   contentContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    marginTop: -20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 24,
-    paddingBottom: 100,
+    padding: 20,
   },
   headerSection: {
     marginBottom: 16,
@@ -575,28 +758,31 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000000',
     marginBottom: 8,
-    lineHeight: 34,
   },
   categoryBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#F2F2F7',
+    backgroundColor: '#F0F0F0',
+    borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
+    alignSelf: 'flex-start',
   },
   categoryText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#3797EF',
+    color: '#666666',
   },
+
+  // Description
   descriptionSection: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   descriptionText: {
     fontSize: 16,
     lineHeight: 24,
-    color: '#000000',
+    color: '#333333',
   },
+
+  // Host Section
   hostSection: {
     marginBottom: 24,
   },
@@ -605,23 +791,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   hostAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 8, // Square with curved edges
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     marginRight: 12,
+  },
+  hostDetails: {
+    flex: 1,
   },
   hostName: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#000000',
   },
+  coHostText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+
+  // Detail Cards
   detailsContainer: {
-    gap: 16,
+    marginBottom: 24,
   },
   detailCard: {
-    backgroundColor: '#F9F9F9',
+    backgroundColor: '#F8F8F8',
     borderRadius: 16,
     padding: 16,
+    marginBottom: 12,
   },
   detailCardHeader: {
     flexDirection: 'row',
@@ -629,166 +826,172 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   detailCardTitle: {
+    marginLeft: 12,
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
-    marginLeft: 12,
     flex: 1,
   },
   detailCardContent: {
     fontSize: 16,
-    fontWeight: '500',
     color: '#000000',
-    marginBottom: 4,
+    marginLeft: 36,
   },
   detailCardSubContent: {
     fontSize: 14,
     color: '#8E8E93',
+    marginLeft: 36,
+    marginTop: 2,
   },
+
+  // Photos Section
+  photosSection: {
+    marginBottom: 24,
+  },
+  photosSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  photosSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  seeAllPhotosText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  photosGrid: {
+    marginHorizontal: -4,
+  },
+  photoItem: {
+    flex: 1,
+    margin: 4,
+    aspectRatio: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#F6F6F6',
+  },
+
+  // Action Buttons
   actionContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
+    paddingTop: 20,
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    paddingBottom: 34,
+    borderTopColor: '#F0F0F0',
   },
-  hostActions: {
+  actionRow: {
+    flexDirection: 'row',
     gap: 12,
   },
-  primaryButton: {
+  actionButton: {
     borderRadius: 12,
     overflow: 'hidden',
+    flex: 1,
+  },
+  primaryAction: {
+    flex: 2,
   },
   gradientButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,
-    paddingHorizontal: 24,
-    gap: 8,
+    paddingHorizontal: 20,
   },
-  primaryButtonText: {
-    color: '#FFFFFF',
+  primaryActionText: {
+    marginLeft: 6,
     fontSize: 16,
     fontWeight: '600',
+    color: '#FFFFFF',
   },
-  secondaryButton: {
+  secondaryAction: {
+    backgroundColor: '#F8F8F8',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F2F2F7',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    gap: 8,
-  },
-  secondaryButtonText: {
-    color: '#3797EF',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  joinButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  joinButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  leaveButton: {
-    backgroundColor: '#F2F2F7',
     paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
+    paddingHorizontal: 20,
   },
-  leaveButtonText: {
-    color: '#FF3B30',
+  secondaryActionText: {
+    marginLeft: 4,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  leaveAction: {
+    backgroundColor: '#FF3B30',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    flex: 2,
+  },
+  leaveActionText: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#FFFFFF',
   },
-  pastEventText: {
-    textAlign: 'center',
-    fontSize: 16,
-    color: '#8E8E93',
-    fontWeight: '500',
-  },
-  // Modal Styles
+
+  // Share Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
-  modalContent: {
+  shareModal: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 8,
     paddingBottom: 34,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  modalText: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  eventPreview: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-  },
-  eventPreviewTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
-  },
-  eventPreviewDate: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  modalActions: {
+  shareModalHeader: {
     flexDirection: 'row',
-    gap: 12,
-  },
-  modalCancelButton: {
-    flex: 1,
-    backgroundColor: '#F2F2F7',
-    paddingVertical: 16,
-    borderRadius: 12,
     alignItems: 'center',
-  },
-  modalCancelText: {
-    color: '#000000',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  modalSendButton: {
-    flex: 1,
-    backgroundColor: '#3797EF',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
     paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
-  modalSendText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  shareModalTitle: {
+    fontSize: 18,
     fontWeight: '600',
+    color: '#000000',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  shareOptions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: 16,
+    paddingTop: 24,
+  },
+  shareOption: {
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  shareOptionIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#F8F8F8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  shareOptionText: {
+    fontSize: 12,
+    color: '#000000',
+    textAlign: 'center',
   },
 });

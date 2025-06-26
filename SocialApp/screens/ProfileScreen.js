@@ -464,11 +464,16 @@ const renderProfileHeader = () => (
     </TouchableOpacity>
   );
 
-  const renderEventCard = ({ item: event }) => {
-    const isShared = sharedEventIds.has(event._id);
-    const isPast = new Date(event.time) <= new Date();
+ 
+const renderEventCard = ({ item: event }) => {
+  const isShared = sharedEventIds.has(event._id);
+  const isPast = new Date(event.time) <= new Date();
 
-    return (
+  return (
+    <TouchableOpacity
+      onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
+      activeOpacity={0.95}
+    >
       <View style={styles.eventCard}>
         {/* Event Cover */}
         <View style={styles.eventCoverContainer}>
@@ -517,7 +522,10 @@ const renderProfileHeader = () => (
                 styles.shareToggleButton,
                 isShared && styles.shareToggleButtonActive
               ]}
-              onPress={() => toggleEventShare(event._id)}
+              onPress={(e) => {
+                e.stopPropagation();
+                toggleEventShare(event._id);
+              }}
               activeOpacity={0.8}
             >
               <Ionicons 
@@ -537,7 +545,10 @@ const renderProfileHeader = () => (
             {event.isHost && !isPast && (
               <TouchableOpacity
                 style={styles.editEventButton}
-                onPress={() => navigation.navigate('EditEventScreen', { eventId: event._id })}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  navigation.navigate('EditEventScreen', { eventId: event._id });
+                }}
                 activeOpacity={0.8}
               >
                 <Ionicons name="create-outline" size={16} color="#3797EF" />
@@ -545,20 +556,16 @@ const renderProfileHeader = () => (
               </TouchableOpacity>
             )}
 
-            {/* View Details button */}
-            <TouchableOpacity
-              style={styles.viewEventButton}
-              onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
-              activeOpacity={0.8}
-            >
+            {/* Visual arrow - no longer a separate button */}
+            <View style={styles.viewEventButton}>
               <Ionicons name="arrow-forward-outline" size={16} color="#8E8E93" />
-            </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
-    );
-  };
-
+    </TouchableOpacity>
+  );
+};
   // 🎯 FIX #3: REMOVED NAVIGATION TO MISSING SCREEN
   const renderManageModal = () => (
     <Modal
