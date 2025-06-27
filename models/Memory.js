@@ -1,4 +1,4 @@
-// models/Memory.js - Updated for standalone memories without conversation dependency
+// models/Memory.js - Enhanced Memory model (verify your existing model has these features)
 const mongoose = require('mongoose');
 
 const MemorySchema = new mongoose.Schema({
@@ -48,10 +48,11 @@ const MemorySchema = new mongoose.Schema({
   }
 });
 
-// Index for efficient queries
+// IMPORTANT: Add these indexes for performance
 MemorySchema.index({ createdBy: 1, createdAt: -1 });
 MemorySchema.index({ participants: 1, createdAt: -1 });
 MemorySchema.index({ createdAt: -1 });
+MemorySchema.index({ updatedAt: -1 }); // For sorting by recent activity
 
 // Update timestamp on save
 MemorySchema.pre('save', function(next) {
@@ -59,7 +60,7 @@ MemorySchema.pre('save', function(next) {
   next();
 });
 
-// Virtual to check if a user is a participant
+// IMPORTANT: Add this method for checking participants
 MemorySchema.methods.isParticipant = function(userId) {
   return this.participants.some(p => p.toString() === userId.toString()) || 
          this.createdBy.toString() === userId.toString();
