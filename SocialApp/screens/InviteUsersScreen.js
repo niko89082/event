@@ -1,4 +1,4 @@
-// screens/InviteUsersScreen.js - Invite users to events with sharing capabilities
+// screens/InviteUsersScreen.js - Simplified invite users to events
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -12,14 +12,13 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Share,
-  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
+import { API_BASE_URL } from '@env';
 
 export default function InviteUsersScreen() {
   const route = useRoute();
@@ -32,11 +31,10 @@ export default function InviteUsersScreen() {
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [searching, setSearching] = useState(false);
   const [inviting, setInviting] = useState(false);
-  const [inviteMessage, setInviteMessage] = useState('');
 
   useEffect(() => {
     navigation.setOptions({
-      title: 'Invite to Event',
+      title: 'Invite Friends',
       headerStyle: {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
@@ -59,7 +57,7 @@ export default function InviteUsersScreen() {
             <ActivityIndicator size="small" color="#3797EF" />
           ) : (
             <Text style={[styles.headerButtonText, (selectedUsers.length === 0 || inviting) && styles.headerButtonTextDisabled]}>
-              Send ({selectedUsers.length})
+              Invite ({selectedUsers.length})
             </Text>
           )}
         </TouchableOpacity>
@@ -67,20 +65,27 @@ export default function InviteUsersScreen() {
     });
   }, [selectedUsers, inviting]);
 
-  // Search for users
-  const searchUsers = async (query) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
+  // Search for users with debouncing
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        searchUsers(searchQuery);
+      } else {
+        setSearchResults([]);
+      }
+    }, 300);
 
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
+
+  const searchUsers = async (query) => {
     try {
       setSearching(true);
       const response = await api.get(`/api/users/search`, {
         params: { q: query, limit: 20 }
       });
       
-      // Filter out current user and already invited users
+      // Filter out current user
       const results = response.data.filter(user => 
         user._id !== currentUser._id
       );
@@ -88,19 +93,11 @@ export default function InviteUsersScreen() {
       setSearchResults(results);
     } catch (error) {
       console.error('Error searching users:', error);
+      Alert.alert('Error', 'Failed to search users');
     } finally {
       setSearching(false);
     }
   };
-
-  // Debounced search effect
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      searchUsers(searchQuery);
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
 
   // Toggle user selection
   const toggleUserSelection = (user) => {
@@ -114,7 +111,7 @@ export default function InviteUsersScreen() {
     });
   };
 
-  // Send invites
+  // Send invites to selected users
   const handleSendInvites = async () => {
     if (selectedUsers.length === 0 || inviting) return;
 
@@ -123,9 +120,8 @@ export default function InviteUsersScreen() {
 
       const userIds = selectedUsers.map(user => user._id);
       
-      await api.post(`/api/events/${eventId}/invite`, {
-        userIds,
-        message: inviteMessage.trim() || undefined
+      const response = await api.post(`/api/events/${eventId}/invite`, {
+        userIds: userIds
       });
 
       Alert.alert(
@@ -150,97 +146,6 @@ export default function InviteUsersScreen() {
     }
   };
 
-  // Share event via external methods
-  const handleShareEvent = () => {
-    Alert.alert(
-      'Share Event',
-      'How would you like to share this event?',
-      [
-        {
-          text: 'Messages',
-          onPress: shareViaMessages
-        },
-        {
-          text: 'Copy Link',
-          onPress: copyEventLink
-        },
-        {
-          text: 'More Options',
-          onPress: shareViaGeneric
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        }
-      ]
-    );
-  };
-
-  const shareViaMessages = async () => {
-    try {
-      const eventLink = `https://yourapp.com/events/${eventId}`;
-      const message = `You're invited to ${eventTitle}! 🎉\n\n${inviteMessage || 'Join me at this event!'}\n\nRSVP here: ${eventLink}`;
-      
-      // iOS-specific iMessage sharing
-      const url = `sms:&body=${encodeURIComponent(message)}`;
-      
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        // Fallback to generic share
-        await Share.share({
-          message: message,
-          url: eventLink,
-          title: eventTitle
-        });
-      }
-    } catch (error) {
-      console.error('Share error:', error);
-      Alert.alert('Error', 'Failed to share event');
-    }
-  };
-
-  const shareViaGeneric = async () => {
-    try {
-      const eventLink = `https://yourapp.com/events/${eventId}`;
-      const message = `You're invited to ${eventTitle}! 🎉\n\n${inviteMessage || 'Join me at this event!'}`;
-      
-      await Share.share({
-        message: message,
-        url: eventLink,
-        title: eventTitle
-      });
-    } catch (error) {
-      console.error('Share error:', error);
-      Alert.alert('Error', 'Failed to share event');
-    }
-  };
-
-  const copyEventLink = async () => {
-    try {
-      const eventLink = `https://yourapp.com/events/${eventId}`;
-      // Note: Clipboard API would need to be imported and used here
-      // For now, we'll show the link in an alert
-      Alert.alert(
-        'Event Link',
-        eventLink,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Copy Link', 
-            onPress: () => {
-              // Clipboard.setString(eventLink);
-              Alert.alert('Copied!', 'Event link copied to clipboard');
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('Copy link error:', error);
-    }
-  };
-
   const renderUserItem = ({ item }) => {
     const isSelected = selectedUsers.some(u => u._id === item._id);
     
@@ -253,7 +158,7 @@ export default function InviteUsersScreen() {
         <View style={styles.userAvatar}>
           {item.profilePicture ? (
             <Image 
-              source={{ uri: item.profilePicture }} 
+              source={{ uri: `${API_BASE_URL}${item.profilePicture}` }} 
               style={styles.userAvatarImage} 
             />
           ) : (
@@ -272,7 +177,7 @@ export default function InviteUsersScreen() {
           )}
         </View>
         
-        <View style={[styles.selectionIndicator, isSelected && styles.selectionIndicatorActive]}>
+        <View style={styles.selectionIndicator}>
           <Ionicons 
             name={isSelected ? "checkmark-circle" : "ellipse-outline"} 
             size={24} 
@@ -288,7 +193,7 @@ export default function InviteUsersScreen() {
       <View style={styles.selectedUserAvatar}>
         {item.profilePicture ? (
           <Image 
-            source={{ uri: item.profilePicture }} 
+            source={{ uri: `${API_BASE_URL}${item.profilePicture}` }} 
             style={styles.selectedUserAvatarImage} 
           />
         ) : (
@@ -304,7 +209,7 @@ export default function InviteUsersScreen() {
         onPress={() => toggleUserSelection(item)}
         style={styles.removeSelectedUser}
       >
-        <Ionicons name="close" size={16} color="#8E8E93" />
+        <Ionicons name="close" size={16} color="#FFFFFF" />
       </TouchableOpacity>
     </View>
   );
@@ -329,45 +234,6 @@ export default function InviteUsersScreen() {
             <ActivityIndicator size="small" color="#8E8E93" />
           )}
         </View>
-
-        {/* Share Options */}
-        <View style={styles.shareSection}>
-          <Text style={styles.shareSectionTitle}>Or share via:</Text>
-          <View style={styles.shareOptions}>
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={shareViaMessages}
-              activeOpacity={0.8}
-            >
-              <View style={styles.shareOptionIcon}>
-                <Ionicons name="chatbubble" size={20} color="#34C759" />
-              </View>
-              <Text style={styles.shareOptionText}>Messages</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={copyEventLink}
-              activeOpacity={0.8}
-            >
-              <View style={styles.shareOptionIcon}>
-                <Ionicons name="link" size={20} color="#FF9500" />
-              </View>
-              <Text style={styles.shareOptionText}>Copy Link</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={shareViaGeneric}
-              activeOpacity={0.8}
-            >
-              <View style={styles.shareOptionIcon}>
-                <Ionicons name="share" size={20} color="#3797EF" />
-              </View>
-              <Text style={styles.shareOptionText}>More</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
       </View>
 
       {/* Selected Users */}
@@ -387,21 +253,6 @@ export default function InviteUsersScreen() {
         </View>
       )}
 
-      {/* Invite Message */}
-      <View style={styles.messageSection}>
-        <Text style={styles.messageLabel}>Personal Message (Optional)</Text>
-        <TextInput
-          style={styles.messageInput}
-          value={inviteMessage}
-          onChangeText={setInviteMessage}
-          placeholder="Add a personal message to your invite..."
-          placeholderTextColor="#C7C7CC"
-          multiline
-          numberOfLines={3}
-          maxLength={200}
-        />
-      </View>
-
       {/* Search Results */}
       <View style={styles.resultsSection}>
         <FlatList
@@ -417,11 +268,12 @@ export default function InviteUsersScreen() {
               ) : (
                 <View style={styles.emptyResultsContent}>
                   <Ionicons name="people-outline" size={48} color="#C7C7CC" />
+                  <Text style={styles.emptyResultsTitle}>Invite Friends</Text>
                   <Text style={styles.emptyResultsText}>
                     Search for friends to invite to your event
                   </Text>
                   <Text style={styles.emptyResultsSubtext}>
-                    You can also share the event link directly via messages or social media
+                    You can also share the event using the share button in the event details
                   </Text>
                 </View>
               )}
@@ -469,7 +321,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    marginBottom: 16,
   },
   searchInput: {
     flex: 1,
@@ -477,44 +328,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000000',
     paddingVertical: 8,
-  },
-
-  // Share Section
-  shareSection: {
-    marginTop: 8,
-  },
-  shareSectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
-    marginBottom: 12,
-  },
-  shareOptions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  shareOption: {
-    alignItems: 'center',
-    minWidth: 80,
-  },
-  shareOptionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  shareOptionText: {
-    fontSize: 12,
-    color: '#000000',
-    textAlign: 'center',
   },
 
   // Selected Users
@@ -577,30 +390,6 @@ const styles = StyleSheet.create({
     padding: 2,
   },
 
-  // Message Section
-  messageSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  messageLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 8,
-  },
-  messageInput: {
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#000000',
-    textAlignVertical: 'top',
-    minHeight: 80,
-  },
-
   // Results Section
   resultsSection: {
     flex: 1,
@@ -656,9 +445,6 @@ const styles = StyleSheet.create({
   selectionIndicator: {
     padding: 4,
   },
-  selectionIndicatorActive: {
-    // No additional styles needed, handled by icon color
-  },
 
   // Empty Results
   emptyResults: {
@@ -671,17 +457,23 @@ const styles = StyleSheet.create({
   emptyResultsContent: {
     alignItems: 'center',
   },
+  emptyResultsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
   emptyResultsText: {
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    marginTop: 16,
+    marginBottom: 8,
   },
   emptyResultsSubtext: {
     fontSize: 14,
     color: '#C7C7CC',
     textAlign: 'center',
-    marginTop: 8,
     lineHeight: 20,
   },
 });

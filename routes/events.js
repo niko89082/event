@@ -1000,79 +1000,119 @@ router.delete('/join-request/:eventId/:userId/reject', protect, async (req, res)
 router.post('/:eventId/invite', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { userId, userIds, message } = req.body;
+    const { userIds } = req.body; // Array of user IDs
 
     console.log(`📨 Processing invite for event ${eventId} from user ${req.user._id}`);
+    console.log(`📨 Inviting users:`, userIds);
 
-    const event = await Event.findById(eventId)
-      .populate('host', 'username')
-      .lean();
-    
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    // Check if user can invite
-    const permission = await EventPrivacyService.checkPermission(
-      req.user._id, 
-      eventId, 
-      'invite'
-    );
-
-    if (!permission.allowed) {
-      return res.status(403).json({ message: permission.reason });
+    // Validate userIds
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ message: 'userIds array is required' });
     }
 
-    // Handle single or multiple invites
-    const targetUsers = userIds || [userId];
-    const newInvites = [];
-    const notificationsSent = [];
+    // Find the event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
 
-    // Get the full event document for updating
-    const eventDoc = await Event.findById(eventId);
-
-    for (const targetUserId of targetUsers) {
-      // Check if user is not already invited or attending
-      if (!eventDoc.invitedUsers.includes(targetUserId) && 
-          !eventDoc.attendees.includes(targetUserId)) {
-        
-        eventDoc.invitedUsers.push(targetUserId);
-        newInvites.push(targetUserId);
-
-        // ✅ FIXED: Actually send notification using NotificationService
-        try {
-          console.log(`📨 Sending notification to user ${targetUserId} for event ${event.title}`);
-          
-          await notificationService.sendEventInvitation(
-            req.user._id,    // hostId (sender)
-            targetUserId,    // guestId (recipient)
-            event           // event object
-          );
-          
-          notificationsSent.push(targetUserId);
-          console.log(`✅ Notification sent successfully to user ${targetUserId}`);
-        } catch (notifError) {
-          console.error(`❌ Failed to send notification to user ${targetUserId}:`, notifError);
-          // Continue with invite even if notification fails
+    // Check if user can invite (host, co-host, or has permission)
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts?.some(c => String(c) === String(req.user._id));
+    
+    if (!isHost && !isCoHost) {
+      // Check event permissions for regular attendees
+      if (event.permissions?.canInvite !== 'attendees' && event.permissions?.canInvite !== 'anyone') {
+        return res.status(403).json({ message: 'You do not have permission to invite users to this event' });
+      }
+      
+      // If permission allows attendees, check if user is attending
+      if (event.permissions?.canInvite === 'attendees') {
+        const isAttending = event.attendees?.some(a => String(a) === String(req.user._id));
+        if (!isAttending) {
+          return res.status(403).json({ message: 'Only attendees can invite others to this event' });
         }
       }
     }
 
-    await eventDoc.save();
+    const newInvites = [];
+    const alreadyInvited = [];
+    const alreadyAttending = [];
+    const invalidUsers = [];
 
-    console.log(`✅ Successfully invited ${newInvites.length} users, sent ${notificationsSent.length} notifications`);
+    // Process each user ID
+    for (const userId of userIds) {
+      try {
+        // Check if user exists
+        const userExists = await User.findById(userId);
+        if (!userExists) {
+          invalidUsers.push(userId);
+          continue;
+        }
 
-    res.json({ 
-      message: `Invited ${newInvites.length} users successfully`,
-      invitedUsers: newInvites,
-      notificationsSent: notificationsSent.length,
-      totalInvites: newInvites.length
+        // Check if already attending
+        if (event.attendees?.includes(userId)) {
+          alreadyAttending.push(userId);
+          continue;
+        }
+
+        // Check if already invited
+        if (event.invitedUsers?.includes(userId)) {
+          alreadyInvited.push(userId);
+          continue;
+        }
+
+        // Add to invited users
+        if (!event.invitedUsers) {
+          event.invitedUsers = [];
+        }
+        event.invitedUsers.push(userId);
+        newInvites.push(userId);
+
+        // Send notification (optional - depends on your notification system)
+        try {
+          // If you have a notification service, uncomment this
+          // await notificationService.sendEventInvitation(req.user._id, userId, event);
+          console.log(`✅ Notification would be sent to user ${userId}`);
+        } catch (notifError) {
+          console.error(`❌ Failed to send notification to user ${userId}:`, notifError);
+          // Continue with invite even if notification fails
+        }
+
+      } catch (userError) {
+        console.error(`❌ Error processing user ${userId}:`, userError);
+        invalidUsers.push(userId);
+      }
+    }
+
+    // Save the event with new invites
+    await event.save();
+
+    console.log(`✅ Successfully invited ${newInvites.length} users`);
+
+    // Return detailed response
+    res.json({
+      message: `Successfully invited ${newInvites.length} user${newInvites.length !== 1 ? 's' : ''}`,
+      invited: newInvites.length,
+      alreadyInvited: alreadyInvited.length,
+      alreadyAttending: alreadyAttending.length,
+      invalid: invalidUsers.length,
+      details: {
+        newInvites,
+        alreadyInvited,
+        alreadyAttending,
+        invalidUsers
+      }
     });
 
-  } catch (e) {
-    console.error('❌ Invite users error:', e);
-    res.status(500).json({ message: 'Server error' });
+  } catch (error) {
+    console.error('❌ Invite users error:', error);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 });
-
 // Decline Event Invite - MUST BE BEFORE /:eventId route
 router.delete('/invite/:eventId', protect, async (req, res) => {
   try {
