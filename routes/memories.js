@@ -1,296 +1,194 @@
-// routes/memories.js - FIXED: Memory creation route
+// routes/memories.js - Updated with enhanced photo support and likes/comments
 const express = require('express');
 const router = express.Router();
 const Memory = require('../models/Memory');
 const MemoryPhoto = require('../models/MemoryPhoto');
 const User = require('../models/User');
-const auth = require('../middleware/auth'); // Your auth middleware
+const auth = require('../middleware/auth');
+const upload = require('../middleware/upload');
 
-// ✅ FIXED: Create memory endpoint
-router.post('/', auth, async (req, res) => {
+// ✅ GET: Get memory details with populated photos including likes/comments
+router.get('/:id', auth, async (req, res) => {
   try {
-    const { title, description, participantIds = [] } = req.body;
-    const creatorId = req.user.id; // From auth middleware
-    
-    console.log('🚀 Creating memory with data:', {
-      title,
-      description,
-      creatorId,
-      participantIds
-    });
-    
-    // ✅ VALIDATION: Check if title is provided
-    if (!title || !title.trim()) {
-      return res.status(400).json({
-        message: 'Memory title is required'
-      });
+    const memory = await Memory.findById(req.params.id)
+      .populate('creator', 'username profilePicture fullName')
+      .populate('participants', 'username profilePicture fullName')
+      .lean();
+
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
     }
-    
-    // ✅ VALIDATION: Check participant count BEFORE database operations
-    const totalParticipants = participantIds.length + 1; // +1 for creator
-    if (totalParticipants > 15) {
-      return res.status(400).json({
-        message: `Cannot create memory with ${totalParticipants} participants. Maximum is 15 (including creator).`
-      });
+
+    // Check if user has access to this memory
+    const userId = req.user.id;
+    const hasAccess = memory.creator._id.equals(userId) || 
+                     memory.participants.some(p => p._id.equals(userId));
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied' });
     }
-    
-    // ✅ VALIDATION: Verify all participant IDs exist and are valid users
-    if (participantIds.length > 0) {
-      console.log('🔍 Validating participantIds:', participantIds);
-      
-      try {
-        const users = await User.find({ 
-          _id: { $in: participantIds } 
-        }).select('_id username');
-        
-        console.log('✅ Found', users.length, 'valid users out of', participantIds.length, 'requested');
-        
-        if (users.length !== participantIds.length) {
-          const foundIds = users.map(u => u._id.toString());
-          const invalidIds = participantIds.filter(id => !foundIds.includes(id));
-          
-          return res.status(400).json({
-            message: 'Some participant IDs are invalid',
-            details: { invalidIds }
-          });
-        }
-      } catch (userError) {
-        console.error('❌ Error validating participant IDs:', userError);
-        return res.status(400).json({
-          message: 'Invalid participant IDs format'
-        });
-      }
-    }
-    
-    // ✅ CLEAN: Remove creator from participants if accidentally included
-    const cleanParticipantIds = participantIds.filter(id => id !== creatorId);
-    const finalParticipantCount = cleanParticipantIds.length + 1; // +1 for creator
-    
-    console.log('✅ Final participants:', finalParticipantCount, 'users');
-    
-    // ✅ CREATE: Memory with proper data
-    const memoryData = {
-      title: title.trim(),
-      description: description ? description.trim() : '',
-      creator: creatorId,
-      participants: cleanParticipantIds,
-      isPrivate: true // Always private by default (no toggle in frontend)
+
+    // Get photos with likes and comments populated
+    const photos = await MemoryPhoto.find({
+      memory: memory._id,
+      isDeleted: false
+    })
+    .populate('uploadedBy', 'username profilePicture fullName')
+    .populate('likes', 'username profilePicture fullName')
+    .populate('comments.user', 'username profilePicture fullName')
+    .populate('taggedUsers', 'username profilePicture fullName')
+    .sort({ uploadedAt: -1 })
+    .lean();
+
+    // Add virtual fields for each photo
+    const enhancedPhotos = photos.map(photo => ({
+      ...photo,
+      likeCount: photo.likes ? photo.likes.length : 0,
+      commentCount: photo.comments ? photo.comments.length : 0,
+      isLikedByUser: photo.likes ? photo.likes.some(like => like._id.equals(userId)) : false,
+      fullUrl: `${req.protocol}://${req.get('host')}${photo.url}`
+    }));
+
+    // Add photos to memory object
+    const memoryWithPhotos = {
+      ...memory,
+      photos: enhancedPhotos,
+      photoCount: enhancedPhotos.length,
+      totalLikes: enhancedPhotos.reduce((sum, photo) => sum + (photo.likeCount || 0), 0),
+      totalComments: enhancedPhotos.reduce((sum, photo) => sum + (photo.commentCount || 0), 0)
     };
-    
-    const memory = new Memory(memoryData);
-    await memory.save();
-    
-    // ✅ POPULATE: Return memory with populated creator and participants
-    await memory.populate([
-      { 
-        path: 'creator', 
-        select: 'username fullName profilePicture' 
-      },
-      { 
-        path: 'participants', 
-        select: 'username fullName profilePicture' 
-      }
-    ]);
-    
-    console.log('✅ Memory created successfully:', memory._id);
-    
-    res.status(201).json({
-      message: 'Memory created successfully',
-      memory: memory
+
+    res.json({
+      success: true,
+      memory: memoryWithPhotos
     });
-    
+
   } catch (error) {
-    console.error('❌ Error creating memory:', error);
-    
-    // ✅ HANDLE: Mongoose validation errors properly
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        message: 'Validation failed',
-        details: errors.join(', ')
-      });
-    }
-    
-    // ✅ HANDLE: Cast errors (invalid ObjectId format)
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        message: 'Invalid ID format',
-        details: error.message
-      });
-    }
-    
-    // ✅ HANDLE: Duplicate key errors
-    if (error.code === 11000) {
-      return res.status(409).json({
-        message: 'Memory with this title already exists'
-      });
-    }
-    
-    // ✅ HANDLE: Generic server errors
-    res.status(500).json({
-      message: 'Internal server error',
-      details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    console.error('Error fetching memory:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch memory',
+      details: error.message 
     });
   }
 });
 
-// ✅ GET: User's memories
+// ✅ GET: Get all memories for user with photo previews
 router.get('/', auth, async (req, res) => {
   try {
+    const { page = 1, limit = 10, sort = 'recent' } = req.query;
+    const skip = (page - 1) * limit;
     const userId = req.user.id;
-    
+
+    // Build sort criteria
+    let sortCriteria = { createdAt: -1 }; // Default: most recent
+    if (sort === 'popular') {
+      // Sort by activity (photos, likes, comments)
+      sortCriteria = { updatedAt: -1 };
+    } else if (sort === 'alphabetical') {
+      sortCriteria = { title: 1 };
+    }
+
+    // Find memories where user is creator or participant
     const memories = await Memory.find({
       $or: [
         { creator: userId },
         { participants: userId }
       ]
     })
-    .populate('creator', 'username fullName profilePicture')
-    .populate('participants', 'username fullName profilePicture')
-    .populate({
-      path: 'photos',
-      match: { isDeleted: false },
-      populate: {
-        path: 'uploadedBy',
-        select: 'username'
+    .populate('creator', 'username profilePicture fullName')
+    .populate('participants', 'username profilePicture fullName')
+    .sort(sortCriteria)
+    .skip(skip)
+    .limit(parseInt(limit))
+    .lean();
+
+    // Get photo counts and cover photos for each memory
+    const memoriesWithPhotos = await Promise.all(
+      memories.map(async (memory) => {
+        // Get photo count and recent photos
+        const photoCount = await MemoryPhoto.countDocuments({
+          memory: memory._id,
+          isDeleted: false
+        });
+
+        // Get cover photo (most recent photo)
+        const coverPhoto = await MemoryPhoto.findOne({
+          memory: memory._id,
+          isDeleted: false
+        })
+        .sort({ uploadedAt: -1 })
+        .select('url uploadedAt')
+        .lean();
+
+        // Get sample photos for preview
+        const samplePhotos = await MemoryPhoto.find({
+          memory: memory._id,
+          isDeleted: false
+        })
+        .populate('uploadedBy', 'username profilePicture')
+        .sort({ uploadedAt: -1 })
+        .limit(3)
+        .select('url uploadedAt uploadedBy likeCount commentCount')
+        .lean();
+
+        // Calculate engagement stats
+        const totalLikes = await MemoryPhoto.aggregate([
+          { $match: { memory: memory._id, isDeleted: false } },
+          { $project: { likeCount: { $size: { $ifNull: ['$likes', []] } } } },
+          { $group: { _id: null, total: { $sum: '$likeCount' } } }
+        ]);
+
+        const totalComments = await MemoryPhoto.aggregate([
+          { $match: { memory: memory._id, isDeleted: false } },
+          { $project: { commentCount: { $size: { $ifNull: ['$comments', []] } } } },
+          { $group: { _id: null, total: { $sum: '$commentCount' } } }
+        ]);
+
+        return {
+          ...memory,
+          photoCount,
+          coverPhoto: coverPhoto ? `${req.protocol}://${req.get('host')}${coverPhoto.url}` : null,
+          samplePhotos: samplePhotos.map(photo => ({
+            ...photo,
+            fullUrl: `${req.protocol}://${req.get('host')}${photo.url}`
+          })),
+          totalLikes: totalLikes[0]?.total || 0,
+          totalComments: totalComments[0]?.total || 0,
+          lastActivity: coverPhoto?.uploadedAt || memory.updatedAt
+        };
+      })
+    );
+
+    // Get total count for pagination
+    const totalMemories = await Memory.countDocuments({
+      $or: [
+        { creator: userId },
+        { participants: userId }
+      ]
+    });
+
+    res.json({
+      success: true,
+      memories: memoriesWithPhotos,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalMemories,
+        pages: Math.ceil(totalMemories / limit),
+        hasMore: skip + parseInt(limit) < totalMemories
       }
-    })
-    .sort({ createdAt: -1 });
-    
-    res.json({ memories });
+    });
+
   } catch (error) {
     console.error('Error fetching memories:', error);
-    res.status(500).json({ message: 'Failed to fetch memories' });
-  }
-});
-
-// ✅ GET: Single memory by ID
-router.get('/:id', auth, async (req, res) => {
-  try {
-    const memory = await Memory.findById(req.params.id)
-      .populate('creator', 'username fullName profilePicture')
-      .populate('participants', 'username fullName profilePicture')
-      .populate({
-        path: 'photos',
-        match: { isDeleted: false },
-        populate: {
-          path: 'uploadedBy',
-          select: 'username profilePicture'
-        },
-        options: { sort: { uploadedAt: -1 } }
-      });
-    
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-    
-    // ✅ CHECK: User has access to this memory
-    const userId = req.user.id;
-    const hasAccess = memory.creator._id.equals(userId) || 
-                     memory.participants.some(p => p._id.equals(userId));
-    
-    if (!hasAccess) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-    
-    res.json({ memory });
-  } catch (error) {
-    console.error('Error fetching memory:', error);
-    res.status(500).json({ message: 'Failed to fetch memory' });
-  }
-});
-
-// ✅ PUT: Add participant to memory
-router.put('/:id/participants', auth, async (req, res) => {
-  try {
-    const { participantId } = req.body;
-    const memory = await Memory.findById(req.params.id);
-    
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-    
-    // Only creator can add participants
-    if (!memory.creator.equals(req.user.id)) {
-      return res.status(403).json({ message: 'Only creator can add participants' });
-    }
-    
-    await memory.addParticipant(participantId);
-    await memory.populate('participants', 'username fullName profilePicture');
-    
-    res.json({ 
-      message: 'Participant added successfully',
-      memory 
+    res.status(500).json({ 
+      message: 'Failed to fetch memories',
+      details: error.message 
     });
-  } catch (error) {
-    console.error('Error adding participant:', error);
-    res.status(400).json({ message: error.message });
   }
 });
 
-// ✅ DELETE: Remove participant from memory
-router.delete('/:id/participants/:participantId', auth, async (req, res) => {
-  try {
-    const memory = await Memory.findById(req.params.id);
-    
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-    
-    // Only creator can remove participants (or users can remove themselves)
-    const isCreator = memory.creator.equals(req.user.id);
-    const isSelf = req.params.participantId === req.user.id;
-    
-    if (!isCreator && !isSelf) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-    
-    await memory.removeParticipant(req.params.participantId);
-    await memory.populate('participants', 'username fullName profilePicture');
-    
-    res.json({ 
-      message: 'Participant removed successfully',
-      memory 
-    });
-  } catch (error) {
-    console.error('Error removing participant:', error);
-    res.status(400).json({ message: error.message });
-  }
-});
-
-// ✅ POST: Upload photos to memory
-const multer = require('multer');
-const path = require('path');
-
-// Configure multer for photo uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/memory-photos/'); // Make sure this directory exists
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'memory-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({ 
-  storage: storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
-  },
-  fileFilter: function (req, file, cb) {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'));
-    }
-  }
-});
-
+// ✅ POST: Upload photo to memory with enhanced metadata
 router.post('/:id/photos', auth, upload.single('photo'), async (req, res) => {
   try {
     const memory = await Memory.findById(req.params.id);
@@ -311,31 +209,171 @@ router.post('/:id/photos', auth, upload.single('photo'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ message: 'No photo file provided' });
     }
+
+    // Parse tagged users if provided
+    let taggedUsers = [];
+    if (req.body.taggedUsers) {
+      try {
+        taggedUsers = JSON.parse(req.body.taggedUsers);
+      } catch (error) {
+        console.warn('Invalid taggedUsers format:', error);
+      }
+    }
     
-    // ✅ Create MemoryPhoto document
+    // ✅ Create MemoryPhoto document with enhanced data
     const photo = await MemoryPhoto.createPhoto({
       memoryId: memory._id,
       file: req.file,
       uploadedBy: userId,
-      caption: req.body.caption
+      caption: req.body.caption,
+      taggedUsers
     });
     
     // ✅ Add photo reference to memory
     memory.photos.push(photo._id);
+    memory.updatedAt = new Date(); // Update memory's last activity
     await memory.save();
     
     // ✅ Populate the photo for response
-    await photo.populate('uploadedBy', 'username profilePicture');
+    await photo.populate([
+      { path: 'uploadedBy', select: 'username profilePicture fullName' },
+      { path: 'taggedUsers', select: 'username profilePicture fullName' }
+    ]);
     
     res.status(201).json({
+      success: true,
       message: 'Photo uploaded successfully',
-      photo: photo
+      photo: {
+        ...photo.toJSON(),
+        likeCount: 0,
+        commentCount: 0,
+        isLikedByUser: false,
+        fullUrl: `${req.protocol}://${req.get('host')}${photo.url}`
+      }
     });
     
   } catch (error) {
     console.error('Error uploading photo:', error);
     res.status(500).json({ 
       message: 'Failed to upload photo',
+      details: error.message 
+    });
+  }
+});
+
+// ✅ GET: Get photos for a specific memory with pagination
+router.get('/:id/photos', auth, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, sort = 'recent' } = req.query;
+    const skip = (page - 1) * limit;
+
+    const memory = await Memory.findById(req.params.id);
+    
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    // Check if user has access to this memory
+    const userId = req.user.id;
+    const hasAccess = memory.creator.equals(userId) || 
+                     memory.participants.some(p => p.equals(userId));
+    
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Build sort criteria
+    let sortCriteria = { uploadedAt: -1 }; // Default: most recent
+    if (sort === 'popular') {
+      // Sort by engagement (likes + comments)
+      sortCriteria = [
+        { $addFields: { 
+          engagement: { 
+            $add: [
+              { $size: { $ifNull: ['$likes', []] } },
+              { $size: { $ifNull: ['$comments', []] } }
+            ]
+          }
+        }},
+        { $sort: { engagement: -1, uploadedAt: -1 } }
+      ];
+    } else if (sort === 'oldest') {
+      sortCriteria = { uploadedAt: 1 };
+    }
+
+    let photosQuery;
+    if (sort === 'popular') {
+      // Use aggregation for popularity sort
+      photosQuery = MemoryPhoto.aggregate([
+        { 
+          $match: { 
+            memory: memory._id, 
+            isDeleted: false 
+          }
+        },
+        ...sortCriteria,
+        { $skip: skip },
+        { $limit: parseInt(limit) }
+      ]);
+    } else {
+      // Use regular query for other sorts
+      photosQuery = MemoryPhoto.find({
+        memory: memory._id,
+        isDeleted: false
+      })
+      .sort(sortCriteria)
+      .skip(skip)
+      .limit(parseInt(limit));
+    }
+
+    const photos = await photosQuery;
+
+    // Populate the photos if not using aggregation
+    const populatedPhotos = sort === 'popular' ? 
+      await MemoryPhoto.populate(photos, [
+        { path: 'uploadedBy', select: 'username profilePicture fullName' },
+        { path: 'likes', select: 'username profilePicture fullName' },
+        { path: 'comments.user', select: 'username profilePicture fullName' },
+        { path: 'taggedUsers', select: 'username profilePicture fullName' }
+      ]) :
+      await photos.populate([
+        { path: 'uploadedBy', select: 'username profilePicture fullName' },
+        { path: 'likes', select: 'username profilePicture fullName' },
+        { path: 'comments.user', select: 'username profilePicture fullName' },
+        { path: 'taggedUsers', select: 'username profilePicture fullName' }
+      ]);
+
+    // Add virtual fields
+    const enhancedPhotos = populatedPhotos.map(photo => ({
+      ...photo.toJSON(),
+      likeCount: photo.likes ? photo.likes.length : 0,
+      commentCount: photo.comments ? photo.comments.length : 0,
+      isLikedByUser: photo.likes ? photo.likes.some(like => like._id.equals(userId)) : false,
+      fullUrl: `${req.protocol}://${req.get('host')}${photo.url}`
+    }));
+
+    // Get total count
+    const totalPhotos = await MemoryPhoto.countDocuments({
+      memory: memory._id,
+      isDeleted: false
+    });
+
+    res.json({
+      success: true,
+      photos: enhancedPhotos,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalPhotos,
+        pages: Math.ceil(totalPhotos / limit),
+        hasMore: skip + parseInt(limit) < totalPhotos
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching memory photos:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch photos',
       details: error.message 
     });
   }
@@ -349,144 +387,356 @@ router.delete('/:id/photos/:photoId', auth, async (req, res) => {
     if (!memory) {
       return res.status(404).json({ message: 'Memory not found' });
     }
-    
+
     const photo = await MemoryPhoto.findById(req.params.photoId);
+    
     if (!photo || photo.isDeleted) {
       return res.status(404).json({ message: 'Photo not found' });
     }
-    
-    // Verify photo belongs to this memory
-    if (!photo.memory.equals(memory._id)) {
-      return res.status(400).json({ message: 'Photo does not belong to this memory' });
-    }
-    
-    // Only photo uploader or memory creator can delete
+
+    // Check if user has permission to delete (uploader or memory creator)
     const userId = req.user.id;
     const canDelete = photo.uploadedBy.equals(userId) || memory.creator.equals(userId);
     
     if (!canDelete) {
-      return res.status(403).json({ message: 'Access denied' });
+      return res.status(403).json({ message: 'Permission denied' });
     }
-    
-    // ✅ Soft delete the photo
+
+    // Soft delete the photo
     await photo.softDelete();
-    
-    // ✅ Remove photo reference from memory
-    memory.photos = memory.photos.filter(p => !p.equals(photo._id));
+
+    // Remove photo reference from memory
+    memory.photos = memory.photos.filter(photoId => !photoId.equals(photo._id));
+    memory.updatedAt = new Date();
     await memory.save();
-    
-    res.json({ message: 'Photo deleted successfully' });
-    
+
+    res.json({
+      success: true,
+      message: 'Photo deleted successfully'
+    });
+
   } catch (error) {
     console.error('Error deleting photo:', error);
-    res.status(500).json({ message: 'Failed to delete photo' });
+    res.status(500).json({ 
+      message: 'Failed to delete photo',
+      details: error.message 
+    });
   }
 });
 
-// ✅ GET: User's memories (for profile screen)
-router.get('/user/:userId', auth, async (req, res) => {
+// ✅ GET: Get memory statistics
+router.get('/:id/stats', auth, async (req, res) => {
   try {
-    const { userId } = req.params;
-    const currentUserId = req.user.id;
-    const { page = 1, limit = 50 } = req.query;
+    const memory = await Memory.findById(req.params.id);
     
-    console.log(`📚 Fetching memories for user ${userId} (requested by ${currentUserId})`);
-    
-    // Build query based on who's requesting
-    let query;
-    
-    if (userId === currentUserId) {
-      // Self: Show all memories where user is creator or participant
-      query = {
-        $or: [
-          { creator: userId },
-          { participants: userId }
-        ]
-      };
-    } else {
-      // Other user: Only show memories where both users are participants
-      query = {
-        $and: [
-          {
-            $or: [
-              { creator: userId, participants: currentUserId },
-              { creator: currentUserId, participants: userId },
-              { 
-                $and: [
-                  { participants: userId },
-                  { participants: currentUserId }
-                ]
-              }
-            ]
-          }
-        ]
-      };
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
     }
     
-    const memories = await Memory.find(query)
-      .populate('creator', 'username fullName profilePicture')
-      .populate('participants', 'username fullName profilePicture')
-      .populate({
-        path: 'photos',
-        match: { isDeleted: false },
-        populate: {
-          path: 'uploadedBy',
-          select: 'username profilePicture'
+    // Check if user has access to this memory
+    const userId = req.user.id;
+    const hasAccess = memory.creator.equals(userId) || 
+                     memory.participants.some(p => p.equals(userId));
+    
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get comprehensive statistics
+    const stats = await MemoryPhoto.aggregate([
+      { 
+        $match: { 
+          memory: memory._id, 
+          isDeleted: false 
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalPhotos: { $sum: 1 },
+          totalLikes: { $sum: { $size: { $ifNull: ['$likes', []] } } },
+          totalComments: { $sum: { $size: { $ifNull: ['$comments', []] } } },
+          totalViews: { $sum: '$viewCount' },
+          totalShares: { $sum: '$shareCount' },
+          avgLikesPerPhoto: { $avg: { $size: { $ifNull: ['$likes', []] } } },
+          avgCommentsPerPhoto: { $avg: { $size: { $ifNull: ['$comments', []] } } },
+          earliestPhoto: { $min: '$uploadedAt' },
+          latestPhoto: { $max: '$uploadedAt' }
+        }
+      }
+    ]);
+
+    // Get top contributors
+    const topContributors = await MemoryPhoto.aggregate([
+      { 
+        $match: { 
+          memory: memory._id, 
+          isDeleted: false 
+        }
+      },
+      {
+        $group: {
+          _id: '$uploadedBy',
+          photoCount: { $sum: 1 },
+          totalLikes: { $sum: { $size: { $ifNull: ['$likes', []] } } },
+          totalComments: { $sum: { $size: { $ifNull: ['$comments', []] } } }
+        }
+      },
+      { $sort: { photoCount: -1 } },
+      { $limit: 5 },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          user: {
+            _id: '$user._id',
+            username: '$user.username',
+            profilePicture: '$user.profilePicture',
+            fullName: '$user.fullName'
+          },
+          photoCount: 1,
+          totalLikes: 1,
+          totalComments: 1
+        }
+      }
+    ]);
+
+    // Get activity timeline (photos per day for last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const activityTimeline = await MemoryPhoto.aggregate([
+      { 
+        $match: { 
+          memory: memory._id, 
+          isDeleted: false,
+          uploadedAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$uploadedAt' },
+            month: { $month: '$uploadedAt' },
+            day: { $dayOfMonth: '$uploadedAt' }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } }
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        memory: {
+          id: memory._id,
+          title: memory.title,
+          createdAt: memory.createdAt,
+          participantCount: memory.participants.length + 1 // +1 for creator
         },
-        options: { sort: { uploadedAt: -1 }, limit: 1 } // Just get first photo for cover
-      })
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
-    
-    // Transform memories to include computed fields for frontend
-    const transformedMemories = memories.map(memory => {
-      const memoryObj = memory.toObject();
-      
-      return {
-        ...memoryObj,
-        // Add cover photo (first photo)
-        coverPhoto: memoryObj.photos && memoryObj.photos.length > 0 
-          ? memoryObj.photos[0].url 
-          : null,
-        // Add photo count
-        photoCount: memoryObj.photos ? memoryObj.photos.length : 0,
-        // Add participant count (including creator)
-        participantCount: (memoryObj.participants ? memoryObj.participants.length : 0) + 1,
-        // Add time ago
-        timeAgo: getTimeAgo(memoryObj.createdAt)
-      };
-    });
-    
-    console.log(`✅ Found ${transformedMemories.length} memories for user ${userId}`);
-    
-    res.json({ 
-      memories: transformedMemories,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        hasMore: memories.length === parseInt(limit)
+        photos: stats[0] || {
+          totalPhotos: 0,
+          totalLikes: 0,
+          totalComments: 0,
+          totalViews: 0,
+          totalShares: 0,
+          avgLikesPerPhoto: 0,
+          avgCommentsPerPhoto: 0,
+          earliestPhoto: null,
+          latestPhoto: null
+        },
+        topContributors,
+        activityTimeline,
+        generatedAt: new Date()
       }
     });
-    
+
   } catch (error) {
-    console.error('❌ Error fetching user memories:', error);
-    res.status(500).json({ message: 'Failed to fetch memories' });
+    console.error('Error fetching memory stats:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch memory statistics',
+      details: error.message 
+    });
   }
 });
 
-// ✅ HELPER: Calculate time ago
-function getTimeAgo(date) {
-  const now = new Date();
-  const diffInSeconds = Math.floor((now - new Date(date)) / 1000);
-  
-  if (diffInSeconds < 60) return 'Just now';
-  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
-  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
-  if (diffInSeconds < 2419200) return `${Math.floor(diffInSeconds / 604800)}w ago`;
-  
-  return new Date(date).toLocaleDateString();
-}
+// ✅ POST: Create new memory
+router.post('/', auth, async (req, res) => {
+  try {
+    const { title, description, participantIds = [] } = req.body;
+    const creatorId = req.user.id;
+
+    if (!title || title.trim().length === 0) {
+      return res.status(400).json({ message: 'Memory title is required' });
+    }
+
+    // Validate participants exist
+    if (participantIds.length > 0) {
+      const validParticipants = await User.find({
+        _id: { $in: participantIds }
+      }).select('_id');
+
+      if (validParticipants.length !== participantIds.length) {
+        return res.status(400).json({ message: 'Some participants not found' });
+      }
+    }
+
+    const memory = await Memory.createMemory({
+      title: title.trim(),
+      description: description?.trim(),
+      creatorId,
+      participantIds
+    });
+
+    await memory.populate([
+      { path: 'creator', select: 'username profilePicture fullName' },
+      { path: 'participants', select: 'username profilePicture fullName' }
+    ]);
+
+    res.status(201).json({
+      success: true,
+      message: 'Memory created successfully',
+      memory: {
+        ...memory.toJSON(),
+        photoCount: 0,
+        totalLikes: 0,
+        totalComments: 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating memory:', error);
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        message: 'Validation error',
+        details: error.message 
+      });
+    }
+
+    res.status(500).json({ 
+      message: 'Failed to create memory',
+      details: error.message 
+    });
+  }
+});
+
+// ✅ PUT: Update memory details
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const { title, description, participantIds } = req.body;
+    const memory = await Memory.findById(req.params.id);
+
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+
+    // Only creator can update memory details
+    if (!memory.creator.equals(req.user.id)) {
+      return res.status(403).json({ message: 'Only the creator can update this memory' });
+    }
+
+    // Update fields
+    if (title !== undefined) {
+      if (!title || title.trim().length === 0) {
+        return res.status(400).json({ message: 'Memory title cannot be empty' });
+      }
+      memory.title = title.trim();
+    }
+
+    if (description !== undefined) {
+      memory.description = description?.trim() || '';
+    }
+
+    if (participantIds !== undefined) {
+      // Validate participants exist
+      if (participantIds.length > 0) {
+        const validParticipants = await User.find({
+          _id: { $in: participantIds }
+        }).select('_id');
+
+        if (validParticipants.length !== participantIds.length) {
+          return res.status(400).json({ message: 'Some participants not found' });
+        }
+      }
+
+      memory.participants = participantIds;
+    }
+
+    memory.updatedAt = new Date();
+    await memory.save();
+
+    await memory.populate([
+      { path: 'creator', select: 'username profilePicture fullName' },
+      { path: 'participants', select: 'username profilePicture fullName' }
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Memory updated successfully',
+      memory: memory.toJSON()
+    });
+
+  } catch (error) {
+    console.error('Error updating memory:', error);
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        message: 'Validation error',
+        details: error.message 
+      });
+    }
+
+    res.status(500).json({ 
+      message: 'Failed to update memory',
+      details: error.message 
+    });
+  }
+});
+
+// ✅ DELETE: Delete memory (soft delete)
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const memory = await Memory.findById(req.params.id);
+
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+
+    // Only creator can delete memory
+    if (!memory.creator.equals(req.user.id)) {
+      return res.status(403).json({ message: 'Only the creator can delete this memory' });
+    }
+
+    // Soft delete all photos in the memory
+    await MemoryPhoto.updateMany(
+      { memory: memory._id },
+      { isDeleted: true }
+    );
+
+    // Delete the memory
+    await Memory.findByIdAndDelete(memory._id);
+
+    res.json({
+      success: true,
+      message: 'Memory deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Error deleting memory:', error);
+    res.status(500).json({ 
+      message: 'Failed to delete memory',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router;

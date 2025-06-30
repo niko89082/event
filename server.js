@@ -43,6 +43,7 @@ const uploadsDir = path.join(__dirname, 'uploads');
 const photosDir = path.join(__dirname, 'uploads', 'photos');
 const eventCoversDir = path.join(__dirname, 'uploads', 'event-covers');
 const memoryPhotosDir = path.join(__dirname, 'uploads', 'memory-photos'); // ✅ ADD: Memory photos directory
+const memoryPhotoRoutes = require('./routes/memory-photos'); // ✅ ADD: Memory photo routes
 
 [uploadsDir, photosDir, eventCoversDir, memoryPhotosDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
@@ -304,6 +305,7 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
+
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/photos', photoRoutes);
@@ -315,6 +317,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);
 app.use('/api/memories', memoryRoutes); // ✅ ENSURE: Memory routes are properly registered
+app.use('/api/memory-photos', memoryPhotoRoutes); // ✅ ADD: Memory photo API routes
 app.use('/api/users', usersRoutes);
 app.use('/api/qr', qrRoutes);
 
