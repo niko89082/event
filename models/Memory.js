@@ -1,4 +1,4 @@
-// models/Memory.js - FIXED: Proper participants validation
+// models/Memory.js - Updated with virtual cover photo field
 const mongoose = require('mongoose');
 
 const memorySchema = new mongoose.Schema({
@@ -21,7 +21,6 @@ const memorySchema = new mongoose.Schema({
     required: [true, 'Memory creator is required']
   },
   
-  // ✅ FIXED: Proper validation for participants array
   participants: {
     type: [{
       type: mongoose.Schema.Types.ObjectId,
@@ -29,7 +28,6 @@ const memorySchema = new mongoose.Schema({
     }],
     validate: {
       validator: function(participants) {
-        // Include creator in total count (creator + participants)
         const totalParticipants = participants.length + 1;
         return totalParticipants <= 15;
       },
@@ -37,7 +35,6 @@ const memorySchema = new mongoose.Schema({
     }
   },
   
-  // ✅ REFERENCE: Use MemoryPhoto schema instead of embedded objects
   photos: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'MemoryPhoto'
@@ -58,25 +55,26 @@ const memorySchema = new mongoose.Schema({
     default: Date.now
   }
 }, {
-  timestamps: true // Automatically manage createdAt and updatedAt
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-// ✅ ADDITIONAL VALIDATION: Pre-save hook for extra safety
-memorySchema.pre('save', function(next) {
-  // Ensure creator is not in participants array (avoid duplicates)
-  if (this.creator && this.participants.includes(this.creator)) {
-    this.participants = this.participants.filter(p => !p.equals(this.creator));
+// ✅ VIRTUAL: Get cover photo from first photo in memory
+memorySchema.virtual('coverPhoto').get(function() {
+  if (this.photos && this.photos.length > 0) {
+    const firstPhoto = this.photos[0];
+    // Handle both populated and unpopulated photos
+    if (typeof firstPhoto === 'object' && firstPhoto.url) {
+      return firstPhoto.url;
+    }
   }
-  
-  // Final validation for total participants
-  const totalParticipants = this.participants.length + 1; // +1 for creator
-  if (totalParticipants > 15) {
-    const error = new Error(`Memory cannot have more than 15 total participants. Current: ${totalParticipants}`);
-    error.name = 'ValidationError';
-    return next(error);
-  }
-  
-  next();
+  return null;
+});
+
+// ✅ VIRTUAL: Get photo count
+memorySchema.virtual('photoCount').get(function() {
+  return this.photos ? this.photos.length : 0;
 });
 
 // ✅ VIRTUAL: Get all participants including creator
@@ -139,18 +137,27 @@ memorySchema.statics.createMemory = async function(memoryData) {
   return memory.save();
 };
 
+// ✅ PRE-SAVE: Additional validation
+memorySchema.pre('save', function(next) {
+  // Ensure creator is not in participants array (avoid duplicates)
+  if (this.creator && this.participants.includes(this.creator)) {
+    this.participants = this.participants.filter(p => !p.equals(this.creator));
+  }
+  
+  // Final validation for total participants
+  const totalParticipants = this.participants.length + 1; // +1 for creator
+  if (totalParticipants > 15) {
+    const error = new Error(`Memory cannot have more than 15 total participants. Current: ${totalParticipants}`);
+    error.name = 'ValidationError';
+    return next(error);
+  }
+  
+  next();
+});
+
 // ✅ INDEXES for better performance
 memorySchema.index({ creator: 1, createdAt: -1 });
 memorySchema.index({ participants: 1 });
 memorySchema.index({ createdAt: -1 });
-
-// ✅ JSON transform to include virtuals
-memorySchema.set('toJSON', { 
-  virtuals: true,
-  transform: function(doc, ret) {
-    delete ret.__v;
-    return ret;
-  }
-});
 
 module.exports = mongoose.model('Memory', memorySchema);

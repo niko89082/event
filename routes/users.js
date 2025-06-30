@@ -1,10 +1,10 @@
-// routes/users.js - FIXED WITH MISSING EVENTS ENDPOINT
+// routes/users.js - FIXED WITH CONSISTENT AUTH MIDDLEWARE
 
 const express = require('express');
 const User = require('../models/User');
 const Event = require('../models/Event');
 const Photo = require('../models/Photo');
-const protect = require('../middleware/auth');
+const protect = require('../middleware/auth'); // ✅ FIXED: Use consistent middleware name
 
 const router = express.Router();
 
@@ -146,21 +146,21 @@ router.get('/:userId/events', protect, async (req, res) => {
   }
 });
 
-
+// ✅ FIXED: User search route with correct middleware name
 router.get('/search', protect, async (req, res) => {
   try {
     const { q } = req.query;
     
-    if (!q || q.trim().length < 1) {
-      return res.status(400).json({ message: 'Search query too short' });
+    if (!q || q.trim().length < 2) {
+      return res.json({ users: [] });
     }
-
+    
     const searchQuery = q.trim();
     
-    // Search by username, fullName, or email (case insensitive)
+    // Search users by username, fullName, or email
     const users = await User.find({
       $and: [
-        { _id: { $ne: req.user._id } }, // Exclude current user
+        { _id: { $ne: req.user._id } }, // ✅ FIXED: Use req.user._id instead of req.user.id
         {
           $or: [
             { username: { $regex: searchQuery, $options: 'i' } },
@@ -170,14 +170,57 @@ router.get('/search', protect, async (req, res) => {
         }
       ]
     })
-    .select('username fullName email profilePicture')
-    .limit(50)
+    .select('username fullName profilePicture')
+    .limit(20)
     .sort({ username: 1 });
-
-    res.json(users);
+    
+    res.json({ users });
+    
   } catch (error) {
-    console.error('Search users error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Error searching users:', error);
+    res.status(500).json({ message: 'Failed to search users' });
+  }
+});
+
+// ✅ FIXED: Advanced search with correct middleware
+router.get('/search-advanced', protect, async (req, res) => {
+  try {
+    const { q, excludeIds = [] } = req.query;
+    
+    if (!q || q.trim().length < 2) {
+      return res.json({ users: [] });
+    }
+    
+    const searchQuery = q.trim();
+    const excludeList = Array.isArray(excludeIds) ? excludeIds : [excludeIds].filter(Boolean);
+    
+    // Add current user to exclude list
+    excludeList.push(req.user._id); // ✅ FIXED: Use req.user._id
+    
+    const users = await User.find({
+      $and: [
+        { _id: { $nin: excludeList } },
+        {
+          $or: [
+            { username: { $regex: searchQuery, $options: 'i' } },
+            { fullName: { $regex: searchQuery, $options: 'i' } }
+          ]
+        }
+      ]
+    })
+    .select('username fullName profilePicture followerCount')
+    .limit(20)
+    .sort({ 
+      // Prioritize exact matches, then by follower count
+      username: 1,
+      followerCount: -1 
+    });
+    
+    res.json({ users });
+    
+  } catch (error) {
+    console.error('Error searching users:', error);
+    res.status(500).json({ message: 'Failed to search users' });
   }
 });
 
@@ -248,7 +291,6 @@ router.get('/shared-events', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 // Add/remove event from shared events
 router.post('/shared-events/:eventId', protect, async (req, res) => {

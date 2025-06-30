@@ -51,156 +51,149 @@ export default function ProfileScreen() {
   const [showMemoriesTab, setShowMemoriesTab] = useState(true); // Control memories tab visibility
 
   // ✅ FIXED: Move renderMemoryCard inside component with proper navigation access
-  const renderMemoryCard = React.useCallback(({ item: memory }) => {
-    // ✅ VALIDATION: Ensure navigation and memory data exist
-    if (!navigation) {
-      console.error('❌ Navigation is not available in renderMemoryCard');
-      return null;
-    }
+const renderMemoryCard = React.useCallback(({ item: memory }) => {
+  if (!navigation) {
+    console.error('❌ Navigation is not available in renderMemoryCard');
+    return null;
+  }
 
-    if (!memory || !memory._id) {
-      console.warn('❌ Invalid memory data:', memory);
-      return null;
-    }
+  if (!memory || !memory._id) {
+    console.warn('❌ Invalid memory data:', memory);
+    return null;
+  }
 
-    // ✅ SAFE: Handle missing data gracefully
-    const coverPhotoUrl = memory.coverPhoto 
-      ? `http://${API_BASE_URL}:3000${memory.coverPhoto}`
-      : 'https://placehold.co/400x200/E1E1E1/8E8E93?text=Memory';
-      
-    const photoCount = memory.photoCount || 0;
-    const participantCount = memory.participantCount || 1;
-    const participants = memory.participants || [];
-
-    // ✅ SAFE: Navigation handler with error handling
-    const handleMemoryPress = () => {
-      try {
-        console.log('🔗 Navigating to memory:', memory._id);
-        
-        if (navigation && typeof navigation.navigate === 'function') {
-          navigation.navigate('MemoryDetailsScreen', { 
-            memoryId: memory._id,
-            memory: memory // Pass memory data as backup
-          });
-        } else {
-          console.error('❌ Navigation.navigate is not available');
-          Alert.alert('Error', 'Unable to navigate to memory details');
-        }
-      } catch (error) {
-        console.error('❌ Error navigating to memory:', error);
-        Alert.alert('Error', 'Failed to open memory');
+  // ✅ FIXED: Get cover photo from the first photo in the memory's photos array
+  const getCoverPhotoUrl = () => {
+    if (memory.photos && memory.photos.length > 0) {
+      const firstPhoto = memory.photos[0];
+      if (firstPhoto.url) {
+        return firstPhoto.url.startsWith('http') 
+          ? firstPhoto.url 
+          : `http://${API_BASE_URL}:3000${firstPhoto.url}`;
       }
-    };
+    }
+    return 'https://placehold.co/400x200/E1E1E1/8E8E93?text=Memory';
+  };
 
-    return (
-      <TouchableOpacity
-        onPress={handleMemoryPress}
-        activeOpacity={0.95}
-      >
-        <View style={styles.memoryCard}>
-          {/* Memory Cover */}
-          <View style={styles.memoryCoverContainer}>
-            <Image
-              source={{ uri: coverPhotoUrl }}
-              style={styles.memoryCover}
-              onError={(error) => {
-                console.warn('❌ Memory cover image failed to load:', error.nativeEvent?.error);
-              }}
-            />
-            
-            {/* Memory Badge */}
-            <View style={styles.memoryBadge}>
-              <Ionicons name="library" size={16} color="#FFFFFF" />
-            </View>
+  const coverPhotoUrl = getCoverPhotoUrl();
+  const photoCount = memory.photos?.length || 0;
+  const participantCount = (memory.participants?.length || 0) + 1; // +1 for creator
+  const participants = memory.participants || [];
 
-            {/* Photo Count */}
-            {photoCount > 0 && (
-              <View style={styles.photoCount}>
-                <Ionicons name="camera" size={12} color="#FFFFFF" />
-                <Text style={styles.photoCountText}>{photoCount}</Text>
-              </View>
-            )}
+  // ✅ SAFE: Navigation handler with error handling
+  const handleMemoryPress = () => {
+    try {
+      console.log('🔗 Navigating to memory:', memory._id);
+      
+      if (navigation && typeof navigation.navigate === 'function') {
+        navigation.navigate('MemoryDetailsScreen', { 
+          memoryId: memory._id,
+          memory: memory // Pass memory data as backup
+        });
+      } else {
+        console.error('❌ Navigation.navigate is not available');
+        Alert.alert('Error', 'Unable to navigate to memory details');
+      }
+    } catch (error) {
+      console.error('❌ Error navigating to memory:', error);
+      Alert.alert('Error', 'Failed to open memory');
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={handleMemoryPress}
+      activeOpacity={0.95}
+    >
+      <View style={styles.memoryCard}>
+        {/* Memory Cover */}
+        <View style={styles.memoryCoverContainer}>
+          <Image
+            source={{ uri: coverPhotoUrl }}
+            style={styles.memoryCover}
+            onError={(error) => {
+              console.warn('❌ Memory cover image failed to load:', error.nativeEvent?.error);
+            }}
+          />
+          
+          {/* Memory Badge */}
+          <View style={styles.memoryBadge}>
+            <Ionicons name="library" size={16} color="#FFFFFF" />
           </View>
 
-          {/* Memory Info */}
-          <View style={styles.memoryInfo}>
-            <Text style={styles.memoryTitle}>{memory.title || 'Untitled Memory'}</Text>
-            
-            {memory.description && (
-              <Text style={styles.memoryDescription} numberOfLines={2}>
-                {memory.description}
-              </Text>
-            )}
-
-            {/* Participants */}
-            <View style={styles.memoryMetadata}>
-              <View style={styles.participantAvatars}>
-                {/* Show creator first if available */}
-                {memory.creator && (
-                  <View style={styles.participantAvatar}>
-                    <Image
-                      source={{
-                        uri: memory.creator.profilePicture
-                          ? `http://${API_BASE_URL}:3000${memory.creator.profilePicture}`
-                          : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
-                            (memory.creator.username?.charAt(0).toUpperCase() || '?')
-                      }}
-                      style={styles.participantAvatarImage}
-                      onError={(error) => {
-                        console.warn('❌ Creator avatar failed to load:', error.nativeEvent?.error);
-                      }}
-                    />
-                  </View>
-                )}
-
-                {/* Show participants */}
-                {participants.slice(0, memory.creator ? 2 : 3).map((participant, index) => (
-                  <View
-                    key={participant._id || `participant-${index}`}
-                    style={[
-                      styles.participantAvatar,
-                      { 
-                        marginLeft: index > 0 || memory.creator ? -8 : 0, 
-                        zIndex: (memory.creator ? 2 : 3) - index 
-                      }
-                    ]}
-                  >
-                    <Image
-                      source={{
-                        uri: participant.profilePicture
-                          ? `http://${API_BASE_URL}:3000${participant.profilePicture}`
-                          : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
-                            (participant.username?.charAt(0).toUpperCase() || '?')
-                      }}
-                      style={styles.participantAvatarImage}
-                      onError={(error) => {
-                        console.warn('❌ Participant avatar failed to load:', error.nativeEvent?.error);
-                      }}
-                    />
-                  </View>
-                ))}
-                
-                {/* Show remaining count if more than 3 total */}
-                {participantCount > 3 && (
-                  <View style={[styles.participantAvatar, styles.remainingCount, { marginLeft: -8 }]}>
-                    <Text style={styles.remainingCountText}>+{participantCount - 3}</Text>
-                  </View>
-                )}
-              </View>
-              
-              <Text style={styles.participantCount}>
-                {participantCount} {participantCount === 1 ? 'person' : 'people'}
-              </Text>
-
-              <Text style={styles.memoryDate}>
-                {memory.timeAgo || new Date(memory.createdAt).toLocaleDateString()}
-              </Text>
+          {/* Photo Count */}
+          {photoCount > 0 && (
+            <View style={styles.photoCount}>
+              <Ionicons name="camera" size={12} color="#FFFFFF" />
+              <Text style={styles.photoCountText}>{photoCount}</Text>
             </View>
+          )}
+        </View>
+
+        {/* Memory Info */}
+        <View style={styles.memoryInfo}>
+          <Text style={styles.memoryTitle}>{memory.title || 'Untitled Memory'}</Text>
+          
+          {memory.description && (
+            <Text style={styles.memoryDescription} numberOfLines={2}>
+              {memory.description}
+            </Text>
+          )}
+
+          {/* Participants */}
+          <View style={styles.memoryMetadata}>
+            <View style={styles.participantAvatars}>
+              {/* Show creator first if available */}
+              {memory.creator && (
+                <View style={styles.participantAvatar}>
+                  <Image
+                    source={{
+                      uri: memory.creator.profilePicture
+                        ? `http://${API_BASE_URL}:3000${memory.creator.profilePicture}`
+                        : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
+                          (memory.creator.username?.charAt(0).toUpperCase() || '?')
+                    }}
+                    style={styles.participantAvatarImage}
+                  />
+                </View>
+              )}
+
+              {/* Show first few participants */}
+              {participants.slice(0, 3).map((participant, index) => (
+                <View key={participant._id} style={[styles.participantAvatar, { marginLeft: -4 }]}>
+                  <Image
+                    source={{
+                      uri: participant.profilePicture
+                        ? `http://${API_BASE_URL}:3000${participant.profilePicture}`
+                        : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
+                          (participant.username?.charAt(0).toUpperCase() || '?')
+                    }}
+                    style={styles.participantAvatarImage}
+                  />
+                </View>
+              ))}
+
+              {/* Show remaining count if more than 4 participants total */}
+              {participantCount > 4 && (
+                <View style={[styles.participantAvatar, styles.remainingCount, { marginLeft: -4 }]}>
+                  <Text style={styles.remainingCountText}>+{participantCount - 4}</Text>
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.participantCount}>
+              {participantCount} {participantCount === 1 ? 'person' : 'people'}
+            </Text>
+
+            <Text style={styles.memoryDate}>
+              {new Date(memory.createdAt).toLocaleDateString()}
+            </Text>
           </View>
         </View>
-      </TouchableOpacity>
-    );
-  }, [navigation, API_BASE_URL]); // ✅ ADD: Dependencies for useCallback
+      </View>
+    </TouchableOpacity>
+  );
+}, [navigation, API_BASE_URL]);
 
   // FIXED: Set up navigation header with proper dependencies
   useEffect(() => {

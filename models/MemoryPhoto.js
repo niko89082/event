@@ -1,4 +1,4 @@
-// models/MemoryPhoto.js - Separate schema for memory photos
+// models/MemoryPhoto.js - Enhanced with likes and comments
 const mongoose = require('mongoose');
 
 const memoryPhotoSchema = new mongoose.Schema({
@@ -61,6 +61,42 @@ const memoryPhotoSchema = new mongoose.Schema({
     height: Number
   },
   
+  // ✅ NEW: Like functionality
+  likes: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
+  // ✅ NEW: Comment functionality
+  comments: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    text: {
+      type: String,
+      required: true,
+      maxLength: [500, 'Comment cannot exceed 500 characters'],
+      trim: true
+    },
+    tags: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }],
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
   isDeleted: {
     type: Boolean,
     default: false
@@ -69,51 +105,63 @@ const memoryPhotoSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// ✅ INDEX: For better query performance
-memoryPhotoSchema.index({ memory: 1, uploadedAt: -1 });
-memoryPhotoSchema.index({ uploadedBy: 1 });
-memoryPhotoSchema.index({ isDeleted: 1 });
+// ✅ VIRTUAL: Like count
+memoryPhotoSchema.virtual('likeCount').get(function() {
+  return this.likes ? this.likes.length : 0;
+});
+
+// ✅ VIRTUAL: Comment count
+memoryPhotoSchema.virtual('commentCount').get(function() {
+  return this.comments ? this.comments.length : 0;
+});
 
 // ✅ VIRTUAL: Get full URL with domain
 memoryPhotoSchema.virtual('fullUrl').get(function() {
   return process.env.BASE_URL ? `${process.env.BASE_URL}${this.url}` : this.url;
 });
 
-// ✅ PRE-DELETE: Clean up file when photo is deleted
-memoryPhotoSchema.pre('deleteOne', { document: true, query: false }, function(next) {
-  const fs = require('fs');
-  const path = require('path');
+// ✅ INSTANCE METHOD: Toggle like
+memoryPhotoSchema.methods.toggleLike = function(userId) {
+  const existingLike = this.likes.find(like => like.user.equals(userId));
   
-  // Delete physical file
-  const filePath = path.join(__dirname, '..', this.url);
-  if (fs.existsSync(filePath)) {
-    try {
-      fs.unlinkSync(filePath);
-      console.log('✅ Deleted photo file:', filePath);
-    } catch (error) {
-      console.error('❌ Error deleting photo file:', error);
-    }
+  if (existingLike) {
+    // Remove like
+    this.likes = this.likes.filter(like => !like.user.equals(userId));
+    return { liked: false, likeCount: this.likes.length };
+  } else {
+    // Add like
+    this.likes.push({ user: userId });
+    return { liked: true, likeCount: this.likes.length };
+  }
+};
+
+// ✅ INSTANCE METHOD: Add comment
+memoryPhotoSchema.methods.addComment = function(userId, text, tags = []) {
+  const comment = {
+    user: userId,
+    text: text.trim(),
+    tags: tags,
+    createdAt: new Date()
+  };
+  
+  this.comments.push(comment);
+  return comment;
+};
+
+// ✅ INSTANCE METHOD: Remove comment
+memoryPhotoSchema.methods.removeComment = function(commentId, userId) {
+  const comment = this.comments.id(commentId);
+  if (!comment) {
+    throw new Error('Comment not found');
   }
   
-  next();
-});
-
-// ✅ STATIC METHOD: Create photo with file info
-memoryPhotoSchema.statics.createPhoto = async function(photoData) {
-  const { memoryId, file, uploadedBy, caption } = photoData;
+  // Only comment author can delete their comment
+  if (!comment.user.equals(userId)) {
+    throw new Error('Not authorized to delete this comment');
+  }
   
-  const photo = new this({
-    memory: memoryId,
-    url: `/uploads/memory-photos/${file.filename}`,
-    filename: file.filename,
-    originalName: file.originalname,
-    uploadedBy,
-    caption: caption || '',
-    fileSize: file.size,
-    mimeType: file.mimetype
-  });
-  
-  return photo.save();
+  comment.remove();
+  return this.comments.length;
 };
 
 // ✅ INSTANCE METHOD: Soft delete
@@ -122,12 +170,18 @@ memoryPhotoSchema.methods.softDelete = function() {
   return this.save();
 };
 
-// ✅ JSON transform
+// ✅ INDEX: For better query performance
+memoryPhotoSchema.index({ memory: 1, uploadedAt: -1 });
+memoryPhotoSchema.index({ uploadedBy: 1 });
+memoryPhotoSchema.index({ isDeleted: 1 });
+memoryPhotoSchema.index({ 'likes.user': 1 });
+memoryPhotoSchema.index({ 'comments.user': 1 });
+
+// ✅ JSON transform to include virtuals
 memoryPhotoSchema.set('toJSON', { 
   virtuals: true,
   transform: function(doc, ret) {
     delete ret.__v;
-    delete ret.isDeleted;
     return ret;
   }
 });
