@@ -1,4 +1,4 @@
-// SocialApp/screens/MemoryDetailsScreen.js - Enhanced with likes and comments
+// SocialApp/screens/MemoryDetailsScreen.js - Simplified without config/api
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -16,11 +16,13 @@ import {
   ActivityIndicator,
   Dimensions,
   Share,
-  Animated
+  Animated,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL } from '../config/api';
+import { API_BASE_URL } from '@env';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -38,17 +40,23 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [photoComments, setPhotoComments] = useState([]);
-  const [photoLikes, setPhotoLikes] = useState([]);
   const [isLiked, setIsLiked] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [loadingComments, setLoadingComments] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
   const [showComments, setShowComments] = useState(false);
-  const [editingCommentId, setEditingCommentId] = useState(null);
-  const [editCommentText, setEditCommentText] = useState('');
 
   // Animation
   const likeAnimation = useRef(new Animated.Value(1)).current;
+
+  // Helper functions
+  const buildApiUrl = (endpoint) => `http://${API_BASE_URL || 'localhost'}:3000${endpoint}`;
+  
+  const buildImageUrl = (imagePath) => {
+    if (!imagePath) return null;
+    if (imagePath.startsWith('http')) return imagePath;
+    return `http://${API_BASE_URL || 'localhost'}:3000${imagePath}`;
+  };
 
   // ✅ Fetch memory details
   const fetchMemoryDetails = useCallback(async (showLoader = true) => {
@@ -62,7 +70,7 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
         return;
       }
 
-      const response = await fetch(`http://${API_BASE_URL}:3000/api/memories/${memoryId}`, {
+      const response = await fetch(buildApiUrl(`/api/memories/${memoryId}`), {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -74,73 +82,46 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
       }
 
       const data = await response.json();
-      setMemory(data.memory);
-      setPhotos(data.memory.photos || []);
+      
+      if (data.success) {
+        setMemory(data.memory);
+        setPhotos(data.memory.photos || []);
+      } else {
+        throw new Error(data.message || 'Failed to fetch memory details');
+      }
 
     } catch (error) {
       console.error('❌ Error fetching memory details:', error);
       setError(error.message);
+      
+      if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+        Alert.alert(
+          'Session Expired',
+          'Please log in again to continue.',
+          [{ text: 'OK', onPress: () => navigation.replace('LoginScreen') }]
+        );
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [memoryId, navigation]);
 
-  // ✅ Fetch photo details with likes and comments
-  const fetchPhotoDetails = async (photoId) => {
-    try {
-      setLoadingComments(true);
-      const token = await AsyncStorage.getItem('token');
-
-      const response = await fetch(`http://${API_BASE_URL}:3000/api/memory-photos/${photoId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch photo details');
-      }
-
-      const data = await response.json();
-      const photo = data.photo;
-
-      setPhotoComments(photo.comments || []);
-      setPhotoLikes(photo.likes || []);
-      setIsLiked(photo.isLikedByUser || false);
-
-    } catch (error) {
-      console.error('❌ Error fetching photo details:', error);
-      Alert.alert('Error', 'Failed to load photo details');
-    } finally {
-      setLoadingComments(false);
-    }
-  };
-
   // ✅ Toggle like on photo
   const toggleLike = async (photoId) => {
     try {
       // Optimistic update
-      const newIsLiked = !isLiked;
-      setIsLiked(newIsLiked);
-
+      const wasLiked = isLiked;
+      setIsLiked(!wasLiked);
+      
       // Animate like button
       Animated.sequence([
-        Animated.timing(likeAnimation, {
-          toValue: 1.3,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(likeAnimation, {
-          toValue: 1,
-          duration: 100,
-          useNativeDriver: true,
-        }),
+        Animated.timing(likeAnimation, { toValue: 1.2, duration: 100, useNativeDriver: true }),
+        Animated.timing(likeAnimation, { toValue: 1, duration: 100, useNativeDriver: true }),
       ]).start();
 
       const token = await AsyncStorage.getItem('token');
-      const response = await fetch(`http://${API_BASE_URL}:3000/api/memory-photos/${photoId}/like`, {
+      const response = await fetch(buildApiUrl(`/api/memories/photos/${photoId}/like`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -149,37 +130,39 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
       });
 
       if (!response.ok) {
+        // Revert optimistic update
+        setIsLiked(wasLiked);
         throw new Error('Failed to toggle like');
       }
 
       const data = await response.json();
-      setIsLiked(data.liked);
-
-      // Update photo in photos array
-      setPhotos(prevPhotos => 
-        prevPhotos.map(photo => 
+      
+      if (data.success) {
+        setIsLiked(data.isLiked);
+        
+        // Update the photo in the photos array
+        setPhotos(prev => prev.map(photo => 
           photo._id === photoId 
-            ? { ...photo, likeCount: data.likeCount, isLikedByUser: data.liked }
+            ? { ...photo, likeCount: data.likeCount, isLikedByUser: data.isLiked }
             : photo
-        )
-      );
+        ));
+      }
 
     } catch (error) {
       console.error('❌ Error toggling like:', error);
-      setIsLiked(!isLiked); // Revert optimistic update
       Alert.alert('Error', 'Failed to update like');
     }
   };
 
   // ✅ Add comment to photo
-  const addComment = async (photoId) => {
-    if (!commentText.trim()) return;
+  const addComment = async () => {
+    if (!commentText.trim() || !selectedPhoto) return;
 
     try {
       setSubmittingComment(true);
       const token = await AsyncStorage.getItem('token');
 
-      const response = await fetch(`http://${API_BASE_URL}:3000/api/memory-photos/${photoId}/comments`, {
+      const response = await fetch(buildApiUrl(`/api/memories/photos/${selectedPhoto._id}/comments`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -193,17 +176,18 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
       }
 
       const data = await response.json();
-      setPhotoComments(prev => [data.comment, ...prev]);
-      setCommentText('');
-
-      // Update photo in photos array
-      setPhotos(prevPhotos => 
-        prevPhotos.map(photo => 
-          photo._id === photoId 
+      
+      if (data.success) {
+        setPhotoComments(prev => [...prev, data.comment]);
+        setCommentText('');
+        
+        // Update photo comment count
+        setPhotos(prev => prev.map(photo => 
+          photo._id === selectedPhoto._id 
             ? { ...photo, commentCount: data.commentCount }
             : photo
-        )
-      );
+        ));
+      }
 
     } catch (error) {
       console.error('❌ Error adding comment:', error);
@@ -214,50 +198,79 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
   };
 
   // ✅ Delete comment
-  const deleteComment = async (photoId, commentId) => {
-    Alert.alert(
-      'Delete Comment',
-      'Are you sure you want to delete this comment?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const token = await AsyncStorage.getItem('token');
-              const response = await fetch(
-                `http://${API_BASE_URL}:3000/api/memory-photos/${photoId}/comments/${commentId}`,
-                {
-                  method: 'DELETE',
-                  headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                  },
-                }
-              );
+  const deleteComment = async (commentId) => {
+    try {
+      const token = await AsyncStorage.getItem('token');
 
-              if (!response.ok) {
-                throw new Error('Failed to delete comment');
-              }
+      const response = await fetch(buildApiUrl(`/api/memories/photos/${selectedPhoto._id}/comments/${commentId}`), {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-              setPhotoComments(prev => prev.filter(comment => comment._id !== commentId));
+      if (!response.ok) {
+        throw new Error('Failed to delete comment');
+      }
 
-            } catch (error) {
-              console.error('❌ Error deleting comment:', error);
-              Alert.alert('Error', 'Failed to delete comment');
-            }
-          }
-        }
-      ]
-    );
+      const data = await response.json();
+      
+      if (data.success) {
+        setPhotoComments(prev => prev.filter(comment => comment._id !== commentId));
+        
+        // Update photo comment count
+        setPhotos(prev => prev.map(photo => 
+          photo._id === selectedPhoto._id 
+            ? { ...photo, commentCount: data.commentCount }
+            : photo
+        ));
+      }
+
+    } catch (error) {
+      console.error('❌ Error deleting comment:', error);
+      Alert.alert('Error', 'Failed to delete comment');
+    }
+  };
+
+  // ✅ Fetch photo comments when photo is selected
+  const fetchPhotoComments = async (photoId) => {
+    try {
+      setLoadingComments(true);
+      const token = await AsyncStorage.getItem('token');
+
+      // Find the photo in our current photos array to get comment data
+      const photo = photos.find(p => p._id === photoId);
+      if (photo) {
+        setPhotoComments(photo.comments || []);
+        setIsLiked(photo.isLikedByUser || false);
+      }
+
+    } catch (error) {
+      console.error('❌ Error fetching photo comments:', error);
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  // ✅ Share memory
+  const shareMemory = async () => {
+    try {
+      await Share.share({
+        message: `Check out this memory: "${memory.title}"\n\nCreated by ${memory.creator.fullName || memory.creator.username}`,
+        title: memory.title,
+      });
+    } catch (error) {
+      console.error('❌ Error sharing memory:', error);
+    }
   };
 
   // ✅ Open photo modal
   const openPhotoModal = (photo) => {
     setSelectedPhoto(photo);
     setShowPhotoModal(true);
-    fetchPhotoDetails(photo._id);
+    setShowComments(false);
+    fetchPhotoComments(photo._id);
   };
 
   // ✅ Close photo modal
@@ -265,25 +278,9 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
     setShowPhotoModal(false);
     setSelectedPhoto(null);
     setPhotoComments([]);
-    setPhotoLikes([]);
     setIsLiked(false);
-    setCommentText('');
     setShowComments(false);
-    setEditingCommentId(null);
-    setEditCommentText('');
-  };
-
-  // ✅ Share photo
-  const sharePhoto = async (photo) => {
-    try {
-      const shareUrl = `http://${API_BASE_URL}:3000/memory-photos/${photo._id}`;
-      await Share.share({
-        message: `Check out this memory photo: ${photo.caption || 'Shared from our memories'}`,
-        url: shareUrl,
-      });
-    } catch (error) {
-      console.error('❌ Error sharing photo:', error);
-    }
+    setCommentText('');
   };
 
   // ✅ Initial load
@@ -291,86 +288,18 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
     fetchMemoryDetails();
   }, [fetchMemoryDetails]);
 
-  // ✅ Pull to refresh
+  // ✅ Refresh handler
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchMemoryDetails(false);
   }, [fetchMemoryDetails]);
-
-  // ✅ Render photo grid item
-  const renderPhotoItem = ({ item: photo, index }) => {
-    const imageUrl = photo.url 
-      ? `http://${API_BASE_URL}:3000${photo.url}`
-      : 'https://placehold.co/300x300/E1E1E1/8E8E93?text=Photo';
-
-    return (
-      <TouchableOpacity
-        style={styles.photoGridItem}
-        onPress={() => openPhotoModal(photo)}
-        activeOpacity={0.9}
-      >
-        <Image
-          source={{ uri: imageUrl }}
-          style={styles.photoThumbnail}
-          resizeMode="cover"
-        />
-        
-        {/* Photo stats overlay */}
-        <View style={styles.photoOverlay}>
-          <View style={styles.photoStats}>
-            <View style={styles.statItem}>
-              <Ionicons name="heart" size={14} color="#FFFFFF" />
-              <Text style={styles.statText}>{photo.likeCount || 0}</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="chatbubble" size={14} color="#FFFFFF" />
-              <Text style={styles.statText}>{photo.commentCount || 0}</Text>
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  // ✅ Render comment item
-  const renderCommentItem = ({ item: comment }) => (
-    <View style={styles.commentItem}>
-      <Image
-        source={{
-          uri: comment.user.profilePicture
-            ? `http://${API_BASE_URL}:3000${comment.user.profilePicture}`
-            : 'https://placehold.co/32x32/C7C7CC/FFFFFF?text=' + 
-              comment.user.username.charAt(0).toUpperCase()
-        }}
-        style={styles.commentAvatar}
-      />
-      <View style={styles.commentContent}>
-        <View style={styles.commentHeader}>
-          <Text style={styles.commentUsername}>{comment.user.username}</Text>
-          <Text style={styles.commentTime}>
-            {new Date(comment.createdAt).toLocaleDateString()}
-          </Text>
-        </View>
-        <Text style={styles.commentText}>{comment.text}</Text>
-        {comment.isEdited && (
-          <Text style={styles.editedLabel}>Edited</Text>
-        )}
-      </View>
-      <TouchableOpacity
-        style={styles.commentOptions}
-        onPress={() => deleteComment(selectedPhoto._id, comment._id)}
-      >
-        <Ionicons name="ellipsis-horizontal" size={16} color="#8E8E93" />
-      </TouchableOpacity>
-    </View>
-  );
 
   // ✅ Loading state
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <View style={styles.loadingContainer}>
+        <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Loading memory...</Text>
         </View>
@@ -379,232 +308,290 @@ const MemoryDetailsScreen = ({ route, navigation }) => {
   }
 
   // ✅ Error state
-  if (error || !memory) {
+  if (error) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={64} color="#FF3B30" />
-          <Text style={styles.errorTitle}>Unable to Load Memory</Text>
-          <Text style={styles.errorMessage}>
-            {error || 'Memory not found or access denied'}
-          </Text>
+        <View style={styles.centerContainer}>
+          <Ionicons name="alert-circle" size={64} color="#FF3B30" />
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorMessage}>{error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={() => fetchMemoryDetails()}>
-            <Text style={styles.retryButtonText}>
-              {error ? 'Try Again' : 'Go Back'}
-            </Text>
+            <Text style={styles.retryButtonText}>Try Again</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ✅ SUCCESS STATE
+  // ✅ Render photo grid item
+  const renderPhotoItem = ({ item, index }) => {
+    const numColumns = 3;
+    const photoSize = (screenWidth - 48) / numColumns; // 48 = padding + gaps
+
+    return (
+      <TouchableOpacity
+        style={[styles.photoGridItem, { width: photoSize, height: photoSize }]}
+        onPress={() => openPhotoModal(item)}
+      >
+        <Image
+          source={{ uri: buildImageUrl(item.url) }}
+          style={styles.photoThumbnail}
+          resizeMode="cover"
+        />
+        <View style={styles.photoOverlay}>
+          <View style={styles.photoStats}>
+            <View style={styles.statItem}>
+              <Ionicons name="heart" size={12} color="#FFFFFF" />
+              <Text style={styles.statText}>{item.likeCount || 0}</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Ionicons name="chatbubble" size={12} color="#FFFFFF" />
+              <Text style={styles.statText}>{item.commentCount || 0}</Text>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // ✅ Render comment item
+  const renderCommentItem = ({ item }) => (
+    <View style={styles.commentItem}>
+      <Image
+        source={{ 
+          uri: buildImageUrl(item.user.profilePicture) || 'https://via.placeholder.com/32'
+        }}
+        style={styles.commentAvatar}
+      />
+      <View style={styles.commentContent}>
+        <View style={styles.commentHeader}>
+          <Text style={styles.commentUsername}>
+            {item.user.fullName || item.user.username}
+          </Text>
+          <Text style={styles.commentTime}>
+            {new Date(item.createdAt).toLocaleDateString()}
+          </Text>
+        </View>
+        <Text style={styles.commentText}>{item.text}</Text>
+      </View>
+      <TouchableOpacity
+        style={styles.commentOptions}
+        onPress={() => {
+          Alert.alert(
+            'Comment Options',
+            'What would you like to do?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Delete', 
+                style: 'destructive',
+                onPress: () => deleteComment(item._id)
+              },
+            ]
+          );
+        }}
+      >
+        <Ionicons name="ellipsis-horizontal" size={16} color="#8E8E93" />
+      </TouchableOpacity>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#000000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{memory.title}</Text>
-        <TouchableOpacity style={styles.shareButton}>
-          <Ionicons name="share-outline" size={24} color="#007AFF" />
+        <Text style={styles.headerTitle}>Memory</Text>
+        <TouchableOpacity onPress={shareMemory}>
+          <Ionicons name="share-outline" size={24} color="#000000" />
         </TouchableOpacity>
       </View>
 
       <ScrollView
         style={styles.scrollContainer}
-        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        showsVerticalScrollIndicator={false}
       >
         {/* Memory Header */}
         <View style={styles.memoryHeader}>
           <Text style={styles.memoryTitle}>{memory.title}</Text>
-          {memory.description && (
+          {memory.description ? (
             <Text style={styles.memoryDescription}>{memory.description}</Text>
-          )}
+          ) : null}
+          
           <View style={styles.memoryMeta}>
             <View style={styles.metaItem}>
-              <Ionicons name="calendar-outline" size={16} color="#8E8E93" />
+              <Ionicons name="person" size={16} color="#8E8E93" />
+              <Text style={styles.metaText}>
+                {memory.creator.fullName || memory.creator.username}
+              </Text>
+            </View>
+            
+            <View style={styles.metaItem}>
+              <Ionicons name="calendar" size={16} color="#8E8E93" />
               <Text style={styles.metaText}>
                 {new Date(memory.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            <View style={styles.metaItem}>
-              <Ionicons name="people-outline" size={16} color="#8E8E93" />
-              <Text style={styles.metaText}>
-                {(memory.participants?.length || 0) + 1} participants
-              </Text>
-            </View>
-            <View style={styles.metaItem}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8E8E93" />
-              <Text style={styles.metaText}>Private</Text>
-            </View>
+            
+            {memory.participants && memory.participants.length > 0 && (
+              <View style={styles.metaItem}>
+                <Ionicons name="people" size={16} color="#8E8E93" />
+                <Text style={styles.metaText}>
+                  {memory.participants.length + 1} participants
+                </Text>
+              </View>
+            )}
+            
+            {memory.location && (
+              <View style={styles.metaItem}>
+                <Ionicons name="location" size={16} color="#8E8E93" />
+                <Text style={styles.metaText}>{memory.location}</Text>
+              </View>
+            )}
           </View>
         </View>
 
         {/* Photos Section */}
-        {photos && photos.length > 0 ? (
-          <View style={styles.photosSection}>
-            <Text style={styles.sectionTitle}>Photos ({photos.length})</Text>
+        <View style={styles.photosSection}>
+          <Text style={styles.sectionTitle}>
+            Photos ({photos.length})
+          </Text>
+          
+          {photos.length > 0 ? (
             <FlatList
               data={photos}
               renderItem={renderPhotoItem}
               keyExtractor={(item) => item._id}
               numColumns={3}
               scrollEnabled={false}
-              contentContainerStyle={styles.photoGrid}
+              style={styles.photoGrid}
+              columnWrapperStyle={styles.photoRow}
             />
-          </View>
-        ) : (
-          <View style={styles.emptyPhotos}>
-            <Ionicons name="camera-outline" size={48} color="#C7C7CC" />
-            <Text style={styles.emptyPhotosText}>No photos yet</Text>
-            <Text style={styles.emptyPhotosSubtext}>
-              Start capturing memories by adding photos
-            </Text>
-          </View>
-        )}
+          ) : (
+            <View style={styles.emptyPhotos}>
+              <Ionicons name="camera-outline" size={48} color="#C7C7CC" />
+              <Text style={styles.emptyPhotosText}>No photos yet</Text>
+            </View>
+          )}
+        </View>
       </ScrollView>
 
-      {/* Photo Detail Modal */}
+      {/* Photo Modal */}
       <Modal
         visible={showPhotoModal}
-        animationType="slide"
-        statusBarTranslucent
+        transparent={true}
+        animationType="fade"
         onRequestClose={closePhotoModal}
       >
-        <SafeAreaView style={styles.modalContainer}>
-          <StatusBar barStyle="light-content" backgroundColor="#000000" />
+        <View style={styles.modalContainer}>
+          <TouchableOpacity
+            style={styles.modalBackground}
+            onPress={closePhotoModal}
+          />
           
-          {/* Modal Header */}
-          <View style={styles.modalHeader}>
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={closePhotoModal}
-            >
-              <Ionicons name="close" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
-            <View style={styles.modalHeaderInfo}>
-              {selectedPhoto?.uploadedBy && (
-                <Text style={styles.modalUsername}>
-                  {selectedPhoto.uploadedBy.username}
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity
-              style={styles.modalShareButton}
-              onPress={() => sharePhoto(selectedPhoto)}
-            >
-              <Ionicons name="share-outline" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Photo */}
           {selectedPhoto && (
-            <View style={styles.photoContainer}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.modalContent}
+            >
+              {/* Photo */}
               <Image
-                source={{
-                  uri: `http://${API_BASE_URL}:3000${selectedPhoto.url}`
-                }}
-                style={styles.fullPhoto}
+                source={{ uri: buildImageUrl(selectedPhoto.url) }}
+                style={styles.modalPhoto}
                 resizeMode="contain"
               />
-            </View>
-          )}
-
-          {/* Photo Actions */}
-          <View style={styles.photoActions}>
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => toggleLike(selectedPhoto._id)}
-              >
-                <Animated.View style={{ transform: [{ scale: likeAnimation }] }}>
-                  <Ionicons
-                    name={isLiked ? "heart" : "heart-outline"}
-                    size={28}
-                    color={isLiked ? "#FF3B30" : "#FFFFFF"}
-                  />
-                </Animated.View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => setShowComments(!showComments)}
-              >
-                <Ionicons name="chatbubble-outline" size={28} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Like count */}
-            {photoLikes.length > 0 && (
-              <Text style={styles.likesCount}>
-                {photoLikes.length} {photoLikes.length === 1 ? 'like' : 'likes'}
-              </Text>
-            )}
-
-            {/* Caption */}
-            {selectedPhoto?.caption && (
-              <Text style={styles.photoCaption}>{selectedPhoto.caption}</Text>
-            )}
-          </View>
-
-          {/* Comments Section */}
-          {showComments && (
-            <View style={styles.commentsSection}>
-              <Text style={styles.commentsTitle}>
-                Comments ({photoComments.length})
-              </Text>
               
-              {loadingComments ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <FlatList
-                  data={photoComments}
-                  renderItem={renderCommentItem}
-                  keyExtractor={(item) => item._id}
-                  style={styles.commentsList}
-                  showsVerticalScrollIndicator={false}
-                />
-              )}
-
-              {/* Add Comment */}
-              <View style={styles.addCommentContainer}>
-                <TextInput
-                  style={styles.commentInput}
-                  placeholder="Add a comment..."
-                  placeholderTextColor="#8E8E93"
-                  value={commentText}
-                  onChangeText={setCommentText}
-                  multiline
-                  maxLength={500}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.sendCommentButton,
-                    { opacity: commentText.trim() ? 1 : 0.5 }
-                  ]}
-                  onPress={() => addComment(selectedPhoto._id)}
-                  disabled={!commentText.trim() || submittingComment}
-                >
-                  {submittingComment ? (
-                    <ActivityIndicator size="small" color="#007AFF" />
-                  ) : (
-                    <Ionicons name="send" size={20} color="#007AFF" />
-                  )}
-                </TouchableOpacity>
+              {/* Photo Controls */}
+              <View style={styles.photoControls}>
+                <View style={styles.photoActions}>
+                  <Animated.View style={{ transform: [{ scale: likeAnimation }] }}>
+                    <TouchableOpacity
+                      style={[styles.actionButton, isLiked && styles.actionButtonLiked]}
+                      onPress={() => toggleLike(selectedPhoto._id)}
+                    >
+                      <Ionicons
+                        name={isLiked ? "heart" : "heart-outline"}
+                        size={24}
+                        color={isLiked ? "#FF3B30" : "#FFFFFF"}
+                      />
+                      <Text style={styles.actionText}>
+                        {selectedPhoto.likeCount || 0}
+                      </Text>
+                    </TouchableOpacity>
+                  </Animated.View>
+                  
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => setShowComments(!showComments)}
+                  >
+                    <Ionicons name="chatbubble-outline" size={24} color="#FFFFFF" />
+                    <Text style={styles.actionText}>
+                      {selectedPhoto.commentCount || 0}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {selectedPhoto.caption && (
+                  <Text style={styles.photoCaption}>{selectedPhoto.caption}</Text>
+                )}
               </View>
-            </View>
+              
+              {/* Comments Section */}
+              {showComments && (
+                <View style={styles.commentsContainer}>
+                  <Text style={styles.commentsTitle}>Comments</Text>
+                  
+                  {loadingComments ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <FlatList
+                      data={photoComments}
+                      renderItem={renderCommentItem}
+                      keyExtractor={(item) => item._id}
+                      style={styles.commentsList}
+                      showsVerticalScrollIndicator={false}
+                    />
+                  )}
+                  
+                  {/* Add Comment */}
+                  <View style={styles.addCommentContainer}>
+                    <TextInput
+                      style={styles.commentInput}
+                      placeholder="Add a comment..."
+                      placeholderTextColor="#8E8E93"
+                      value={commentText}
+                      onChangeText={setCommentText}
+                      multiline
+                      maxLength={500}
+                    />
+                    <TouchableOpacity
+                      style={[
+                        styles.sendCommentButton,
+                        (!commentText.trim() || submittingComment) && styles.sendCommentButtonDisabled
+                      ]}
+                      onPress={addComment}
+                      disabled={!commentText.trim() || submittingComment}
+                    >
+                      {submittingComment ? (
+                        <ActivityIndicator size="small" color="#000000" />
+                      ) : (
+                        <Ionicons name="send" size={20} color="#000000" />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </KeyboardAvoidingView>
           )}
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -619,60 +606,45 @@ const styles = {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E1E1E1',
-  },
-  backButton: {
-    padding: 8,
+    borderBottomColor: '#F2F2F7',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000000',
-    flex: 1,
-    textAlign: 'center',
   },
-  shareButton: {
-    padding: 8,
-  },
-  loadingContainer: {
+  centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
-    marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
+    marginTop: 12,
   },
   errorTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '600',
     color: '#000000',
     marginTop: 16,
-    textAlign: 'center',
+    marginBottom: 8,
   },
   errorMessage: {
     fontSize: 16,
     color: '#8E8E93',
-    marginTop: 8,
     textAlign: 'center',
-    lineHeight: 22,
+    marginBottom: 24,
   },
   retryButton: {
     backgroundColor: '#007AFF',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
-    marginTop: 24,
   },
   retryButtonText: {
     color: '#FFFFFF',
@@ -724,18 +696,20 @@ const styles = {
     marginBottom: 16,
   },
   photoGrid: {
-    gap: 2,
+    marginTop: 8,
+  },
+  photoRow: {
+    justifyContent: 'space-between',
   },
   photoGridItem: {
-    flex: 1,
-    aspectRatio: 1,
-    margin: 1,
+    marginBottom: 2,
     position: 'relative',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   photoThumbnail: {
     width: '100%',
     height: '100%',
-    borderRadius: 8,
   },
   photoOverlay: {
     position: 'absolute',
@@ -743,8 +717,6 @@ const styles = {
     left: 0,
     right: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    borderBottomLeftRadius: 8,
-    borderBottomRightRadius: 8,
     padding: 8,
   },
   photoStats: {
@@ -759,87 +731,70 @@ const styles = {
     color: '#FFFFFF',
     fontSize: 12,
     marginLeft: 4,
-    fontWeight: '500',
   },
   emptyPhotos: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: 40,
   },
   emptyPhotosText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#8E8E93',
-    marginTop: 16,
-  },
-  emptyPhotosSubtext: {
     fontSize: 16,
-    color: '#C7C7CC',
-    marginTop: 8,
-    textAlign: 'center',
+    color: '#8E8E93',
+    marginTop: 12,
   },
+  // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: 'rgba(0,0,0,0.9)',
   },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+  modalBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
-  modalCloseButton: {
-    padding: 8,
-  },
-  modalHeaderInfo: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  modalUsername: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  modalShareButton: {
-    padding: 8,
-  },
-  photoContainer: {
+  modalContent: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  fullPhoto: {
+  modalPhoto: {
     width: screenWidth,
     height: screenHeight * 0.6,
   },
-  photoActions: {
+  photoControls: {
+    padding: 20,
     backgroundColor: 'rgba(0,0,0,0.8)',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
   },
-  actionRow: {
+  photoActions: {
     flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 12,
   },
   actionButton: {
-    marginRight: 20,
-    padding: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    marginRight: 12,
   },
-  likesCount: {
+  actionButtonLiked: {
+    backgroundColor: 'rgba(255,59,48,0.2)',
+  },
+  actionText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '500',
-    marginBottom: 8,
+    marginLeft: 6,
   },
   photoCaption: {
     color: '#FFFFFF',
     fontSize: 16,
     lineHeight: 22,
   },
-  commentsSection: {
+  // Comments styles
+  commentsContainer: {
     backgroundColor: 'rgba(0,0,0,0.9)',
     maxHeight: screenHeight * 0.4,
     paddingHorizontal: 16,
@@ -887,12 +842,6 @@ const styles = {
     fontSize: 14,
     lineHeight: 20,
   },
-  editedLabel: {
-    color: '#8E8E93',
-    fontSize: 12,
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
   commentOptions: {
     padding: 8,
   },
@@ -918,6 +867,9 @@ const styles = {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 10,
+  },
+  sendCommentButtonDisabled: {
+    backgroundColor: '#3C3C43',
   },
 };
 

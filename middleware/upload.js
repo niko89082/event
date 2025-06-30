@@ -100,22 +100,79 @@ const profileUpload = multer({
   fileFilter: imageFileFilter
 });
 
-// Export different upload configurations
+// Create middleware wrapper to handle the req.headers issue
+const createUploadMiddleware = (upload) => {
+  return (req, res, next) => {
+    // Ensure req.headers exists to prevent the transfer-encoding error
+    if (!req.headers) {
+      req.headers = {};
+    }
+    
+    // Call the multer middleware
+    upload(req, res, (error) => {
+      if (error instanceof multer.MulterError) {
+        console.error('❌ Multer error:', error);
+        
+        switch (error.code) {
+          case 'LIMIT_FILE_SIZE':
+            return res.status(400).json({ 
+              message: 'File too large. Maximum size is 10MB.',
+              code: 'FILE_TOO_LARGE'
+            });
+          case 'LIMIT_FILE_COUNT':
+            return res.status(400).json({ 
+              message: 'Too many files. Maximum is 5 files per upload.',
+              code: 'TOO_MANY_FILES'
+            });
+          case 'LIMIT_UNEXPECTED_FILE':
+            return res.status(400).json({ 
+              message: 'Unexpected file field.',
+              code: 'UNEXPECTED_FILE'
+            });
+          default:
+            return res.status(400).json({ 
+              message: `Upload error: ${error.message}`,
+              code: error.code
+            });
+        }
+      }
+      
+      if (error && error.message === 'Only image files (JPEG, PNG, GIF, WebP) are allowed!') {
+        return res.status(400).json({ 
+          message: 'Only image files (JPEG, PNG, GIF, WebP) are allowed!',
+          code: 'INVALID_FILE_TYPE'
+        });
+      }
+      
+      if (error) {
+        console.error('❌ Upload error:', error);
+        return res.status(500).json({ 
+          message: 'Upload failed',
+          details: error.message 
+        });
+      }
+      
+      next();
+    });
+  };
+};
+
+// Export different upload configurations with proper error handling
 module.exports = {
   // For memory photos (single file)
-  single: memoryPhotoUpload.single('photo'),
+  single: createUploadMiddleware(memoryPhotoUpload.single('photo')),
   
   // For memory photos (multiple files)
-  array: memoryPhotoUpload.array('photos', 5),
+  array: createUploadMiddleware(memoryPhotoUpload.array('photos', 5)),
   
   // For regular event photos
-  eventPhotos: photoUpload.array('photos', 10),
+  eventPhotos: createUploadMiddleware(photoUpload.array('photos', 10)),
   
   // For profile pictures
-  profile: profileUpload.single('profilePicture'),
+  profile: createUploadMiddleware(profileUpload.single('profilePicture')),
   
   // Generic single photo upload (uses memory photo storage)
-  photo: memoryPhotoUpload.single('photo'),
+  photo: createUploadMiddleware(memoryPhotoUpload.single('photo')),
   
   // Raw multer instances for custom use
   memoryPhotoUpload,

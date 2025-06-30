@@ -11,9 +11,25 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const fs = require('fs');
-const multer = require('multer'); // ✅ ADD: Required for memory photo uploads
+const multer = require('multer'); // Required for memory photo uploads
 
-// Import routes
+// Load environment first
+dotenv.config();
+
+// ✅ ENSURE ALL uploads directories exist BEFORE importing routes
+const uploadsDir = path.join(__dirname, 'uploads');
+const photosDir = path.join(__dirname, 'uploads', 'photos');
+const eventCoversDir = path.join(__dirname, 'uploads', 'event-covers');
+const memoryPhotosDir = path.join(__dirname, 'uploads', 'memory-photos');
+
+[uploadsDir, photosDir, eventCoversDir, memoryPhotosDir].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`✅ Created upload directory: ${dir}`);
+  }
+});
+
+// Import routes AFTER ensuring directories exist
 const authRoutes = require('./routes/auth');
 const notificationRoutes = require('./routes/notifications');
 const eventRoutes = require('./routes/events');
@@ -25,34 +41,17 @@ const feedRoutes = require('./routes/feed');
 const profileRoutes = require('./routes/profile');
 const followRoutes = require('./routes/follow');
 const usersRoutes = require('./routes/users');
-const memoryRoutes = require('./routes/memories');
+const memoryRoutes = require('./routes/memories'); // ✅ This should work now
 const qrRoutes = require('./routes/qr');
 
 // Import middleware and models
 const protect = require('./middleware/auth');
 const Notification = require('./models/Notification');
 
-// Import the new EventPrivacyService
+// Import the EventPrivacyService
 const EventPrivacyService = require('./services/eventPrivacyService');
 
-// Load environment
-dotenv.config();
-
-// ✅ UPDATED: Ensure ALL uploads directories exist (including memory photos)
-const uploadsDir = path.join(__dirname, 'uploads');
-const photosDir = path.join(__dirname, 'uploads', 'photos');
-const eventCoversDir = path.join(__dirname, 'uploads', 'event-covers');
-const memoryPhotosDir = path.join(__dirname, 'uploads', 'memory-photos'); // ✅ ADD: Memory photos directory
-const memoryPhotoRoutes = require('./routes/memory-photos'); // ✅ ADD: Memory photo routes
-
-[uploadsDir, photosDir, eventCoversDir, memoryPhotosDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    console.log(`✅ Created upload directory: ${dir}`);
-  }
-});
-
-// Example CRON job: delete old notifications every night at midnight
+// CRON job: delete old notifications every night at midnight
 cron.schedule('0 0 * * *', async () => {
   try {
     const cutoffDate = new Date();
@@ -73,13 +72,10 @@ const io = socketIo(server, {
   }
 });
 
-// ********************************
-// 1) Maintain user -> socket mapping in memory
+// Maintain user -> socket mapping in memory
 const connectedUsers = {}; 
 
-// ********************************
-// 2) Body parsing, static paths
-// ✅ UPDATED: Increase limits for photo uploads
+// Body parsing, static paths
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -95,49 +91,48 @@ app.use((req, res, next) => {
   }
 });
 
-// ✅ UPDATED: Static file serving with proper headers for images
+// Static file serving with proper headers for images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   setHeaders: (res, path) => {
-    if (path.match(/\.(jpg|jpeg|png|gif)$/i)) {
+    if (path.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
       res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache images for 1 day
       res.setHeader('Content-Type', 'image/*');
     }
   }
 }));
 
-// ✅ ADD: Global multer error handling (must be early in middleware stack)
+// Global multer error handling (must be early in middleware stack)
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     console.error('❌ Multer error:', error);
     
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ 
-        message: 'File too large. Maximum size is 10MB.',
-        code: 'FILE_TOO_LARGE'
-      });
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        return res.status(400).json({ 
+          message: 'File too large. Maximum size is 10MB.',
+          code: 'FILE_TOO_LARGE'
+        });
+      case 'LIMIT_FILE_COUNT':
+        return res.status(400).json({ 
+          message: 'Too many files. Maximum is 10 files per upload.',
+          code: 'TOO_MANY_FILES'
+        });
+      case 'LIMIT_UNEXPECTED_FILE':
+        return res.status(400).json({ 
+          message: 'Unexpected file field.',
+          code: 'UNEXPECTED_FILE'
+        });
+      default:
+        return res.status(400).json({ 
+          message: `Upload error: ${error.message}`,
+          code: error.code
+        });
     }
-    if (error.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({ 
-        message: 'Too many files. Maximum is 10 files per upload.',
-        code: 'TOO_MANY_FILES'
-      });
-    }
-    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-      return res.status(400).json({ 
-        message: 'Unexpected file field.',
-        code: 'UNEXPECTED_FILE'
-      });
-    }
-    
-    return res.status(400).json({ 
-      message: `Upload error: ${error.message}`,
-      code: error.code
-    });
   }
   
-  if (error.message === 'Only image files are allowed!') {
+  if (error.message && error.message.includes('Only image files')) {
     return res.status(400).json({ 
-      message: 'Only image files (JPEG, PNG, GIF) are allowed!',
+      message: 'Only image files (JPEG, PNG, GIF, WebP) are allowed!',
       code: 'INVALID_FILE_TYPE'
     });
   }
@@ -145,12 +140,8 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
-// ********************************
-// 3) Connect to Mongo with enhanced error handling
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+// Connect to MongoDB with proper configuration
+mongoose.connect(process.env.MONGO_URI)
 .then(() => {
   console.log('✅ MongoDB connected successfully');
 })
@@ -159,54 +150,114 @@ mongoose.connect(process.env.MONGO_URI, {
   process.exit(1);
 });
 
-// Enhanced index creation for privacy system
+// Enhanced index creation for privacy system (with conflict handling)
 async function ensureIndexes() {
   try {
-    const User = mongoose.model('User');
-    const Event = mongoose.model('Event');
-
-    await Promise.all([
-      // Full-text search for users
-      User.collection.createIndex(
-        { username: 'text', displayName: 'text', bio: 'text' },
-        { name: 'UserFullText', weights: { username: 10, displayName: 5, bio: 2 } }
-      ),
-
-      // Full-text search for events with privacy tags
-      Event.collection.createIndex(
-        { title: 'text', category: 'text', description: 'text', tags: 'text' },
-        { name: 'EventFullText', weights: { title: 8, category: 5, description: 1, tags: 3 } }
-      ),
-
-      // Privacy and discovery indexes
-      Event.collection.createIndex({ privacyLevel: 1, time: 1 }),
-      Event.collection.createIndex({ 'permissions.appearInSearch': 1, time: 1 }),
-      Event.collection.createIndex({ 'permissions.appearInFeed': 1, time: 1 }),
-      Event.collection.createIndex({ host: 1, privacyLevel: 1 }),
-      Event.collection.createIndex({ attendees: 1, time: 1 }),
-      Event.collection.createIndex({ invitedUsers: 1 }),
-      
-      // Category and tag discovery
-      Event.collection.createIndex({ category: 1, time: 1 }),
-      Event.collection.createIndex({ tags: 1, time: 1 }),
-      Event.collection.createIndex({ interests: 1, time: 1 }),
-      
-      // Weather and location indexes
-      Event.collection.createIndex({ weatherDependent: 1, time: 1 }),
-      Event.collection.createIndex(
-        { geo: '2dsphere' },
-        {
-          name: 'GeoIndex',
-          partialFilterExpression: { 'geo.coordinates.0': { $exists: true } }
+    console.log('🔍 Checking existing indexes...');
+    
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    const collectionNames = collections.map(c => c.name);
+    
+    // Helper function to safely create indexes
+    async function safeCreateIndex(collection, indexSpec, options = {}) {
+      try {
+        await collection.createIndex(indexSpec, options);
+        console.log(`✅ Created index: ${options.name || JSON.stringify(indexSpec)}`);
+      } catch (error) {
+        if (error.code === 85) { // IndexOptionsConflict
+          console.log(`⚠️  Index already exists: ${options.name || JSON.stringify(indexSpec)}`);
+          
+          // Optionally drop and recreate if needed
+          if (options.forceRecreate) {
+            try {
+              await collection.dropIndex(options.name);
+              await collection.createIndex(indexSpec, options);
+              console.log(`✅ Recreated index: ${options.name}`);
+            } catch (recreateError) {
+              console.log(`❌ Failed to recreate index: ${options.name}`, recreateError.message);
+            }
+          }
+        } else {
+          console.log(`❌ Error creating index: ${options.name || JSON.stringify(indexSpec)}`, error.message);
         }
-      ),
+      }
+    }
+    
+    // Only create indexes if collections exist
+    if (collectionNames.includes('users')) {
+      const User = mongoose.model('User');
+      await safeCreateIndex(
+        User.collection,
+        { username: 'text', displayName: 'text', bio: 'text' },
+        { 
+          name: 'UserFullText', 
+          weights: { username: 10, displayName: 5, bio: 2 }
+        }
+      );
+    }
 
-      // Time-based queries
-      Event.collection.createIndex({ time: 1 }),
-      Event.collection.createIndex({ createdAt: -1 }),
-    ]);
+    if (collectionNames.includes('events')) {
+      const Event = mongoose.model('Event');
+      
+      // Create text index with proper conflict handling
+      await safeCreateIndex(
+        Event.collection,
+        { title: 'text', category: 'text', description: 'text', tags: 'text' },
+        { 
+          name: 'EventFullText', 
+          weights: { title: 8, category: 5, description: 1, tags: 3 }
+        }
+      );
+      
+      // Create other indexes
+      const eventIndexes = [
+        { spec: { privacyLevel: 1, time: 1 }, options: { name: 'privacy_time' } },
+        { spec: { host: 1, privacyLevel: 1 }, options: { name: 'host_privacy' } },
+        { spec: { attendees: 1, time: 1 }, options: { name: 'attendees_time' } },
+        { spec: { time: 1 }, options: { name: 'time_index' } },
+        { spec: { createdAt: -1 }, options: { name: 'created_desc' } },
+      ];
+      
+      for (const { spec, options } of eventIndexes) {
+        await safeCreateIndex(Event.collection, spec, options);
+      }
+    }
 
-    console.log('✅ Database indexes ensured for privacy system');
+    // ✅ Memory indexes
+    if (collectionNames.includes('memories')) {
+      const Memory = mongoose.model('Memory');
+      
+      const memoryIndexes = [
+        { spec: { creator: 1, createdAt: -1 }, options: { name: 'creator_created' } },
+        { spec: { participants: 1, createdAt: -1 }, options: { name: 'participants_created' } },
+        { spec: { isDeleted: 1 }, options: { name: 'deleted_flag' } },
+        { spec: { isPrivate: 1 }, options: { name: 'private_flag' } },
+        { spec: { creator: 1, isDeleted: 1 }, options: { name: 'creator_deleted' } },
+        { spec: { participants: 1, isDeleted: 1 }, options: { name: 'participants_deleted' } },
+      ];
+      
+      for (const { spec, options } of memoryIndexes) {
+        await safeCreateIndex(Memory.collection, spec, options);
+      }
+    }
+
+    if (collectionNames.includes('memoryphotos')) {
+      const MemoryPhoto = mongoose.model('MemoryPhoto');
+      
+      const photoIndexes = [
+        { spec: { memory: 1, uploadedAt: -1 }, options: { name: 'memory_uploaded' } },
+        { spec: { uploadedBy: 1, uploadedAt: -1 }, options: { name: 'uploader_uploaded' } },
+        { spec: { isDeleted: 1 }, options: { name: 'photo_deleted' } },
+        { spec: { likes: 1 }, options: { name: 'photo_likes' } },
+        { spec: { memory: 1, isDeleted: 1, uploadedAt: -1 }, options: { name: 'memory_deleted_uploaded' } },
+      ];
+      
+      for (const { spec, options } of photoIndexes) {
+        await safeCreateIndex(MemoryPhoto.collection, spec, options);
+      }
+    }
+
+    console.log('✅ Database indexes ensured for privacy and memory systems');
   } catch (error) {
     console.error('❌ Error creating indexes:', error);
   }
@@ -214,8 +265,7 @@ async function ensureIndexes() {
 
 mongoose.connection.once('open', ensureIndexes);
 
-// ********************************
-// 4) Socket.io setup with enhanced event handling
+// Socket.io setup with enhanced event handling
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   // Add authentication if needed
@@ -240,14 +290,34 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} joined event room: ${eventId}`);
   });
 
+  // ✅ ADD: Memory room handling
+  socket.on('joinMemoryRoom', ({ memoryId }) => {
+    socket.join(`memory_${memoryId}`);
+    console.log(`Socket ${socket.id} joined memory room: ${memoryId}`);
+  });
+
   // Handle messages
   socket.on('sendMessage', async ({ conversationId, message }) => {
     io.to(conversationId).emit('message', message);
   });
 
-  // Handle event updates (for live event changes)
+  // Handle event updates
   socket.on('eventUpdate', ({ eventId, update }) => {
     socket.to(`event_${eventId}`).emit('eventUpdated', update);
+  });
+
+  // ✅ ADD: Memory updates
+  socket.on('memoryUpdate', ({ memoryId, update }) => {
+    socket.to(`memory_${memoryId}`).emit('memoryUpdated', update);
+  });
+
+  // ✅ ADD: Memory photo likes/comments
+  socket.on('memoryPhotoLike', ({ memoryId, photoId, like }) => {
+    socket.to(`memory_${memoryId}`).emit('photoLiked', { photoId, like });
+  });
+
+  socket.on('memoryPhotoComment', ({ memoryId, photoId, comment }) => {
+    socket.to(`memory_${memoryId}`).emit('photoCommented', { photoId, comment });
   });
 
   // Handle typing indicators
@@ -280,11 +350,7 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// ********************************
-// 5) ROUTES WITH /api PREFIX FOR CONSISTENCY
-// ********************************
-
-// ✅ UPDATED: Health check endpoint with memory support indication
+// Health check endpoint with memory support indication
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
@@ -293,7 +359,7 @@ app.get('/health', (req, res) => {
       eventPrivacy: true,
       recommendations: true,
       realTimeUpdates: true,
-      memoryPhotos: true, // ✅ ADD: Indicate memory photo support
+      memoryPhotos: true,
       fileUploads: true
     },
     uploadDirs: {
@@ -304,7 +370,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
+// ********************************
+// API ROUTES WITH /api PREFIX
+// ********************************
 
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
@@ -316,12 +384,11 @@ app.use('/api/checkin', checkinRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);
-app.use('/api/memories', memoryRoutes); // ✅ ENSURE: Memory routes are properly registered
-app.use('/api/memory-photos', memoryPhotoRoutes); // ✅ ADD: Memory photo API routes
+app.use('/api/memories', memoryRoutes); // ✅ Memory routes
 app.use('/api/users', usersRoutes);
 app.use('/api/qr', qrRoutes);
 
-// Legacy routes for backward compatibility (WITHOUT /api prefix)
+// ✅ Legacy routes for backward compatibility (WITHOUT /api prefix)
 app.use('/auth', authRoutes);
 app.use('/events', eventRoutes);
 app.use('/photos', photoRoutes);
@@ -329,12 +396,10 @@ app.use('/notifications', notificationRoutes);
 app.use('/profile', profileRoutes);
 app.use('/follow', followRoutes);
 app.use('/users', usersRoutes);
-// ✅ REMOVE: Duplicate memory route registrations
-// app.use('/api/memories', memoryRoutes); // This was duplicated
-// app.use('/api/notifications', notificationRoutes); // This was duplicated
+app.use('/memories', memoryRoutes); // ✅ Legacy memory routes
 
 // ********************************
-// 6) EVENT PRIVACY SYSTEM API ENDPOINTS
+// EVENT PRIVACY SYSTEM API ENDPOINTS
 // ********************************
 
 // Get event recommendations
@@ -399,10 +464,82 @@ app.get('/api/events/:eventId/permissions/:action', protect, async (req, res) =>
 });
 
 // ********************************
-// 7) ERROR HANDLING MIDDLEWARE
+// ✅ MEMORY SYSTEM API ENDPOINTS
 // ********************************
 
-// ✅ UPDATED: Handle 404 with better logging
+// Share memory via socket (real-time sharing)
+app.post('/api/memories/:memoryId/share', protect, async (req, res) => {
+  try {
+    const { memoryId } = req.params;
+    const { recipientIds, message } = req.body;
+
+    // Emit to connected recipients
+    recipientIds.forEach(recipientId => {
+      const socketId = connectedUsers[recipientId];
+      if (socketId) {
+        io.to(socketId).emit('memoryShared', {
+          memoryId,
+          sharedBy: req.user._id,
+          message
+        });
+      }
+    });
+
+    res.json({ success: true, message: 'Memory shared successfully' });
+  } catch (error) {
+    console.error('Error sharing memory:', error);
+    res.status(500).json({ message: 'Failed to share memory' });
+  }
+});
+
+// Get memory analytics
+app.get('/api/memories/:memoryId/analytics', protect, async (req, res) => {
+  try {
+    const { memoryId } = req.params;
+    const Memory = require('./models/Memory');
+    const MemoryPhoto = require('./models/MemoryPhoto');
+
+    const memory = await Memory.findById(memoryId);
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+
+    // Check access
+    if (!memory.hasAccess(req.user._id)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get analytics
+    const photos = await MemoryPhoto.find({ memory: memoryId, isDeleted: false });
+    const totalLikes = photos.reduce((sum, photo) => sum + photo.likes.length, 0);
+    const totalComments = photos.reduce((sum, photo) => sum + photo.comments.length, 0);
+    const totalViews = photos.reduce((sum, photo) => sum + photo.viewCount, 0);
+
+    res.json({
+      success: true,
+      analytics: {
+        photoCount: photos.length,
+        totalLikes,
+        totalComments,
+        totalViews,
+        participantCount: memory.participants.length + 1, // +1 for creator
+        createdAt: memory.createdAt,
+        lastActivity: photos.length > 0 ? 
+          Math.max(...photos.map(p => new Date(p.uploadedAt))) : 
+          memory.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error getting memory analytics:', error);
+    res.status(500).json({ message: 'Failed to get analytics' });
+  }
+});
+
+// ********************************
+// ERROR HANDLING MIDDLEWARE
+// ********************************
+
+// Handle 404 with better logging
 app.use('*', (req, res) => {
   console.log('🟡 Route not found:', req.method, req.originalUrl);
   res.status(404).json({ 
@@ -419,7 +556,8 @@ app.use('*', (req, res) => {
       '/api/profile',
       '/api/follow',
       '/api/users',
-      '/api/memories'
+      '/api/memories', // ✅ Include memories in available routes
+      '/api/qr'
     ]
   });
 });
@@ -459,7 +597,7 @@ app.use((err, req, res, next) => {
 });
 
 // ********************************
-// 8) START SERVER
+// START SERVER
 // ********************************
 
 const PORT = process.env.PORT || 3000;
@@ -471,11 +609,23 @@ server.listen(PORT, () => {
   console.log(`📁 Static files: http://localhost:${PORT}/uploads`);
   console.log(`📸 Memory photos directory: ${memoryPhotosDir}`);
   
-  // ✅ ADD: Verify upload directories on startup
+  // Verify upload directories on startup
   console.log('📂 Upload directories:');
   console.log(`   Photos: ${fs.existsSync(photosDir) ? '✅' : '❌'} ${photosDir}`);
   console.log(`   Event covers: ${fs.existsSync(eventCoversDir) ? '✅' : '❌'} ${eventCoversDir}`);
   console.log(`   Memory photos: ${fs.existsSync(memoryPhotosDir) ? '✅' : '❌'} ${memoryPhotosDir}`);
+  
+  // ✅ Test memory routes
+  console.log('🧠 Memory system: ✅ Enabled');
+  console.log('   Available memory endpoints:');
+  console.log('   - GET    /api/memories (list memories)');
+  console.log('   - POST   /api/memories (create memory)');
+  console.log('   - GET    /api/memories/:id (get memory details)');
+  console.log('   - PUT    /api/memories/:id (update memory)');
+  console.log('   - DELETE /api/memories/:id (delete memory)');
+  console.log('   - POST   /api/memories/:id/photos (upload photos)');
+  console.log('   - POST   /api/memories/photos/:photoId/like (like photo)');
+  console.log('   - POST   /api/memories/photos/:photoId/comments (add comment)');
 });
 
 // Graceful shutdown
