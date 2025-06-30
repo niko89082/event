@@ -1,4 +1,4 @@
-// SocialApp/components/MemoryPhotoItem.js - FIXED: Natural photo aspect ratios
+// SocialApp/components/MemoryPhotoItem.js - Enhanced with proper profile pictures and like functionality
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, 
@@ -15,7 +15,8 @@ export default function MemoryPhotoItem({
   onLikeUpdate, 
   onCommentUpdate, 
   onOpenComments,
-  onOpenFullscreen 
+  onOpenFullscreen,
+  onOpenLikes // NEW: Handler for opening likes modal
 }) {
   const [likes, setLikes] = useState({
     count: photo.likeCount || 0,
@@ -28,7 +29,7 @@ export default function MemoryPhotoItem({
     count: photo.commentCount || 0
   });
 
-  // ✅ NEW: State for image dimensions to maintain aspect ratio
+  // State for image dimensions to maintain aspect ratio
   const [imageDimensions, setImageDimensions] = useState({
     width: screenWidth - 40, // Default width (container padding)
     height: 300 // Default height
@@ -62,77 +63,61 @@ export default function MemoryPhotoItem({
     }
   }, [photo.likeCount, photo.commentCount]);
 
-  // ✅ NEW: Get image dimensions to maintain aspect ratio
+  // Get image dimensions to maintain aspect ratio
   useEffect(() => {
     const photoUrl = photo.url?.startsWith('http') 
       ? photo.url 
       : `http://${API_BASE_URL}:3000${photo.url}`;
 
-    Image.getSize(
-      photoUrl,
-      (width, height) => {
-        // Calculate height to maintain aspect ratio
-        // Maximum width is container width minus padding
-        const maxWidth = screenWidth - 40;
-        const aspectRatio = height / width;
-        
-        // Set reasonable height limits
-        const minHeight = 200;
-        const maxHeight = 500;
-        
-        let newHeight = maxWidth * aspectRatio;
-        newHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
-        
-        setImageDimensions({
-          width: maxWidth,
-          height: newHeight
-        });
-      },
-      (error) => {
-        console.log('Error getting image size:', error);
-        // Keep default dimensions if we can't get image size
-      }
-    );
+    Image.getSize(photoUrl, (width, height) => {
+      const containerWidth = screenWidth - 40; // Account for container padding
+      const aspectRatio = height / width;
+      const calculatedHeight = Math.min(containerWidth * aspectRatio, 500); // Max height 500
+
+      setImageDimensions({
+        width: containerWidth,
+        height: calculatedHeight
+      });
+    }, (error) => {
+      console.warn('Failed to get image dimensions:', error);
+      // Keep default dimensions if image sizing fails
+    });
   }, [photo.url]);
 
+  // Helper function to get proper profile picture URL
+  const getProfilePictureUrl = (profilePicture, fallbackText = '👤') => {
+    if (profilePicture) {
+      if (profilePicture.startsWith('http')) {
+        return profilePicture;
+      }
+      const cleanPath = profilePicture.startsWith('/') ? profilePicture : `/${profilePicture}`;
+      return `http://${API_BASE_URL}:3000${cleanPath}`;
+    }
+    return `https://placehold.co/40x40/E1E1E1/8E8E93?text=${fallbackText}`;
+  };
+
   const fetchLikes = async () => {
-    if (likes.loading || likes.initialized) return;
-    
     try {
-      setLikes(prev => ({ ...prev, loading: true }));
-      console.log('🔍 Fetching likes for photo:', photo._id);
-      
       const response = await api.get(`/api/memories/photos/${photo._id}/likes`);
-      
-      setLikes({
+      setLikes(prev => ({
+        ...prev,
         count: response.data.likeCount,
         userLiked: response.data.userLiked,
-        loading: false,
         initialized: true
-      });
-      
-      if (onLikeUpdate) {
-        onLikeUpdate(photo._id, {
-          count: response.data.likeCount,
-          userLiked: response.data.userLiked
-        });
-      }
+      }));
     } catch (error) {
       console.error('Error fetching likes:', error);
-      setLikes(prev => ({ 
-        ...prev, 
-        loading: false, 
-        initialized: true 
-      }));
+      setLikes(prev => ({ ...prev, initialized: true }));
     }
   };
-console.log(photo.uploadedBy?.profilePicture);
+
   const handleLike = async () => {
     if (likes.loading) return;
 
     try {
       setLikes(prev => ({ ...prev, loading: true }));
 
+      // Optimistic update
       const newLiked = !likes.userLiked;
       const newCount = newLiked ? likes.count + 1 : likes.count - 1;
 
@@ -142,6 +127,7 @@ console.log(photo.uploadedBy?.profilePicture);
         count: newCount
       }));
 
+      // Animate heart if liking
       if (newLiked) {
         heartScale.setValue(0);
         Animated.sequence([
@@ -192,6 +178,7 @@ console.log(photo.uploadedBy?.profilePicture);
 
     } catch (error) {
       console.error('Error toggling like:', error);
+      // Revert optimistic update
       setLikes(prev => ({
         ...prev,
         userLiked: !prev.userLiked,
@@ -207,10 +194,12 @@ console.log(photo.uploadedBy?.profilePicture);
     const timeSinceLastTap = now - lastTap.current;
 
     if (timeSinceLastTap < DOUBLE_PRESS_DELAY) {
+      // Double tap - like the photo
       if (!likes.userLiked) {
         handleLike();
       }
     } else {
+      // Single tap - open fullscreen after delay to check for double tap
       setTimeout(() => {
         const timeSinceThisTap = Date.now() - lastTap.current;
         if (timeSinceThisTap >= DOUBLE_PRESS_DELAY && onOpenFullscreen) {
@@ -228,82 +217,78 @@ console.log(photo.uploadedBy?.profilePicture);
     }
   };
 
+  // NEW: Handle likes press to show who liked
+  const handleLikesPress = () => {
+    if (likes.count > 0 && onOpenLikes) {
+      onOpenLikes(photo._id);
+    }
+  };
+
   const photoUrl = photo.url?.startsWith('http') 
     ? photo.url 
     : `http://${API_BASE_URL}:3000${photo.url}`;
 
   return (
     <View style={styles.container}>
-      {/* Photo */}
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPress={handleImagePress}
-        style={styles.imageContainer}
+      {/* Photo with overlay interactions */}
+      <Animated.View 
+        style={[
+          styles.imageContainer,
+          { transform: [{ scale: scaleValue }] }
+        ]}
       >
-        <Animated.View style={{ transform: [{ scale: scaleValue }] }}>
+        <TouchableOpacity
+          onPress={handleImagePress}
+          activeOpacity={0.95}
+        >
           <Image
             source={{ uri: photoUrl }}
             style={[
               styles.photo,
               {
                 width: imageDimensions.width,
-                height: imageDimensions.height, // ✅ FIXED: Use calculated height to maintain aspect ratio
+                height: imageDimensions.height
               }
             ]}
-            resizeMode="cover" // ✅ FIXED: Use 'cover' to maintain aspect ratio without distortion
+            onError={(error) => {
+              console.warn('❌ Photo failed to load:', error.nativeEvent?.error);
+            }}
           />
-        </Animated.View>
+          
+          {/* Floating heart animation */}
+          <Animated.View 
+            style={[
+              styles.floatingHeart,
+              {
+                transform: [{ scale: heartScale }],
+                opacity: heartScale
+              }
+            ]}
+          >
+            <Ionicons name="heart" size={60} color="#FF3B30" />
+          </Animated.View>
+        </TouchableOpacity>
+      </Animated.View>
 
-        {/* Floating heart animation */}
-        <Animated.View 
-          style={[
-            styles.floatingHeart,
-            { transform: [{ scale: heartScale }] }
-          ]}
-        >
-          <Ionicons name="heart" size={60} color="#FF3B30" />
-        </Animated.View>
-
-        {/* Photo overlay with quick actions */}
-        <View style={styles.photoOverlay}>
-          <View style={styles.overlayActions}>
-            <TouchableOpacity
-              style={styles.overlayAction}
-              onPress={handleLike}
-              disabled={likes.loading}
-            >
-              <Ionicons 
-                name={likes.userLiked ? "heart" : "heart-outline"} 
-                size={20} 
-                color={likes.userLiked ? "#FF3B30" : "#FFFFFF"} 
-              />
-              <Text style={styles.overlayText}>{likes.count}</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.overlayAction}
-              onPress={handleCommentsPress}
-            >
-              <Ionicons name="chatbubble-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.overlayText}>{comments.count}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </TouchableOpacity>
-
-      {/* Photo info */}
+      {/* Photo info section */}
       <View style={styles.photoInfo}>
-        {/* Uploader info */}
+        {/* Uploader info with FIXED profile picture */}
         <View style={styles.uploaderInfo}>
           <Image
             source={{
-              uri: photo.uploadedBy?.profilePicture || 'https://placehold.co/40x40/E1E1E1/8E8E93?text=U'
+              uri: getProfilePictureUrl(
+                photo.uploadedBy?.profilePicture, 
+                photo.uploadedBy?.username?.charAt(0) || 'U'
+              )
             }}
             style={styles.uploaderAvatar}
+            onError={(error) => {
+              console.warn('❌ Profile picture failed to load:', error.nativeEvent?.error);
+            }}
           />
           <View style={styles.uploaderDetails}>
             <Text style={styles.uploaderName}>
-              {photo.uploadedBy?.username || 'Unknown'}
+              {photo.uploadedBy?.username || photo.uploadedBy?.fullName || 'Unknown'}
             </Text>
             <Text style={styles.uploadTime}>
               {new Date(photo.uploadedAt).toLocaleDateString()}
@@ -311,12 +296,12 @@ console.log(photo.uploadedBy?.profilePicture);
           </View>
         </View>
 
-        {/* Caption */}
+        {/* Caption - only show if present */}
         {photo.caption && (
           <Text style={styles.caption}>{photo.caption}</Text>
         )}
 
-        {/* Action buttons */}
+        {/* Action buttons - CLEANED UP, removed duplicate comments */}
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={[
@@ -331,12 +316,15 @@ console.log(photo.uploadedBy?.profilePicture);
               size={18} 
               color={likes.userLiked ? "#FF3B30" : "#8E8E93"} 
             />
-            <Text style={[
-              styles.actionButtonText,
-              likes.userLiked && styles.actionButtonTextActive
-            ]}>
-              {likes.count} {likes.count === 1 ? 'like' : 'likes'}
-            </Text>
+            <TouchableOpacity onPress={handleLikesPress}>
+              <Text style={[
+                styles.actionButtonText,
+                likes.userLiked && styles.actionButtonTextActive,
+                likes.count > 0 && styles.clickableText
+              ]}>
+                {likes.count} {likes.count === 1 ? 'like' : 'likes'}
+              </Text>
+            </TouchableOpacity>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -371,12 +359,12 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     position: 'relative',
-    alignItems: 'center', // Center the image
+    alignItems: 'center',
   },
   photo: {
     backgroundColor: '#F6F6F6',
-    borderRadius: 16, // ✅ FIXED: Add border radius to the image itself
-    // ✅ REMOVED: Fixed height and width - now calculated dynamically
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
   },
   floatingHeart: {
     position: 'absolute',
@@ -385,35 +373,6 @@ const styles = StyleSheet.create({
     marginTop: -30,
     marginLeft: -30,
     zIndex: 10,
-  },
-  photoOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    justifyContent: 'flex-end',
-    padding: 16,
-    borderRadius: 16, // Match the image border radius
-  },
-  overlayActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  overlayAction: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
-  },
-  overlayText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
   },
   photoInfo: {
     padding: 16,
@@ -426,7 +385,7 @@ const styles = StyleSheet.create({
   uploaderAvatar: {
     width: 40,
     height: 40,
-    borderRadius: 12, // ✅ FIXED: Square with curved edges (was 20 for circle)
+    borderRadius: 12, // FIXED: Square with rounded corners instead of circle
     backgroundColor: '#F6F6F6',
   },
   uploaderDetails: {
@@ -472,5 +431,8 @@ const styles = StyleSheet.create({
   },
   actionButtonTextActive: {
     color: '#FF3B30',
+  },
+  clickableText: {
+    textDecorationLine: 'underline',
   },
 });

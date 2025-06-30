@@ -341,6 +341,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // ✅ PUT: Add participant to memory
+// ✅ PUT: Add participant to memory (FIXED)
 router.put('/:id/participants', auth, async (req, res) => {
   try {
     const { participantId } = req.body;
@@ -354,21 +355,93 @@ router.put('/:id/participants', auth, async (req, res) => {
       return res.status(403).json({ message: 'Only creator can add participants' });
     }
     
-    await memory.addParticipant(participantId);
+    // Check if user exists
+    const participant = await User.findById(participantId);
+    if (!participant) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Check if user is already a participant
+    if (memory.participants.includes(participantId) || memory.creator.equals(participantId)) {
+      return res.status(400).json({ message: 'User is already a participant' });
+    }
+    
+    // Add participant directly to the array (instead of calling addParticipant method)
+    memory.participants.push(participantId);
+    await memory.save();
+    
+    // Populate participants for response
     await memory.populate('participants', 'username fullName profilePicture');
     
     res.json({ 
       message: 'Participant added successfully',
-      memory 
+      participant: {
+        _id: participant._id,
+        username: participant.username,
+        fullName: participant.fullName,
+        profilePicture: participant.profilePicture
+      }
     });
   } catch (error) {
     console.error('Error adding participant:', error);
-    res.status(400).json({ message: error.message });
+    res.status(500).json({ message: 'Failed to add participant' });
+  }
+});
+// ✅ PUT: Update memory details (creator only) - NEW ROUTE
+router.put('/:memoryId', auth, async (req, res) => {
+  try {
+    const { memoryId } = req.params;
+    const { title, description } = req.body;
+    const userId = req.user.id;
+    
+    // Validate input
+    if (!title || !title.trim()) {
+      return res.status(400).json({ message: 'Memory title is required' });
+    }
+    
+    if (title.trim().length > 50) {
+      return res.status(400).json({ message: 'Title cannot exceed 50 characters' });
+    }
+    
+    if (description && description.length > 200) {
+      return res.status(400).json({ message: 'Description cannot exceed 200 characters' });
+    }
+    
+    // Find memory and check ownership
+    const memory = await Memory.findById(memoryId);
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    // Only memory creator can update
+    if (!memory.creator.equals(userId)) {
+      return res.status(403).json({ message: 'Only memory creator can edit this memory' });
+    }
+    
+    // Update memory
+    memory.title = title.trim();
+    memory.description = description ? description.trim() : '';
+    memory.updatedAt = new Date();
+    
+    await memory.save();
+    
+    // Populate creator and participants for response
+    await memory.populate('creator', 'username fullName profilePicture');
+    await memory.populate('participants', 'username fullName profilePicture');
+    
+    res.json({
+      message: 'Memory updated successfully',
+      memory
+    });
+    
+  } catch (error) {
+    console.error('Error updating memory:', error);
+    res.status(500).json({ message: 'Failed to update memory' });
   }
 });
 
 // ✅ DELETE: Remove participant from memory
-router.delete('/:id/participants/:participantId', auth, async (req, res) => {
+router.delete('/:memoryId/participants/:participantId', auth, async (req, res) => {
   try {
     const memory = await Memory.findById(req.params.id);
     

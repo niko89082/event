@@ -109,134 +109,41 @@ export default function CreateMemoryScreen({ navigation }) {
   }, [searchQuery]);
 
   const searchUsers = async () => {
-    try {
-      setSearching(true);
-      console.log('🔍 Searching for users with query:', searchQuery.trim());
-      
-      // Try multiple endpoints and combine results for better coverage
-      let allUsers = [];
-      const searchTerm = searchQuery.trim();
-      
-      // Try the /api/search/users endpoint first
-      try {
-        const response1 = await api.get('/api/search/users', {
-          params: { q: searchTerm, limit: 50 }
-        });
-        console.log('✅ Search response from /api/search/users:', response1.data);
-        
-        if (Array.isArray(response1.data)) {
-          allUsers = [...allUsers, ...response1.data];
-        } else if (response1.data.users && Array.isArray(response1.data.users)) {
-          allUsers = [...allUsers, ...response1.data.users];
-        } else if (response1.data && typeof response1.data === 'object') {
-          allUsers = [...allUsers, response1.data];
-        }
-      } catch (searchError1) {
-        console.log('❌ /api/search/users failed, trying fallback');
-      }
-      
-      // Try fallback endpoint for additional results
-      try {
-        const response2 = await api.get('/api/users/search', {
-          params: { q: searchTerm, limit: 50 }
-        });
-        console.log('✅ Search response from /api/users/search:', response2.data);
-        
-        if (Array.isArray(response2.data)) {
-          allUsers = [...allUsers, ...response2.data];
-        } else if (response2.data.users && Array.isArray(response2.data.users)) {
-          allUsers = [...allUsers, ...response2.data.users];
-        } else if (response2.data && typeof response2.data === 'object') {
-          allUsers = [...allUsers, response2.data];
-        }
-      } catch (searchError2) {
-        console.log('❌ /api/users/search also failed');
-      }
-      
-      // Try getting all users and doing client-side filtering for partial matches
-      try {
-        const response3 = await api.get('/api/users', {
-          params: { limit: 100 } // Get more users for better partial matching
-        });
-        console.log('✅ All users response:', response3.data);
-        
-        let allUsersFromAPI = [];
-        if (Array.isArray(response3.data)) {
-          allUsersFromAPI = response3.data;
-        } else if (response3.data.users && Array.isArray(response3.data.users)) {
-          allUsersFromAPI = response3.data.users;
-        }
-        
-        // Client-side partial matching for better results
-        const partialMatches = allUsersFromAPI.filter(user => {
-          const searchLower = searchTerm.toLowerCase();
-          const username = (user.username || '').toLowerCase();
-          const fullName = (user.fullName || '').toLowerCase();
-          const displayName = (user.displayName || '').toLowerCase();
-          const email = (user.email || '').toLowerCase();
-          
-          return username.includes(searchLower) || 
-                 fullName.includes(searchLower) || 
-                 displayName.includes(searchLower) ||
-                 email.includes(searchLower) ||
-                 username.startsWith(searchLower) ||
-                 fullName.startsWith(searchLower);
-        });
-        
-        allUsers = [...allUsers, ...partialMatches];
-      } catch (allUsersError) {
-        console.log('❌ /api/users failed for partial matching');
-      }
-      
-      // Remove duplicates based on _id
-      const uniqueUsers = allUsers.filter((user, index, self) => 
-        index === self.findIndex(u => u._id === user._id)
-      );
-      
-      console.log('📊 Total unique users found:', uniqueUsers.length);
-      
-      // Filter out current user and already selected users
-      const filteredResults = uniqueUsers.filter(user => 
-        user._id !== currentUser._id && 
-        !selectedUsers.some(selected => selected._id === user._id)
-      );
-      
-      // Sort results by relevance (exact matches first, then partial matches)
-      const searchLower = searchTerm.toLowerCase();
-      const sortedResults = filteredResults.sort((a, b) => {
-        const aUsername = (a.username || '').toLowerCase();
-        const bUsername = (b.username || '').toLowerCase();
-        const aFullName = (a.fullName || '').toLowerCase();
-        const bFullName = (b.fullName || '').toLowerCase();
-        
-        // Exact username matches first
-        if (aUsername === searchLower && bUsername !== searchLower) return -1;
-        if (bUsername === searchLower && aUsername !== searchLower) return 1;
-        
-        // Username starts with search term
-        if (aUsername.startsWith(searchLower) && !bUsername.startsWith(searchLower)) return -1;
-        if (bUsername.startsWith(searchLower) && !aUsername.startsWith(searchLower)) return 1;
-        
-        // Full name starts with search term
-        if (aFullName.startsWith(searchLower) && !bFullName.startsWith(searchLower)) return -1;
-        if (bFullName.startsWith(searchLower) && !aFullName.startsWith(searchLower)) return 1;
-        
-        // Alphabetical order as final sort
-        return aUsername.localeCompare(bUsername);
-      });
-      
-      // Limit to reasonable number of results
-      setSearchResults(sortedResults.slice(0, 20));
-      
-    } catch (error) {
-      console.error('❌ Error searching users:', error);
-      console.error('❌ Error details:', error.response?.data || error.message);
-      setSearchResults([]);
-      // Don't show error alert for search failures - just clear results
-    } finally {
-      setSearching(false);
+  try {
+    setSearching(true);
+    console.log('🔍 Searching for users with query:', searchQuery.trim());
+    
+    // Use the correct users search endpoint
+    const response = await api.get(`/api/users/search?q=${encodeURIComponent(searchQuery.trim())}`);
+    console.log('✅ Search response from /api/users/search:', response.data);
+    
+    // The /api/users/search endpoint returns { users: [...] }
+    let users = [];
+    if (response.data && Array.isArray(response.data.users)) {
+      users = response.data.users;
+    } else if (Array.isArray(response.data)) {
+      users = response.data;
+    } else {
+      console.warn('❌ Unexpected search response format:', response.data);
+      users = [];
     }
-  };
+    
+    // Filter out current user and already selected users
+    const excludeIds = [currentUser._id, ...selectedUsers.map(u => u._id)];
+    const filteredUsers = users.filter(user => 
+      user && user._id && !excludeIds.includes(user._id)
+    );
+    
+    console.log('📊 Filtered users found:', filteredUsers.length);
+    setSearchResults(filteredUsers);
+    
+  } catch (error) {
+    console.error('❌ Error searching users:', error.response?.data || error);
+    setSearchResults([]);
+  } finally {
+    setSearching(false);
+  }
+};
 
   const canProceed = () => {
     switch (currentStep) {

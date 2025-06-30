@@ -1,10 +1,10 @@
-// SocialApp/screens/MemoryDetailsScreen.js - FIXED: Square profile photos + natural photo ratios
+// SocialApp/screens/MemoryDetailsScreen.js - Enhanced with all requested improvements
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, ScrollView, SafeAreaView, StatusBar, 
   Alert, FlatList, TouchableOpacity, Modal, Image,
   TextInput, KeyboardAvoidingView, Platform, ActionSheetIOS,
-  Dimensions, StyleSheet
+  Dimensions, StyleSheet, RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,19 +35,25 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   const [commentText, setCommentText] = useState('');
   const [commentsLoading, setCommentsLoading] = useState(false);
 
-  // Host control states
-  const [showManageModal, setShowManageModal] = useState(false);
-  const [showAddParticipants, setShowAddParticipants] = useState(false);
+  // NEW: Likes modal state
+  const [showLikesModal, setShowLikesModal] = useState(false);
+  const [currentPhotoLikes, setCurrentPhotoLikes] = useState([]);
+  const [likesLoading, setLikesLoading] = useState(false);
+
+  // NEW: Participants modal state - REMOVED (now using separate screen)
+  // const [showParticipantsModal, setShowParticipantsModal] = useState(false);
+
+  // Host control states - SIMPLIFIED (removed manage modal)
+  // const [showManageModal, setShowManageModal] = useState(false);
+  // const [showAddParticipants, setShowAddParticipants] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  // ✅ FIXED: Separate useEffect for initial fetch - no dependencies on memory
   useEffect(() => {
     fetchMemoryDetails();
   }, [memoryId]);
 
-  // ✅ FIXED: Separate useEffect for navigation header - only runs when needed
   useEffect(() => {
     if (memory && currentUser) {
       const isHost = memory.creator?._id === currentUser._id;
@@ -55,7 +61,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         navigation.setOptions({
           headerRight: () => (
             <TouchableOpacity
-              onPress={() => setShowManageModal(true)}
+              onPress={() => navigation.navigate('EditMemoryScreen', { memoryId: memory._id })}
               style={{ marginRight: 16 }}
             >
               <Ionicons name="settings-outline" size={24} color="#000000" />
@@ -69,20 +75,28 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   // Helper function to get proper profile picture URL
   const getProfilePictureUrl = (profilePicture, fallbackText = '👤') => {
     if (profilePicture) {
-      // Check if it's already a full URL
       if (profilePicture.startsWith('http')) {
         return profilePicture;
       }
-      // Add the base URL if it's a relative path
       const cleanPath = profilePicture.startsWith('/') ? profilePicture : `/${profilePicture}`;
       return `http://${API_BASE_URL}:3000${cleanPath}`;
     }
     return `https://placehold.co/40x40/E1E1E1/8E8E93?text=${fallbackText}`;
   };
 
+  // NEW: Pull-to-refresh functionality
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await fetchMemoryDetails();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const fetchMemoryDetails = async () => {
     try {
-      setLoading(true);
+      setLoading(!refreshing); // Don't show main loading if refreshing
       setError(null);
       
       console.log('🔍 Fetching memory details for:', memoryId);
@@ -96,6 +110,25 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  // NEW: Fetch photo likes
+  const fetchPhotoLikes = async (photoId) => {
+    try {
+      setLikesLoading(true);
+      const response = await api.get(`/api/memories/photos/${photoId}/likes`);
+      setCurrentPhotoLikes(response.data.likes);
+      setShowLikesModal(true);
+    } catch (error) {
+      console.error('Error fetching photo likes:', error);
+      Alert.alert('Error', 'Failed to load likes');
+    } finally {
+      setLikesLoading(false);
+    }
+  };
+
+  const handleOpenLikes = (photoId) => {
+    fetchPhotoLikes(photoId);
   };
 
   const isHost = currentUser && memory && memory.creator?._id === currentUser._id;
@@ -133,6 +166,13 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         return;
       }
 
+      const options = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      };
+
       let result;
       if (source === 'camera') {
         const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
@@ -140,24 +180,13 @@ export default function MemoryDetailsScreen({ route, navigation }) {
           Alert.alert('Permission needed', 'Please grant camera permissions to take photos.');
           return;
         }
-        result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          allowsEditing: false, // ✅ FIXED: Don't force square cropping
-          quality: 0.8,
-        });
+        result = await ImagePicker.launchCameraAsync(options);
       } else {
-        result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          allowsEditing: false, // ✅ FIXED: Don't force square cropping
-          quality: 0.8,
-          allowsMultipleSelection: true,
-        });
+        result = await ImagePicker.launchImageLibraryAsync(options);
       }
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        for (const asset of result.assets) {
-          await uploadPhoto(asset);
-        }
+      if (!result.cancelled && result.assets && result.assets[0]) {
+        await uploadPhoto(result.assets[0]);
       }
     } catch (error) {
       console.error('Error picking image:', error);
@@ -168,103 +197,52 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   const uploadPhoto = async (asset) => {
     try {
       setUploading(true);
-
+      
       const formData = new FormData();
       formData.append('photo', {
         uri: asset.uri,
-        type: 'image/jpeg',
-        name: 'memory-photo.jpg',
+        type: asset.type || 'image/jpeg',
+        name: asset.fileName || 'memory-photo.jpg',
       });
 
-      formData.append('caption', '');
-
-      console.log('📤 Uploading photo to memory:', memoryId);
       const response = await api.post(`/api/memories/${memoryId}/photos`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
 
-      await fetchMemoryDetails();
-      Alert.alert('Success', 'Photo uploaded successfully!');
+      setMemory(prev => ({
+        ...prev,
+        photos: [...(prev.photos || []), response.data.photo]
+      }));
 
+      Alert.alert('Success', 'Photo uploaded successfully!');
     } catch (error) {
       console.error('Error uploading photo:', error);
-      Alert.alert('Error', 'Failed to upload photo. Please try again.');
+      Alert.alert('Error', 'Failed to upload photo');
     } finally {
       setUploading(false);
     }
   };
 
-  // Host control functions
-  const searchUsers = async (query) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    try {
-      setSearchLoading(true);
-      const response = await api.get(`/api/users/search?q=${encodeURIComponent(query)}`);
-      const existingUserIds = [
-        memory.creator._id,
-        ...memory.participants.map(p => p._id)
-      ];
-      const filteredResults = response.data.users.filter(
-        user => !existingUserIds.includes(user._id)
-      );
-      setSearchResults(filteredResults);
-    } catch (error) {
-      console.error('Error searching users:', error);
-    } finally {
-      setSearchLoading(false);
-    }
+  // Photo interactions
+  const handleLikeUpdate = (photoId, likeData) => {
+    setMemory(prev => ({
+      ...prev,
+      photos: prev.photos?.map(photo => 
+        photo._id === photoId 
+          ? { ...photo, likeCount: likeData.count, userLiked: likeData.userLiked }
+          : photo
+      )
+    }));
   };
 
-  const addParticipant = async (userId) => {
+  const handleOpenComments = async (photoId) => {
     try {
-      await api.put(`/api/memories/${memoryId}/participants`, {
-        participantId: userId
-      });
-
-      await fetchMemoryDetails();
-      setSearchText('');
-      setSearchResults([]);
-      Alert.alert('Success', 'Participant added successfully!');
-    } catch (error) {
-      console.error('Error adding participant:', error);
-      Alert.alert('Error', 'Failed to add participant');
-    }
-  };
-
-  const removeParticipant = async (participantId) => {
-    Alert.alert(
-      'Remove Participant',
-      'Are you sure you want to remove this person from the memory?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete(`/api/memories/${memoryId}/participants/${participantId}`);
-              await fetchMemoryDetails();
-              Alert.alert('Success', 'Participant removed successfully');
-            } catch (error) {
-              console.error('Error removing participant:', error);
-              Alert.alert('Error', 'Failed to remove participant');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  // Comment functions
-  const fetchComments = async (photoId) => {
-    try {
+      setCurrentPhotoId(photoId);
       setCommentsLoading(true);
+      setShowComments(true);
+      
       const response = await api.get(`/api/memories/photos/${photoId}/comments`);
       setComments(response.data.comments);
     } catch (error) {
@@ -275,61 +253,97 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
-  const handleAddComment = async () => {
-    if (!commentText.trim() || !currentPhotoId) return;
-    
+  const handleOpenFullscreen = (photo) => {
+    setSelectedPhoto(photo);
+    setShowPhotoModal(true);
+  };
+
+  // Participant management
+  const searchUsers = async (query) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      setSearchLoading(true);
+      const response = await api.get(`/api/search/users?q=${encodeURIComponent(query)}`);
+      
+      const filteredResults = response.data.users.filter(user => 
+        user._id !== currentUser._id &&
+        user._id !== memory.creator._id &&
+        !memory.participants?.some(p => p._id === user._id)
+      );
+      
+      setSearchResults(filteredResults);
+    } catch (error) {
+      console.error('Error searching users:', error);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const addParticipant = async (userId) => {
+    try {
+      await api.post(`/api/memories/${memoryId}/participants`, { userId });
+      
+      const user = searchResults.find(u => u._id === userId);
+      if (user) {
+        setMemory(prev => ({
+          ...prev,
+          participants: [...(prev.participants || []), user]
+        }));
+      }
+      
+      setSearchText('');
+      setSearchResults([]);
+      Alert.alert('Success', 'Participant added successfully');
+    } catch (error) {
+      console.error('Error adding participant:', error);
+      Alert.alert('Error', 'Failed to add participant');
+    }
+  };
+
+  const removeParticipant = async (userId) => {
+    try {
+      await api.delete(`/api/memories/${memoryId}/participants/${userId}`);
+      
+      setMemory(prev => ({
+        ...prev,
+        participants: prev.participants?.filter(p => p._id !== userId) || []
+      }));
+      
+      Alert.alert('Success', 'Participant removed successfully');
+    } catch (error) {
+      console.error('Error removing participant:', error);
+      Alert.alert('Error', 'Failed to remove participant');
+    }
+  };
+
+  const addComment = async () => {
+    if (!commentText.trim()) return;
+
     try {
       const response = await api.post(`/api/memories/photos/${currentPhotoId}/comments`, {
         text: commentText.trim()
       });
-      
-      setComments(prev => [response.data.comment, ...prev]);
+
+      setComments(prev => [...prev, response.data.comment]);
       setCommentText('');
-      
     } catch (error) {
       console.error('Error adding comment:', error);
       Alert.alert('Error', 'Failed to add comment');
     }
   };
 
-  const handleDeleteComment = async (commentId) => {
-    try {
-      await api.delete(`/api/memories/photos/comments/${commentId}`);
-      setComments(prev => prev.filter(c => c._id !== commentId));
-    } catch (error) {
-      console.error('Error deleting comment:', error);
-      Alert.alert('Error', 'Failed to delete comment');
-    }
-  };
-
-  const handleOpenComments = (photoId) => {
-    setCurrentPhotoId(photoId);
-    fetchComments(photoId);
-    setShowComments(true);
-  };
-
-  const handleOpenFullscreen = (photo) => {
-    setSelectedPhoto(photo);
-    setShowPhotoModal(true);
-  };
-
-  const handleLikeUpdate = (photoId, likeData) => {
-    setMemory(prev => ({
-      ...prev,
-      photos: prev.photos.map(photo => 
-        photo._id === photoId 
-          ? { ...photo, likeCount: likeData.count, userLiked: likeData.userLiked }
-          : photo
-      )
-    }));
-  };
-
+  // Render functions
   const renderPhoto = ({ item: photo }) => (
     <MemoryPhotoItem
       photo={photo}
       onLikeUpdate={handleLikeUpdate}
       onOpenComments={handleOpenComments}
       onOpenFullscreen={handleOpenFullscreen}
+      onOpenLikes={handleOpenLikes}
     />
   );
 
@@ -350,7 +364,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         </Text>
       </TouchableOpacity>
       
-      {/* Remove button for host */}
       {isHost && (
         <TouchableOpacity
           style={styles.removeButton}
@@ -390,71 +403,82 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         style={styles.commentAvatar}
       />
       <View style={styles.commentContent}>
-        <View style={styles.commentBubble}>
-          <Text style={styles.commentUsername}>{comment.user?.username}</Text>
-          <Text style={styles.commentText}>{comment.text}</Text>
-        </View>
-        <View style={styles.commentMeta}>
-          <Text style={styles.commentTime}>
-            {new Date(comment.createdAt).toLocaleDateString()}
-          </Text>
-          {(comment.user?._id === currentUser?._id || isHost) && (
-            <TouchableOpacity
-              style={styles.deleteCommentButton}
-              onPress={() => handleDeleteComment(comment._id)}
-            >
-              <Text style={styles.deleteCommentText}>Delete</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        <Text style={styles.commentAuthor}>{comment.user?.username || 'Unknown'}</Text>
+        <Text style={styles.commentText}>{comment.text}</Text>
+        <Text style={styles.commentTime}>
+          {new Date(comment.createdAt).toLocaleDateString()}
+        </Text>
       </View>
     </View>
   );
 
+  const renderLikedUser = ({ item: like }) => (
+    <TouchableOpacity
+      style={styles.likedUserItem}
+      onPress={() => {
+        setShowLikesModal(false);
+        navigation.navigate('ProfileScreen', { userId: like.user._id });
+      }}
+    >
+      <Image
+        source={{
+          uri: getProfilePictureUrl(like.user.profilePicture, like.user.username?.charAt(0))
+        }}
+        style={styles.likedUserAvatar}
+      />
+      <View style={styles.likedUserInfo}>
+        <Text style={styles.likedUserName}>
+          {like.user.fullName || like.user.username}
+        </Text>
+        <Text style={styles.likedUserUsername}>@{like.user.username}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <View style={styles.centerContent}>
-          <Text style={styles.loadingText}>Loading memory...</Text>
-        </View>
-      </SafeAreaView>
+      <View style={styles.loadingContainer}>
+        <Text>Loading memory...</Text>
+      </View>
     );
   }
 
   if (error) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <View style={styles.centerContent}>
-          <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={fetchMemoryDetails}>
-            <Text style={styles.retryButtonText}>Try Again</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={fetchMemoryDetails}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!memory) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>Memory not found</Text>
+      </View>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle="dark-content" />
       
-      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#3797EF"
+          />
+        }
+      >
         {/* Memory Header */}
-        <View style={styles.headerSection}>
-          <View style={styles.titleRow}>
-            <Text style={styles.memoryTitle}>{memory.title}</Text>
-            {isHost && (
-              <TouchableOpacity
-                style={styles.manageButton}
-                onPress={() => setShowManageModal(true)}
-              >
-                <Ionicons name="settings-outline" size={20} color="#3797EF" />
-              </TouchableOpacity>
-            )}
-          </View>
+        <View style={styles.memoryHeader}>
+          <Text style={styles.memoryTitle}>{memory.title || 'Untitled Memory'}</Text>
           
           {memory.description && (
             <Text style={styles.memoryDescription}>{memory.description}</Text>
@@ -467,18 +491,42 @@ export default function MemoryDetailsScreen({ route, navigation }) {
                 {new Date(memory.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            <View style={styles.metaItem}>
+            
+            {/* NEW: Clickable participants count - Navigate to separate screen */}
+            <TouchableOpacity 
+              style={styles.metaItem}
+              onPress={() => navigation.navigate('MemoryParticipantsScreen', { 
+                memoryId: memory._id,
+                memoryTitle: memory.title 
+              })}
+            >
               <Ionicons name="people-outline" size={16} color="#8E8E93" />
-              <Text style={styles.metaText}>
+              <Text style={[styles.metaText, styles.clickableText]}>
                 {(memory.participants?.length || 0) + 1} participants
               </Text>
-            </View>
-            <View style={styles.metaItem}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8E8E93" />
-              <Text style={styles.metaText}>Private</Text>
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* NEW: Add Photo Button - Moved above photos */}
+        {isParticipant && (
+          <View style={styles.addPhotoSection}>
+            <TouchableOpacity
+              style={[styles.addPhotoButton, uploading && styles.addPhotoButtonDisabled]}
+              onPress={handleAddPhotos}
+              disabled={uploading}
+            >
+              <Ionicons 
+                name={uploading ? "cloud-upload-outline" : "add-outline"} 
+                size={20} 
+                color={uploading ? "#C7C7CC" : "#3797EF"} 
+              />
+              <Text style={[styles.addPhotoButtonText, uploading && styles.addPhotoButtonTextDisabled]}>
+                {uploading ? 'Uploading...' : 'Add Photos'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Photos Section */}
         {memory.photos && memory.photos.length > 0 && (
@@ -493,167 +541,103 @@ export default function MemoryDetailsScreen({ route, navigation }) {
             />
           </View>
         )}
-
-        {/* Participants Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>
-              Participants ({(memory.participants?.length || 0) + 1})
-            </Text>
-            {isHost && (
-              <TouchableOpacity
-                style={styles.addParticipantButton}
-                onPress={() => setShowAddParticipants(true)}
-              >
-                <Ionicons name="person-add-outline" size={20} color="#3797EF" />
-              </TouchableOpacity>
-            )}
-          </View>
-          
-          {/* Creator */}
-          {memory.creator && (
-            <View style={styles.participantsList}>
-              <View style={[styles.participantItem, styles.creatorItem]}>
-                <TouchableOpacity 
-                  style={styles.participantInfo}
-                  onPress={() => navigation.navigate('ProfileScreen', { userId: memory.creator._id })}
-                >
-                  <Image
-                    source={{
-                      uri: getProfilePictureUrl(memory.creator.profilePicture, memory.creator.username?.charAt(0))
-                    }}
-                    style={styles.participantAvatar}
-                  />
-                  <View>
-                    <Text style={styles.participantName}>
-                      {memory.creator.username || memory.creator.fullName || 'Unknown'}
-                    </Text>
-                    <Text style={styles.creatorLabel}>Creator</Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-          
-          {/* Other Participants */}
-          {memory.participants && memory.participants.length > 0 && (
-            <FlatList
-              data={memory.participants}
-              renderItem={renderParticipant}
-              keyExtractor={(item) => item._id}
-              scrollEnabled={false}
-            />
-          )}
-        </View>
-
-        {/* Add Photos Button */}
-        {isParticipant && (
-          <View style={styles.actionSection}>
-            <TouchableOpacity
-              style={[styles.addPhotoButton, uploading && styles.addPhotoButtonDisabled]}
-              onPress={handleAddPhotos}
-              disabled={uploading}
-              activeOpacity={0.8}
-            >
-              <Ionicons 
-                name="camera-outline" 
-                size={24} 
-                color={uploading ? "#C7C7CC" : "#3797EF"} 
-              />
-              <Text style={[styles.addPhotoButtonText, uploading && styles.addPhotoButtonTextDisabled]}>
-                {uploading ? 'Uploading...' : 'Add Photos'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
       </ScrollView>
 
-      {/* Host Management Modal */}
+      {/* Participants Modal - REMOVED, now using separate screen */}
+
+      {/* Likes Modal */}
       <Modal
-        visible={showManageModal}
+        visible={showLikesModal}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => setShowManageModal(false)}
+        onRequestClose={() => setShowLikesModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.manageModal}>
+          <View style={styles.likesModal}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Manage Memory</Text>
-              <TouchableOpacity onPress={() => setShowManageModal(false)}>
+              <Text style={styles.modalTitle}>
+                Likes ({currentPhotoLikes.length})
+              </Text>
+              <TouchableOpacity onPress={() => setShowLikesModal(false)}>
                 <Ionicons name="close" size={24} color="#000000" />
               </TouchableOpacity>
             </View>
             
-            <View style={styles.manageOptions}>
-              <TouchableOpacity
-                style={styles.manageOption}
-                onPress={() => {
-                  setShowManageModal(false);
-                  setShowAddParticipants(true);
-                }}
-              >
-                <Ionicons name="person-add-outline" size={24} color="#3797EF" />
-                <Text style={styles.manageOptionText}>Add Participants</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.manageOption}
-                onPress={() => {
-                  setShowManageModal(false);
-                }}
-              >
-                <Ionicons name="create-outline" size={24} color="#3797EF" />
-                <Text style={styles.manageOptionText}>Edit Memory</Text>
-              </TouchableOpacity>
-            </View>
+            {likesLoading ? (
+              <View style={styles.modalLoading}>
+                <Text>Loading likes...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={currentPhotoLikes}
+                renderItem={renderLikedUser}
+                keyExtractor={(item, index) => `${item.user._id}-${index}`}
+                style={styles.likedUsersList}
+              />
+            )}
           </View>
         </View>
       </Modal>
 
-      {/* Add Participants Modal */}
+      {/* Comments Modal */}
       <Modal
-        visible={showAddParticipants}
+        visible={showComments}
         animationType="slide"
-        onRequestClose={() => setShowAddParticipants(false)}
+        onRequestClose={() => setShowComments(false)}
       >
-        <SafeAreaView style={styles.addParticipantsModal}>
+        <SafeAreaView style={styles.commentsModal}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowAddParticipants(false)}>
+            <TouchableOpacity onPress={() => setShowComments(false)}>
               <Ionicons name="arrow-back" size={24} color="#000000" />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Add Participants</Text>
+            <Text style={styles.modalTitle}>Comments</Text>
             <View style={{ width: 24 }} />
           </View>
           
-          <View style={styles.searchContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search users..."
-              value={searchText}
-              onChangeText={(text) => {
-                setSearchText(text);
-                searchUsers(text);
-              }}
-            />
-          </View>
-          
           <FlatList
-            data={searchResults}
-            renderItem={renderSearchResult}
-            keyExtractor={(item) => item._id}
-            style={styles.searchResults}
+            data={comments}
+            renderItem={renderComment}
+            keyExtractor={(item, index) => `comment-${index}`}
+            style={styles.commentsList}
             ListEmptyComponent={
-              searchText ? (
-                <View style={styles.emptySearch}>
-                  <Text style={styles.emptySearchText}>
-                    {searchLoading ? 'Searching...' : 'No users found'}
-                  </Text>
+              commentsLoading ? (
+                <View style={styles.modalLoading}>
+                  <Text>Loading comments...</Text>
                 </View>
-              ) : null
+              ) : (
+                <View style={styles.emptyComments}>
+                  <Text style={styles.emptyCommentsText}>No comments yet</Text>
+                </View>
+              )
             }
           />
+          
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.commentInputContainer}
+          >
+            <TextInput
+              style={styles.commentInput}
+              placeholder="Add a comment..."
+              value={commentText}
+              onChangeText={setCommentText}
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              style={[styles.sendButton, !commentText.trim() && styles.sendButtonDisabled]}
+              onPress={addComment}
+              disabled={!commentText.trim()}
+            >
+              <Ionicons name="send" size={20} color={commentText.trim() ? "#3797EF" : "#C7C7CC"} />
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
+
+      {/* Host Management Modal - REMOVED (using direct navigation) */}
+
+      {/* Add Participants Modal - REMOVED, now using separate screen */}
 
       {/* Fullscreen Photo Modal */}
       <Modal
@@ -662,9 +646,9 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         animationType="fade"
         onRequestClose={() => setShowPhotoModal(false)}
       >
-        <View style={styles.photoModalOverlay}>
+        <View style={styles.fullscreenModal}>
           <TouchableOpacity
-            style={styles.photoModalClose}
+            style={styles.fullscreenCloseButton}
             onPress={() => setShowPhotoModal(false)}
           >
             <Ionicons name="close" size={30} color="#FFFFFF" />
@@ -677,79 +661,11 @@ export default function MemoryDetailsScreen({ route, navigation }) {
                   ? selectedPhoto.url 
                   : `http://${API_BASE_URL}:3000${selectedPhoto.url}`
               }}
-              style={styles.fullPhoto}
+              style={styles.fullscreenImage}
               resizeMode="contain"
             />
           )}
         </View>
-      </Modal>
-
-      {/* Comments Modal */}
-      <Modal
-        visible={showComments}
-        animationType="slide"
-        onRequestClose={() => setShowComments(false)}
-      >
-        <SafeAreaView style={styles.commentsModal}>
-          <View style={styles.commentsHeader}>
-            <TouchableOpacity onPress={() => setShowComments(false)}>
-              <Ionicons name="arrow-back" size={24} color="#000000" />
-            </TouchableOpacity>
-            <Text style={styles.commentsTitle}>Comments</Text>
-            <View style={{ width: 24 }} />
-          </View>
-          
-          {commentsLoading ? (
-            <View style={styles.centerContent}>
-              <Text style={styles.loadingText}>Loading comments...</Text>
-            </View>
-          ) : (
-            <>
-              <FlatList
-                data={comments}
-                renderItem={renderComment}
-                keyExtractor={(item) => item._id}
-                style={styles.commentsList}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <View style={styles.noCommentsContainer}>
-                    <Ionicons name="chatbubble-outline" size={48} color="#C7C7CC" />
-                    <Text style={styles.noCommentsText}>No comments yet</Text>
-                    <Text style={styles.noCommentsSubtext}>Be the first to comment!</Text>
-                  </View>
-                }
-              />
-              
-              <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={styles.commentInputContainer}
-              >
-                <TextInput
-                  style={styles.commentInput}
-                  placeholder="Add a comment..."
-                  value={commentText}
-                  onChangeText={setCommentText}
-                  multiline
-                  maxLength={500}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    !commentText.trim() && styles.sendButtonDisabled
-                  ]}
-                  onPress={handleAddComment}
-                  disabled={!commentText.trim()}
-                >
-                  <Ionicons 
-                    name="send" 
-                    size={20} 
-                    color={commentText.trim() ? "#FFFFFF" : "#C7C7CC"} 
-                  />
-                </TouchableOpacity>
-              </KeyboardAvoidingView>
-            </>
-          )}
-        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -760,70 +676,58 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  scrollContainer: {
+  scrollView: {
     flex: 1,
   },
-  centerContent: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    backgroundColor: '#FFFFFF',
   },
-  loadingText: {
-    fontSize: 16,
-    color: '#8E8E93',
-    marginTop: 12,
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 20,
   },
   errorText: {
     fontSize: 16,
     color: '#FF3B30',
     textAlign: 'center',
-    marginVertical: 12,
+    marginBottom: 20,
   },
   retryButton: {
     backgroundColor: '#3797EF',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderRadius: 8,
-    marginTop: 12,
   },
   retryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
-
-  // Header
-  headerSection: {
+  memoryHeader: {
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
   memoryTitle: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: 'bold',
     color: '#000000',
-    flex: 1,
-  },
-  manageButton: {
-    padding: 8,
-    marginLeft: 12,
+    marginBottom: 8,
   },
   memoryDescription: {
     fontSize: 16,
-    color: '#666666',
+    color: '#8E8E93',
     lineHeight: 22,
     marginBottom: 16,
   },
   memoryMeta: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 16,
   },
   metaItem: {
@@ -834,93 +738,31 @@ const styles = StyleSheet.create({
   metaText: {
     fontSize: 14,
     color: '#8E8E93',
-    fontWeight: '500',
   },
-
-  // Sections
-  section: {
-    paddingVertical: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  addParticipantButton: {
-    padding: 8,
-  },
-
-  // Photos
-  photosList: {
-    paddingHorizontal: 20,
-  },
-
-  // Participants
-  participantsList: {
-    paddingHorizontal: 20,
-  },
-  participantItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  participantInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  creatorItem: {
-    backgroundColor: '#F8F9FA',
-    marginHorizontal: -20,
-    paddingHorizontal: 20,
-  },
-  participantAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 12, // ✅ FIXED: Square with curved edges (was 20 for circle)
-    marginRight: 12,
-    backgroundColor: '#F6F6F6',
-  },
-  participantName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000000',
-  },
-  creatorLabel: {
-    fontSize: 12,
+  clickableText: {
     color: '#3797EF',
-    fontWeight: '600',
-    marginTop: 2,
+    textDecorationLine: 'underline',
   },
-  removeButton: {
-    padding: 8,
-  },
-
-  // Action section
-  actionSection: {
+  addPhotoSection: {
     padding: 20,
-    paddingBottom: 40,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
   },
   addPhotoButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F6F6F6',
-    paddingVertical: 16,
+    backgroundColor: '#F0F8FF',
+    borderWidth: 1,
+    borderColor: '#3797EF',
     borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     gap: 8,
   },
   addPhotoButtonDisabled: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F6F6F6',
+    borderColor: '#C7C7CC',
   },
   addPhotoButtonText: {
     fontSize: 16,
@@ -930,237 +772,196 @@ const styles = StyleSheet.create({
   addPhotoButtonTextDisabled: {
     color: '#C7C7CC',
   },
-
-  // Modals
+  section: {
+    padding: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 16,
+  },
+  photosList: {
+    gap: 16,
+  },
+  
+  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
-  manageModal: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 40,
-  },
-  addParticipantsModal: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
   modalHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E1E1E1',
+    borderBottomColor: '#F0F0F0',
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000000',
   },
-  manageOptions: {
-    padding: 20,
-  },
-  manageOption: {
-    flexDirection: 'row',
+  modalLoading: {
+    padding: 40,
     alignItems: 'center',
-    paddingVertical: 16,
-    gap: 16,
   },
-  manageOptionText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000000',
+  
+  // Participants Modal - REMOVED (using separate screen)
+  
+  // Likes Modal
+  likesModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
   },
-
-  // Search
-  searchContainer: {
-    padding: 20,
+  likedUsersList: {
+    maxHeight: 400,
   },
-  searchInput: {
-    backgroundColor: '#F0F0F0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-  },
-  searchResults: {
-    flex: 1,
-  },
-  searchResultItem: {
+  likedUserItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
-  searchResultAvatar: {
+  likedUserAvatar: {
     width: 40,
     height: 40,
-    borderRadius: 12, // ✅ FIXED: Square with curved edges (was 20 for circle)
-    marginRight: 12,
+    borderRadius: 12,
     backgroundColor: '#F6F6F6',
   },
-  searchResultInfo: {
+  likedUserInfo: {
+    marginLeft: 12,
     flex: 1,
   },
-  searchResultName: {
+  likedUserName: {
     fontSize: 16,
     fontWeight: '500',
     color: '#000000',
   },
-  searchResultUsername: {
+  likedUserUsername: {
     fontSize: 14,
     color: '#8E8E93',
     marginTop: 2,
   },
-  emptySearch: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptySearchText: {
-    fontSize: 16,
-    color: '#8E8E93',
-  },
-
-  // Photo Modal
-  photoModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photoModalClose: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    zIndex: 10,
-    padding: 10,
-  },
-  fullPhoto: {
-    width: '90%',
-    height: '70%',
-  },
-
+  
   // Comments Modal
   commentsModal: {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  commentsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E1E1E1',
-  },
-  commentsTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
-  },
   commentsList: {
     flex: 1,
-    paddingVertical: 8,
+    paddingHorizontal: 20,
   },
   commentItem: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    alignItems: 'flex-start',
+    paddingVertical: 12,
   },
   commentAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 10, // ✅ FIXED: Square with curved edges (was 16 for circle)
-    marginRight: 12,
+    borderRadius: 8,
     backgroundColor: '#F6F6F6',
   },
   commentContent: {
+    marginLeft: 12,
     flex: 1,
   },
-  commentBubble: {
-    backgroundColor: '#F0F0F0',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxWidth: '85%',
-  },
-  commentUsername: {
-    fontSize: 12,
+  commentAuthor: {
+    fontSize: 14,
     fontWeight: '600',
-    color: '#3797EF',
-    marginBottom: 2,
+    color: '#000000',
+    marginBottom: 4,
   },
   commentText: {
     fontSize: 14,
     color: '#000000',
-    lineHeight: 18,
-  },
-  commentMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-    paddingLeft: 12,
-    gap: 12,
+    lineHeight: 20,
+    marginBottom: 4,
   },
   commentTime: {
     fontSize: 12,
     color: '#8E8E93',
   },
-  deleteCommentButton: {
-    padding: 4,
-  },
-  deleteCommentText: {
-    fontSize: 12,
-    color: '#FF3B30',
-    fontWeight: '500',
-  },
-  noCommentsContainer: {
+  emptyComments: {
+    padding: 40,
     alignItems: 'center',
-    paddingVertical: 40,
   },
-  noCommentsText: {
+  emptyCommentsText: {
     fontSize: 16,
-    fontWeight: '500',
     color: '#8E8E93',
-    marginTop: 12,
-  },
-  noCommentsSubtext: {
-    fontSize: 14,
-    color: '#C7C7CC',
-    marginTop: 4,
   },
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
     backgroundColor: '#FFFFFF',
-    borderTopWidth: 0.5,
-    borderTopColor: '#E1E1E1',
   },
   commentInput: {
     flex: 1,
-    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    fontSize: 14,
-    maxHeight: 100,
-    marginRight: 8,
+    maxHeight: 80,
+    fontSize: 16,
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#3797EF',
+    marginLeft: 12,
+    padding: 8,
+  },
+  sendButtonDisabled: {
+    opacity: 0.5,
+  },
+  
+  // Management Modal
+  manageModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  manageOptions: {
+    paddingBottom: 20,
+  },
+  manageOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  manageOptionText: {
+    fontSize: 16,
+    color: '#000000',
+    marginLeft: 12,
+  },
+  
+  // Add Participants Modal - REMOVED (using separate screen)
+  
+  // Fullscreen Photo Modal
+  fullscreenModal: {
+    flex: 1,
+    backgroundColor: '#000000',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendButtonDisabled: {
-    backgroundColor: '#F0F0F0',
+  fullscreenCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 1,
+    padding: 10,
+  },
+  fullscreenImage: {
+    width: screenWidth,
+    height: '100%',
   },
 });
