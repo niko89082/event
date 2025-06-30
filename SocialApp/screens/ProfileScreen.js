@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - FIXED NAVIGATION ISSUE
+// screens/ProfileScreen.js - COMPLETE FIXED VERSION
 import React, { useEffect, useState, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -35,10 +35,12 @@ export default function ProfileScreen() {
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
   const [events, setEvents] = useState([]);
+  const [memories, setMemories] = useState([]);
   const [filteredEvents, setFilteredEvents] = useState([]);
   const [sharedEventIds, setSharedEventIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [memoriesLoading, setMemoriesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [hasRequested, setHasRequested] = useState(false);
@@ -46,6 +48,159 @@ export default function ProfileScreen() {
   const [eventFilter, setEventFilter] = useState('all');
   const [showEventFilters, setShowEventFilters] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
+  const [showMemoriesTab, setShowMemoriesTab] = useState(true); // Control memories tab visibility
+
+  // ✅ FIXED: Move renderMemoryCard inside component with proper navigation access
+  const renderMemoryCard = React.useCallback(({ item: memory }) => {
+    // ✅ VALIDATION: Ensure navigation and memory data exist
+    if (!navigation) {
+      console.error('❌ Navigation is not available in renderMemoryCard');
+      return null;
+    }
+
+    if (!memory || !memory._id) {
+      console.warn('❌ Invalid memory data:', memory);
+      return null;
+    }
+
+    // ✅ SAFE: Handle missing data gracefully
+    const coverPhotoUrl = memory.coverPhoto 
+      ? `http://${API_BASE_URL}:3000${memory.coverPhoto}`
+      : 'https://placehold.co/400x200/E1E1E1/8E8E93?text=Memory';
+      
+    const photoCount = memory.photoCount || 0;
+    const participantCount = memory.participantCount || 1;
+    const participants = memory.participants || [];
+
+    // ✅ SAFE: Navigation handler with error handling
+    const handleMemoryPress = () => {
+      try {
+        console.log('🔗 Navigating to memory:', memory._id);
+        
+        if (navigation && typeof navigation.navigate === 'function') {
+          navigation.navigate('MemoryDetailsScreen', { 
+            memoryId: memory._id,
+            memory: memory // Pass memory data as backup
+          });
+        } else {
+          console.error('❌ Navigation.navigate is not available');
+          Alert.alert('Error', 'Unable to navigate to memory details');
+        }
+      } catch (error) {
+        console.error('❌ Error navigating to memory:', error);
+        Alert.alert('Error', 'Failed to open memory');
+      }
+    };
+
+    return (
+      <TouchableOpacity
+        onPress={handleMemoryPress}
+        activeOpacity={0.95}
+      >
+        <View style={styles.memoryCard}>
+          {/* Memory Cover */}
+          <View style={styles.memoryCoverContainer}>
+            <Image
+              source={{ uri: coverPhotoUrl }}
+              style={styles.memoryCover}
+              onError={(error) => {
+                console.warn('❌ Memory cover image failed to load:', error.nativeEvent?.error);
+              }}
+            />
+            
+            {/* Memory Badge */}
+            <View style={styles.memoryBadge}>
+              <Ionicons name="library" size={16} color="#FFFFFF" />
+            </View>
+
+            {/* Photo Count */}
+            {photoCount > 0 && (
+              <View style={styles.photoCount}>
+                <Ionicons name="camera" size={12} color="#FFFFFF" />
+                <Text style={styles.photoCountText}>{photoCount}</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Memory Info */}
+          <View style={styles.memoryInfo}>
+            <Text style={styles.memoryTitle}>{memory.title || 'Untitled Memory'}</Text>
+            
+            {memory.description && (
+              <Text style={styles.memoryDescription} numberOfLines={2}>
+                {memory.description}
+              </Text>
+            )}
+
+            {/* Participants */}
+            <View style={styles.memoryMetadata}>
+              <View style={styles.participantAvatars}>
+                {/* Show creator first if available */}
+                {memory.creator && (
+                  <View style={styles.participantAvatar}>
+                    <Image
+                      source={{
+                        uri: memory.creator.profilePicture
+                          ? `http://${API_BASE_URL}:3000${memory.creator.profilePicture}`
+                          : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
+                            (memory.creator.username?.charAt(0).toUpperCase() || '?')
+                      }}
+                      style={styles.participantAvatarImage}
+                      onError={(error) => {
+                        console.warn('❌ Creator avatar failed to load:', error.nativeEvent?.error);
+                      }}
+                    />
+                  </View>
+                )}
+
+                {/* Show participants */}
+                {participants.slice(0, memory.creator ? 2 : 3).map((participant, index) => (
+                  <View
+                    key={participant._id || `participant-${index}`}
+                    style={[
+                      styles.participantAvatar,
+                      { 
+                        marginLeft: index > 0 || memory.creator ? -8 : 0, 
+                        zIndex: (memory.creator ? 2 : 3) - index 
+                      }
+                    ]}
+                  >
+                    <Image
+                      source={{
+                        uri: participant.profilePicture
+                          ? `http://${API_BASE_URL}:3000${participant.profilePicture}`
+                          : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
+                            (participant.username?.charAt(0).toUpperCase() || '?')
+                      }}
+                      style={styles.participantAvatarImage}
+                      onError={(error) => {
+                        console.warn('❌ Participant avatar failed to load:', error.nativeEvent?.error);
+                      }}
+                    />
+                  </View>
+                ))}
+                
+                {/* Show remaining count if more than 3 total */}
+                {participantCount > 3 && (
+                  <View style={[styles.participantAvatar, styles.remainingCount, { marginLeft: -8 }]}>
+                    <Text style={styles.remainingCountText}>+{participantCount - 3}</Text>
+                  </View>
+                )}
+              </View>
+              
+              <Text style={styles.participantCount}>
+                {participantCount} {participantCount === 1 ? 'person' : 'people'}
+              </Text>
+
+              <Text style={styles.memoryDate}>
+                {memory.timeAgo || new Date(memory.createdAt).toLocaleDateString()}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }, [navigation, API_BASE_URL]); // ✅ ADD: Dependencies for useCallback
 
   // FIXED: Set up navigation header with proper dependencies
   useEffect(() => {
@@ -161,6 +316,16 @@ export default function ProfileScreen() {
         await fetchUserEvents();
       }
 
+      // Fetch memories when switching to Memories tab or if it's already active
+      if (activeTab === 'Memories') {
+        await fetchUserMemories();
+      }
+
+      // Check if we should show memories tab for other users
+      if (!isSelf) {
+        await checkSharedMemories();
+      }
+
     } catch (error) {
       console.error('❌ Error fetching profile:', error);
       if (error.response?.status === 404) {
@@ -219,6 +384,48 @@ export default function ProfileScreen() {
   }
 };
 
+const fetchUserMemories = async () => {
+  try {
+    setMemoriesLoading(true);
+    console.log('📚 Fetching memories for userId:', userId);
+    
+    const { data } = await api.get(`/api/memories/user/${userId}`, {
+      params: { page: 1, limit: 50 }
+    });
+    
+    console.log('📚 Memories received:', data.memories?.length || 0);
+    setMemories(data.memories || []);
+    
+  } catch (error) {
+    console.error('❌ Error fetching memories:', error);
+    if (error.response?.status !== 404) {
+      Alert.alert('Error', 'Failed to load memories');
+    }
+  } finally {
+    setMemoriesLoading(false);
+  }
+};
+
+// Check if current user has shared memories with the profile user
+const checkSharedMemories = async () => {
+  try {
+    console.log('🔍 Checking shared memories with userId:', userId);
+    // FIXED: Use the correct API endpoint that checks for shared memories
+    // This endpoint already handles the logic for showing shared memories between users
+    const { data } = await api.get(`/api/memories/user/${userId}`, {
+      params: { page: 1, limit: 1 } // Just check if any exist
+    });
+    
+    const hasSharedMemories = data.memories && data.memories.length > 0;
+    setShowMemoriesTab(hasSharedMemories);
+    console.log('🔍 Has shared memories:', hasSharedMemories);
+  } catch (error) {
+    console.error('Error checking shared memories:', error);
+    // If there's an error, hide the memories tab for other users
+    setShowMemoriesTab(false);
+  }
+};
+
 // ENHANCED: Apply event filter with better logic
 const applyEventFilter = () => {
   if (!Array.isArray(events)) {
@@ -256,10 +463,14 @@ const applyEventFilter = () => {
 
   setFilteredEvents(filtered);
 };
+
   const handleTabSwitch = async (tab) => {
     setActiveTab(tab);
     if (tab === 'Events' && events.length === 0) {
       await fetchUserEvents();
+    }
+    if (tab === 'Memories' && memories.length === 0) {
+      await fetchUserMemories();
     }
   };
 
@@ -394,24 +605,36 @@ const renderProfileHeader = () => (
     </View>
   );
 
-  const renderTabBar = () => (
-    <View style={styles.tabBar}>
-      {['Posts', 'Events'].map((tab) => (
-        <TouchableOpacity
-          key={tab}
-          style={[styles.tab, activeTab === tab && styles.activeTab]}
-          onPress={() => handleTabSwitch(tab)}
-          activeOpacity={0.8}
-        >
-          <Ionicons 
-            name={tab === 'Posts' ? 'grid-outline' : 'calendar-outline'} 
-            size={24} 
-            color={activeTab === tab ? '#000000' : '#8E8E93'} 
-          />
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
+  // UPDATED: Added Memories tab to tab bar (conditionally)
+  const renderTabBar = () => {
+    const tabs = ['Posts', 'Events'];
+    if (isSelf || showMemoriesTab) {
+      tabs.push('Memories');
+    }
+
+    return (
+      <View style={styles.tabBar}>
+        {tabs.map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tab, activeTab === tab && styles.activeTab]}
+            onPress={() => handleTabSwitch(tab)}
+            activeOpacity={0.8}
+          >
+            <Ionicons 
+              name={
+                tab === 'Posts' ? 'grid-outline' : 
+                tab === 'Events' ? 'calendar-outline' : 
+                'library-outline'
+              } 
+              size={24} 
+              color={activeTab === tab ? '#000000' : '#8E8E93'} 
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  };
 
   const renderEventFilterBar = () => {
     if (activeTab !== 'Events' || !isSelf) return null;
@@ -464,7 +687,6 @@ const renderProfileHeader = () => (
     </TouchableOpacity>
   );
 
- 
 const renderEventCard = ({ item: event }) => {
   const isShared = sharedEventIds.has(event._id);
   const isPast = new Date(event.time) <= new Date();
@@ -566,7 +788,7 @@ const renderEventCard = ({ item: event }) => {
     </TouchableOpacity>
   );
 };
-  // 🎯 FIX #3: REMOVED NAVIGATION TO MISSING SCREEN
+
   const renderManageModal = () => (
     <Modal
       visible={showManageModal}
@@ -621,12 +843,18 @@ const renderEventCard = ({ item: event }) => {
         return 'private';
       }
       return posts;
-    } else {
+    } else if (activeTab === 'Events') {
       if (eventsLoading) {
         return 'loading';
       }
       return isSelf ? filteredEvents : events;
+    } else if (activeTab === 'Memories') {
+      if (memoriesLoading) {
+        return 'loading';
+      }
+      return memories;
     }
+    return [];
   };
 
   const renderContent = () => {
@@ -648,19 +876,26 @@ const renderEventCard = ({ item: event }) => {
       return (
         <View style={styles.loadingEventsContainer}>
           <ActivityIndicator size="large" color="#3797EF" />
-          <Text style={styles.loadingText}>Loading events...</Text>
+          <Text style={styles.loadingText}>
+            {activeTab === 'Events' ? 'Loading events...' : 'Loading memories...'}
+          </Text>
         </View>
       );
     }
 
     if (Array.isArray(contentData) && contentData.length === 0) {
       const isEventsTab = activeTab === 'Events';
+      const isMemoriesTab = activeTab === 'Memories';
       const hasFilter = isEventsTab && eventFilter !== 'all';
       
       return (
         <View style={styles.emptyContainer}>
           <Ionicons 
-            name={isEventsTab ? "calendar-outline" : "camera-outline"} 
+            name={
+              isEventsTab ? "calendar-outline" : 
+              isMemoriesTab ? "library-outline" : 
+              "camera-outline"
+            } 
             size={64} 
             color="#C7C7CC" 
           />
@@ -670,7 +905,9 @@ const renderEventCard = ({ item: event }) => {
                   ? `No ${eventFilter} events`
                   : (isSelf ? 'No events found' : 'No shared events')
                 )
-              : (isSelf ? 'Share your first post' : 'No posts yet')
+              : isMemoriesTab
+                ? (isSelf ? 'No memories yet' : 'No shared memories')
+                : (isSelf ? 'Share your first post' : 'No posts yet')
             }
           </Text>
           <Text style={styles.emptySubtitle}>
@@ -682,22 +919,31 @@ const renderEventCard = ({ item: event }) => {
                       : 'This user hasn\'t shared any events publicly yet.'
                     )
                 )
-              : (isSelf 
-                  ? 'When you share photos, they\'ll appear on your profile.'
-                  : 'When they share photos, they\'ll appear here.'
-                )
+              : isMemoriesTab
+                ? (isSelf 
+                    ? 'Create your first memory to preserve special moments with friends'
+                    : 'You don\'t have any shared memories with this person yet'
+                  )
+                : (isSelf 
+                    ? 'When you share photos, they\'ll appear on your profile.'
+                    : 'When they share photos, they\'ll appear here.'
+                  )
             }
           </Text>
           {isSelf && (
             <TouchableOpacity
               style={styles.createButton}
               onPress={() => navigation.navigate(
-                isEventsTab ? 'CreateEventScreen' : 'CreatePickerScreen'
+                isEventsTab ? 'CreateEventScreen' : 
+                isMemoriesTab ? 'CreateMemoryScreen' : 
+                'CreatePickerScreen'
               )}
               activeOpacity={0.8}
             >
               <Text style={styles.createButtonText}>
-                {isEventsTab ? 'Create Event' : 'Create Post'}
+                {isEventsTab ? 'Create Event' : 
+                 isMemoriesTab ? 'Create Memory' : 
+                 'Create Post'}
               </Text>
             </TouchableOpacity>
           )}
@@ -732,14 +978,15 @@ const renderEventCard = ({ item: event }) => {
   const contentData = renderContent();
   const isPostsGrid = activeTab === 'Posts' && Array.isArray(contentData);
   const isEventsGrid = activeTab === 'Events' && Array.isArray(contentData);
+  const isMemoriesGrid = activeTab === 'Memories' && Array.isArray(contentData);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       <FlatList
-        data={isPostsGrid ? contentData : (isEventsGrid ? contentData : [])}
-        renderItem={isPostsGrid ? renderPostGrid : renderEventCard}
+        data={isPostsGrid ? contentData : (isEventsGrid ? contentData : (isMemoriesGrid ? contentData : []))}
+        renderItem={isPostsGrid ? renderPostGrid : (isEventsGrid ? renderEventCard : renderMemoryCard)}
         keyExtractor={(item) => item._id}
         numColumns={isPostsGrid ? 3 : 1}
         key={`${activeTab}-${isPostsGrid ? 3 : 1}`} // Force re-render when switching tabs
@@ -764,7 +1011,7 @@ const renderEventCard = ({ item: event }) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={
           isPostsGrid && contentData.length > 0 ? styles.postsGrid : 
-          isEventsGrid ? styles.eventsGrid : {}
+          (isEventsGrid || isMemoriesGrid) ? styles.eventsGrid : {}
         }
         scrollEventThrottle={16}
       />
@@ -934,7 +1181,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
-  // Tab Bar
+  // Tab Bar - UPDATED: Support for 3 tabs
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
@@ -1171,7 +1418,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Modal - FIXED: No longer navigates to missing screen
+  // Modal
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -1235,5 +1482,109 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // Memory Cards
+  memoryCard: {
+    marginHorizontal: 20,
+    marginVertical: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  memoryCoverContainer: {
+    position: 'relative',
+  },
+  memoryCover: {
+    width: '100%',
+    height: 160,
+    backgroundColor: '#F6F6F6',
+  },
+  memoryBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(55, 151, 239, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoCount: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  photoCountText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  memoryInfo: {
+    padding: 16,
+  },
+  memoryTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 8,
+  },
+  memoryDescription: {
+    fontSize: 14,
+    color: '#000000',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  memoryMetadata: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  participantAvatars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  participantAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  participantAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  remainingCount: {
+    backgroundColor: '#8E8E93',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  remainingCountText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  participantCount: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '500',
+  },
+  memoryDate: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '500',
+    marginLeft: 'auto',
   },
 });

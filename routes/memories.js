@@ -1,417 +1,492 @@
-// routes/memories.js - Enhanced for comprehensive memories system
+// routes/memories.js - FIXED: Memory creation route
 const express = require('express');
+const router = express.Router();
 const Memory = require('../models/Memory');
 const MemoryPhoto = require('../models/MemoryPhoto');
 const User = require('../models/User');
-const Notification = require('../models/Notification');
-const protect = require('../middleware/auth');
+const auth = require('../middleware/auth'); // Your auth middleware
+
+// ✅ FIXED: Create memory endpoint
+router.post('/', auth, async (req, res) => {
+  try {
+    const { title, description, participantIds = [] } = req.body;
+    const creatorId = req.user.id; // From auth middleware
+    
+    console.log('🚀 Creating memory with data:', {
+      title,
+      description,
+      creatorId,
+      participantIds
+    });
+    
+    // ✅ VALIDATION: Check if title is provided
+    if (!title || !title.trim()) {
+      return res.status(400).json({
+        message: 'Memory title is required'
+      });
+    }
+    
+    // ✅ VALIDATION: Check participant count BEFORE database operations
+    const totalParticipants = participantIds.length + 1; // +1 for creator
+    if (totalParticipants > 15) {
+      return res.status(400).json({
+        message: `Cannot create memory with ${totalParticipants} participants. Maximum is 15 (including creator).`
+      });
+    }
+    
+    // ✅ VALIDATION: Verify all participant IDs exist and are valid users
+    if (participantIds.length > 0) {
+      console.log('🔍 Validating participantIds:', participantIds);
+      
+      try {
+        const users = await User.find({ 
+          _id: { $in: participantIds } 
+        }).select('_id username');
+        
+        console.log('✅ Found', users.length, 'valid users out of', participantIds.length, 'requested');
+        
+        if (users.length !== participantIds.length) {
+          const foundIds = users.map(u => u._id.toString());
+          const invalidIds = participantIds.filter(id => !foundIds.includes(id));
+          
+          return res.status(400).json({
+            message: 'Some participant IDs are invalid',
+            details: { invalidIds }
+          });
+        }
+      } catch (userError) {
+        console.error('❌ Error validating participant IDs:', userError);
+        return res.status(400).json({
+          message: 'Invalid participant IDs format'
+        });
+      }
+    }
+    
+    // ✅ CLEAN: Remove creator from participants if accidentally included
+    const cleanParticipantIds = participantIds.filter(id => id !== creatorId);
+    const finalParticipantCount = cleanParticipantIds.length + 1; // +1 for creator
+    
+    console.log('✅ Final participants:', finalParticipantCount, 'users');
+    
+    // ✅ CREATE: Memory with proper data
+    const memoryData = {
+      title: title.trim(),
+      description: description ? description.trim() : '',
+      creator: creatorId,
+      participants: cleanParticipantIds,
+      isPrivate: true // Always private by default (no toggle in frontend)
+    };
+    
+    const memory = new Memory(memoryData);
+    await memory.save();
+    
+    // ✅ POPULATE: Return memory with populated creator and participants
+    await memory.populate([
+      { 
+        path: 'creator', 
+        select: 'username fullName profilePicture' 
+      },
+      { 
+        path: 'participants', 
+        select: 'username fullName profilePicture' 
+      }
+    ]);
+    
+    console.log('✅ Memory created successfully:', memory._id);
+    
+    res.status(201).json({
+      message: 'Memory created successfully',
+      memory: memory
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating memory:', error);
+    
+    // ✅ HANDLE: Mongoose validation errors properly
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        message: 'Validation failed',
+        details: errors.join(', ')
+      });
+    }
+    
+    // ✅ HANDLE: Cast errors (invalid ObjectId format)
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        message: 'Invalid ID format',
+        details: error.message
+      });
+    }
+    
+    // ✅ HANDLE: Duplicate key errors
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message: 'Memory with this title already exists'
+      });
+    }
+    
+    // ✅ HANDLE: Generic server errors
+    res.status(500).json({
+      message: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
+  }
+});
+
+// ✅ GET: User's memories
+router.get('/', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const memories = await Memory.find({
+      $or: [
+        { creator: userId },
+        { participants: userId }
+      ]
+    })
+    .populate('creator', 'username fullName profilePicture')
+    .populate('participants', 'username fullName profilePicture')
+    .populate({
+      path: 'photos',
+      match: { isDeleted: false },
+      populate: {
+        path: 'uploadedBy',
+        select: 'username'
+      }
+    })
+    .sort({ createdAt: -1 });
+    
+    res.json({ memories });
+  } catch (error) {
+    console.error('Error fetching memories:', error);
+    res.status(500).json({ message: 'Failed to fetch memories' });
+  }
+});
+
+// ✅ GET: Single memory by ID
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const memory = await Memory.findById(req.params.id)
+      .populate('creator', 'username fullName profilePicture')
+      .populate('participants', 'username fullName profilePicture')
+      .populate({
+        path: 'photos',
+        match: { isDeleted: false },
+        populate: {
+          path: 'uploadedBy',
+          select: 'username profilePicture'
+        },
+        options: { sort: { uploadedAt: -1 } }
+      });
+    
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    // ✅ CHECK: User has access to this memory
+    const userId = req.user.id;
+    const hasAccess = memory.creator._id.equals(userId) || 
+                     memory.participants.some(p => p._id.equals(userId));
+    
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    res.json({ memory });
+  } catch (error) {
+    console.error('Error fetching memory:', error);
+    res.status(500).json({ message: 'Failed to fetch memory' });
+  }
+});
+
+// ✅ PUT: Add participant to memory
+router.put('/:id/participants', auth, async (req, res) => {
+  try {
+    const { participantId } = req.body;
+    const memory = await Memory.findById(req.params.id);
+    
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    // Only creator can add participants
+    if (!memory.creator.equals(req.user.id)) {
+      return res.status(403).json({ message: 'Only creator can add participants' });
+    }
+    
+    await memory.addParticipant(participantId);
+    await memory.populate('participants', 'username fullName profilePicture');
+    
+    res.json({ 
+      message: 'Participant added successfully',
+      memory 
+    });
+  } catch (error) {
+    console.error('Error adding participant:', error);
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// ✅ DELETE: Remove participant from memory
+router.delete('/:id/participants/:participantId', auth, async (req, res) => {
+  try {
+    const memory = await Memory.findById(req.params.id);
+    
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    // Only creator can remove participants (or users can remove themselves)
+    const isCreator = memory.creator.equals(req.user.id);
+    const isSelf = req.params.participantId === req.user.id;
+    
+    if (!isCreator && !isSelf) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    await memory.removeParticipant(req.params.participantId);
+    await memory.populate('participants', 'username fullName profilePicture');
+    
+    res.json({ 
+      message: 'Participant removed successfully',
+      memory 
+    });
+  } catch (error) {
+    console.error('Error removing participant:', error);
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// ✅ POST: Upload photos to memory
 const multer = require('multer');
 const path = require('path');
 
-const router = express.Router();
-
-// Multer setup for photo uploads
+// Configure multer for photo uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/memory-photos/');
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/memory-photos/'); // Make sure this directory exists
   },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'memory-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage });
 
-/* ═══════════════════════════════════════════════════════════════════
-   ENHANCED: GET /api/memories/user/:userId - Get memories for specific user with privacy filtering
-══════════════════════════════════════════════════════════════════════ */
-router.get('/user/:userId?', protect, async (req, res) => {
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    const allowedTypes = /jpeg|jpg|png|gif/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
+    }
+  }
+});
+
+router.post('/:id/photos', auth, upload.single('photo'), async (req, res) => {
   try {
-    const targetUserId = req.params.userId || req.user._id;
-    const currentUserId = req.user._id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
+    const memory = await Memory.findById(req.params.id);
+    
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    // Check if user has access to this memory
+    const userId = req.user.id;
+    const hasAccess = memory.creator.equals(userId) || 
+                     memory.participants.some(p => p.equals(userId));
+    
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'No photo file provided' });
+    }
+    
+    // ✅ Create MemoryPhoto document
+    const photo = await MemoryPhoto.createPhoto({
+      memoryId: memory._id,
+      file: req.file,
+      uploadedBy: userId,
+      caption: req.body.caption
+    });
+    
+    // ✅ Add photo reference to memory
+    memory.photos.push(photo._id);
+    await memory.save();
+    
+    // ✅ Populate the photo for response
+    await photo.populate('uploadedBy', 'username profilePicture');
+    
+    res.status(201).json({
+      message: 'Photo uploaded successfully',
+      photo: photo
+    });
+    
+  } catch (error) {
+    console.error('Error uploading photo:', error);
+    res.status(500).json({ 
+      message: 'Failed to upload photo',
+      details: error.message 
+    });
+  }
+});
 
-    console.log(`🔍 Fetching memories for user ${targetUserId}, requested by ${currentUserId}`);
+// ✅ DELETE: Remove photo from memory
+router.delete('/:id/photos/:photoId', auth, async (req, res) => {
+  try {
+    const memory = await Memory.findById(req.params.id);
+    
+    if (!memory) {
+      return res.status(404).json({ message: 'Memory not found' });
+    }
+    
+    const photo = await MemoryPhoto.findById(req.params.photoId);
+    if (!photo || photo.isDeleted) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+    
+    // Verify photo belongs to this memory
+    if (!photo.memory.equals(memory._id)) {
+      return res.status(400).json({ message: 'Photo does not belong to this memory' });
+    }
+    
+    // Only photo uploader or memory creator can delete
+    const userId = req.user.id;
+    const canDelete = photo.uploadedBy.equals(userId) || memory.creator.equals(userId);
+    
+    if (!canDelete) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    // ✅ Soft delete the photo
+    await photo.softDelete();
+    
+    // ✅ Remove photo reference from memory
+    memory.photos = memory.photos.filter(p => !p.equals(photo._id));
+    await memory.save();
+    
+    res.json({ message: 'Photo deleted successfully' });
+    
+  } catch (error) {
+    console.error('Error deleting photo:', error);
+    res.status(500).json({ message: 'Failed to delete photo' });
+  }
+});
 
+// ✅ GET: User's memories (for profile screen)
+router.get('/user/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user.id;
+    const { page = 1, limit = 50 } = req.query;
+    
+    console.log(`📚 Fetching memories for user ${userId} (requested by ${currentUserId})`);
+    
+    // Build query based on who's requesting
     let query;
-
-    if (targetUserId.toString() === currentUserId.toString()) {
-      // Own profile: Show ALL memories user participates in
+    
+    if (userId === currentUserId) {
+      // Self: Show all memories where user is creator or participant
       query = {
         $or: [
-          { createdBy: currentUserId },
-          { participants: currentUserId }
+          { creator: userId },
+          { participants: userId }
         ]
       };
-      console.log('👤 Viewing own memories');
     } else {
-      // Other user's profile: Show only shared memories between both users
+      // Other user: Only show memories where both users are participants
       query = {
         $and: [
-          { participants: currentUserId }, // Current user must be participant
-          { participants: targetUserId },  // Target user must be participant
-          { isPrivate: { $ne: true } }     // Exclude private memories (extra safety)
+          {
+            $or: [
+              { creator: userId, participants: currentUserId },
+              { creator: currentUserId, participants: userId },
+              { 
+                $and: [
+                  { participants: userId },
+                  { participants: currentUserId }
+                ]
+              }
+            ]
+          }
         ]
       };
-      console.log('🤝 Viewing shared memories');
     }
-
+    
     const memories = await Memory.find(query)
-      .populate('createdBy', 'username profilePicture')
-      .populate('participants', 'username profilePicture')
+      .populate('creator', 'username fullName profilePicture')
+      .populate('participants', 'username fullName profilePicture')
       .populate({
         path: 'photos',
-        options: { limit: 4, sort: { created: -1 } }, // Show latest 4 photos
-        populate: { path: 'user', select: 'username profilePicture' }
+        match: { isDeleted: false },
+        populate: {
+          path: 'uploadedBy',
+          select: 'username profilePicture'
+        },
+        options: { sort: { uploadedAt: -1 }, limit: 1 } // Just get first photo for cover
       })
-      .sort({ updatedAt: -1 }) // Sort by most recent activity
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    // Add computed fields for each memory
-    const enhancedMemories = memories.map(memory => ({
-      ...memory,
-      photoCount: memory.photos?.length || 0,
-      participantCount: memory.participants?.length || 0,
-      coverPhoto: memory.photos?.[0]?.path || null,
-      lastActivity: memory.updatedAt,
-      isOwner: memory.createdBy._id.toString() === currentUserId.toString(),
-      timeAgo: getTimeAgo(memory.updatedAt)
-    }));
-
-    const totalMemories = await Memory.countDocuments(query);
-
-    console.log(`✅ Found ${enhancedMemories.length} memories`);
-
-    res.json({
-      memories: enhancedMemories,
-      page,
-      totalPages: Math.ceil(totalMemories / limit),
-      hasMore: skip + limit < totalMemories,
-      total: totalMemories,
-      isOwnProfile: targetUserId.toString() === currentUserId.toString()
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit));
+    
+    // Transform memories to include computed fields for frontend
+    const transformedMemories = memories.map(memory => {
+      const memoryObj = memory.toObject();
+      
+      return {
+        ...memoryObj,
+        // Add cover photo (first photo)
+        coverPhoto: memoryObj.photos && memoryObj.photos.length > 0 
+          ? memoryObj.photos[0].url 
+          : null,
+        // Add photo count
+        photoCount: memoryObj.photos ? memoryObj.photos.length : 0,
+        // Add participant count (including creator)
+        participantCount: (memoryObj.participants ? memoryObj.participants.length : 0) + 1,
+        // Add time ago
+        timeAgo: getTimeAgo(memoryObj.createdAt)
+      };
     });
-
+    
+    console.log(`✅ Found ${transformedMemories.length} memories for user ${userId}`);
+    
+    res.json({ 
+      memories: transformedMemories,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        hasMore: memories.length === parseInt(limit)
+      }
+    });
+    
   } catch (error) {
     console.error('❌ Error fetching user memories:', error);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Failed to fetch memories' });
   }
 });
 
-/* ═══════════════════════════════════════════════════════════════════
-   NEW: GET /api/memories/shared/:userId1/:userId2 - Get shared memories between two users
-══════════════════════════════════════════════════════════════════════ */
-router.get('/shared/:userId1/:userId2', protect, async (req, res) => {
-  try {
-    const { userId1, userId2 } = req.params;
-    const currentUserId = req.user._id;
-
-    // Only allow if current user is one of the two users
-    if (currentUserId.toString() !== userId1 && currentUserId.toString() !== userId2) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    const query = {
-      $and: [
-        { participants: userId1 },
-        { participants: userId2 },
-        { isPrivate: { $ne: true } } // Extra safety
-      ]
-    };
-
-    const memories = await Memory.find(query)
-      .populate('createdBy', 'username profilePicture')
-      .populate('participants', 'username profilePicture')
-      .populate({
-        path: 'photos',
-        options: { limit: 4, sort: { created: -1 } },
-        populate: { path: 'user', select: 'username profilePicture' }
-      })
-      .sort({ updatedAt: -1 })
-      .lean();
-
-    res.json({ memories });
-
-  } catch (error) {
-    console.error('❌ Error fetching shared memories:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════════
-   ENHANCED: POST /api/memories - Create new memory with better validation
-══════════════════════════════════════════════════════════════════════ */
-router.post('/', protect, async (req, res) => {
-  try {
-    const { title, description, participantIds, isPrivate } = req.body;
-
-    // Validation
-    if (!title?.trim()) {
-      return res.status(400).json({ message: 'Title is required' });
-    }
-
-    if (title.trim().length > 50) {
-      return res.status(400).json({ message: 'Title must be 50 characters or less' });
-    }
-
-    if (description && description.length > 250) {
-      return res.status(400).json({ message: 'Description must be 250 characters or less' });
-    }
-
-    // Validate and process participants
-    const validParticipants = [];
-    if (participantIds && participantIds.length > 0) {
-      if (participantIds.length > 14) { // Creator + 14 others = 15 max
-        return res.status(400).json({ message: 'Maximum 15 participants allowed' });
-      }
-      
-      const users = await User.find({ _id: { $in: participantIds } }).select('_id username');
-      if (users.length !== participantIds.length) {
-        return res.status(400).json({ message: 'Some users not found' });
-      }
-      
-      validParticipants.push(...users.map(u => u._id));
-    }
-
-    // Always include creator
-    if (!validParticipants.some(p => p.toString() === req.user._id.toString())) {
-      validParticipants.push(req.user._id);
-    }
-
-    const memory = await Memory.create({
-      title: title.trim(),
-      description: description?.trim() || '',
-      createdBy: req.user._id,
-      participants: validParticipants,
-      isPrivate: isPrivate || false,
-    });
-
-    // Send notifications to participants (excluding creator)
-    const notificationPromises = validParticipants
-      .filter(p => p.toString() !== req.user._id.toString())
-      .map(participantId => 
-        Notification.create({
-          user: participantId,
-          sender: req.user._id,
-          type: 'memory_invitation',
-          title: 'New Memory',
-          message: `${req.user.username} added you to a memory: "${title}"`,
-          data: { memoryId: memory._id },
-          actionType: 'VIEW_MEMORY',
-          actionData: { memoryId: memory._id }
-        })
-      );
-
-    await Promise.all(notificationPromises);
-
-    const populatedMemory = await Memory.findById(memory._id)
-      .populate('createdBy', 'username profilePicture')
-      .populate('participants', 'username profilePicture');
-
-    console.log(`✅ Created memory "${title}" with ${validParticipants.length} participants`);
-
-    res.status(201).json({ memory: populatedMemory });
-
-  } catch (error) {
-    console.error('❌ Error creating memory:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════════
-   ENHANCED: GET /api/memories/:memoryId - Get single memory with access control
-══════════════════════════════════════════════════════════════════════ */
-router.get('/:memoryId', protect, async (req, res) => {
-  try {
-    const memory = await Memory.findById(req.params.memoryId)
-      .populate('createdBy', 'username profilePicture')
-      .populate('participants', 'username profilePicture')
-      .populate({
-        path: 'photos',
-        populate: [
-          { path: 'user', select: 'username profilePicture' },
-          { path: 'comments.user', select: 'username profilePicture' },
-        ],
-        options: { sort: { created: -1 } }
-      });
-
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-
-    // Check access - user must be participant or creator
-    if (!memory.isParticipant(req.user._id)) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    // Add computed fields
-    const enhancedMemory = {
-      ...memory.toObject(),
-      photoCount: memory.photos?.length || 0,
-      participantCount: memory.participants?.length || 0,
-      isOwner: memory.createdBy._id.toString() === req.user._id.toString(),
-      canEdit: memory.createdBy._id.toString() === req.user._id.toString(),
-      canAddPhotos: true, // All participants can add photos
-      timeAgo: getTimeAgo(memory.updatedAt)
-    };
-
-    res.json({ memory: enhancedMemory });
-
-  } catch (error) {
-    console.error('❌ Error fetching memory:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════════
-   ENHANCED: POST /api/memories/:memoryId/photos - Add photo to memory
-══════════════════════════════════════════════════════════════════════ */
-router.post('/:memoryId/photos', protect, upload.single('photo'), async (req, res) => {
-  try {
-    const memory = await Memory.findById(req.params.memoryId);
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-
-    if (!memory.isParticipant(req.user._id)) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ message: 'No photo uploaded' });
-    }
-
-    const photo = await MemoryPhoto.create({
-      user: req.user._id,
-      memory: memory._id,
-      path: `/uploads/memory-photos/${req.file.filename}`,
-    });
-
-    memory.photos.push(photo._id);
-    memory.updatedAt = new Date();
-    await memory.save();
-
-    // Notify other participants
-    const notificationPromises = memory.participants
-      .filter(p => p.toString() !== req.user._id.toString())
-      .map(participantId => 
-        Notification.create({
-          user: participantId,
-          sender: req.user._id,
-          type: 'memory_photo_added',
-          title: 'New Photo Added',
-          message: `${req.user.username} added a photo to "${memory.title}"`,
-          data: { memoryId: memory._id, photoId: photo._id },
-          actionType: 'VIEW_MEMORY',
-          actionData: { memoryId: memory._id }
-        })
-      );
-
-    await Promise.all(notificationPromises);
-
-    const populatedMemory = await Memory.findById(memory._id)
-      .populate('createdBy', 'username profilePicture')
-      .populate('participants', 'username profilePicture')
-      .populate({
-        path: 'photos',
-        populate: [
-          { path: 'user', select: 'username profilePicture' },
-          { path: 'comments.user', select: 'username profilePicture' },
-        ],
-      });
-
-    res.status(201).json({ memory: populatedMemory, photo });
-
-  } catch (error) {
-    console.error('❌ Error adding photo:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════════
-   NEW: PUT /api/memories/:memoryId - Update memory (title, description)
-══════════════════════════════════════════════════════════════════════ */
-router.put('/:memoryId', protect, async (req, res) => {
-  try {
-    const { title, description } = req.body;
-    
-    const memory = await Memory.findById(req.params.memoryId);
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-
-    // Only creator can edit memory details
-    if (memory.createdBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only the creator can edit this memory' });
-    }
-
-    if (title?.trim()) {
-      memory.title = title.trim();
-    }
-    if (description !== undefined) {
-      memory.description = description?.trim() || '';
-    }
-
-    memory.updatedAt = new Date();
-    await memory.save();
-
-    const populatedMemory = await Memory.findById(memory._id)
-      .populate('createdBy', 'username profilePicture')
-      .populate('participants', 'username profilePicture');
-
-    res.json({ memory: populatedMemory });
-
-  } catch (error) {
-    console.error('❌ Error updating memory:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════════
-   NEW: DELETE /api/memories/:memoryId - Delete memory (creator only)
-══════════════════════════════════════════════════════════════════════ */
-router.delete('/:memoryId', protect, async (req, res) => {
-  try {
-    const memory = await Memory.findById(req.params.memoryId);
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-
-    // Only creator can delete memory
-    if (memory.createdBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only the creator can delete this memory' });
-    }
-
-    // Delete all photos associated with this memory
-    await MemoryPhoto.deleteMany({ memory: memory._id });
-
-    // Delete the memory
-    await Memory.findByIdAndDelete(memory._id);
-
-    res.json({ message: 'Memory deleted successfully' });
-
-  } catch (error) {
-    console.error('❌ Error deleting memory:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════════
-   UTILITY FUNCTION: Calculate time ago
-══════════════════════════════════════════════════════════════════════ */
+// ✅ HELPER: Calculate time ago
 function getTimeAgo(date) {
   const now = new Date();
-  const diffMs = now - new Date(date);
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffInSeconds = Math.floor((now - new Date(date)) / 1000);
   
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
-  return `${Math.floor(diffDays / 365)} years ago`;
+  if (diffInSeconds < 60) return 'Just now';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+  if (diffInSeconds < 2419200) return `${Math.floor(diffInSeconds / 604800)}w ago`;
+  
+  return new Date(date).toLocaleDateString();
 }
 
 module.exports = router;

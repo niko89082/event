@@ -1,5 +1,5 @@
 /*************************************************
- * server.js (main server file) - UPDATED WITH EVENT PRIVACY SYSTEM
+ * server.js (main server file) - UPDATED WITH MEMORY PHOTO SUPPORT
  *************************************************/
 const express = require('express');
 const http = require('http');
@@ -11,6 +11,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const fs = require('fs');
+const multer = require('multer'); // ✅ ADD: Required for memory photo uploads
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -37,14 +38,16 @@ const EventPrivacyService = require('./services/eventPrivacyService');
 // Load environment
 dotenv.config();
 
-// Ensure uploads directories exist
+// ✅ UPDATED: Ensure ALL uploads directories exist (including memory photos)
 const uploadsDir = path.join(__dirname, 'uploads');
 const photosDir = path.join(__dirname, 'uploads', 'photos');
 const eventCoversDir = path.join(__dirname, 'uploads', 'event-covers');
+const memoryPhotosDir = path.join(__dirname, 'uploads', 'memory-photos'); // ✅ ADD: Memory photos directory
 
-[uploadsDir, photosDir, eventCoversDir].forEach(dir => {
+[uploadsDir, photosDir, eventCoversDir, memoryPhotosDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
+    console.log(`✅ Created upload directory: ${dir}`);
   }
 });
 
@@ -75,8 +78,9 @@ const connectedUsers = {};
 
 // ********************************
 // 2) Body parsing, static paths
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// ✅ UPDATED: Increase limits for photo uploads
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // CORS middleware
 app.use((req, res, next) => {
@@ -90,8 +94,55 @@ app.use((req, res, next) => {
   }
 });
 
-// FIXED: Static file serving - this must come BEFORE other routes
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// ✅ UPDATED: Static file serving with proper headers for images
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, path) => {
+    if (path.match(/\.(jpg|jpeg|png|gif)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache images for 1 day
+      res.setHeader('Content-Type', 'image/*');
+    }
+  }
+}));
+
+// ✅ ADD: Global multer error handling (must be early in middleware stack)
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    console.error('❌ Multer error:', error);
+    
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ 
+        message: 'File too large. Maximum size is 10MB.',
+        code: 'FILE_TOO_LARGE'
+      });
+    }
+    if (error.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ 
+        message: 'Too many files. Maximum is 10 files per upload.',
+        code: 'TOO_MANY_FILES'
+      });
+    }
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ 
+        message: 'Unexpected file field.',
+        code: 'UNEXPECTED_FILE'
+      });
+    }
+    
+    return res.status(400).json({ 
+      message: `Upload error: ${error.message}`,
+      code: error.code
+    });
+  }
+  
+  if (error.message === 'Only image files are allowed!') {
+    return res.status(400).json({ 
+      message: 'Only image files (JPEG, PNG, GIF) are allowed!',
+      code: 'INVALID_FILE_TYPE'
+    });
+  }
+  
+  next(error);
+});
 
 // ********************************
 // 3) Connect to Mongo with enhanced error handling
@@ -232,7 +283,7 @@ app.use(limiter);
 // 5) ROUTES WITH /api PREFIX FOR CONSISTENCY
 // ********************************
 
-// Health check endpoint
+// ✅ UPDATED: Health check endpoint with memory support indication
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
@@ -240,7 +291,14 @@ app.get('/health', (req, res) => {
     features: {
       eventPrivacy: true,
       recommendations: true,
-      realTimeUpdates: true
+      realTimeUpdates: true,
+      memoryPhotos: true, // ✅ ADD: Indicate memory photo support
+      fileUploads: true
+    },
+    uploadDirs: {
+      photos: fs.existsSync(photosDir),
+      eventCovers: fs.existsSync(eventCoversDir),
+      memoryPhotos: fs.existsSync(memoryPhotosDir)
     }
   });
 });
@@ -256,9 +314,10 @@ app.use('/api/checkin', checkinRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);
-app.use('/api/memories', memoryRoutes);
+app.use('/api/memories', memoryRoutes); // ✅ ENSURE: Memory routes are properly registered
 app.use('/api/users', usersRoutes);
 app.use('/api/qr', qrRoutes);
+
 // Legacy routes for backward compatibility (WITHOUT /api prefix)
 app.use('/auth', authRoutes);
 app.use('/events', eventRoutes);
@@ -267,8 +326,9 @@ app.use('/notifications', notificationRoutes);
 app.use('/profile', profileRoutes);
 app.use('/follow', followRoutes);
 app.use('/users', usersRoutes);
-app.use('/api/memories', memoryRoutes);
-app.use('/api/notifications', notificationRoutes);
+// ✅ REMOVE: Duplicate memory route registrations
+// app.use('/api/memories', memoryRoutes); // This was duplicated
+// app.use('/api/notifications', notificationRoutes); // This was duplicated
 
 // ********************************
 // 6) EVENT PRIVACY SYSTEM API ENDPOINTS
@@ -339,10 +399,13 @@ app.get('/api/events/:eventId/permissions/:action', protect, async (req, res) =>
 // 7) ERROR HANDLING MIDDLEWARE
 // ********************************
 
-// Handle 404
+// ✅ UPDATED: Handle 404 with better logging
 app.use('*', (req, res) => {
+  console.log('🟡 Route not found:', req.method, req.originalUrl);
   res.status(404).json({ 
     message: 'Route not found',
+    method: req.method,
+    path: req.originalUrl,
     availableRoutes: [
       '/api/auth',
       '/api/events',
@@ -399,8 +462,17 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 WebSocket: Enabled`);
   console.log(`🔗 API Base: http://localhost:${PORT}/api`);
+  console.log(`📁 Static files: http://localhost:${PORT}/uploads`);
+  console.log(`📸 Memory photos directory: ${memoryPhotosDir}`);
+  
+  // ✅ ADD: Verify upload directories on startup
+  console.log('📂 Upload directories:');
+  console.log(`   Photos: ${fs.existsSync(photosDir) ? '✅' : '❌'} ${photosDir}`);
+  console.log(`   Event covers: ${fs.existsSync(eventCoversDir) ? '✅' : '❌'} ${eventCoversDir}`);
+  console.log(`   Memory photos: ${fs.existsSync(memoryPhotosDir) ? '✅' : '❌'} ${memoryPhotosDir}`);
 });
 
 // Graceful shutdown

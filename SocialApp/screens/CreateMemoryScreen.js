@@ -1,4 +1,4 @@
-// screens/CreateMemoryScreen.js - Enhanced create memory with 4-step process
+// screens/CreateMemoryScreen.js - Combined: Working user search + No privacy toggle
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -13,7 +13,6 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
-  Switch,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -29,7 +28,6 @@ export default function CreateMemoryScreen({ navigation }) {
   // Form state
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [selectedPhotos, setSelectedPhotos] = useState([]);
   
@@ -95,37 +93,146 @@ export default function CreateMemoryScreen({ navigation }) {
         </TouchableOpacity>
       ),
     });
-  }, [currentStep, title, selectedUsers, creating]);
+  }, [navigation, currentStep, creating, title, canProceed]);
 
-  // Search for users with debouncing
+  // User search with proper error handling
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchQuery.length > 1) {
+    const delayedSearch = setTimeout(() => {
+      if (searchQuery.trim()) {
         searchUsers();
       } else {
         setSearchResults([]);
       }
     }, 300);
 
-    return () => clearTimeout(timeoutId);
+    return () => clearTimeout(delayedSearch);
   }, [searchQuery]);
 
   const searchUsers = async () => {
     try {
       setSearching(true);
-      const response = await api.get('/api/users/search', {
-        params: { q: searchQuery, limit: 20 }
-      });
+      console.log('🔍 Searching for users with query:', searchQuery.trim());
+      
+      // Try multiple endpoints and combine results for better coverage
+      let allUsers = [];
+      const searchTerm = searchQuery.trim();
+      
+      // Try the /api/search/users endpoint first
+      try {
+        const response1 = await api.get('/api/search/users', {
+          params: { q: searchTerm, limit: 50 }
+        });
+        console.log('✅ Search response from /api/search/users:', response1.data);
+        
+        if (Array.isArray(response1.data)) {
+          allUsers = [...allUsers, ...response1.data];
+        } else if (response1.data.users && Array.isArray(response1.data.users)) {
+          allUsers = [...allUsers, ...response1.data.users];
+        } else if (response1.data && typeof response1.data === 'object') {
+          allUsers = [...allUsers, response1.data];
+        }
+      } catch (searchError1) {
+        console.log('❌ /api/search/users failed, trying fallback');
+      }
+      
+      // Try fallback endpoint for additional results
+      try {
+        const response2 = await api.get('/api/users/search', {
+          params: { q: searchTerm, limit: 50 }
+        });
+        console.log('✅ Search response from /api/users/search:', response2.data);
+        
+        if (Array.isArray(response2.data)) {
+          allUsers = [...allUsers, ...response2.data];
+        } else if (response2.data.users && Array.isArray(response2.data.users)) {
+          allUsers = [...allUsers, ...response2.data.users];
+        } else if (response2.data && typeof response2.data === 'object') {
+          allUsers = [...allUsers, response2.data];
+        }
+      } catch (searchError2) {
+        console.log('❌ /api/users/search also failed');
+      }
+      
+      // Try getting all users and doing client-side filtering for partial matches
+      try {
+        const response3 = await api.get('/api/users', {
+          params: { limit: 100 } // Get more users for better partial matching
+        });
+        console.log('✅ All users response:', response3.data);
+        
+        let allUsersFromAPI = [];
+        if (Array.isArray(response3.data)) {
+          allUsersFromAPI = response3.data;
+        } else if (response3.data.users && Array.isArray(response3.data.users)) {
+          allUsersFromAPI = response3.data.users;
+        }
+        
+        // Client-side partial matching for better results
+        const partialMatches = allUsersFromAPI.filter(user => {
+          const searchLower = searchTerm.toLowerCase();
+          const username = (user.username || '').toLowerCase();
+          const fullName = (user.fullName || '').toLowerCase();
+          const displayName = (user.displayName || '').toLowerCase();
+          const email = (user.email || '').toLowerCase();
+          
+          return username.includes(searchLower) || 
+                 fullName.includes(searchLower) || 
+                 displayName.includes(searchLower) ||
+                 email.includes(searchLower) ||
+                 username.startsWith(searchLower) ||
+                 fullName.startsWith(searchLower);
+        });
+        
+        allUsers = [...allUsers, ...partialMatches];
+      } catch (allUsersError) {
+        console.log('❌ /api/users failed for partial matching');
+      }
+      
+      // Remove duplicates based on _id
+      const uniqueUsers = allUsers.filter((user, index, self) => 
+        index === self.findIndex(u => u._id === user._id)
+      );
+      
+      console.log('📊 Total unique users found:', uniqueUsers.length);
       
       // Filter out current user and already selected users
-      const results = response.data.filter(user => 
-        user._id !== currentUser._id &&
+      const filteredResults = uniqueUsers.filter(user => 
+        user._id !== currentUser._id && 
         !selectedUsers.some(selected => selected._id === user._id)
       );
       
-      setSearchResults(results);
+      // Sort results by relevance (exact matches first, then partial matches)
+      const searchLower = searchTerm.toLowerCase();
+      const sortedResults = filteredResults.sort((a, b) => {
+        const aUsername = (a.username || '').toLowerCase();
+        const bUsername = (b.username || '').toLowerCase();
+        const aFullName = (a.fullName || '').toLowerCase();
+        const bFullName = (b.fullName || '').toLowerCase();
+        
+        // Exact username matches first
+        if (aUsername === searchLower && bUsername !== searchLower) return -1;
+        if (bUsername === searchLower && aUsername !== searchLower) return 1;
+        
+        // Username starts with search term
+        if (aUsername.startsWith(searchLower) && !bUsername.startsWith(searchLower)) return -1;
+        if (bUsername.startsWith(searchLower) && !aUsername.startsWith(searchLower)) return 1;
+        
+        // Full name starts with search term
+        if (aFullName.startsWith(searchLower) && !bFullName.startsWith(searchLower)) return -1;
+        if (bFullName.startsWith(searchLower) && !aFullName.startsWith(searchLower)) return 1;
+        
+        // Alphabetical order as final sort
+        return aUsername.localeCompare(bUsername);
+      });
+      
+      // Limit to reasonable number of results
+      setSearchResults(sortedResults.slice(0, 20));
+      
     } catch (error) {
-      console.error('Error searching users:', error);
+      console.error('❌ Error searching users:', error);
+      console.error('❌ Error details:', error.response?.data || error.message);
+      setSearchResults([]);
+      // Don't show error alert for search failures - just clear results
     } finally {
       setSearching(false);
     }
@@ -166,8 +273,9 @@ export default function CreateMemoryScreen({ navigation }) {
       if (isSelected) {
         return prev.filter(u => u._id !== user._id);
       } else {
-        if (prev.length >= 14) {
-          Alert.alert('Limit Reached', 'You can add up to 14 people to a memory');
+        // Be more conservative - limit to 13 since creator makes 14 total
+        if (prev.length >= 13) {
+          Alert.alert('Limit Reached', 'You can add up to 13 people to a memory (including yourself makes 14 total)');
           return prev;
         }
         return [...prev, user];
@@ -185,13 +293,14 @@ export default function CreateMemoryScreen({ navigation }) {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
         quality: 0.8,
-        selectionLimit: 10 - selectedPhotos.length,
+        selectionLimit: Math.max(1, 10 - selectedPhotos.length),
       });
 
       if (!result.canceled) {
         setSelectedPhotos(prev => [...prev, ...result.assets]);
       }
     } catch (error) {
+      console.error('Photo picker error:', error);
       Alert.alert('Error', 'Failed to select photos');
     }
   };
@@ -205,31 +314,53 @@ export default function CreateMemoryScreen({ navigation }) {
 
     try {
       setCreating(true);
+      console.log('🚀 Creating memory...');
 
-      // Create memory
+      // Validate participant count before sending
+      const totalParticipants = selectedUsers.length + 1; // +1 for creator
+      if (totalParticipants > 15) {
+        Alert.alert('Too Many Participants', `You can only have up to 15 total participants. You currently have ${totalParticipants}.`);
+        setCreating(false);
+        return;
+      }
+
       const memoryData = {
         title: title.trim(),
         description: description.trim(),
         participantIds: selectedUsers.map(u => u._id),
-        isPrivate,
       };
+
+      console.log('📡 API Request Data:', memoryData);
+      console.log('🔍 Total participants will be:', totalParticipants, '(Creator + ' + selectedUsers.length + ' selected users)');
 
       const response = await api.post('/api/memories', memoryData);
       const memory = response.data.memory;
 
+      console.log('✅ Memory created:', memory._id);
+
       // Upload photos if any
       if (selectedPhotos.length > 0) {
-        for (const photo of selectedPhotos) {
-          const formData = new FormData();
-          formData.append('photo', {
-            uri: photo.uri,
-            type: 'image/jpeg',
-            name: 'memory-photo.jpg',
-          });
+        console.log(`📸 Uploading ${selectedPhotos.length} photos...`);
+        
+        for (let i = 0; i < selectedPhotos.length; i++) {
+          const photo = selectedPhotos[i];
+          
+          try {
+            const formData = new FormData();
+            formData.append('photo', {
+              uri: photo.uri,
+              type: 'image/jpeg',
+              name: `memory-photo-${i}.jpg`,
+            });
 
-          await api.post(`/api/memories/${memory._id}/photos`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          });
+            await api.post(`/api/memories/${memory._id}/photos`, formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            
+            console.log(`✅ Photo ${i + 1} uploaded`);
+          } catch (photoError) {
+            console.error(`❌ Failed to upload photo ${i + 1}:`, photoError);
+          }
         }
       }
 
@@ -253,24 +384,42 @@ export default function CreateMemoryScreen({ navigation }) {
       );
 
     } catch (error) {
-      console.error('Error creating memory:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to create memory');
+      console.error('❌ Error creating memory:', error);
+      console.log('❌ API Response Error:', error.response?.data);
+      
+      const errorMessage = error.response?.data?.message || 'Failed to create memory';
+      Alert.alert('Error', errorMessage);
     } finally {
       setCreating(false);
     }
   };
 
+  const renderProgressIndicator = () => (
+    <View style={styles.progressContainer}>
+      {[1, 2, 3, 4].map((step) => (
+        <View
+          key={step}
+          style={[
+            styles.progressDot,
+            step < currentStep && styles.progressDotCompleted,
+            step === currentStep && styles.progressDotActive,
+          ]}
+        />
+      ))}
+    </View>
+  );
+
   const renderBasicInfoStep = () => (
-    <KeyboardAvoidingView
-      style={styles.stepContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView
+        style={styles.stepContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <View style={styles.stepHeader}>
           <Ionicons name="library" size={48} color="#3797EF" />
           <Text style={styles.stepTitle}>Create a Memory</Text>
           <Text style={styles.stepSubtitle}>
-            Give your memory a title and description to help people remember this special moment
+            Memories are private collections that only you and people you add can see
           </Text>
         </View>
 
@@ -303,267 +452,277 @@ export default function CreateMemoryScreen({ navigation }) {
           <Text style={styles.charCount}>{description.length}/250</Text>
         </View>
 
-        <View style={styles.formGroup}>
-          <View style={styles.switchRow}>
-            <View style={styles.switchLabel}>
-              <Text style={styles.label}>Private Memory</Text>
-              <Text style={styles.switchDescription}>
-                Only you and people you add can see this memory
-              </Text>
-            </View>
-            <Switch
-              value={isPrivate}
-              onValueChange={setIsPrivate}
-              trackColor={{ false: '#E5E5E7', true: '#3797EF' }}
-              thumbColor="#FFFFFF"
-            />
+        <View style={styles.privacyInfo}>
+          <View style={styles.privacyIcon}>
+            <Ionicons name="lock-closed" size={20} color="#FF9500" />
+          </View>
+          <View style={styles.privacyText}>
+            <Text style={styles.privacyTitle}>Private by Design</Text>
+            <Text style={styles.privacyDescription}>
+              Only you and people you add can see this memory
+            </Text>
           </View>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </ScrollView>
   );
 
   const renderUserSelectionStep = () => (
-    <View style={styles.stepContainer}>
-      <View style={styles.stepHeader}>
-        <Ionicons name="people" size={48} color="#3797EF" />
-        <Text style={styles.stepTitle}>Add People</Text>
-        <Text style={styles.stepSubtitle}>
-          Add up to 14 friends to share this memory with (you can skip this step)
-        </Text>
-      </View>
-
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search for friends..."
-          placeholderTextColor="#8E8E93"
-        />
-        {searching && (
-          <ActivityIndicator size="small" color="#8E8E93" style={styles.searchSpinner} />
-        )}
-      </View>
-
-      {selectedUsers.length > 0 && (
-        <View style={styles.selectedSection}>
-          <Text style={styles.selectedTitle}>
-            Added ({selectedUsers.length}/14)
+    <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <View style={styles.stepContainer}>
+        <View style={styles.stepHeader}>
+          <Ionicons name="people" size={48} color="#3797EF" />
+          <Text style={styles.stepTitle}>Add People</Text>
+          <Text style={styles.stepSubtitle}>
+            Add up to 13 friends to share this memory with (you can skip this step)
           </Text>
-          <FlatList
-            data={selectedUsers}
-            horizontal
-            keyExtractor={(item) => item._id}
-            renderItem={({ item }) => (
-              <View style={styles.selectedUser}>
-                <TouchableOpacity
-                  onPress={() => removeUser(item._id)}
-                  style={styles.removeUserButton}
-                >
-                  <Ionicons name="close" size={16} color="#FFFFFF" />
-                </TouchableOpacity>
-                <Image
-                  source={{
-                    uri: item.profilePicture
-                      ? `${API_BASE_URL}${item.profilePicture}`
-                      : 'https://via.placeholder.com/60x60/C7C7CC/FFFFFF?text=' + 
-                        item.username.charAt(0).toUpperCase()
-                  }}
-                  style={styles.selectedUserAvatar}
-                />
-                <Text style={styles.selectedUserName} numberOfLines={1}>
-                  {item.username}
-                </Text>
-              </View>
-            )}
-            showsHorizontalScrollIndicator={false}
+        </View>
+
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search for friends..."
+            placeholderTextColor="#8E8E93"
           />
-        </View>
-      )}
-
-      <FlatList
-        data={searchResults}
-        keyExtractor={(item) => item._id}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.userItem}
-            onPress={() => toggleUserSelection(item)}
-            activeOpacity={0.7}
-          >
-            <Image
-              source={{
-                uri: item.profilePicture
-                  ? `${API_BASE_URL}${item.profilePicture}`
-                  : 'https://via.placeholder.com/44x44/C7C7CC/FFFFFF?text=' + 
-                    item.username.charAt(0).toUpperCase()
-              }}
-              style={styles.userAvatar}
-            />
-            <View style={styles.userInfo}>
-              <Text style={styles.userName}>{item.username}</Text>
-              {item.displayName && (
-                <Text style={styles.userDisplayName}>{item.displayName}</Text>
-              )}
-            </View>
-            <Ionicons name="add-circle-outline" size={24} color="#3797EF" />
-          </TouchableOpacity>
-        )}
-        ListEmptyComponent={() => (
-          <View style={styles.emptyUsers}>
-            <Ionicons name="people-outline" size={48} color="#C7C7CC" />
-            <Text style={styles.emptyUsersText}>
-              {searchQuery.length > 1 ? 'No users found' : 'Search for friends to add'}
-            </Text>
-          </View>
-        )}
-        showsVerticalScrollIndicator={false}
-      />
-    </View>
-  );
-
-  const renderPhotoSelectionStep = () => (
-    <View style={styles.stepContainer}>
-      <View style={styles.stepHeader}>
-        <Ionicons name="camera" size={48} color="#3797EF" />
-        <Text style={styles.stepTitle}>Add Photos</Text>
-        <Text style={styles.stepSubtitle}>
-          Add some photos to start your memory (you can add more later)
-        </Text>
-      </View>
-
-      <TouchableOpacity 
-        style={styles.photoButton} 
-        onPress={handlePhotoPicker}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="images-outline" size={32} color="#3797EF" />
-        <Text style={styles.photoButtonText}>Select Photos</Text>
-        <Text style={styles.photoButtonSubtext}>Choose up to 10 photos</Text>
-      </TouchableOpacity>
-
-      {selectedPhotos.length > 0 && (
-        <View style={styles.photoGrid}>
-          <Text style={styles.selectedTitle}>
-            Selected Photos ({selectedPhotos.length}/10)
-          </Text>
-          <FlatList
-            data={selectedPhotos}
-            numColumns={3}
-            keyExtractor={(item, index) => index.toString()}
-            renderItem={({ item, index }) => (
-              <View style={styles.photoItem}>
-                <Image source={{ uri: item.uri }} style={styles.photoPreview} />
-                <TouchableOpacity
-                  style={styles.photoRemove}
-                  onPress={() => removePhoto(index)}
-                >
-                  <Ionicons name="close" size={14} color="#FFFFFF" />
-                </TouchableOpacity>
-              </View>
-            )}
-            scrollEnabled={false}
-          />
-        </View>
-      )}
-    </View>
-  );
-
-  const renderReviewStep = () => (
-    <ScrollView style={styles.stepContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.stepHeader}>
-        <Ionicons name="checkmark-circle" size={48} color="#34C759" />
-        <Text style={styles.stepTitle}>Review Memory</Text>
-        <Text style={styles.stepSubtitle}>
-          Review your memory details before creating
-        </Text>
-      </View>
-
-      <View style={styles.reviewCard}>
-        <View style={styles.reviewSection}>
-          <Text style={styles.reviewLabel}>Title</Text>
-          <Text style={styles.reviewValue}>{title}</Text>
-        </View>
-
-        {description.length > 0 && (
-          <View style={styles.reviewSection}>
-            <Text style={styles.reviewLabel}>Description</Text>
-            <Text style={styles.reviewValue}>{description}</Text>
-          </View>
-        )}
-
-        <View style={styles.reviewSection}>
-          <Text style={styles.reviewLabel}>Privacy</Text>
-          <View style={styles.privacyIndicator}>
-            <Ionicons 
-              name={isPrivate ? "lock-closed" : "globe"} 
-              size={16} 
-              color={isPrivate ? "#FF9500" : "#34C759"} 
-            />
-            <Text style={styles.reviewValue}>
-              {isPrivate ? 'Private' : 'Participants only'}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.reviewSection}>
-          <Text style={styles.reviewLabel}>People</Text>
-          <Text style={styles.reviewValue}>
-            You + {selectedUsers.length} {selectedUsers.length === 1 ? 'person' : 'people'}
-          </Text>
-          {selectedUsers.length > 0 && (
-            <View style={styles.selectedUsersPreview}>
-              {selectedUsers.slice(0, 5).map((user, index) => (
-                <Image
-                  key={user._id}
-                  source={{
-                    uri: user.profilePicture
-                      ? `${API_BASE_URL}${user.profilePicture}`
-                      : 'https://via.placeholder.com/24x24/C7C7CC/FFFFFF?text=' + 
-                        user.username.charAt(0).toUpperCase()
-                  }}
-                  style={[styles.previewAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
-                />
-              ))}
-              {selectedUsers.length > 5 && (
-                <View style={[styles.previewAvatar, styles.moreUsers]}>
-                  <Text style={styles.moreUsersText}>+{selectedUsers.length - 5}</Text>
-                </View>
-              )}
-            </View>
+          {searching && (
+            <ActivityIndicator size="small" color="#8E8E93" style={styles.searchSpinner} />
           )}
         </View>
 
-        {selectedPhotos.length > 0 && (
-          <View style={styles.reviewSection}>
-            <Text style={styles.reviewLabel}>Photos</Text>
-            <Text style={styles.reviewValue}>
-              {selectedPhotos.length} {selectedPhotos.length === 1 ? 'photo' : 'photos'} selected
+        {selectedUsers.length > 0 && (
+          <View style={styles.selectedSection}>
+            <Text style={styles.selectedTitle}>
+              Added ({selectedUsers.length}/13)
             </Text>
-            <View style={styles.photosPreview}>
-              {selectedPhotos.slice(0, 4).map((photo, index) => (
-                <Image
-                  key={index}
-                  source={{ uri: photo.uri }}
-                  style={styles.previewPhoto}
-                />
-              ))}
-              {selectedPhotos.length > 4 && (
-                <View style={[styles.previewPhoto, styles.morePhotos]}>
-                  <Text style={styles.morePhotosText}>+{selectedPhotos.length - 4}</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.selectedUsersContainer}
+            >
+              {selectedUsers.map((user) => (
+                <View key={user._id} style={styles.selectedUser}>
+                  <TouchableOpacity
+                    onPress={() => removeUser(user._id)}
+                    style={styles.removeUserButton}
+                  >
+                    <Ionicons name="close" size={16} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  <Image
+                    source={{
+                      uri: user.profilePicture
+                        ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                        : 'https://placehold.co/48x48/C7C7CC/FFFFFF?text=' + 
+                          (user.username?.charAt(0).toUpperCase() || '?')
+                    }}
+                    style={styles.selectedUserImage}
+                  />
+                  <Text style={styles.selectedUserName} numberOfLines={1}>
+                    {user.username}
+                  </Text>
                 </View>
-              )}
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        <ScrollView style={styles.searchResultsContainer} showsVerticalScrollIndicator={false}>
+          {searchResults.map((user) => {
+            const isSelected = selectedUsers.some(u => u._id === user._id);
+            
+            return (
+              <TouchableOpacity
+                key={user._id}
+                style={styles.userItem}
+                onPress={() => toggleUserSelection(user)}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={{
+                    uri: user.profilePicture
+                      ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                      : 'https://placehold.co/40x40/C7C7CC/FFFFFF?text=' + 
+                        (user.username?.charAt(0).toUpperCase() || '?')
+                  }}
+                  style={styles.userAvatar}
+                />
+                <View style={styles.userInfo}>
+                  <Text style={styles.userName}>{user.username}</Text>
+                  {(user.displayName || user.fullName) && (
+                    <Text style={styles.userDisplayName}>{user.displayName || user.fullName}</Text>
+                  )}
+                </View>
+                {!isSelected && (
+                  <View style={styles.addButton}>
+                    <Ionicons name="add" size={20} color="#3797EF" />
+                  </View>
+                )}
+                {isSelected && (
+                  <View style={styles.selectedIndicator}>
+                    <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+
+          {searchQuery.trim() && searchResults.length === 0 && !searching && (
+            <View style={styles.emptySearchResults}>
+              <Ionicons name="search-outline" size={48} color="#C7C7CC" />
+              <Text style={styles.emptySearchText}>No users found</Text>
             </View>
+          )}
+
+          {!searchQuery.trim() && (
+            <View style={styles.emptySearchResults}>
+              <Ionicons name="search-outline" size={48} color="#C7C7CC" />
+              <Text style={styles.emptySearchText}>Search for friends to add</Text>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </ScrollView>
+  );
+
+  const renderPhotoSelectionStep = () => (
+    <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <View style={styles.stepContainer}>
+        <View style={styles.stepHeader}>
+          <Ionicons name="camera" size={48} color="#3797EF" />
+          <Text style={styles.stepTitle}>Add Photos</Text>
+          <Text style={styles.stepSubtitle}>
+            Add some photos to start your memory (you can add more later)
+          </Text>
+        </View>
+
+        <TouchableOpacity 
+          style={styles.photoButton} 
+          onPress={handlePhotoPicker}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="images-outline" size={32} color="#3797EF" />
+          <Text style={styles.photoButtonText}>Select Photos</Text>
+          <Text style={styles.photoButtonSubtext}>Choose up to 10 photos</Text>
+        </TouchableOpacity>
+
+        {selectedPhotos.length > 0 && (
+          <View style={styles.selectedPhotosSection}>
+            <Text style={styles.selectedTitle}>
+              Selected Photos ({selectedPhotos.length}/10)
+            </Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.selectedPhotosContainer}
+            >
+              {selectedPhotos.map((photo, index) => (
+                <View key={index} style={styles.selectedPhotoItem}>
+                  <Image source={{ uri: photo.uri }} style={styles.selectedPhotoImage} />
+                  <TouchableOpacity
+                    style={styles.photoRemoveButton}
+                    onPress={() => removePhoto(index)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="close" size={14} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
           </View>
         )}
       </View>
+    </ScrollView>
+  );
 
-      <View style={styles.createNote}>
-        <Ionicons name="information-circle-outline" size={16} color="#8E8E93" />
-        <Text style={styles.createNoteText}>
-          Once created, all participants can add photos to this memory
-        </Text>
+  const renderReviewStep = () => (
+    <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <View style={styles.stepContainer}>
+        <View style={styles.stepHeader}>
+          <Ionicons name="checkmark-circle" size={48} color="#34C759" />
+          <Text style={styles.stepTitle}>Review Memory</Text>
+          <Text style={styles.stepSubtitle}>
+            Review your memory details before creating
+          </Text>
+        </View>
+
+        <View style={styles.reviewCard}>
+          <View style={styles.reviewSection}>
+            <Text style={styles.reviewLabel}>Title</Text>
+            <Text style={styles.reviewValue}>{title}</Text>
+          </View>
+
+          {description.length > 0 && (
+            <View style={styles.reviewSection}>
+              <Text style={styles.reviewLabel}>Description</Text>
+              <Text style={styles.reviewValue}>{description}</Text>
+            </View>
+          )}
+
+          <View style={styles.reviewSection}>
+            <Text style={styles.reviewLabel}>Privacy</Text>
+            <View style={styles.privacyIndicator}>
+              <Ionicons name="lock-closed" size={16} color="#FF9500" />
+              <Text style={styles.reviewValue}>Private</Text>
+            </View>
+          </View>
+
+          <View style={styles.reviewSection}>
+            <Text style={styles.reviewLabel}>People</Text>
+            <Text style={styles.reviewValue}>
+              You + {selectedUsers.length} {selectedUsers.length === 1 ? 'person' : 'people'}
+            </Text>
+            {selectedUsers.length > 0 && (
+              <View style={styles.selectedUsersPreview}>
+                {selectedUsers.slice(0, 5).map((user, index) => (
+                  <Image
+                    key={user._id}
+                    source={{
+                      uri: user.profilePicture
+                        ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                        : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
+                          user.username.charAt(0).toUpperCase()
+                    }}
+                    style={[styles.previewAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
+                  />
+                ))}
+                {selectedUsers.length > 5 && (
+                  <View style={[styles.previewAvatar, styles.moreUsers]}>
+                    <Text style={styles.moreUsersText}>+{selectedUsers.length - 5}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+
+          {selectedPhotos.length > 0 && (
+            <View style={styles.reviewSection}>
+              <Text style={styles.reviewLabel}>Photos</Text>
+              <Text style={styles.reviewValue}>
+                {selectedPhotos.length} {selectedPhotos.length === 1 ? 'photo' : 'photos'}
+              </Text>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.reviewPhotosScroll}
+              >
+                {selectedPhotos.slice(0, 5).map((photo, index) => (
+                  <Image
+                    key={index}
+                    source={{ uri: photo.uri }}
+                    style={styles.reviewPhotoPreview}
+                  />
+                ))}
+                {selectedPhotos.length > 5 && (
+                  <View style={styles.morePhotos}>
+                    <Text style={styles.morePhotosText}>+{selectedPhotos.length - 5}</Text>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          )}
+        </View>
       </View>
     </ScrollView>
   );
@@ -579,7 +738,7 @@ export default function CreateMemoryScreen({ navigation }) {
       case 4:
         return renderReviewStep();
       default:
-        return null;
+        return renderBasicInfoStep();
     }
   };
 
@@ -587,20 +746,7 @@ export default function CreateMemoryScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Progress Indicator */}
-      <View style={styles.progressContainer}>
-        {[1, 2, 3, 4].map((step) => (
-          <View
-            key={step}
-            style={[
-              styles.progressDot,
-              step <= currentStep && styles.progressDotActive,
-              step < currentStep && styles.progressDotCompleted
-            ]}
-          />
-        ))}
-      </View>
-
+      {renderProgressIndicator()}
       {renderStep()}
     </SafeAreaView>
   );
@@ -610,6 +756,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  scrollContainer: {
+    flex: 1,
   },
   headerButton: {
     paddingHorizontal: 16,
@@ -629,6 +778,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 16,
     gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
   progressDot: {
     width: 8,
@@ -643,8 +795,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#34C759',
   },
   stepContainer: {
-    flex: 1,
     padding: 20,
+    minHeight: 400,
   },
   stepHeader: {
     alignItems: 'center',
@@ -664,6 +816,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
   },
+
+  // Basic Info Step
   formGroup: {
     marginBottom: 24,
   },
@@ -693,20 +847,33 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: 4,
   },
-  switchRow: {
+  privacyInfo: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: '#FFF9E6',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFE066',
   },
-  switchLabel: {
+  privacyIcon: {
+    marginRight: 12,
+  },
+  privacyText: {
     flex: 1,
-    marginRight: 16,
   },
-  switchDescription: {
+  privacyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  privacyDescription: {
     fontSize: 14,
     color: '#8E8E93',
-    marginTop: 2,
   },
+
+  // User Selection Step
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -736,15 +903,18 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginBottom: 12,
   },
+  selectedUsersContainer: {
+    paddingHorizontal: 4,
+  },
   selectedUser: {
     alignItems: 'center',
     marginRight: 16,
-    position: 'relative',
+    width: 64,
   },
   removeUserButton: {
     position: 'absolute',
-    top: -6,
-    right: -6,
+    top: -4,
+    right: -4,
     width: 20,
     height: 20,
     borderRadius: 10,
@@ -753,30 +923,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1,
   },
-  selectedUserAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    marginBottom: 6,
+  selectedUserImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F6F6F6',
   },
   selectedUserName: {
     fontSize: 12,
-    fontWeight: '500',
-    color: '#000000',
+    color: '#8E8E93',
+    marginTop: 4,
     textAlign: 'center',
-    maxWidth: 60,
+  },
+  searchResultsContainer: {
+    maxHeight: 300,
   },
   userItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
+    paddingHorizontal: 4,
   },
   userAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F6F6F6',
     marginRight: 12,
   },
   userInfo: {
@@ -792,23 +964,44 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginTop: 2,
   },
-  emptyUsers: {
+  addButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F8FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#3797EF',
+  },
+  selectedIndicator: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#3797EF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptySearchResults: {
     alignItems: 'center',
     paddingVertical: 40,
   },
-  emptyUsersText: {
+  emptySearchText: {
     fontSize: 16,
     color: '#8E8E93',
-    marginTop: 12,
-    textAlign: 'center',
+    marginTop: 16,
   },
+
+  // Photo Selection Step
   photoButton: {
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#F8F9FA',
     borderRadius: 16,
-    padding: 32,
+    paddingVertical: 40,
+    paddingHorizontal: 20,
     borderWidth: 2,
-    borderColor: '#E5E5EA',
+    borderColor: '#E1E1E1',
     borderStyle: 'dashed',
     marginBottom: 24,
   },
@@ -823,56 +1016,60 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginTop: 4,
   },
-  photoGrid: {
+  selectedPhotosSection: {
     flex: 1,
   },
-  photoItem: {
-    flex: 1,
-    margin: 4,
-    aspectRatio: 1,
-    borderRadius: 8,
-    overflow: 'hidden',
+  selectedPhotosContainer: {
+    paddingRight: 20,
+  },
+  selectedPhotoItem: {
     position: 'relative',
+    marginRight: 12,
   },
-  photoPreview: {
-    width: '100%',
-    height: '100%',
+  selectedPhotoImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#F6F6F6',
   },
-  photoRemove: {
+  photoRemoveButton: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 59, 48, 0.8)',
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FF3B30',
     justifyContent: 'center',
     alignItems: 'center',
   },
+
+  // Review Step
   reviewCard: {
     backgroundColor: '#F8F9FA',
     borderRadius: 16,
     padding: 20,
-    marginBottom: 20,
   },
   reviewSection: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   reviewLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: '#8E8E93',
-    marginBottom: 6,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   reviewValue: {
     fontSize: 16,
-    color: '#000000',
     fontWeight: '500',
+    color: '#000000',
   },
   privacyIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   selectedUsersPreview: {
     flexDirection: 'row',
@@ -896,18 +1093,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  photosPreview: {
-    flexDirection: 'row',
-    gap: 8,
+  reviewPhotosScroll: {
     marginTop: 8,
   },
-  previewPhoto: {
+  reviewPhotoPreview: {
     width: 60,
     height: 60,
     borderRadius: 8,
+    marginRight: 8,
+    backgroundColor: '#F6F6F6',
   },
   morePhotos: {
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    backgroundColor: '#8E8E93',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -915,19 +1115,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#FFFFFF',
-  },
-  createNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F8FF',
-    padding: 16,
-    borderRadius: 12,
-    gap: 8,
-  },
-  createNoteText: {
-    fontSize: 14,
-    color: '#8E8E93',
-    flex: 1,
-    lineHeight: 20,
   },
 });

@@ -1,51 +1,64 @@
-// screens/MemoryDetailsScreen.js - Enhanced memory details with full functionality
+// screens/MemoryDetailsScreen.js - FIXED: Safe navigation parameter handling
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Image,
-  TouchableOpacity,
-  ScrollView,
   SafeAreaView,
   StatusBar,
+  ScrollView,
+  Image,
+  TouchableOpacity,
   Alert,
-  Modal,
   ActivityIndicator,
-  RefreshControl,
   FlatList,
-  Dimensions,
-  ActionSheetIOS,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function MemoryDetailsScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
-  const { memoryId } = route.params;
-
+  
+  // ✅ SAFE: Handle undefined route params
+  const routeParams = route?.params || {};
+  const { memoryId, memory: passedMemory } = routeParams;
+  
   // State
-  const [memory, setMemory] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedPhoto, setSelectedPhoto] = useState(null);
-  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [memory, setMemory] = useState(passedMemory || null);
+  const [loading, setLoading] = useState(!passedMemory);
+  const [error, setError] = useState(null);
 
-  // Setup navigation header
+  // ✅ VALIDATION: Check if we have a memoryId
+  useEffect(() => {
+    if (!memoryId) {
+      console.error('❌ No memoryId provided to MemoryDetailsScreen');
+      Alert.alert(
+        'Error',
+        'Memory ID is missing. Please try again.',
+        [
+          {
+            text: 'Go Back',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+      return;
+    }
+
+    // Only fetch if we don't have memory data already
+    if (!memory) {
+      fetchMemoryDetails();
+    }
+  }, [memoryId, memory]);
+
+  // ✅ NAVIGATION: Set header options safely
   useEffect(() => {
     navigation.setOptions({
-      headerShown: true,
       headerStyle: {
         backgroundColor: '#FFFFFF',
         shadowOpacity: 0,
@@ -58,83 +71,122 @@ export default function MemoryDetailsScreen() {
         fontSize: 18,
         color: '#000000',
       },
-      headerTitle: memory?.title || 'Memory',
-      headerRight: () => {
-        if (memory?.isOwner) {
-          return (
-            <TouchableOpacity
-              onPress={handleMoreOptions}
-              style={styles.headerButton}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="ellipsis-horizontal" size={24} color="#000000" />
-            </TouchableOpacity>
-          );
-        }
-        return null;
-      },
+      headerTitle: memory?.title || 'Memory Details',
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={24} color="#000000" />
+        </TouchableOpacity>
+      ),
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={handleMenuPress}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="ellipsis-horizontal" size={24} color="#000000" />
+        </TouchableOpacity>
+      ),
     });
   }, [navigation, memory]);
 
-  useEffect(() => {
-    if (memoryId) {
-      fetchMemory();
-    }
-  }, [memoryId]);
-
-  const fetchMemory = async (isRefresh = false) => {
+  const fetchMemoryDetails = async () => {
     try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
+      setLoading(true);
+      setError(null);
+      
+      console.log('🔍 Fetching memory details for ID:', memoryId);
+      
       const response = await api.get(`/api/memories/${memoryId}`);
       setMemory(response.data.memory);
-
+      
+      console.log('✅ Memory details loaded successfully');
     } catch (error) {
-      console.error('Error fetching memory:', error);
-      Alert.alert('Error', 'Failed to load memory');
-      navigation.goBack();
+      console.error('❌ Error fetching memory details:', error);
+      
+      const errorMessage = error.response?.data?.message || 'Failed to load memory details';
+      setError(errorMessage);
+      
+      if (error.response?.status === 404) {
+        Alert.alert(
+          'Memory Not Found',
+          'This memory no longer exists or you don\'t have access to it.',
+          [
+            {
+              text: 'Go Back',
+              onPress: () => navigation.goBack(),
+            },
+          ]
+        );
+      } else if (error.response?.status === 403) {
+        Alert.alert(
+          'Access Denied',
+          'You don\'t have permission to view this memory.',
+          [
+            {
+              text: 'Go Back',
+              onPress: () => navigation.goBack(),
+            },
+          ]
+        );
+      }
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
-  const handleMoreOptions = () => {
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['Cancel', 'Edit Memory', 'Delete Memory'],
-          destructiveButtonIndex: 2,
-          cancelButtonIndex: 0,
-        },
-        (buttonIndex) => {
-          if (buttonIndex === 1) {
-            handleEditMemory();
-          } else if (buttonIndex === 2) {
-            handleDeleteMemory();
-          }
-        }
-      );
-    } else {
-      Alert.alert(
-        'Memory Options',
-        'What would you like to do?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Edit Memory', onPress: handleEditMemory },
-          { text: 'Delete Memory', style: 'destructive', onPress: handleDeleteMemory },
-        ]
-      );
+  const handleMenuPress = () => {
+    if (!memory || !currentUser) return;
+
+    const isCreator = memory.creator?._id === currentUser._id;
+    const isParticipant = memory.participants?.some(p => p._id === currentUser._id);
+
+    const options = [];
+
+    if (isCreator) {
+      options.push('Edit Memory');
+      options.push('Add Photos');
+      options.push('Manage Participants');
+      options.push('Delete Memory');
+    } else if (isParticipant) {
+      options.push('Add Photos');
+      options.push('Leave Memory');
     }
+
+    options.push('Cancel');
+
+    Alert.alert(
+      'Memory Options',
+      'Choose an action',
+      options.map((option, index) => ({
+        text: option,
+        style: option === 'Delete Memory' || option === 'Leave Memory' ? 'destructive' : 'default',
+        onPress: () => handleMenuOption(option),
+      }))
+    );
   };
 
-  const handleEditMemory = () => {
-    // Navigate to edit screen or show edit modal
-    Alert.alert('Edit Memory', 'Edit functionality coming soon!');
+  const handleMenuOption = (option) => {
+    switch (option) {
+      case 'Edit Memory':
+        // Navigate to edit screen
+        break;
+      case 'Add Photos':
+        // Navigate to photo picker
+        break;
+      case 'Manage Participants':
+        // Navigate to participant management
+        break;
+      case 'Delete Memory':
+        handleDeleteMemory();
+        break;
+      case 'Leave Memory':
+        handleLeaveMemory();
+        break;
+    }
   };
 
   const handleDeleteMemory = () => {
@@ -154,106 +206,79 @@ export default function MemoryDetailsScreen() {
             } catch (error) {
               Alert.alert('Error', 'Failed to delete memory');
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
 
-  const handleAddPhoto = () => {
-    setShowAddModal(true);
+  const handleLeaveMemory = () => {
+    Alert.alert(
+      'Leave Memory',
+      'Are you sure you want to leave this memory?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/api/memories/${memoryId}/participants/${currentUser._id}`);
+              Alert.alert('Success', 'You have left the memory');
+              navigation.goBack();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to leave memory');
+            }
+          },
+        },
+      ]
+    );
   };
 
-  const handlePickFromLibrary = async () => {
-    setShowAddModal(false);
-    
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        await uploadPhoto(result.assets[0]);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to select photo');
-    }
-  };
-
-  const handleTakePhoto = async () => {
-    setShowAddModal(false);
-    
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        await uploadPhoto(result.assets[0]);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to take photo');
-    }
-  };
-
-  const uploadPhoto = async (photo) => {
-    try {
-      setUploading(true);
-
-      const formData = new FormData();
-      formData.append('photo', {
-        uri: photo.uri,
-        type: 'image/jpeg',
-        name: 'memory-photo.jpg',
-      });
-
-      await api.post(`/api/memories/${memoryId}/photos`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-
-      Alert.alert('Success', 'Photo added to memory!');
-      fetchMemory(); // Refresh memory data
-
-    } catch (error) {
-      console.error('Error uploading photo:', error);
-      Alert.alert('Error', 'Failed to upload photo');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handlePhotoPress = (photo) => {
-    setSelectedPhoto(photo);
-    setShowPhotoModal(true);
-  };
-
-  const renderParticipant = ({ item: participant }) => (
+  const renderPhoto = ({ item }) => (
     <TouchableOpacity
-      style={styles.participantItem}
-      onPress={() => navigation.navigate('ProfileScreen', { userId: participant._id })}
+      style={styles.photoItem}
+      onPress={() => {
+        // Navigate to photo viewer
+        console.log('Photo pressed:', item._id);
+      }}
       activeOpacity={0.8}
     >
-      <View style={styles.participantAvatar}>
-        {participant.profilePicture ? (
-          <Image
-            source={{ uri: `${API_BASE_URL}${participant.profilePicture}` }}
-            style={styles.participantAvatarImage}
-          />
-        ) : (
-          <View style={styles.participantAvatarPlaceholder}>
-            <Text style={styles.participantAvatarText}>
-              {participant.username?.charAt(0).toUpperCase()}
-            </Text>
-          </View>
+      <Image
+        source={{
+          uri: item.fullUrl || `http://${API_BASE_URL}:3000${item.url}`
+        }}
+        style={styles.photoImage}
+        resizeMode="cover"
+      />
+      {item.caption && (
+        <View style={styles.photoCaptionOverlay}>
+          <Text style={styles.photoCaption} numberOfLines={2}>
+            {item.caption}
+          </Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
+  const renderParticipant = ({ item }) => (
+    <TouchableOpacity style={styles.participantItem} activeOpacity={0.8}>
+      <Image
+        source={{
+          uri: item.profilePicture
+            ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+            : 'https://placehold.co/40x40/C7C7CC/FFFFFF?text=' + 
+              (item.username?.charAt(0).toUpperCase() || '?')
+        }}
+        style={styles.participantAvatar}
+      />
+      <View style={styles.participantInfo}>
+        <Text style={styles.participantName}>{item.username}</Text>
+        {item.fullName && (
+          <Text style={styles.participantFullName}>{item.fullName}</Text>
         )}
       </View>
-      <Text style={styles.participantName}>{participant.username}</Text>
-      {participant._id === memory?.createdBy._id && (
+      {memory.creator?._id === item._id && (
         <View style={styles.creatorBadge}>
           <Text style={styles.creatorBadgeText}>Creator</Text>
         </View>
@@ -261,217 +286,136 @@ export default function MemoryDetailsScreen() {
     </TouchableOpacity>
   );
 
-  const renderPhoto = ({ item: photo }) => (
-    <TouchableOpacity
-      style={styles.photoItem}
-      onPress={() => handlePhotoPress(photo)}
-      activeOpacity={0.9}
-    >
-      <Image
-        source={{ uri: `${API_BASE_URL}${photo.path}` }}
-        style={styles.photoImage}
-        resizeMode="cover"
-      />
-      <View style={styles.photoOverlay}>
-        <Text style={styles.photoUser}>{photo.user.username}</Text>
-      </View>
-    </TouchableOpacity>
-  );
-
+  // ✅ LOADING STATE
   if (loading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3797EF" />
-        <Text style={styles.loadingText}>Loading memory...</Text>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading memory...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
-  if (!memory) {
+  // ✅ ERROR STATE
+  if (error || !memory) {
     return (
-      <SafeAreaView style={styles.errorContainer}>
-        <Ionicons name="library-outline" size={80} color="#C7C7CC" />
-        <Text style={styles.errorTitle}>Memory not found</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.goBackButton}>
-          <Text style={styles.goBackText}>Go Back</Text>
-        </TouchableOpacity>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle-outline" size={64} color="#FF3B30" />
+          <Text style={styles.errorTitle}>Unable to Load Memory</Text>
+          <Text style={styles.errorMessage}>
+            {error || 'Memory not found or invalid memory ID'}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => {
+              if (memoryId) {
+                fetchMemoryDetails();
+              } else {
+                navigation.goBack();
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.retryButtonText}>
+              {memoryId ? 'Try Again' : 'Go Back'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
+  // ✅ SUCCESS STATE
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      <ScrollView
-        style={styles.scrollContainer}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => fetchMemory(true)}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-          />
-        }
-      >
+      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
         {/* Memory Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>{memory.title}</Text>
+        <View style={styles.headerSection}>
+          <Text style={styles.memoryTitle}>{memory.title}</Text>
           {memory.description && (
-            <Text style={styles.description}>{memory.description}</Text>
+            <Text style={styles.memoryDescription}>{memory.description}</Text>
           )}
-          
-          <View style={styles.metadata}>
-            <View style={styles.metadataItem}>
-              <Ionicons name="people" size={16} color="#8E8E93" />
-              <Text style={styles.metadataText}>
-                {memory.participantCount} {memory.participantCount === 1 ? 'person' : 'people'}
+          <View style={styles.memoryMeta}>
+            <View style={styles.metaItem}>
+              <Ionicons name="calendar-outline" size={16} color="#8E8E93" />
+              <Text style={styles.metaText}>
+                {new Date(memory.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            <View style={styles.metadataItem}>
-              <Ionicons name="camera" size={16} color="#8E8E93" />
-              <Text style={styles.metadataText}>
-                {memory.photoCount} {memory.photoCount === 1 ? 'photo' : 'photos'}
+            <View style={styles.metaItem}>
+              <Ionicons name="people-outline" size={16} color="#8E8E93" />
+              <Text style={styles.metaText}>
+                {(memory.participants?.length || 0) + 1} participants
               </Text>
             </View>
-            <View style={styles.metadataItem}>
-              <Ionicons name="time" size={16} color="#8E8E93" />
-              <Text style={styles.metadataText}>{memory.timeAgo}</Text>
+            <View style={styles.metaItem}>
+              <Ionicons name="lock-closed-outline" size={16} color="#8E8E93" />
+              <Text style={styles.metaText}>Private</Text>
             </View>
           </View>
-        </View>
-
-        {/* Participants Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Participants</Text>
-          <FlatList
-            data={memory.participants}
-            keyExtractor={(item) => item._id}
-            renderItem={renderParticipant}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.participantsList}
-          />
         </View>
 
         {/* Photos Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Photos</Text>
-            {memory.canAddPhotos && (
-              <TouchableOpacity
-                onPress={handleAddPhoto}
-                style={styles.addPhotoButton}
-                disabled={uploading}
-                activeOpacity={0.8}
-              >
-                {uploading ? (
-                  <ActivityIndicator size="small" color="#3797EF" />
-                ) : (
-                  <Ionicons name="add" size={20} color="#3797EF" />
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {memory.photos && memory.photos.length > 0 ? (
+        {memory.photos && memory.photos.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Photos ({memory.photos.length})</Text>
             <FlatList
               data={memory.photos}
-              keyExtractor={(item) => item._id}
               renderItem={renderPhoto}
+              keyExtractor={(item) => item._id}
               numColumns={2}
               scrollEnabled={false}
-              columnWrapperStyle={styles.photoRow}
+              contentContainerStyle={styles.photosGrid}
             />
-          ) : (
-            <View style={styles.emptyPhotos}>
-              <Ionicons name="camera-outline" size={48} color="#C7C7CC" />
-              <Text style={styles.emptyPhotosText}>No photos yet</Text>
-              {memory.canAddPhotos && (
-                <TouchableOpacity
-                  onPress={handleAddPhoto}
-                  style={styles.firstPhotoButton}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.firstPhotoButtonText}>Add the first photo</Text>
-                </TouchableOpacity>
-              )}
+          </View>
+        )}
+
+        {/* Participants Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>
+            Participants ({(memory.participants?.length || 0) + 1})
+          </Text>
+          
+          {/* Creator */}
+          {memory.creator && (
+            <View style={styles.participantsList}>
+              {renderParticipant({ item: memory.creator })}
             </View>
           )}
+          
+          {/* Other Participants */}
+          {memory.participants && memory.participants.length > 0 && (
+            <FlatList
+              data={memory.participants}
+              renderItem={renderParticipant}
+              keyExtractor={(item) => item._id}
+              scrollEnabled={false}
+            />
+          )}
         </View>
-      </ScrollView>
 
-      {/* Add Photo Modal */}
-      <Modal
-        visible={showAddModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowAddModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.addPhotoModal}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Photo</Text>
-              <TouchableOpacity
-                onPress={() => setShowAddModal(false)}
-                style={styles.closeButton}
-              >
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.photoOptions}>
-              <TouchableOpacity
-                style={styles.photoOption}
-                onPress={handleTakePhoto}
-                activeOpacity={0.8}
-              >
-                <View style={styles.photoOptionIcon}>
-                  <Ionicons name="camera" size={24} color="#3797EF" />
-                </View>
-                <Text style={styles.photoOptionText}>Take Photo</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.photoOption}
-                onPress={handlePickFromLibrary}
-                activeOpacity={0.8}
-              >
-                <View style={styles.photoOptionIcon}>
-                  <Ionicons name="images" size={24} color="#3797EF" />
-                </View>
-                <Text style={styles.photoOptionText}>Choose from Library</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Photo Viewer Modal */}
-      <Modal
-        visible={showPhotoModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowPhotoModal(false)}
-      >
-        <View style={styles.photoModalOverlay}>
+        {/* Add Photos Button */}
+        <View style={styles.actionSection}>
           <TouchableOpacity
-            style={styles.photoModalClose}
-            onPress={() => setShowPhotoModal(false)}
+            style={styles.addPhotoButton}
+            onPress={() => {
+              // Navigate to photo picker
+              console.log('Add photos pressed');
+            }}
             activeOpacity={0.8}
           >
-            <Ionicons name="close" size={32} color="#FFFFFF" />
+            <Ionicons name="camera-outline" size={24} color="#3797EF" />
+            <Text style={styles.addPhotoButtonText}>Add Photos</Text>
           </TouchableOpacity>
-          
-          {selectedPhoto && (
-            <Image
-              source={{ uri: `${API_BASE_URL}${selectedPhoto.path}` }}
-              style={styles.fullScreenPhoto}
-              resizeMode="contain"
-            />
-          )}
         </View>
-      </Modal>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -481,23 +425,28 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  scrollContainer: {
+    flex: 1,
+  },
+  headerButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
   },
   loadingText: {
-    marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
+    marginTop: 16,
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    padding: 40,
+    paddingHorizontal: 40,
   },
   errorTitle: {
     fontSize: 24,
@@ -505,248 +454,152 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginTop: 16,
     marginBottom: 8,
+    textAlign: 'center',
   },
-  goBackButton: {
+  errorMessage: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 32,
+  },
+  retryButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
+    paddingHorizontal: 32,
     paddingVertical: 12,
     borderRadius: 8,
-    marginTop: 16,
   },
-  goBackText: {
-    color: '#FFFFFF',
+  retryButtonText: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#FFFFFF',
   },
-  headerButton: {
-    padding: 8,
-    marginHorizontal: 4,
-  },
-  scrollContainer: {
-    flex: 1,
-  },
-  header: {
+  headerSection: {
     padding: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  title: {
+  memoryTitle: {
     fontSize: 28,
     fontWeight: '700',
     color: '#000000',
     marginBottom: 8,
   },
-  description: {
+  memoryDescription: {
     fontSize: 16,
-    color: '#666666',
+    color: '#8E8E93',
     lineHeight: 24,
     marginBottom: 16,
   },
-  metadata: {
+  memoryMeta: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 16,
   },
-  metadataItem: {
+  metaItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  metadataText: {
+  metaText: {
     fontSize: 14,
     color: '#8E8E93',
-    fontWeight: '500',
   },
   section: {
     padding: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  addPhotoButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F0F8FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  participantsList: {
-    gap: 12,
-  },
-  participantItem: {
-    alignItems: 'center',
-    minWidth: 80,
-  },
-  participantAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    marginBottom: 8,
-  },
-  participantAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 30,
-  },
-  participantAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 30,
-    backgroundColor: '#C7C7CC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  participantAvatarText: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  participantName: {
-    fontSize: 14,
     fontWeight: '600',
     color: '#000000',
-    textAlign: 'center',
+    marginBottom: 16,
   },
-  creatorBadge: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    marginTop: 4,
-  },
-  creatorBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  photoRow: {
-    justifyContent: 'space-between',
-    marginBottom: 12,
+  photosGrid: {
+    gap: 8,
   },
   photoItem: {
-    width: (SCREEN_WIDTH - 52) / 2, // Account for padding and gap
-    height: (SCREEN_WIDTH - 52) / 2,
-    borderRadius: 12,
+    flex: 1,
+    margin: 4,
+    aspectRatio: 1,
+    borderRadius: 8,
     overflow: 'hidden',
     position: 'relative',
   },
   photoImage: {
     width: '100%',
     height: '100%',
+    backgroundColor: '#F6F6F6',
   },
-  photoOverlay: {
+  photoCaptionOverlay: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     padding: 8,
   },
-  photoUser: {
-    color: '#FFFFFF',
+  photoCaption: {
     fontSize: 12,
-    fontWeight: '600',
+    color: '#FFFFFF',
   },
-  emptyPhotos: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyPhotosText: {
-    fontSize: 16,
-    color: '#8E8E93',
-    marginTop: 12,
+  participantsList: {
     marginBottom: 16,
   },
-  firstPhotoButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 20,
+  participantItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 12,
-    borderRadius: 8,
   },
-  firstPhotoButtonText: {
+  participantAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F6F6F6',
+    marginRight: 12,
+  },
+  participantInfo: {
+    flex: 1,
+  },
+  participantName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  participantFullName: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  creatorBadge: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  creatorBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+  actionSection: {
+    padding: 20,
   },
-  addPhotoModal: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 8,
-    paddingBottom: 34,
-  },
-  modalHeader: {
+  addPhotoButton: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  photoOptions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 16,
-    paddingTop: 24,
-  },
-  photoOption: {
-    alignItems: 'center',
-    minWidth: 120,
-  },
-  photoOptionIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    justifyContent: 'center',
     backgroundColor: '#F0F8FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3797EF',
+    gap: 8,
   },
-  photoOptionText: {
-    fontSize: 14,
-    color: '#000000',
-    fontWeight: '500',
-  },
-  photoModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photoModalClose: {
-    position: 'absolute',
-    top: 60,
-    right: 20,
-    zIndex: 1000,
-    padding: 8,
-  },
-  fullScreenPhoto: {
-    width: SCREEN_WIDTH,
-    height: '80%',
+  addPhotoButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
   },
 });
