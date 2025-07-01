@@ -1,12 +1,17 @@
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const Event = require('../models/Event');
 const Group = require('../models/Group');
 const Photo = require('../models/Photo');
 const User = require('../models/User');
+const GuestPass = require('../models/GuestPass');
 const protect = require('../middleware/auth');
 const EventPrivacyService = require('../services/eventPrivacyService');
-const StripeConnectService = require('../services/stripeConnectService'); // NEW: Payment service
+const StripeConnectService = require('../services/stripeConnectService');
+const PayPalProvider = require('../services/paymentProviders/paypalProvider');
+const PaymentProviderFactory = require('../services/paymentProviders/paymentProviderFactory');
 const fs = require('fs');
 const path = require('path');
 const notificationService = require('../services/notificationService');
@@ -66,8 +71,116 @@ const parseFloatSafe = (val, defaultVal = 0) => {
 };
 
 // ============================================
-// NEW: PAYMENT ACCOUNT SETUP ROUTES
+// PAYMENT PROVIDER SELECTION ROUTES
 // ============================================
+
+/**
+ * Get available payment providers
+ */
+router.get('/payment-providers', protect, async (req, res) => {
+  try {
+    const providers = [
+      {
+        type: 'paypal',
+        name: 'PayPal',
+        description: 'Quick setup with just your PayPal email address',
+        setupTime: '1 minute',
+        fees: '2.9% + $0.30 per transaction',
+        recommended: true,
+        features: ['Accept credit cards', 'PayPal account payments', 'Buyer protection', 'Mobile optimized']
+      },
+      {
+        type: 'stripe',
+        name: 'Stripe Connect',
+        description: 'Professional payment processing with advanced features',
+        setupTime: '5-10 minutes',
+        fees: '2.9% + $0.30 per transaction',
+        recommended: false,
+        features: ['Advanced analytics', 'Subscription billing', 'International payments', 'Custom branding']
+      }
+    ];
+    
+    res.json({ 
+      success: true,
+      providers 
+    });
+  } catch (error) {
+    console.error('❌ Error getting payment providers:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get payment providers' 
+    });
+  }
+});
+
+// ============================================
+// PAYMENT ACCOUNT SETUP ROUTES
+// ============================================
+
+/**
+ * Setup PayPal payments for host
+ */
+router.post('/setup-payments/paypal', protect, async (req, res) => {
+  try {
+    const { paypalEmail } = req.body;
+    
+    // Validate input
+    if (!paypalEmail || !paypalEmail.includes('@')) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Valid PayPal email address is required' 
+      });
+    }
+
+    console.log(`🔗 Setting up PayPal for user ${req.user._id} with email: ${paypalEmail}`);
+
+    // Check if user already has PayPal account setup
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    if (user.paymentAccounts?.paypal?.verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'PayPal account already connected',
+        currentEmail: user.paymentAccounts.paypal.email
+      });
+    }
+
+    // Setup PayPal account
+    const paypalProvider = new PayPalProvider();
+    const result = await paypalProvider.setupAccount(req.user._id, { paypalEmail });
+    
+    if (result.success) {
+      console.log(`✅ PayPal setup successful for user ${req.user._id}`);
+      
+      res.json({
+        success: true,
+        message: 'PayPal account connected successfully',
+        provider: 'paypal',
+        accountEmail: paypalEmail
+      });
+    } else {
+      console.log(`❌ PayPal setup failed: ${result.message}`);
+      res.status(400).json({ 
+        success: false,
+        message: result.message 
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ PayPal setup error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to setup PayPal payments',
+      error: error.message 
+    });
+  }
+});
 
 // Create Stripe Connect account for host
 router.post('/setup-payments', protect, async (req, res) => {
@@ -76,8 +189,6 @@ router.post('/setup-payments', protect, async (req, res) => {
     
     console.log(`🔗 Setting up payments for user ${req.user._id}`);
     console.log(`📝 User info:`, { firstName, lastName, country });
-    console.log(`🆔 User ID type:`, typeof req.user._id);
-    console.log(`🆔 User ID value:`, req.user._id);
 
     // Check if user already has account
     const user = await User.findById(req.user._id);
@@ -85,12 +196,6 @@ router.post('/setup-payments', protect, async (req, res) => {
       console.log(`❌ User not found: ${req.user._id}`);
       return res.status(404).json({ message: 'User not found' });
     }
-
-    console.log(`👤 User found:`, { 
-      id: user._id, 
-      email: user.email,
-      hasPaymentAccount: !!user.paymentAccounts?.stripe?.accountId 
-    });
 
     if (user.paymentAccounts?.stripe?.accountId) {
       console.log(`⚠️ User already has Stripe account: ${user.paymentAccounts.stripe.accountId}`);
@@ -108,8 +213,6 @@ router.post('/setup-payments', protect, async (req, res) => {
       country
     });
 
-    console.log(`✅ Stripe account creation result:`, { success: result.success, accountId: result.accountId });
-
     if (!result.success) {
       console.log(`❌ Account creation failed: ${result.message}`);
       return res.status(400).json({ message: result.message });
@@ -120,15 +223,11 @@ router.post('/setup-payments', protect, async (req, res) => {
     const returnUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/events/payment-setup/return`;
     const refreshUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/events/payment-setup/refresh`;
     
-    console.log(`🔗 URLs:`, { returnUrl, refreshUrl });
-    
     const linkResult = await StripeConnectService.createAccountLink(
       req.user._id, 
       returnUrl, 
       refreshUrl
     );
-
-    console.log(`✅ Onboarding link created:`, { success: linkResult.success, expires: linkResult.expiresAt });
 
     res.json({
       success: true,
@@ -139,7 +238,6 @@ router.post('/setup-payments', protect, async (req, res) => {
 
   } catch (error) {
     console.error('❌ Payment setup error:', error);
-    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ 
       message: 'Failed to setup payments', 
       error: error.message 
@@ -147,23 +245,66 @@ router.post('/setup-payments', protect, async (req, res) => {
   }
 });
 
-// Check payment account status
+/**
+ * Check payment account status (enhanced for multiple providers)
+ */
 router.get('/payment-status', protect, async (req, res) => {
   try {
-    const status = await StripeConnectService.checkAccountStatus(req.user._id);
+    const user = await User.findById(req.user._id);
     
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const paymentAccounts = user.paymentAccounts || {};
+    const primaryType = paymentAccounts.primary?.type;
+    
+    let status = {
+      canReceivePayments: false,
+      primaryProvider: null,
+      providers: {}
+    };
+
+    // Check PayPal status
+    if (paymentAccounts.paypal?.email) {
+      status.providers.paypal = {
+        connected: paymentAccounts.paypal.verified || false,
+        email: paymentAccounts.paypal.email,
+        connectedAt: paymentAccounts.paypal.connectedAt
+      };
+    }
+
+    // Check Stripe status (existing logic)
+    if (paymentAccounts.stripe?.accountId) {
+      const stripeStatus = await StripeConnectService.checkAccountStatus(req.user._id);
+      
+      status.providers.stripe = {
+        connected: stripeStatus.connected,
+        onboardingComplete: stripeStatus.onboardingComplete,
+        chargesEnabled: stripeStatus.chargesEnabled,
+        payoutsEnabled: stripeStatus.payoutsEnabled
+      };
+    }
+
+    // Determine primary provider and overall status
+    if (primaryType && status.providers[primaryType]?.connected) {
+      status.canReceivePayments = true;
+      status.primaryProvider = primaryType;
+    }
+
     res.json({
-      canReceivePayments: status.connected,
-      onboardingComplete: status.onboardingComplete,
-      chargesEnabled: status.chargesEnabled,
-      payoutsEnabled: status.payoutsEnabled,
-      requirements: status.requirements
+      success: true,
+      ...status
     });
 
   } catch (error) {
     console.error('❌ Payment status check error:', error);
     res.status(500).json({ 
-      message: 'Failed to check payment status', 
+      success: false,
+      message: 'Failed to check payment status',
       error: error.message 
     });
   }
@@ -215,6 +356,214 @@ router.get('/payment-dashboard', protect, async (req, res) => {
   }
 });
 
+// ============================================
+// GUEST PAYMENT PROCESSING ROUTES
+// ============================================
+
+/**
+ * Create PayPal payment order for guest
+ */
+router.post('/guest-payment/paypal/create', async (req, res) => {
+  try {
+    const { guestPassToken } = req.body;
+    
+    if (!guestPassToken) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Guest pass token is required' 
+      });
+    }
+
+    // Verify guest pass token
+    const decoded = jwt.verify(guestPassToken, process.env.JWT_SECRET);
+    const tokenHash = crypto.createHash('sha256').update(guestPassToken).digest('hex');
+    
+    const guestPass = await GuestPass.findOne({
+      _id: decoded.guestPassId,
+      token: tokenHash,
+      nonce: decoded.nonce
+    }).populate({
+      path: 'event',
+      populate: { 
+        path: 'host',
+        select: 'paymentAccounts'
+      }
+    });
+
+    if (!guestPass) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Invalid or expired invitation' 
+      });
+    }
+
+    // Validate payment is required and guest hasn't paid
+    if (!guestPass.payment.required || guestPass.payment.status === 'succeeded') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Payment not required or already completed' 
+      });
+    }
+
+    // Check host has PayPal setup
+    const hostPayPal = guestPass.event.host.paymentAccounts?.paypal;
+    if (!hostPayPal?.verified || !hostPayPal.email) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Host payment setup is incomplete' 
+      });
+    }
+
+    console.log(`💳 Creating PayPal payment for guest pass ${guestPass._id}`);
+
+    // Create PayPal payment order
+    const paypalProvider = new PayPalProvider();
+    const paymentOrder = await paypalProvider.createPaymentOrder(
+      guestPass.payment.amount,
+      guestPass.payment.currency,
+      hostPayPal.email,
+      {
+        eventId: guestPass.event._id.toString(),
+        eventTitle: guestPass.event.title,
+        guestPassId: guestPass._id.toString(),
+        guestName: guestPass.guestName
+      }
+    );
+
+    if (paymentOrder.success) {
+      // Store PayPal order ID for later capture
+      guestPass.payment.provider = 'paypal';
+      guestPass.payment.paypalOrderId = paymentOrder.orderId;
+      await guestPass.save();
+
+      console.log(`✅ PayPal order created: ${paymentOrder.orderId}`);
+
+      res.json({
+        success: true,
+        orderId: paymentOrder.orderId,
+        approvalUrl: paymentOrder.approvalUrl,
+        amount: guestPass.payment.amount,
+        currency: guestPass.payment.currency
+      });
+    } else {
+      throw new Error('Failed to create PayPal payment order');
+    }
+
+  } catch (error) {
+    console.error('❌ PayPal payment creation error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to create PayPal payment',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Capture PayPal payment after user approval
+ */
+router.post('/guest-payment/paypal/capture', async (req, res) => {
+  try {
+    const { orderId, guestPassToken } = req.body;
+    
+    if (!orderId || !guestPassToken) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Order ID and guest pass token are required' 
+      });
+    }
+
+    // Verify guest pass token
+    const decoded = jwt.verify(guestPassToken, process.env.JWT_SECRET);
+    const tokenHash = crypto.createHash('sha256').update(guestPassToken).digest('hex');
+    
+    const guestPass = await GuestPass.findOne({
+      _id: decoded.guestPassId,
+      token: tokenHash,
+      nonce: decoded.nonce
+    }).populate('event');
+
+    if (!guestPass) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Invalid guest pass' 
+      });
+    }
+
+    // Verify this is the correct PayPal order
+    if (guestPass.payment.paypalOrderId !== orderId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid payment request' 
+      });
+    }
+
+    // Check if already captured
+    if (guestPass.payment.status === 'succeeded') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Payment already processed' 
+      });
+    }
+
+    console.log(`💰 Capturing PayPal payment for order ${orderId}`);
+
+    // Capture the payment
+    const paypalProvider = new PayPalProvider();
+    const captureResult = await paypalProvider.capturePayment(orderId);
+
+    if (captureResult.success) {
+      // Update guest pass
+      guestPass.payment.status = 'succeeded';
+      guestPass.payment.paypalCaptureId = captureResult.captureId;
+      guestPass.payment.paidAt = captureResult.paidAt;
+      guestPass.status = 'confirmed';
+      await guestPass.save();
+
+      // Add payment to event history
+      const paymentData = {
+        guestPass: guestPass._id,
+        guestName: guestPass.guestName,
+        amount: guestPass.payment.amount,
+        currency: guestPass.payment.currency,
+        provider: 'paypal',
+        paypalOrderId: orderId,
+        paypalCaptureId: captureResult.captureId,
+        status: 'succeeded',
+        paidAt: captureResult.paidAt,
+        type: 'guest'
+      };
+
+      await guestPass.event.addPayment(paymentData);
+
+      console.log(`✅ PayPal payment captured successfully: ${captureResult.captureId}`);
+
+      res.json({
+        success: true,
+        message: 'Payment completed successfully',
+        guestPassId: guestPass._id,
+        captureId: captureResult.captureId,
+        amount: captureResult.amount
+      });
+
+    } else {
+      throw new Error('Payment capture failed');
+    }
+
+  } catch (error) {
+    console.error('❌ PayPal capture error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to complete payment',
+      error: error.message 
+    });
+  }
+});
+
+// ============================================
+// WEBHOOK HANDLING
+// ============================================
+
 // Stripe webhook handler
 router.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req, res) => {
   try {
@@ -234,6 +583,176 @@ router.post('/stripe-webhook', express.raw({type: 'application/json'}), async (r
   } catch (error) {
     console.error('❌ Webhook error:', error);
     res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * Handle PayPal webhooks
+ */
+router.post('/webhooks/paypal', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const event = req.body;
+    
+    console.log(`📡 PayPal webhook received: ${event.event_type}`);
+    
+    const paypalProvider = new PayPalProvider();
+    const result = await paypalProvider.handleWebhook(event);
+    
+    if (result.success) {
+      res.status(200).json({ received: true });
+    } else {
+      console.error('❌ Webhook processing failed:', result.error);
+      res.status(400).json({ error: result.error });
+    }
+
+  } catch (error) {
+    console.error('❌ PayPal webhook error:', error);
+    res.status(400).json({ error: 'Invalid webhook payload' });
+  }
+});
+
+// ============================================
+// PAYMENT MANAGEMENT ROUTES
+// ============================================
+
+/**
+ * Get payment history for event (host only)
+ */
+router.get('/:eventId/payments', protect, async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId)
+      .populate('paymentHistory.user', 'username email')
+      .populate('paymentHistory.guestPass', 'guestName guestEmail');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is the host
+    if (event.host.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'Access denied' 
+      });
+    }
+
+    // Group payments by provider for analytics
+    const paymentsByProvider = event.paymentHistory.reduce((acc, payment) => {
+      const provider = payment.provider || 'stripe';
+      if (!acc[provider]) {
+        acc[provider] = {
+          count: 0,
+          totalAmount: 0,
+          payments: []
+        };
+      }
+      acc[provider].count++;
+      acc[provider].totalAmount += payment.amount;
+      acc[provider].payments.push(payment);
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      paymentHistory: event.paymentHistory,
+      analytics: {
+        totalPayments: event.paymentHistory.length,
+        totalRevenue: event.financials.totalRevenue,
+        byProvider: paymentsByProvider
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting payment history:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get payment history' 
+    });
+  }
+});
+
+/**
+ * Process refund (works for both Stripe and PayPal)
+ */
+router.post('/:eventId/payments/:paymentId/refund', protect, async (req, res) => {
+  try {
+    const { refundAmount, reason } = req.body;
+    
+    const event = await Event.findById(req.params.eventId);
+    if (!event) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is the host
+    if (event.host.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'Access denied' 
+      });
+    }
+
+    const payment = event.paymentHistory.id(req.params.paymentId);
+    if (!payment) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Payment not found' 
+      });
+    }
+
+    if (payment.status !== 'succeeded') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Can only refund successful payments' 
+      });
+    }
+
+    const amountToRefund = refundAmount || payment.amount;
+    let refundResult;
+
+    // Process refund based on provider
+    if (payment.provider === 'paypal' && payment.paypalCaptureId) {
+      const paypalProvider = new PayPalProvider();
+      refundResult = await paypalProvider.processRefund(
+        payment.paypalCaptureId,
+        amountToRefund,
+        reason
+      );
+    } else {
+      // Default to Stripe for backward compatibility
+      refundResult = await StripeConnectService.processRefund(
+        payment.stripePaymentIntentId,
+        amountToRefund,
+        reason
+      );
+    }
+
+    if (refundResult.success) {
+      // Update payment record
+      event.processRefund(req.params.paymentId, amountToRefund, reason);
+      
+      res.json({
+        success: true,
+        message: 'Refund processed successfully',
+        refundId: refundResult.refundId,
+        amount: amountToRefund
+      });
+    } else {
+      throw new Error('Refund processing failed');
+    }
+
+  } catch (error) {
+    console.error('❌ Refund processing error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to process refund',
+      error: error.message 
+    });
   }
 });
 
@@ -764,7 +1283,7 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       // ============================================
       const hostUser = await User.findById(req.user._id);
       
-      // Check if host can receive payments
+      // Check if host can receive payments (works for both PayPal and Stripe)
       if (!hostUser.canReceivePayments()) {
         return res.status(400).json({ 
           message: 'You need to set up a payment account before creating paid events',
@@ -773,7 +1292,7 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
         });
       }
 
-      console.log(`✅ Host ${req.user._id} can receive payments`);
+      console.log(`✅ Host ${req.user._id} can receive payments via ${hostUser.getPrimaryPaymentMethod()}`);
     }
 
     /* optional group link */
@@ -1061,7 +1580,7 @@ router.post('/attend/:eventId', protect, async (req, res) => {
     }
 
     // ============================================
-    // SMART PAYMENT HANDLING
+    // SMART PAYMENT HANDLING (BOTH PAYPAL & STRIPE)
     // ============================================
     if (event.isPaidEvent()) {
       console.log(`💳 Processing payment for paid event ${event._id}`);
@@ -1089,35 +1608,54 @@ router.post('/attend/:eventId', protect, async (req, res) => {
       // User needs to pay
       if (!req.body.paymentConfirmed) {
         const currentPrice = event.getCurrentPrice();
+        const hostPaymentMethod = event.host.getPrimaryPaymentMethod();
         
         // Verify host can receive payments
-        if (!event.host.paymentAccounts?.stripe?.chargesEnabled) {
+        if (!event.host.canReceivePayments()) {
           return res.status(400).json({ 
             message: 'Host cannot currently receive payments. Please try again later.' 
           });
         }
 
         try {
-          // Create payment intent directly to host account
-          const paymentResult = await StripeConnectService.createDirectPaymentIntent(
-            currentPrice,
-            event.pricing.currency,
-            event.host.paymentAccounts.stripe.accountId,
-            {
-              eventId: event._id.toString(),
-              userId: req.user._id.toString(),
+          let paymentResponse = {};
+
+          if (hostPaymentMethod === 'paypal') {
+            // Return PayPal payment requirement
+            paymentResponse = {
+              requiresPayment: true,
+              paymentMethod: 'paypal',
+              hostEmail: event.host.paymentAccounts.paypal.email,
+              amount: currentPrice,
+              currency: event.pricing.currency,
               eventTitle: event.title,
               hostId: event.host._id.toString()
-            }
-          );
+            };
+          } else {
+            // Create Stripe payment intent
+            const paymentResult = await StripeConnectService.createDirectPaymentIntent(
+              currentPrice,
+              event.pricing.currency,
+              event.host.paymentAccounts.stripe.accountId,
+              {
+                eventId: event._id.toString(),
+                userId: req.user._id.toString(),
+                eventTitle: event.title,
+                hostId: event.host._id.toString()
+              }
+            );
 
-          return res.json({ 
-            requiresPayment: true,
-            clientSecret: paymentResult.clientSecret,
-            amount: currentPrice,
-            currency: event.pricing.currency,
-            eventTitle: event.title
-          });
+            paymentResponse = {
+              requiresPayment: true,
+              paymentMethod: 'stripe',
+              clientSecret: paymentResult.clientSecret,
+              amount: currentPrice,
+              currency: event.pricing.currency,
+              eventTitle: event.title
+            };
+          }
+
+          return res.json(paymentResponse);
 
         } catch (paymentError) {
           console.error('❌ Payment intent creation error:', paymentError);
@@ -1128,8 +1666,9 @@ router.post('/attend/:eventId', protect, async (req, res) => {
       }
 
       // Payment was confirmed, verify and add to attendees
-      const { paymentIntentId } = req.body;
-      if (!paymentIntentId) {
+      const { paymentIntentId, paypalOrderId, paypalCaptureId } = req.body;
+      
+      if (!paymentIntentId && !paypalCaptureId) {
         return res.status(400).json({ message: 'Payment confirmation required' });
       }
 
@@ -1138,11 +1677,20 @@ router.post('/attend/:eventId', protect, async (req, res) => {
         user: req.user._id,
         amount: event.getCurrentPrice(),
         currency: event.pricing.currency,
-        stripePaymentIntentId: paymentIntentId,
-        status: 'succeeded', // Will be verified by webhook
+        status: 'succeeded',
         paidAt: new Date(),
         type: 'user'
       };
+
+      // Add provider-specific fields
+      if (paypalCaptureId) {
+        paymentData.provider = 'paypal';
+        paymentData.paypalOrderId = paypalOrderId;
+        paymentData.paypalCaptureId = paypalCaptureId;
+      } else {
+        paymentData.provider = 'stripe';
+        paymentData.stripePaymentIntentId = paymentIntentId;
+      }
 
       await event.addPayment(paymentData);
       console.log(`✅ Payment recorded for user ${req.user._id} on event ${event._id}`);

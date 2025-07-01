@@ -1,206 +1,414 @@
-// models/Event.js - Enhanced with Payment History and Better Pricing
+// models/Event.js - Enhanced with Multi-Provider Payment Support
 const mongoose = require('mongoose');
 
-const AnnouncementSchema = new mongoose.Schema({
-  message   : { type: String, required: true },
-  createdAt : { type: Date, default: Date.now }
-});
-
-const CommentSchema = new mongoose.Schema({
-  user      : { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  text      : { type: String, required: true },
-  tags      : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  createdAt : { type: Date, default: Date.now }
-});
-
-// ============================================
-// NEW: PAYMENT HISTORY SCHEMA
-// ============================================
+// Enhanced Payment History Schema with Multi-Provider Support
 const PaymentHistorySchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },           // null for guest users
-  guestPass: { type: mongoose.Schema.Types.ObjectId, ref: 'GuestPass' }, // null for registered users
-  guestName: String,                                                      // For guest payments
-  amount: { type: Number, required: true },                              // Amount in cents
-  currency: { type: String, default: 'USD' },
-  stripePaymentIntentId: String,                                          // Stripe payment ID
-  paymentMethod: { type: String, enum: ['stripe', 'paypal'], default: 'stripe' },
+  // User or guest information
+  user: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User' 
+  },
+  guestPass: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'GuestPass' 
+  },
+  guestName: String,                        // For guest payments
+  guestEmail: String,                       // For guest payments
+  
+  // Payment details
+  amount: { 
+    type: Number, 
+    required: true 
+  },                    // Amount in cents
+  currency: { 
+    type: String, 
+    default: 'USD' 
+  },
+  
+  // Provider information
+  provider: { 
+    type: String, 
+    enum: ['stripe', 'paypal', 'manual'], 
+    default: 'stripe' 
+  },
+  
+  // Stripe-specific fields
+  stripePaymentIntentId: String,
+  stripeChargeId: String,
+  
+  // PayPal-specific fields
+  paypalOrderId: String,
+  paypalCaptureId: String,
+  paypalPayerId: String,
+  
+  // Manual payment fields
+  manualPaymentMethod: String,              // 'venmo', 'cashapp', 'zelle', etc.
+  manualTransactionId: String,
+  manualNotes: String,
+  
+  // Payment status and timing
   status: { 
     type: String, 
-    enum: ['pending', 'succeeded', 'failed', 'refunded', 'partially_refunded'], 
+    enum: ['pending', 'processing', 'succeeded', 'failed', 'refunded', 'partially_refunded'], 
     default: 'pending' 
   },
   paidAt: Date,
+  processedAt: Date,
+  
+  // Refund information
   refundedAt: Date,
-  refundAmount: Number,                                                   // For partial refunds
+  refundAmount: Number,
   refundReason: String,
-  type: { type: String, enum: ['user', 'guest'], required: true },      // Payment source
-  metadata: {
-    userAgent: String,
+  refundId: String,                         // Provider-specific refund ID
+  
+  // Payment type and metadata
+  type: { 
+    type: String, 
+    enum: ['user', 'guest'], 
+    required: true 
+  },
+  metadata: {                               // Additional payment metadata
     ipAddress: String,
-    platform: String // 'web', 'mobile', 'guest-link'
+    userAgent: String,
+    paymentMethodType: String,              // 'card', 'paypal_account', etc.
+    last4: String,                          // Last 4 digits of card (if applicable)
+    brand: String                           // Card brand or payment method brand
   }
-}, { timestamps: true });
+}, {
+  timestamps: true
+});
 
 const EventSchema = new mongoose.Schema({
-  /* basic info */
-  title        : { type: String, required: true },
-  description  : { type: String, required: true },
-  category     : { type: String, required: true, default: 'General' },
-  time         : { type: Date, required: true },
-
-  /* location */
-  location     : { type: String, required: true },
-  geo          : {
-    type        : { type: String, enum: ['Point'] },
-    coordinates : { type: [Number] }
+  title: {
+    type: String,
+    required: true,
+  },
+  description: {
+    type: String,
+    required: true,
+  },
+  time: {
+    type: Date,
+    required: true,
+  },
+  location: {
+    type: String,
+    required: true,
+  },
+  host: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
+  coHosts: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  attendees: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  checkedIn: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  invitedUsers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  maxAttendees: {
+    type: Number,
+    default: 50,
   },
 
-  /* limits & pricing */
-  maxAttendees : { type: Number, required: true },
-  
   // ============================================
-  // ENHANCED: PAYMENT CONFIGURATION
+  // ENHANCED: MULTI-PROVIDER PRICING SYSTEM
   // ============================================
   pricing: {
-    isFree: { type: Boolean, default: true },                    // Toggle for paid/free
-    amount: { type: Number, default: 0 },                        // Price in cents (e.g., 2500 = $25.00)
-    currency: { type: String, default: 'USD' },
-    description: String,                                          // e.g., "Includes drinks and appetizers"
-    refundPolicy: { 
-      type: String, 
-      enum: ['no-refund', 'full-refund-24h', 'full-refund-7d', 'partial-refund'], 
-      default: 'no-refund' 
+    isFree: { 
+      type: Boolean, 
+      default: true 
     },
-    refundDeadline: Date,                                         // Calculated based on policy
+    amount: { 
+      type: Number, 
+      default: 0 
+    },                    // Price in cents
+    currency: { 
+      type: String, 
+      default: 'USD' 
+    },
+    description: String,                      // Price description (e.g., "Includes drinks and appetizers")
+    
+    // Refund policy
+    refundPolicy: {
+      type: String,
+      enum: ['no-refund', 'partial-refund', 'full-refund', 'custom'],
+      default: 'no-refund'
+    },
+    refundDeadline: Date,                     // Deadline for refunds
+    customRefundPolicy: String,               // Custom refund policy text
+    
+    // Early bird pricing
     earlyBirdPricing: {
-      enabled: { type: Boolean, default: false },
-      amount: Number,                                             // Early bird price in cents
-      deadline: Date                                              // Early bird deadline
+      enabled: { 
+        type: Boolean, 
+        default: false 
+      },
+      amount: { 
+        type: Number, 
+        default: 0 
+      },           // Early bird price in cents
+      deadline: Date,                         // Early bird deadline
+      description: String                     // Early bird description
+    },
+    
+    // Group pricing (future feature)
+    groupPricing: {
+      enabled: { 
+        type: Boolean, 
+        default: false 
+      },
+      minimumPeople: Number,
+      discountPercentage: Number,
+      discountAmount: Number
     }
   },
 
-  // Legacy fields (keep for backward compatibility)
-  price        : { type: Number, default: 0 },
-  ticketPrice  : { type: Number, default: 0 },
+  // Legacy price field for backward compatibility
+  price: {
+    type: Number,
+    default: 0,
+  },
 
-  /* hosting & roles */
-  host         : { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  coHosts      : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  coHostRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  // ============================================
+  // ENHANCED: FINANCIAL TRACKING
+  // ============================================
+  financials: {
+    totalRevenue: { 
+      type: Number, 
+      default: 0 
+    },         // Total revenue in cents
+    totalRefunded: { 
+      type: Number, 
+      default: 0 
+    },        // Total refunded in cents
+    netRevenue: { 
+      type: Number, 
+      default: 0 
+    },           // Revenue minus refunds
+    totalPayments: { 
+      type: Number, 
+      default: 0 
+    },         // Number of successful payments
+    
+    // Provider-specific tracking
+    providerBreakdown: {
+      stripe: {
+        revenue: { type: Number, default: 0 },
+        payments: { type: Number, default: 0 },
+        fees: { type: Number, default: 0 }
+      },
+      paypal: {
+        revenue: { type: Number, default: 0 },
+        payments: { type: Number, default: 0 },
+        fees: { type: Number, default: 0 }
+      },
+      manual: {
+        revenue: { type: Number, default: 0 },
+        payments: { type: Number, default: 0 }
+      }
+    },
+    
+    // Fee tracking
+    stripeFeesTotal: { 
+      type: Number, 
+      default: 0 
+    },      // Legacy Stripe fees
+    paypalFeesTotal: { 
+      type: Number, 
+      default: 0 
+    },      // PayPal fees
+    totalFees: { 
+      type: Number, 
+      default: 0 
+    },           // All provider fees combined
+    
+    // Host earnings
+    hostEarnings: { 
+      type: Number, 
+      default: 0 
+    },         // Net amount host receives
+    currency: { 
+      type: String, 
+      default: 'USD' 
+    },
+    
+    // Financial timestamps
+    lastPaymentAt: Date,
+    lastRefundAt: Date,
+    revenueUpdatedAt: { 
+      type: Date, 
+      default: Date.now 
+    }
+  },
 
-  /* ENHANCED PRIVACY SYSTEM */
-  privacyLevel : {
+  // ============================================
+  // ENHANCED: PAYMENT HISTORY WITH MULTI-PROVIDER SUPPORT
+  // ============================================
+  paymentHistory: [PaymentHistorySchema],
+
+  // Privacy and permissions system
+  privacyLevel: {
     type: String,
     enum: ['public', 'friends', 'private', 'secret'],
     default: 'public'
   },
-  
   permissions: {
     canView: {
       type: String,
-      enum: ['anyone', 'followers', 'invitees', 'host-only'],
+      enum: ['anyone', 'followers', 'friends', 'invited-only'],
       default: 'anyone'
     },
     canJoin: {
       type: String,
-      enum: ['anyone', 'followers', 'invited', 'approval-required'],
+      enum: ['anyone', 'followers', 'friends', 'approval-required', 'invited-only'],
       default: 'anyone'
     },
     canShare: {
       type: String,
-      enum: ['anyone', 'attendees', 'co-hosts', 'host-only'],
+      enum: ['anyone', 'attendees', 'host-only'],
       default: 'attendees'
     },
     canInvite: {
       type: String,
-      enum: ['anyone', 'attendees', 'co-hosts', 'host-only'],
+      enum: ['anyone', 'attendees', 'host-only'],
       default: 'attendees'
     },
-    appearInFeed: { type: Boolean, default: true },
-    appearInSearch: { type: Boolean, default: true },
-    showAttendeesToPublic: { type: Boolean, default: true }
+    appearInFeed: {
+      type: Boolean,
+      default: true
+    },
+    appearInSearch: {
+      type: Boolean,
+      default: true
+    },
+    showAttendeesToPublic: {
+      type: Boolean,
+      default: true
+    }
   },
 
-  /* visibility & behaviour - DEPRECATED but kept for backward compatibility */
-  isPublic     : { type: Boolean, default: true },
-  openToPublic : { type: Boolean, default: true },
-  recurring    : { type: String, enum: ['daily', 'weekly', 'monthly'], default: null },
-
-  /* media permissions */
-  coverImage             : { type: String, default: '' },
-  allowPhotos            : { type: Boolean, default: true },
-  allowUploads           : { type: Boolean, default: true },
-  allowUploadsBeforeStart: { type: Boolean, default: true },
-
-  /* relations */
-  group        : { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
-  attendees    : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  invitedUsers : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  bannedUsers  : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  checkedIn    : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  
-  /* join requests for approval-required events */
-  joinRequests : [{ 
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    requestedAt: { type: Date, default: Date.now },
-    message: String
+  // Join request system
+  joinRequests: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    message: String,
+    requestedAt: {
+      type: Date,
+      default: Date.now
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending'
+    }
   }],
 
-  // ============================================
-  // NEW: PAYMENT HISTORY AND FINANCIAL TRACKING
-  // ============================================
-  paymentHistory: [PaymentHistorySchema],
-
-  financials: {
-    totalRevenue: { type: Number, default: 0 },        // Total money collected
-    totalRefunded: { type: Number, default: 0 },       // Total refunds issued
-    netRevenue: { type: Number, default: 0 },          // Revenue - refunds
-    totalPayments: { type: Number, default: 0 },       // Number of successful payments
-    stripeFeesTotal: { type: Number, default: 0 },     // Total Stripe processing fees
-    hostEarnings: { type: Number, default: 0 },        // What the host actually receives
-    currency: { type: String, default: 'USD' }
+  // Event content and media
+  coverImage: String,
+  photos: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Photo',
+  }],
+  allowPhotos: {
+    type: Boolean,
+    default: true,
+  },
+  allowUploads: {
+    type: Boolean,
+    default: true,
+  },
+  allowUploadsBeforeStart: {
+    type: Boolean,
+    default: false,
   },
 
-  /* content */
-  photos       : [{ type: mongoose.Schema.Types.ObjectId, ref: 'Photo', index: true }],
-  removedPhotos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Photo' }],
-  comments     : [CommentSchema],
-  announcements: [AnnouncementSchema],
+  // Event metadata
+  category: {
+    type: String,
+    default: 'General',
+  },
+  tags: [String],
+  interests: [String],
+  weatherDependent: {
+    type: Boolean,
+    default: false,
+  },
+  ageRestriction: {
+    min: Number,
+    max: Number
+  },
 
-  /* engagement */
-  likes        : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  shareCount   : { type: Number, default: 0 },
-  
-  /* recommendations & discovery */
-  tags         : [String],
-  weatherDependent: { type: Boolean, default: false },
-  ageRestriction: { min: Number, max: Number },
-  interests    : [String],
+  // Legacy fields for backward compatibility
+  isPublic: {
+    type: Boolean,
+    default: true,
+  },
+  openToPublic: {
+    type: Boolean,
+    default: true,
+  },
 
-}, { timestamps: true });
+  // Group association
+  group: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Group',
+  },
 
-/* ---------- indexes ------------------------------------------------------- */
-EventSchema.index(
-  { title: 'text', category: 'text', description: 'text', tags: 'text' },
-  { name: 'EventFullText', weights: { title: 8, category: 5, description: 1, tags: 3 } }
-);
-EventSchema.index({ time: 1 });
-EventSchema.index({ privacyLevel: 1, time: 1 });
-EventSchema.index({ 'geo': '2dsphere' }, { sparse: true });
-EventSchema.index({ category: 1, time: 1 });
-EventSchema.index({ host: 1, time: 1 });
-EventSchema.index({ 'pricing.isFree': 1, time: 1 });
-EventSchema.index({ 'paymentHistory.user': 1 });
-EventSchema.index({ 'paymentHistory.status': 1 });
+  // Geographic data
+  geo: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      index: '2dsphere'
+    }
+  },
 
-/* ---------- helper methods ------------------------------------------------ */
+  // User management
+  bannedUsers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
 
-// Check if event is paid
+}, {
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// ============================================
+// ENHANCED: PAYMENT-RELATED METHODS
+// ============================================
+
+/**
+ * Check if this is a paid event
+ * @returns {boolean} True if event requires payment
+ */
 EventSchema.methods.isPaidEvent = function() {
   return !this.pricing.isFree && this.pricing.amount > 0;
 };
 
-// Get current price (considering early bird)
+/**
+ * Get current price (considering early bird pricing)
+ * @returns {number} Current price in cents
+ */
 EventSchema.methods.getCurrentPrice = function() {
   if (this.pricing.isFree) return 0;
   
@@ -214,7 +422,24 @@ EventSchema.methods.getCurrentPrice = function() {
   return this.pricing.amount;
 };
 
-// Check if user already paid for this event
+/**
+ * Get formatted price for display
+ * @returns {string} Formatted price string
+ */
+EventSchema.methods.getFormattedPrice = function() {
+  if (this.pricing.isFree) return 'Free';
+  
+  const currentPrice = this.getCurrentPrice();
+  const dollarAmount = (currentPrice / 100).toFixed(2);
+  
+  return `${dollarAmount}`;
+};
+
+/**
+ * Check if user already paid for this event
+ * @param {string} userId - User ID to check
+ * @returns {boolean} True if user has successful payment
+ */
 EventSchema.methods.hasUserPaid = function(userId) {
   if (!userId) return false;
   
@@ -225,7 +450,11 @@ EventSchema.methods.hasUserPaid = function(userId) {
   );
 };
 
-// Check if guest already paid
+/**
+ * Check if guest already paid
+ * @param {string} guestPassId - Guest pass ID to check
+ * @returns {boolean} True if guest has successful payment
+ */
 EventSchema.methods.hasGuestPaid = function(guestPassId) {
   if (!guestPassId) return false;
   
@@ -236,105 +465,218 @@ EventSchema.methods.hasGuestPaid = function(guestPassId) {
   );
 };
 
-// Add payment to history
+/**
+ * Add payment to history and update financials
+ * @param {object} paymentData - Payment information
+ * @returns {Promise} Save promise
+ */
 EventSchema.methods.addPayment = function(paymentData) {
-  this.paymentHistory.push(paymentData);
+  // Add to payment history
+  this.paymentHistory.push({
+    ...paymentData,
+    processedAt: new Date()
+  });
   
   // Update financial tracking
   if (paymentData.status === 'succeeded') {
-    this.financials.totalRevenue += paymentData.amount;
+    const amount = paymentData.amount;
+    const provider = paymentData.provider || 'stripe';
+    
+    // Update totals
+    this.financials.totalRevenue += amount;
     this.financials.totalPayments += 1;
     this.financials.netRevenue = this.financials.totalRevenue - this.financials.totalRefunded;
+    this.financials.lastPaymentAt = new Date();
+    this.financials.revenueUpdatedAt = new Date();
     
-    // Calculate estimated Stripe fees (2.9% + 30¢)
-    const stripeFee = Math.round(paymentData.amount * 0.029 + 30);
-    this.financials.stripeFeesTotal += stripeFee;
-    this.financials.hostEarnings = this.financials.netRevenue - this.financials.stripeFeesTotal;
+    // Update provider breakdown
+    if (!this.financials.providerBreakdown) {
+      this.financials.providerBreakdown = {
+        stripe: { revenue: 0, payments: 0, fees: 0 },
+        paypal: { revenue: 0, payments: 0, fees: 0 },
+        manual: { revenue: 0, payments: 0 }
+      };
+    }
+    
+    if (this.financials.providerBreakdown[provider]) {
+      this.financials.providerBreakdown[provider].revenue += amount;
+      this.financials.providerBreakdown[provider].payments += 1;
+    }
+    
+    // Calculate estimated fees
+    let estimatedFee = 0;
+    if (provider === 'stripe' || provider === 'paypal') {
+      // Standard rate: 2.9% + 30¢
+      estimatedFee = Math.round(amount * 0.029 + 30);
+    }
+    
+    if (provider === 'stripe') {
+      this.financials.stripeFeesTotal += estimatedFee;
+    } else if (provider === 'paypal') {
+      this.financials.paypalFeesTotal += estimatedFee;
+    }
+    
+    this.financials.totalFees = this.financials.stripeFeesTotal + this.financials.paypalFeesTotal;
+    this.financials.hostEarnings = this.financials.netRevenue - this.financials.totalFees;
   }
   
   return this.save();
 };
 
-// Process refund
-EventSchema.methods.processRefund = function(paymentId, refundAmount, reason) {
+/**
+ * Process refund and update financials
+ * @param {string} paymentId - Payment ID to refund
+ * @param {number} refundAmount - Refund amount in cents
+ * @param {string} reason - Refund reason
+ * @param {string} refundId - Provider refund ID
+ * @returns {Promise} Save promise
+ */
+EventSchema.methods.processRefund = function(paymentId, refundAmount, reason, refundId = null) {
   const payment = this.paymentHistory.id(paymentId);
-  if (!payment) return false;
+  if (!payment) return Promise.reject(new Error('Payment not found'));
   
-  payment.status = refundAmount === payment.amount ? 'refunded' : 'partially_refunded';
+  const isPartialRefund = refundAmount < payment.amount;
+  
+  // Update payment record
+  payment.status = isPartialRefund ? 'partially_refunded' : 'refunded';
   payment.refundedAt = new Date();
-  payment.refundAmount = refundAmount;
+  payment.refundAmount = (payment.refundAmount || 0) + refundAmount;
   payment.refundReason = reason;
+  if (refundId) payment.refundId = refundId;
   
   // Update financials
   this.financials.totalRefunded += refundAmount;
   this.financials.netRevenue = this.financials.totalRevenue - this.financials.totalRefunded;
-  this.financials.hostEarnings = this.financials.netRevenue - this.financials.stripeFeesTotal;
+  this.financials.hostEarnings = this.financials.netRevenue - this.financials.totalFees;
+  this.financials.lastRefundAt = new Date();
+  this.financials.revenueUpdatedAt = new Date();
+  
+  // Update provider breakdown
+  const provider = payment.provider || 'stripe';
+  if (this.financials.providerBreakdown?.[provider]) {
+    this.financials.providerBreakdown[provider].revenue -= refundAmount;
+  }
   
   return this.save();
 };
 
-// Legacy compatibility - sync old price field with new pricing structure
+/**
+ * Get payment analytics for host dashboard
+ * @returns {object} Payment analytics data
+ */
+EventSchema.methods.getPaymentAnalytics = function() {
+  const analytics = {
+    overview: {
+      totalRevenue: this.financials.totalRevenue,
+      totalRefunded: this.financials.totalRefunded,
+      netRevenue: this.financials.netRevenue,
+      hostEarnings: this.financials.hostEarnings,
+      totalPayments: this.financials.totalPayments,
+      currency: this.financials.currency
+    },
+    byProvider: this.financials.providerBreakdown || {},
+    recentPayments: this.paymentHistory
+      .filter(p => p.status === 'succeeded')
+      .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt))
+      .slice(0, 10),
+    paymentMethods: {},
+    timeline: []
+  };
+  
+  // Calculate payment method breakdown
+  this.paymentHistory.forEach(payment => {
+    if (payment.status === 'succeeded') {
+      const provider = payment.provider || 'stripe';
+      if (!analytics.paymentMethods[provider]) {
+        analytics.paymentMethods[provider] = { count: 0, revenue: 0 };
+      }
+      analytics.paymentMethods[provider].count++;
+      analytics.paymentMethods[provider].revenue += payment.amount;
+    }
+  });
+  
+  return analytics;
+};
+
+/**
+ * Check if user can get refund
+ * @param {string} userId - User ID
+ * @returns {object} Refund eligibility information
+ */
+EventSchema.methods.canUserGetRefund = function(userId) {
+  const userPayment = this.paymentHistory.find(p => 
+    p.user && String(p.user) === String(userId) && p.status === 'succeeded'
+  );
+  
+  if (!userPayment) {
+    return { eligible: false, reason: 'No payment found' };
+  }
+  
+  if (userPayment.status === 'refunded') {
+    return { eligible: false, reason: 'Already refunded' };
+  }
+  
+  // Check refund policy
+  switch (this.pricing.refundPolicy) {
+    case 'no-refund':
+      return { eligible: false, reason: 'No refund policy' };
+    
+    case 'full-refund':
+      if (this.pricing.refundDeadline && new Date() > this.pricing.refundDeadline) {
+        return { eligible: false, reason: 'Refund deadline passed' };
+      }
+      return { eligible: true, amount: userPayment.amount };
+    
+    case 'partial-refund':
+      if (this.pricing.refundDeadline && new Date() > this.pricing.refundDeadline) {
+        return { eligible: false, reason: 'Refund deadline passed' };
+      }
+      return { eligible: true, amount: Math.floor(userPayment.amount * 0.8) }; // 80% refund
+    
+    case 'custom':
+      // Custom logic would go here
+      return { eligible: true, amount: userPayment.amount, note: this.pricing.customRefundPolicy };
+    
+    default:
+      return { eligible: false, reason: 'Unknown refund policy' };
+  }
+};
+
+// ============================================
+// LEGACY COMPATIBILITY METHODS
+// ============================================
+
+// Sync legacy price field with new pricing structure
 EventSchema.pre('save', function(next) {
   // Sync legacy fields
-  this.price = this.pricing.isFree ? 0 : this.pricing.amount / 100; // Convert cents to dollars
-  this.isPublic = this.privacyLevel === 'public' && this.permissions.appearInSearch;
+  this.price = this.pricing.isFree ? 0 : (this.pricing.amount / 100);
   
-  // Set refund deadline based on policy
-  if (this.pricing.refundPolicy === 'full-refund-24h') {
-    this.pricing.refundDeadline = new Date(this.time.getTime() - 24 * 60 * 60 * 1000);
-  } else if (this.pricing.refundPolicy === 'full-refund-7d') {
-    this.pricing.refundDeadline = new Date(this.time.getTime() - 7 * 24 * 60 * 60 * 1000);
+  // Update financial timestamps
+  if (this.isModified('paymentHistory') || this.isModified('financials')) {
+    this.financials.revenueUpdatedAt = new Date();
   }
   
   next();
 });
 
-// Existing methods for permissions...
-EventSchema.methods.canUserView = function(userId, userFollowers = []) {
-  const userIdStr = String(userId);
-  const hostStr = String(this.host);
-  
-  if (userIdStr === hostStr) return true;
-  if (this.coHosts.some(c => String(c) === userIdStr)) return true;
-  
-  switch (this.privacyLevel) {
-    case 'public':
-      return this.permissions.canView === 'anyone' || 
-             (this.permissions.canView === 'followers' && userFollowers.includes(hostStr));
-    case 'friends':
-      return userFollowers.includes(hostStr);
-    case 'private':
-      return this.invitedUsers.some(u => String(u) === userIdStr) ||
-             this.attendees.some(u => String(u) === userIdStr);
-    case 'secret':
-      return this.invitedUsers.some(u => String(u) === userIdStr) ||
-             this.attendees.some(u => String(u) === userIdStr);
-    default:
-      return false;
-  }
-};
+// Virtual for backward compatibility
+EventSchema.virtual('isFree').get(function() {
+  return this.pricing.isFree;
+});
 
-EventSchema.methods.canUserJoin = function(userId, userFollowers = []) {
-  if (!this.canUserView(userId, userFollowers)) return false;
-  
-  const userIdStr = String(userId);
-  const hostStr = String(this.host);
-  
-  if (this.attendees.some(u => String(u) === userIdStr)) return false;
-  if (this.bannedUsers.some(u => String(u) === userIdStr)) return false;
-  
-  switch (this.permissions.canJoin) {
-    case 'anyone':
-      return this.privacyLevel === 'public';
-    case 'followers':
-      return userFollowers.includes(hostStr);
-    case 'invited':
-      return this.invitedUsers.some(u => String(u) === userIdStr);
-    case 'approval-required':
-      return true;
-    default:
-      return false;
-  }
-};
+EventSchema.virtual('priceInDollars').get(function() {
+  return this.pricing.amount / 100;
+});
+
+// ============================================
+// INDEXES FOR PERFORMANCE
+// ============================================
+EventSchema.index({ time: 1 });
+EventSchema.index({ host: 1 });
+EventSchema.index({ 'pricing.amount': 1 });
+EventSchema.index({ 'paymentHistory.user': 1 });
+EventSchema.index({ 'paymentHistory.status': 1 });
+EventSchema.index({ privacyLevel: 1 });
+EventSchema.index({ geo: '2dsphere' });
 
 module.exports = mongoose.model('Event', EventSchema);
