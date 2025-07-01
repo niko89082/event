@@ -6,19 +6,18 @@ const Photo = require('../models/Photo');
 const User = require('../models/User');
 const protect = require('../middleware/auth');
 const EventPrivacyService = require('../services/eventPrivacyService');
-const paypal = require('paypal-rest-sdk');
+const StripeConnectService = require('../services/stripeConnectService'); // NEW: Payment service
 const fs = require('fs');
 const path = require('path');
-const notificationService = require('../services/notificationService'); // Add this import at the top
+const notificationService = require('../services/notificationService');
 require('dotenv').config();
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const router = express.Router();
 
-const UP_DIR      = path.join(__dirname, '..', 'uploads');
-const PHOTO_DIR   = path.join(UP_DIR, 'photos');
-const COVER_DIR   = path.join(UP_DIR, 'event-covers');
-const COVERS_DIR  = path.join(UP_DIR, 'covers');
+const UP_DIR = path.join(__dirname, '..', 'uploads');
+const PHOTO_DIR = path.join(UP_DIR, 'photos');
+const COVER_DIR = path.join(UP_DIR, 'event-covers');
+const COVERS_DIR = path.join(UP_DIR, 'covers');
 
 // Ensure all directories exist
 [PHOTO_DIR, COVER_DIR, COVERS_DIR].forEach((d) => { 
@@ -27,11 +26,10 @@ const COVERS_DIR  = path.join(UP_DIR, 'covers');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, file.fieldname === 'coverImage' ? COVER_DIR : PHOTO_DIR),
-  filename:    (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage });
 
-// Separate cover image storage
 const coverStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, COVERS_DIR);
@@ -48,7 +46,6 @@ const uploadCover = multer({
     fileSize: 10 * 1024 * 1024, // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    // Accept only image files
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -68,11 +65,176 @@ const parseFloatSafe = (val, defaultVal = 0) => {
   return isNaN(parsed) ? defaultVal : parsed;
 };
 
-// PayPal Configuration
-paypal.configure({
-  'mode': 'sandbox',
-  'client_id': process.env.PAYPAL_CLIENT_ID,
-  'client_secret': process.env.PAYPAL_CLIENT_SECRET,
+// ============================================
+// NEW: PAYMENT ACCOUNT SETUP ROUTES
+// ============================================
+
+// Create Stripe Connect account for host
+router.post('/setup-payments', protect, async (req, res) => {
+  try {
+    const { firstName, lastName, country = 'US' } = req.body;
+    
+    console.log(`🔗 Setting up payments for user ${req.user._id}`);
+    console.log(`📝 User info:`, { firstName, lastName, country });
+    console.log(`🆔 User ID type:`, typeof req.user._id);
+    console.log(`🆔 User ID value:`, req.user._id);
+
+    // Check if user already has account
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      console.log(`❌ User not found: ${req.user._id}`);
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log(`👤 User found:`, { 
+      id: user._id, 
+      email: user.email,
+      hasPaymentAccount: !!user.paymentAccounts?.stripe?.accountId 
+    });
+
+    if (user.paymentAccounts?.stripe?.accountId) {
+      console.log(`⚠️ User already has Stripe account: ${user.paymentAccounts.stripe.accountId}`);
+      return res.status(400).json({ 
+        message: 'Payment account already exists',
+        accountId: user.paymentAccounts.stripe.accountId
+      });
+    }
+
+    // Create Stripe Connect account
+    console.log(`🏗️ Creating Stripe Connect account...`);
+    const result = await StripeConnectService.createConnectAccount(req.user._id, {
+      firstName,
+      lastName,
+      country
+    });
+
+    console.log(`✅ Stripe account creation result:`, { success: result.success, accountId: result.accountId });
+
+    if (!result.success) {
+      console.log(`❌ Account creation failed: ${result.message}`);
+      return res.status(400).json({ message: result.message });
+    }
+
+    // Create onboarding link
+    console.log(`🔗 Creating onboarding link...`);
+    const returnUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/events/payment-setup/return`;
+    const refreshUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/events/payment-setup/refresh`;
+    
+    console.log(`🔗 URLs:`, { returnUrl, refreshUrl });
+    
+    const linkResult = await StripeConnectService.createAccountLink(
+      req.user._id, 
+      returnUrl, 
+      refreshUrl
+    );
+
+    console.log(`✅ Onboarding link created:`, { success: linkResult.success, expires: linkResult.expiresAt });
+
+    res.json({
+      success: true,
+      accountId: result.accountId,
+      onboardingUrl: linkResult.url,
+      expiresAt: linkResult.expiresAt
+    });
+
+  } catch (error) {
+    console.error('❌ Payment setup error:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Failed to setup payments', 
+      error: error.message 
+    });
+  }
+});
+
+// Check payment account status
+router.get('/payment-status', protect, async (req, res) => {
+  try {
+    const status = await StripeConnectService.checkAccountStatus(req.user._id);
+    
+    res.json({
+      canReceivePayments: status.connected,
+      onboardingComplete: status.onboardingComplete,
+      chargesEnabled: status.chargesEnabled,
+      payoutsEnabled: status.payoutsEnabled,
+      requirements: status.requirements
+    });
+
+  } catch (error) {
+    console.error('❌ Payment status check error:', error);
+    res.status(500).json({ 
+      message: 'Failed to check payment status', 
+      error: error.message 
+    });
+  }
+});
+
+// Create new onboarding link (if previous expired)
+router.post('/payment-setup/refresh', protect, async (req, res) => {
+  try {
+    const returnUrl = `${process.env.FRONTEND_URL}/events/payment-setup/return`;
+    const refreshUrl = `${process.env.FRONTEND_URL}/events/payment-setup/refresh`;
+    
+    const linkResult = await StripeConnectService.createAccountLink(
+      req.user._id, 
+      returnUrl, 
+      refreshUrl
+    );
+
+    res.json({
+      success: true,
+      onboardingUrl: linkResult.url,
+      expiresAt: linkResult.expiresAt
+    });
+
+  } catch (error) {
+    console.error('❌ Payment link refresh error:', error);
+    res.status(500).json({ 
+      message: 'Failed to refresh payment link', 
+      error: error.message 
+    });
+  }
+});
+
+// Get Stripe dashboard link for host
+router.get('/payment-dashboard', protect, async (req, res) => {
+  try {
+    const result = await StripeConnectService.createDashboardLink(req.user._id);
+    
+    res.json({
+      success: true,
+      dashboardUrl: result.url
+    });
+
+  } catch (error) {
+    console.error('❌ Dashboard link error:', error);
+    res.status(500).json({ 
+      message: 'Failed to create dashboard link', 
+      error: error.message 
+    });
+  }
+});
+
+// Stripe webhook handler
+router.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req, res) => {
+  try {
+    const signature = req.headers['stripe-signature'];
+    const event = StripeConnectService.validateWebhook(req.body, signature);
+    
+    console.log(`🔗 Stripe webhook received: ${event.type}`);
+    
+    const result = await StripeConnectService.handleWebhook(event);
+    
+    if (result.success) {
+      res.json({ received: true });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+
+  } catch (error) {
+    console.error('❌ Webhook error:', error);
+    res.status(400).json({ error: error.message });
+  }
 });
 
 // ========================================
@@ -89,7 +251,6 @@ router.get('/following-events', protect, async (req, res) => {
   try {
     console.log('🟡 User ID:', req.user._id);
     
-    // Get current user with populated following list
     const viewer = await User.findById(req.user._id)
       .select('following')
       .populate('following', '_id username')
@@ -113,22 +274,20 @@ router.get('/following-events', protect, async (req, res) => {
       });
     }
 
-    // Build query for events from people you follow
     const query = {
       host: { $in: followingIds },
-      time: { $gte: new Date() }, // Only future events
+      time: { $gte: new Date() },
       $or: [
         { privacyLevel: 'public' },
         { 
           privacyLevel: 'friends',
-          host: { $in: followingIds } // Friends can see friends-only events
+          host: { $in: followingIds }
         }
       ]
     };
 
     console.log('🟡 Query:', JSON.stringify(query, null, 2));
 
-    // Get events with populated data
     const events = await Event.find(query)
       .populate('host', 'username profilePicture')
       .populate('attendees', 'username')
@@ -139,7 +298,6 @@ router.get('/following-events', protect, async (req, res) => {
 
     console.log('🟡 Found events:', events.length);
 
-    // Add user relationship metadata to each event
     const eventsWithMetadata = events.map(event => {
       const isHost = String(event.host._id) === String(req.user._id);
       const isAttending = event.attendees.some(attendee => 
@@ -157,7 +315,6 @@ router.get('/following-events', protect, async (req, res) => {
       };
     });
 
-    // Get total count for pagination
     const totalEvents = await Event.countDocuments(query);
     const totalPages = Math.ceil(totalEvents / limit);
     const hasMore = skip + limit < totalEvents;
@@ -214,7 +371,6 @@ router.get('/feed/posts', protect, async (req, res) => {
       });
     }
 
-    // Get posts from friends
     const posts = await Photo.find({
       user: { $in: followingIds }
     })
@@ -227,7 +383,6 @@ router.get('/feed/posts', protect, async (req, res) => {
 
     console.log('🟡 Found posts:', posts.length);
 
-    // Add source field
     const postsWithSource = posts.map(post => ({
       ...post,
       source: 'friend'
@@ -310,7 +465,7 @@ router.get('/my-photo-events', protect, async (req, res) => {
       $or: [
         { attendees: req.user._id }, 
         { checkedIn: req.user._id },
-        { host: req.user._id } // Include hosted events
+        { host: req.user._id }
       ]
     }).select('title time allowPhotos host attendees');
     res.json(list);
@@ -320,10 +475,6 @@ router.get('/my-photo-events', protect, async (req, res) => {
   }
 });
 
-// ================================
-// FIXED: NOTIFICATION ROUTES MOVED TO TOP
-// ================================
-
 // Get My Event Invites - MUST BE BEFORE /:eventId route
 router.get('/my-invites', protect, async (req, res) => {
   try {
@@ -331,21 +482,19 @@ router.get('/my-invites', protect, async (req, res) => {
     
     const events = await Event.find({
       invitedUsers: req.user._id,
-      // Exclude events the user is already attending
       attendees: { $ne: req.user._id }
     })
     .populate('host', 'username profilePicture')
     .populate('coHosts', 'username profilePicture')
-    .select('title description time location host coHosts invitedUsers price visibility coverImage')
-    .sort({ time: 1 }) // Upcoming events first
+    .select('title description time location host coHosts invitedUsers pricing coverImage')
+    .sort({ time: 1 })
     .lean();
 
     console.log(`✅ Found ${events.length} event invitations`);
 
-    // Transform to match expected format for NotificationScreen
     const eventInvites = events.map(event => ({
       event,
-      invitedAt: new Date(), // Note: You might want to add this field to Event model later
+      invitedAt: new Date(),
       status: 'pending'
     }));
 
@@ -366,7 +515,7 @@ router.get('/my-join-requests', protect, async (req, res) => {
         { host: req.user._id },
         { coHosts: req.user._id }
       ],
-      'joinRequests.0': { $exists: true } // Only events with join requests
+      'joinRequests.0': { $exists: true }
     })
     .populate({
       path: 'joinRequests.user',
@@ -377,7 +526,6 @@ router.get('/my-join-requests', protect, async (req, res) => {
 
     console.log(`✅ Found ${events.length} events with join requests`);
 
-    // Flatten join requests with event info
     const joinRequests = [];
     events.forEach(event => {
       event.joinRequests.forEach(request => {
@@ -393,7 +541,6 @@ router.get('/my-join-requests', protect, async (req, res) => {
       });
     });
 
-    // Sort by most recent
     joinRequests.sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
 
     console.log(`✅ Returning ${joinRequests.length} total join requests`);
@@ -411,7 +558,6 @@ router.post('/upload-cover', protect, uploadCover.single('coverImage'), async (r
       return res.status(400).json({ message: 'No image file provided' });
     }
 
-    // Return the file path relative to uploads directory
     const coverImagePath = `/uploads/covers/${req.file.filename}`;
     
     res.json({
@@ -434,7 +580,7 @@ router.get('/user/:userId', protect, async (req, res) => {
   try {
     const { userId } = req.params;
     const { 
-      type = 'all', // 'hosted', 'attending', 'shared', 'all'
+      type = 'all',
       includePast = 'false',
       limit = 50,
       skip = 0 
@@ -443,7 +589,6 @@ router.get('/user/:userId', protect, async (req, res) => {
     const currentUserId = req.user._id;
     const isOwnProfile = String(userId) === String(currentUserId);
 
-    // Build query based on type
     let query = {};
     
     switch (type) {
@@ -452,31 +597,27 @@ router.get('/user/:userId', protect, async (req, res) => {
         break;
       case 'attending':
         query.attendees = userId;
-        query.host = { $ne: userId }; // Exclude hosted events
+        query.host = { $ne: userId };
         break;
       case 'shared':
-        // For shared events, we need to get the user's shared event IDs first
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ message: 'User not found' });
         
         const sharedEventIds = user.sharedEvents || [];
         query._id = { $in: sharedEventIds };
         break;
-      default: // 'all'
+      default:
         query.$or = [
           { host: userId },
           { attendees: userId }
         ];
     }
 
-    // Add time filter
     if (includePast !== 'true') {
       query.time = { $gte: new Date() };
     }
 
-    // Check privacy permissions
     if (!isOwnProfile) {
-      // For other users, only show public events they can see
       const permission = await EventPrivacyService.getVisibleEvents(currentUserId, {
         hostFilter: userId,
         limit: parseInt(limit),
@@ -490,7 +631,6 @@ router.get('/user/:userId', protect, async (req, res) => {
       });
     }
 
-    // For own profile, get all events with metadata
     const events = await Event.find(query)
       .populate('host', 'username profilePicture')
       .populate('attendees', 'username')
@@ -498,7 +638,6 @@ router.get('/user/:userId', protect, async (req, res) => {
       .limit(parseInt(limit))
       .skip(parseInt(skip));
 
-    // Add metadata about user's relationship to each event
     const eventsWithMetadata = events.map(event => {
       const isHost = String(event.host._id) === String(userId);
       const isAttending = event.attendees.some(a => String(a._id) === String(userId));
@@ -556,15 +695,23 @@ router.get('/user/:userId/calendar', protect, async (req, res) => {
   }
 });
 
-// Create Event with Enhanced Privacy
-router.post('/create', protect, upload.single('coverImage'), async (req, res) => {
+// ============================================
+// ENHANCED: CREATE EVENT WITH PAYMENT TOGGLE
+// ============================================
+router.post('/create', protect, uploadCover.single('coverImage'), async (req, res) => {
   try {
+    console.log('📝 Creating new event...');
+    console.log('Request body:', req.body);
+
     const {
       title, description, category = 'General',
-      time, location,
-      maxAttendees = 10, price = 0,
+      time, location, maxAttendees = 10,
       
-      // NEW PRIVACY FIELDS
+      // Enhanced pricing fields
+      isPaidEvent, eventPrice, priceDescription, refundPolicy,
+      earlyBirdEnabled, earlyBirdPrice, earlyBirdDeadline,
+      
+      // Privacy fields
       privacyLevel = 'public',
       canView = 'anyone',
       canJoin = 'anyone', 
@@ -574,15 +721,60 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
       appearInSearch = 'true',
       showAttendeesToPublic = 'true',
       
-      // Legacy fields (still supported)
+      // Legacy fields
       isPublic, allowPhotos, openToPublic,
       allowUploads, allowUploadsBeforeStart,
       groupId, geo,
       
-      // NEW DISCOVERY FIELDS
+      // Discovery fields
       tags, weatherDependent = 'false',
       interests, ageMin, ageMax
     } = req.body;
+
+    // ============================================
+    // NEW: PAYMENT VALIDATION FOR PAID EVENTS
+    // ============================================
+    const isPaid = bool(isPaidEvent);
+    let priceInCents = 0;
+    let earlyBirdPriceInCents = 0;
+
+    if (isPaid) {
+      // Validate price
+      const price = parseFloatSafe(eventPrice);
+      if (price <= 0) {
+        return res.status(400).json({ 
+          message: 'Event price must be greater than 0 for paid events' 
+        });
+      }
+      priceInCents = Math.round(price * 100); // Convert to cents
+
+      // Early bird pricing
+      if (bool(earlyBirdEnabled)) {
+        const earlyPrice = parseFloatSafe(earlyBirdPrice);
+        if (earlyPrice <= 0 || earlyPrice >= price) {
+          return res.status(400).json({ 
+            message: 'Early bird price must be greater than 0 and less than regular price' 
+          });
+        }
+        earlyBirdPriceInCents = Math.round(earlyPrice * 100);
+      }
+
+      // ============================================
+      // CRITICAL: CHECK HOST PAYMENT ACCOUNT
+      // ============================================
+      const hostUser = await User.findById(req.user._id);
+      
+      // Check if host can receive payments
+      if (!hostUser.canReceivePayments()) {
+        return res.status(400).json({ 
+          message: 'You need to set up a payment account before creating paid events',
+          needsPaymentSetup: true,
+          canReceivePayments: false
+        });
+      }
+
+      console.log(`✅ Host ${req.user._id} can receive payments`);
+    }
 
     /* optional group link */
     let group = null;
@@ -609,14 +801,30 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
       title, description, category,
       time: new Date(time), location,
       maxAttendees: parseIntSafe(maxAttendees),
-      price: parseFloatSafe(price),
       host: req.user._id,
       
-      // NEW PRIVACY SYSTEM
+      // Enhanced pricing structure
+      pricing: {
+        isFree: !isPaid,
+        amount: priceInCents,
+        currency: 'USD',
+        description: priceDescription?.trim(),
+        refundPolicy: refundPolicy || 'no-refund',
+        earlyBirdPricing: {
+          enabled: isPaid && bool(earlyBirdEnabled),
+          amount: earlyBirdPriceInCents,
+          deadline: earlyBirdDeadline ? new Date(earlyBirdDeadline) : null
+        }
+      },
+
+      // Legacy fields for backward compatibility
+      price: isPaid ? priceInCents / 100 : 0,
+      
+      // Privacy system
       privacyLevel: privacyLevel || 'public',
       permissions,
       
-      // Legacy fields for backward compatibility
+      // Legacy fields
       isPublic: bool(isPublic) ?? (privacyLevel === 'public'),
       allowPhotos: bool(allowPhotos) ?? true,
       openToPublic: bool(openToPublic) ?? (canJoin === 'anyone'),
@@ -625,13 +833,24 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
       
       group: group?._id,
       
-      // NEW DISCOVERY FIELDS
+      // Discovery fields
       tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : [],
       weatherDependent: bool(weatherDependent),
       interests: interests ? (Array.isArray(interests) ? interests : interests.split(',').map(i => i.trim())) : [],
       ageRestriction: {
         ...(ageMin && { min: parseIntSafe(ageMin) }),
         ...(ageMax && { max: parseIntSafe(ageMax) })
+      },
+      
+      // Initialize financial tracking
+      financials: {
+        totalRevenue: 0,
+        totalRefunded: 0,
+        netRevenue: 0,
+        totalPayments: 0,
+        stripeFeesTotal: 0,
+        hostEarnings: 0,
+        currency: 'USD'
       }
     });
 
@@ -648,7 +867,7 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
     }
 
     if (req.file) {
-      event.coverImage = `/uploads/event-covers/${req.file.filename}`;
+      event.coverImage = `/uploads/covers/${req.file.filename}`;
     }
 
     await event.save();
@@ -664,11 +883,22 @@ router.post('/create', protect, upload.single('coverImage'), async (req, res) =>
       await event.save();
     }
 
-    res.status(201).json(event);
+    console.log(`✅ Event created: ${event._id} (Paid: ${isPaid})`);
+
+    res.status(201).json({
+      message: 'Event created successfully',
+      _id: event._id,
+      event: event,
+      isPaidEvent: isPaid,
+      needsPaymentSetup: false
+    });
 
   } catch (err) {
-    console.error('Create event →', err);
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('❌ Event creation error:', err);
+    res.status(500).json({ 
+      message: 'Failed to create event', 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
   }
 });
 
@@ -794,23 +1024,26 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// Attend Event with Privacy Check
+// ============================================
+// ENHANCED: ATTEND EVENT WITH SMART PAYMENT
+// ============================================
 router.post('/attend/:eventId', protect, async (req, res) => {
   try {
-    const event = await Event.findById(req.params.eventId);
+    const event = await Event.findById(req.params.eventId).populate('host', 'paymentAccounts');
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
-    // Event is considered over 3 hours after start time
+    // Check if event has ended
     const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000);
     if (Date.now() > eventEndTime) {
       return res.status(400).json({ message: 'Event has already ended' });
     }
 
+    // Check if already attending
     if (event.attendees.includes(req.user._id)) {
       return res.status(400).json({ message: 'Already attending' });
     }
 
-    // Check if user can join
+    // Check permissions
     const permission = await EventPrivacyService.checkPermission(
       req.user._id, 
       req.params.eventId, 
@@ -818,7 +1051,6 @@ router.post('/attend/:eventId', protect, async (req, res) => {
     );
 
     if (!permission.allowed) {
-      // If approval required, suggest join request instead
       if (event.permissions.canJoin === 'approval-required') {
         return res.status(400).json({ 
           message: 'This event requires approval to join',
@@ -828,20 +1060,95 @@ router.post('/attend/:eventId', protect, async (req, res) => {
       return res.status(403).json({ message: permission.reason });
     }
 
-    // Handle payment if required
-    if (event.price > 0 && !req.body.paymentConfirmed) {
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: Math.round(event.price * 100),
-        currency: 'usd',
-        metadata: { 
-          eventId: event._id.toString(), 
-          userId: req.user._id.toString() 
+    // ============================================
+    // SMART PAYMENT HANDLING
+    // ============================================
+    if (event.isPaidEvent()) {
+      console.log(`💳 Processing payment for paid event ${event._id}`);
+
+      // Check if user already paid (prevents double charging)
+      if (event.hasUserPaid(req.user._id)) {
+        console.log(`✅ User ${req.user._id} already paid for event ${event._id}`);
+        
+        // User already paid, just add to attendees
+        event.attendees.push(req.user._id);
+        await event.save();
+
+        // Add to user's attending events
+        await User.findByIdAndUpdate(req.user._id, {
+          $addToSet: { attendingEvents: event._id }
+        });
+
+        return res.json({ 
+          message: 'You are now attending (no charge - already paid)', 
+          event,
+          alreadyPaid: true
+        });
+      }
+
+      // User needs to pay
+      if (!req.body.paymentConfirmed) {
+        const currentPrice = event.getCurrentPrice();
+        
+        // Verify host can receive payments
+        if (!event.host.paymentAccounts?.stripe?.chargesEnabled) {
+          return res.status(400).json({ 
+            message: 'Host cannot currently receive payments. Please try again later.' 
+          });
         }
-      });
-      return res.json({ clientSecret: paymentIntent.client_secret });
+
+        try {
+          // Create payment intent directly to host account
+          const paymentResult = await StripeConnectService.createDirectPaymentIntent(
+            currentPrice,
+            event.pricing.currency,
+            event.host.paymentAccounts.stripe.accountId,
+            {
+              eventId: event._id.toString(),
+              userId: req.user._id.toString(),
+              eventTitle: event.title,
+              hostId: event.host._id.toString()
+            }
+          );
+
+          return res.json({ 
+            requiresPayment: true,
+            clientSecret: paymentResult.clientSecret,
+            amount: currentPrice,
+            currency: event.pricing.currency,
+            eventTitle: event.title
+          });
+
+        } catch (paymentError) {
+          console.error('❌ Payment intent creation error:', paymentError);
+          return res.status(500).json({ 
+            message: 'Failed to process payment setup. Please try again.' 
+          });
+        }
+      }
+
+      // Payment was confirmed, verify and add to attendees
+      const { paymentIntentId } = req.body;
+      if (!paymentIntentId) {
+        return res.status(400).json({ message: 'Payment confirmation required' });
+      }
+
+      // Add payment to event history
+      const paymentData = {
+        user: req.user._id,
+        amount: event.getCurrentPrice(),
+        currency: event.pricing.currency,
+        stripePaymentIntentId: paymentIntentId,
+        status: 'succeeded', // Will be verified by webhook
+        paidAt: new Date(),
+        type: 'user'
+      };
+
+      await event.addPayment(paymentData);
+      console.log(`✅ Payment recorded for user ${req.user._id} on event ${event._id}`);
     }
 
-    // Add to attendees
+    // Add to attendees (free event or payment completed)
     event.attendees.push(req.user._id);
     await event.save();
 
@@ -850,15 +1157,22 @@ router.post('/attend/:eventId', protect, async (req, res) => {
       $addToSet: { attendingEvents: event._id }
     });
 
-    res.json({ message: 'You are now attending', event });
+    res.json({ 
+      message: 'You are now attending', 
+      event,
+      paymentRequired: event.isPaidEvent(),
+      alreadyPaid: false
+    });
 
-  } catch (e) { 
-    console.error('Attend event error:', e);
-    res.status(500).json({ message: 'Server error', error: e.message }); 
+  } catch (error) {
+    console.error('❌ Attend event error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-// Leave Event
+// ============================================
+// ENHANCED: UNATTEND EVENT (KEEPS PAYMENT HISTORY)
+// ============================================
 router.delete('/attend/:eventId', protect, async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
@@ -868,6 +1182,7 @@ router.delete('/attend/:eventId', protect, async (req, res) => {
       return res.status(400).json({ message: 'You are not attending' });
     }
 
+    // Remove from attendees
     event.attendees.pull(req.user._id);
     await event.save();
 
@@ -876,10 +1191,18 @@ router.delete('/attend/:eventId', protect, async (req, res) => {
       $pull: { attendingEvents: event._id }
     });
 
-    res.json({ message: 'Left event', event });
-  } catch (e) { 
-    console.error('Unattend event error:', e);
-    res.status(500).json({ message: 'Server error' }); 
+    // NOTE: Payment history is preserved - user can re-attend without paying again
+    const hadPaidBefore = event.hasUserPaid(req.user._id);
+
+    res.json({ 
+      message: 'Left event successfully', 
+      event,
+      canReattendWithoutPayment: hadPaidBefore
+    });
+
+  } catch (error) {
+    console.error('❌ Unattend event error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -1000,33 +1323,29 @@ router.delete('/join-request/:eventId/:userId/reject', protect, async (req, res)
 router.post('/:eventId/invite', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { userIds } = req.body; // Array of user IDs
+    const { userIds } = req.body;
 
     console.log(`📨 Processing invite for event ${eventId} from user ${req.user._id}`);
     console.log(`📨 Inviting users:`, userIds);
 
-    // Validate userIds
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({ message: 'userIds array is required' });
     }
 
-    // Find the event
     const event = await Event.findById(eventId);
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Check if user can invite (host, co-host, or has permission)
+    // Check if user can invite
     const isHost = String(event.host) === String(req.user._id);
     const isCoHost = event.coHosts?.some(c => String(c) === String(req.user._id));
     
     if (!isHost && !isCoHost) {
-      // Check event permissions for regular attendees
       if (event.permissions?.canInvite !== 'attendees' && event.permissions?.canInvite !== 'anyone') {
         return res.status(403).json({ message: 'You do not have permission to invite users to this event' });
       }
       
-      // If permission allows attendees, check if user is attending
       if (event.permissions?.canInvite === 'attendees') {
         const isAttending = event.attendees?.some(a => String(a) === String(req.user._id));
         if (!isAttending) {
@@ -1040,43 +1359,34 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     const alreadyAttending = [];
     const invalidUsers = [];
 
-    // Process each user ID
     for (const userId of userIds) {
       try {
-        // Check if user exists
         const userExists = await User.findById(userId);
         if (!userExists) {
           invalidUsers.push(userId);
           continue;
         }
 
-        // Check if already attending
         if (event.attendees?.includes(userId)) {
           alreadyAttending.push(userId);
           continue;
         }
 
-        // Check if already invited
         if (event.invitedUsers?.includes(userId)) {
           alreadyInvited.push(userId);
           continue;
         }
 
-        // Add to invited users
         if (!event.invitedUsers) {
           event.invitedUsers = [];
         }
         event.invitedUsers.push(userId);
         newInvites.push(userId);
 
-        // Send notification (optional - depends on your notification system)
         try {
-          // If you have a notification service, uncomment this
-          // await notificationService.sendEventInvitation(req.user._id, userId, event);
           console.log(`✅ Notification would be sent to user ${userId}`);
         } catch (notifError) {
           console.error(`❌ Failed to send notification to user ${userId}:`, notifError);
-          // Continue with invite even if notification fails
         }
 
       } catch (userError) {
@@ -1085,12 +1395,10 @@ router.post('/:eventId/invite', protect, async (req, res) => {
       }
     }
 
-    // Save the event with new invites
     await event.save();
 
     console.log(`✅ Successfully invited ${newInvites.length} users`);
 
-    // Return detailed response
     res.json({
       message: `Successfully invited ${newInvites.length} user${newInvites.length !== 1 ? 's' : ''}`,
       invited: newInvites.length,
@@ -1113,7 +1421,8 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     });
   }
 });
-// Decline Event Invite - MUST BE BEFORE /:eventId route
+
+// Decline Event Invite
 router.delete('/invite/:eventId', protect, async (req, res) => {
   try {
     console.log(`❌ User ${req.user._id} declining invite to event ${req.params.eventId}`);
@@ -1121,7 +1430,6 @@ router.delete('/invite/:eventId', protect, async (req, res) => {
     const event = await Event.findById(req.params.eventId);
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
-    // Remove user from invited users
     const wasInvited = event.invitedUsers.includes(req.user._id);
     event.invitedUsers.pull(req.user._id);
     await event.save();
@@ -1148,7 +1456,6 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Must be host or co-host to ban
     const isHost = String(event.host) === String(req.user._id);
     const isCoHost = event.coHosts?.some(
       (cId) => String(cId) === String(req.user._id)
@@ -1158,17 +1465,14 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to ban users' });
     }
 
-    // Ensure the user we want to ban is an attendee OR at least valid
     if (!event.attendees.includes(userId)) {
       return res.status(400).json({ message: 'User is not an attendee' });
     }
 
-    // Remove from attendees
     event.attendees = event.attendees.filter(
       (attId) => String(attId) !== String(userId)
     );
 
-    // If we want to ban them permanently => push to bannedUsers
     if (banPermanently) {
       if (!event.bannedUsers) {
         event.bannedUsers = [];
@@ -1180,7 +1484,6 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
 
     await event.save();
 
-    // Also remove the event from the user's `attendingEvents` list
     const user = await User.findById(userId);
     if (user) {
       user.attendingEvents = user.attendingEvents.filter(
@@ -1215,7 +1518,6 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Ensure the requestor is the host or co-host
     const isHost = String(event.host) === String(req.user._id);
     const isCoHost = event.coHosts.some(
       (c) => String(c) === String(req.user._id)
@@ -1226,19 +1528,16 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       });
     }
 
-    // Determine which user to check in
     const targetUserId = scannedUserId || userId;
     if (!targetUserId) {
       return res.status(400).json({ message: 'No user ID provided for check-in' });
     }
 
-    // Find the user doc
     const user = await User.findById(targetUserId).select('username profilePicture');
     if (!user) {
       return res.status(404).json({ message: 'User not found in system' });
     }
 
-    // Check if user is in event.attendees
     const isAttendee = event.attendees.some((a) => a._id.equals(targetUserId));
     if (!isAttendee) {
       return res.json({
@@ -1251,7 +1550,6 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       });
     }
 
-    // If user is an attendee => see if they are already checked in
     const isAlreadyCheckedIn = event.checkedIn.some((id) =>
       String(id) === String(targetUserId)
     );
@@ -1266,7 +1564,6 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       });
     }
 
-    // Otherwise, add them to checkedIn
     event.checkedIn.push(targetUserId);
     await event.save();
 
@@ -1299,19 +1596,16 @@ router.get('/:eventId/attendees', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Check if user can view attendees
     const userId = req.user._id;
     const isHost = String(event.host._id) === String(userId);
     const isAttending = event.attendees.some(attendee => 
       String(attendee._id) === String(userId)
     );
 
-    // Privacy check - only hosts, attendees, or public events can show attendees
     if (!isHost && !isAttending && !event.permissions?.showAttendeesToPublic) {
       return res.status(403).json({ message: 'Not authorized to view attendees' });
     }
 
-    // Return attendees with check-in status
     const attendeesWithStatus = event.attendees.map(attendee => ({
       _id: attendee._id,
       username: attendee.username,
@@ -1397,28 +1691,24 @@ router.get('/:eventId', protect, async (req, res) => {
   }
 });
 
-// Update Event with Privacy Controls - MUST BE LAST
+// Update Event Cover Image
 router.post('/:eventId/cover', protect, upload.single('coverImage'), async (req, res) => {
   try {
     const { eventId } = req.params;
     
-    // Find the event
     const event = await Event.findById(eventId);
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
     
-    // Check if user is the host
     if (String(event.host) !== String(req.user._id)) {
       return res.status(403).json({ message: 'Only the host can update the cover image' });
     }
     
-    // Check if file was uploaded
     if (!req.file) {
       return res.status(400).json({ message: 'No cover image uploaded' });
     }
     
-    // Delete old cover image if it exists
     if (event.coverImage) {
       const oldImagePath = path.join(__dirname, '..', event.coverImage);
       fs.unlink(oldImagePath, (err) => {
@@ -1426,7 +1716,6 @@ router.post('/:eventId/cover', protect, upload.single('coverImage'), async (req,
       });
     }
     
-    // Update event with new cover image path
     const coverImagePath = `/uploads/event-covers/${req.file.filename}`;
     event.coverImage = coverImagePath;
     await event.save();
@@ -1447,22 +1736,20 @@ router.post('/:eventId/cover', protect, upload.single('coverImage'), async (req,
   }
 });
 
+// Remove Event Cover Image
 router.delete('/:eventId/cover', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
     
-    // Find the event
     const event = await Event.findById(eventId);
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
     
-    // Check if user is the host
     if (String(event.host) !== String(req.user._id)) {
       return res.status(403).json({ message: 'Only the host can remove the cover image' });
     }
     
-    // Delete the cover image file if it exists
     if (event.coverImage) {
       const imagePath = path.join(__dirname, '..', event.coverImage);
       fs.unlink(imagePath, (err) => {
@@ -1470,7 +1757,6 @@ router.delete('/:eventId/cover', protect, async (req, res) => {
       });
     }
     
-    // Remove cover image from event
     event.coverImage = null;
     await event.save();
     

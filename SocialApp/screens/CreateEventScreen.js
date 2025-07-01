@@ -1,439 +1,4 @@
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  headerButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  headerButtonDisabled: {
-    opacity: 0.5,
-  },
-  headerButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3797EF',
-  },
-  headerButtonTextDisabled: {
-    color: '#C7C7CC',
-  },
-
-  // Cover Image
-  coverSection: {
-    height: 200,
-    backgroundColor: '#F6F6F6',
-    position: 'relative',
-  },
-  coverImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  coverPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  coverPlaceholderText: {
-    marginTop: 8,
-    fontSize: 16,
-    color: '#C7C7CC',
-    fontWeight: '500',
-  },
-  coverOverlay: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  // Form
-  formContainer: {
-    padding: 16,
-  },
-  section: {
-    marginBottom: 32,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 4,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 16,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#000000',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-
-  // Date & Time
-  dateTimeRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  dateTimeButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  dateTimeButtonText: {
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#000000',
-  },
-
-  // Location Suggestions
-  suggestionsContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: '#E5E5EA',
-    maxHeight: 200,
-  },
-  suggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  suggestionText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#000000',
-    flex: 1,
-  },
-
-  // Select Button
-  selectButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  selectButtonText: {
-    fontSize: 16,
-    color: '#000000',
-  },
-
-  // Co-hosts
-  coHostsList: {
-    marginBottom: 16,
-  },
-  coHostItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-  },
-  coHostInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  coHostAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  coHostAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 20,
-  },
-  coHostAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 20,
-    backgroundColor: '#3797EF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  coHostAvatarText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  coHostDetails: {
-    flex: 1,
-  },
-  coHostName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  coHostRole: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  removeCoHostButton: {
-    padding: 8,
-  },
-  addCoHostButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderStyle: 'dashed',
-  },
-  addCoHostButtonText: {
-    marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3797EF',
-  },
-
-  // Privacy Settings
-  privacyButton: {
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-  },
-  privacyButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  privacyButtonText: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  privacyLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  privacyDesc: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-
-  // Permissions
-  permissionsList: {
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    padding: 4,
-  },
-  permissionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  permissionLabel: {
-    fontSize: 16,
-    color: '#000000',
-  },
-
-  // Modals
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    paddingBottom: 34,
-  },
-  coHostModal: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: '80%',
-    paddingBottom: 34,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
-  },
-
-  // Category Modal
-  categoryItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  categoryText: {
-    fontSize: 16,
-    color: '#000000',
-  },
-  categoryTextSelected: {
-    color: '#3797EF',
-    fontWeight: '600',
-  },
-
-  // Privacy Modal
-  privacyOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  privacyOptionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  privacyOptionText: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  privacyOptionLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  privacyOptionDesc: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-
-  // Co-host Search
-  searchContainer: {
-    padding: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  searchInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#000000',
-    paddingVertical: 8,
-  },
-  searchResultsList: {
-    flex: 1,
-  },
-  searchResultItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  searchResultAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    marginRight: 12,
-  },
-  searchResultAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 22,
-  },
-  searchResultAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 22,
-    backgroundColor: '#C7C7CC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchResultAvatarText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  searchResultInfo: {
-    flex: 1,
-  },
-  searchResultName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  searchResultDisplayName: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-  emptySearchResults: {
-    padding: 32,
-    alignItems: 'center',
-  },
-  emptySearchText: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-  },
-});// screens/CreateEventScreen.js - Updated with Co-host functionality
+// screens/CreateEventScreen.js - Enhanced with Payment Integration
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
@@ -447,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
+import PaymentSetupComponent from '../components/PaymentSetupComponent'; // NEW
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -487,6 +53,14 @@ const CATEGORIES = [
   'Movies', 'Books', 'Fitness', 'Outdoor', 'Indoor'
 ];
 
+// NEW: Refund policy options
+const REFUND_POLICIES = [
+  { key: 'no-refund', label: 'No Refunds' },
+  { key: 'full-refund-24h', label: 'Full Refund (24h before)' },
+  { key: 'full-refund-7d', label: 'Full Refund (7 days before)' },
+  { key: 'partial-refund', label: 'Partial Refunds' }
+];
+
 export default function CreateEventScreen({ navigation, route }) {
   const { groupId } = route.params || {};
   const { currentUser } = useContext(AuthContext);
@@ -521,6 +95,22 @@ export default function CreateEventScreen({ navigation, route }) {
     showAttendeesToPublic: true
   });
 
+  // ============================================
+  // NEW: Payment fields
+  // ============================================
+  const [isPaidEvent, setIsPaidEvent] = useState(false);
+  const [priceDescription, setPriceDescription] = useState('');
+  const [refundPolicy, setRefundPolicy] = useState('no-refund');
+  const [earlyBirdEnabled, setEarlyBirdEnabled] = useState(false);
+  const [earlyBirdPrice, setEarlyBirdPrice] = useState('');
+  const [earlyBirdDeadline, setEarlyBirdDeadline] = useState(new Date());
+  const [showEarlyBirdDatePicker, setShowEarlyBirdDatePicker] = useState(false);
+  const [showRefundPolicyModal, setShowRefundPolicyModal] = useState(false);
+
+  // Payment setup state
+  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [showPaymentSetup, setShowPaymentSetup] = useState(false);
+
   // Co-hosts management
   const [coHosts, setCoHosts] = useState([]);
   const [showCoHostModal, setShowCoHostModal] = useState(false);
@@ -535,6 +125,9 @@ export default function CreateEventScreen({ navigation, route }) {
   const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // NEW: Check payment status on mount
+    checkPaymentStatus();
+    
     navigation.setOptions({
       headerStyle: {
         backgroundColor: '#FFFFFF',
@@ -573,7 +166,67 @@ export default function CreateEventScreen({ navigation, route }) {
         </TouchableOpacity>
       ),
     });
-  }, [step, title, location, dateTime, creating, coHosts]);
+  }, [step, title, location, dateTime, creating, coHosts, isPaidEvent, price]);
+
+  // ============================================
+  // NEW: Payment functions
+  // ============================================
+  const checkPaymentStatus = async () => {
+    try {
+      const response = await api.get('/api/events/payment-status');
+      setPaymentStatus(response.data);
+    } catch (err) {
+      console.error('Failed to check payment status:', err);
+    }
+  };
+
+  const handlePaidEventToggle = (value) => {
+    if (value && !paymentStatus?.canReceivePayments) {
+      setShowPaymentSetup(true);
+      return;
+    }
+    
+    setIsPaidEvent(value);
+    if (!value) {
+      // Reset price fields when disabling
+      setPrice('0');
+      setPriceDescription('');
+      setEarlyBirdEnabled(false);
+      setEarlyBirdPrice('');
+    }
+  };
+
+  const calculateEstimatedEarnings = (priceValue) => {
+    const amount = parseFloat(priceValue);
+    if (isNaN(amount) || amount <= 0) return '0.00';
+    const stripeFee = (amount * 0.029) + 0.30;
+    const earnings = Math.max(0, amount - stripeFee);
+    return earnings.toFixed(2);
+  };
+
+  const validatePricing = () => {
+    if (!isPaidEvent) return true;
+    
+    const priceNum = parseFloat(price);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      Alert.alert('Error', 'Event price must be greater than $0');
+      return false;
+    }
+    
+    if (earlyBirdEnabled) {
+      const earlyPrice = parseFloat(earlyBirdPrice);
+      if (isNaN(earlyPrice) || earlyPrice <= 0) {
+        Alert.alert('Error', 'Early bird price must be greater than $0');
+        return false;
+      }
+      if (earlyPrice >= priceNum) {
+        Alert.alert('Error', 'Early bird price must be less than regular price');
+        return false;
+      }
+    }
+    
+    return true;
+  };
 
   // Search for potential co-hosts
   const searchCoHosts = async (query) => {
@@ -588,7 +241,6 @@ export default function CreateEventScreen({ navigation, route }) {
         params: { q: query, limit: 10 }
       });
       
-      // Filter out current user and already selected co-hosts
       const results = response.data.filter(user => 
         user._id !== currentUser._id && 
         !coHosts.some(coHost => coHost._id === user._id)
@@ -602,14 +254,12 @@ export default function CreateEventScreen({ navigation, route }) {
     }
   };
 
-  // Add co-host
   const addCoHost = (user) => {
     setCoHosts(prev => [...prev, user]);
     setCoHostSearchQuery('');
     setCoHostSearchResults([]);
   };
 
-  // Remove co-host
   const removeCoHost = (userId) => {
     setCoHosts(prev => prev.filter(coHost => coHost._id !== userId));
   };
@@ -627,7 +277,8 @@ export default function CreateEventScreen({ navigation, route }) {
     if (step === 1) {
       return title.trim() && location.trim() && dateTime > new Date();
     }
-    return true;
+    // NEW: Add pricing validation for step 2
+    return validatePricing();
   };
 
   const handleNext = () => {
@@ -651,8 +302,25 @@ export default function CreateEventScreen({ navigation, route }) {
       formData.append('location', location.trim());
       formData.append('category', category);
       formData.append('maxAttendees', parseInt(maxAttendees) || 0);
-      formData.append('price', parseFloat(price) || 0);
       formData.append('privacyLevel', privacyLevel);
+      
+      // ============================================
+      // NEW: Enhanced pricing fields
+      // ============================================
+      formData.append('isPaidEvent', isPaidEvent);
+      if (isPaidEvent) {
+        formData.append('eventPrice', price);
+        if (priceDescription) formData.append('priceDescription', priceDescription);
+        formData.append('refundPolicy', refundPolicy);
+        formData.append('earlyBirdEnabled', earlyBirdEnabled);
+        if (earlyBirdEnabled) {
+          formData.append('earlyBirdPrice', earlyBirdPrice);
+          formData.append('earlyBirdDeadline', earlyBirdDeadline.toISOString());
+        }
+      } else {
+        // For free events, set price to 0
+        formData.append('eventPrice', '0');
+      }
       
       // Co-hosts
       formData.append('coHosts', JSON.stringify(coHosts.map(coHost => coHost._id)));
@@ -685,7 +353,7 @@ export default function CreateEventScreen({ navigation, route }) {
         });
       }
 
-      const response = await api.post('/api/events', formData, {
+      const response = await api.post('/api/events/create', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -708,10 +376,16 @@ export default function CreateEventScreen({ navigation, route }) {
 
     } catch (error) {
       console.error('Event creation error:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to create event. Please try again.'
-      );
+      
+      // NEW: Handle payment setup requirement
+      if (error.response?.data?.needsPaymentSetup) {
+        setShowPaymentSetup(true);
+      } else {
+        Alert.alert(
+          'Error',
+          error.response?.data?.message || 'Failed to create event. Please try again.'
+        );
+      }
     } finally {
       setCreating(false);
     }
@@ -753,6 +427,14 @@ export default function CreateEventScreen({ navigation, route }) {
       newDateTime.setHours(selectedTime.getHours());
       newDateTime.setMinutes(selectedTime.getMinutes());
       setDateTime(newDateTime);
+    }
+  };
+
+  // NEW: Early bird date picker
+  const onEarlyBirdDateChange = (event, selectedDate) => {
+    setShowEarlyBirdDatePicker(false);
+    if (selectedDate) {
+      setEarlyBirdDeadline(selectedDate);
     }
   };
 
@@ -963,11 +645,23 @@ export default function CreateEventScreen({ navigation, route }) {
             </View>
           </View>
         </Modal>
+
+        {/* NEW: Payment Setup Modal */}
+        {showPaymentSetup && (
+          <PaymentSetupComponent
+            onPaymentSetupComplete={() => {
+              setShowPaymentSetup(false);
+              checkPaymentStatus();
+              setIsPaidEvent(true);
+            }}
+            onClose={() => setShowPaymentSetup(false)}
+          />
+        )}
       </SafeAreaView>
     );
   }
 
-  // Step 2: Advanced Settings
+  // Step 2: Advanced Settings with Payment Configuration
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -977,6 +671,173 @@ export default function CreateEventScreen({ navigation, route }) {
       >
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           <View style={styles.formContainer}>
+            {/* ============================================ */}
+            {/* NEW: Payment Configuration Section */}
+            {/* ============================================ */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Event Pricing</Text>
+              <Text style={styles.sectionDescription}>
+                Configure ticket pricing for your event
+              </Text>
+
+              {/* Payment Status Indicator */}
+              {paymentStatus && (
+                <View style={[
+                  styles.paymentStatusBanner,
+                  paymentStatus.canReceivePayments ? styles.statusReady : styles.statusPending
+                ]}>
+                  <Ionicons 
+                    name={paymentStatus.canReceivePayments ? "checkmark-circle" : "warning"} 
+                    size={20} 
+                    color={paymentStatus.canReceivePayments ? "#34C759" : "#FF9500"} 
+                  />
+                  <Text style={[
+                    styles.statusText,
+                    { color: paymentStatus.canReceivePayments ? "#34C759" : "#FF9500" }
+                  ]}>
+                    {paymentStatus.canReceivePayments 
+                      ? 'Payment account ready - you can create paid events'
+                      : 'Payment setup required for paid events'
+                    }
+                  </Text>
+                </View>
+              )}
+
+              {/* Paid Event Toggle */}
+              <View style={styles.permissionItem}>
+                <Text style={styles.permissionLabel}>Paid Event</Text>
+                <Switch
+                  value={isPaidEvent}
+                  onValueChange={handlePaidEventToggle}
+                  trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              {/* Price Configuration */}
+              {isPaidEvent && paymentStatus?.canReceivePayments && (
+                <View style={styles.pricingConfig}>
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Ticket Price ($) *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={price}
+                      onChangeText={setPrice}
+                      placeholder="25.00"
+                      placeholderTextColor="#C7C7CC"
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Price Description (Optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={priceDescription}
+                      onChangeText={setPriceDescription}
+                      placeholder="e.g., Includes drinks and appetizers"
+                      placeholderTextColor="#C7C7CC"
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Refund Policy</Text>
+                    <TouchableOpacity
+                      style={styles.selectButton}
+                      onPress={() => setShowRefundPolicyModal(true)}
+                    >
+                      <Text style={styles.selectButtonText}>
+                        {REFUND_POLICIES.find(p => p.key === refundPolicy)?.label || 'No Refunds'}
+                      </Text>
+                      <Ionicons name="chevron-down" size={20} color="#8E8E93" />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Early Bird Pricing */}
+                  <View style={styles.permissionItem}>
+                    <Text style={styles.permissionLabel}>Early Bird Pricing</Text>
+                    <Switch
+                      value={earlyBirdEnabled}
+                      onValueChange={setEarlyBirdEnabled}
+                      trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
+
+                  {earlyBirdEnabled && (
+                    <>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Early Bird Price ($) *</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={earlyBirdPrice}
+                          onChangeText={setEarlyBirdPrice}
+                          placeholder="20.00"
+                          placeholderTextColor="#C7C7CC"
+                          keyboardType="decimal-pad"
+                        />
+                      </View>
+
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Early Bird Deadline *</Text>
+                        <TouchableOpacity
+                          style={styles.dateTimeButton}
+                          onPress={() => setShowEarlyBirdDatePicker(true)}
+                        >
+                          <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
+                          <Text style={styles.dateTimeButtonText}>
+                            {earlyBirdDeadline.toLocaleDateString()}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {showEarlyBirdDatePicker && (
+                        <DateTimePicker
+                          value={earlyBirdDeadline}
+                          mode="datetime"
+                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                          onChange={onEarlyBirdDateChange}
+                        />
+                      )}
+                    </>
+                  )}
+
+                  {/* Pricing Summary */}
+                  {price && parseFloat(price) > 0 && (
+                    <View style={styles.pricingSummary}>
+                      <Text style={styles.summaryTitle}>Pricing Summary</Text>
+                      
+                      {earlyBirdEnabled && earlyBirdPrice && (
+                        <View style={styles.summaryRow}>
+                          <Text style={styles.summaryLabel}>Early Bird Price:</Text>
+                          <Text style={styles.summaryValue}>${parseFloat(earlyBirdPrice).toFixed(2)}</Text>
+                        </View>
+                      )}
+                      
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Regular Price:</Text>
+                        <Text style={styles.summaryValue}>${parseFloat(price).toFixed(2)}</Text>
+                      </View>
+                      
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabelSmall}>Processing Fee (2.9% + $0.30):</Text>
+                        <Text style={styles.summaryValueSmall}>
+                          ~${((parseFloat(price) * 0.029) + 0.30).toFixed(2)}
+                        </Text>
+                      </View>
+                      
+                      <View style={[styles.summaryRow, styles.summaryRowHighlight]}>
+                        <Text style={styles.summaryLabelEarnings}>Your Estimated Earnings:</Text>
+                        <Text style={styles.summaryValueEarnings}>
+                          ~${calculateEstimatedEarnings(price)}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+
             {/* Co-hosts Section */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Co-hosts</Text>
@@ -1041,18 +902,6 @@ export default function CreateEventScreen({ navigation, route }) {
                   value={maxAttendees}
                   onChangeText={setMaxAttendees}
                   placeholder="50"
-                  placeholderTextColor="#C7C7CC"
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Ticket Price ($)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={price}
-                  onChangeText={setPrice}
-                  placeholder="0.00"
                   placeholderTextColor="#C7C7CC"
                   keyboardType="numeric"
                 />
@@ -1264,6 +1113,581 @@ export default function CreateEventScreen({ navigation, route }) {
           </View>
         </View>
       </Modal>
+
+      {/* NEW: Refund Policy Modal */}
+      <Modal
+        visible={showRefundPolicyModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowRefundPolicyModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Refund Policy</Text>
+              <TouchableOpacity onPress={() => setShowRefundPolicyModal(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={REFUND_POLICIES}
+              keyExtractor={(item) => item.key}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.categoryItem}
+                  onPress={() => {
+                    setRefundPolicy(item.key);
+                    setShowRefundPolicyModal(false);
+                  }}
+                >
+                  <Text style={[
+                    styles.categoryText,
+                    refundPolicy === item.key && styles.categoryTextSelected
+                  ]}>
+                    {item.label}
+                  </Text>
+                  {refundPolicy === item.key && (
+                    <Ionicons name="checkmark" size={20} color="#3797EF" />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* NEW: Payment Setup Modal */}
+      {showPaymentSetup && (
+        <PaymentSetupComponent
+          onPaymentSetupComplete={() => {
+            setShowPaymentSetup(false);
+            checkPaymentStatus();
+            setIsPaidEvent(true);
+          }}
+          onClose={() => setShowPaymentSetup(false)}
+        />
+      )}
     </SafeAreaView>
   );
 }
+
+// ============================================
+// ENHANCED STYLES (Added payment-specific styles)
+// ============================================
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  headerButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  headerButtonDisabled: {
+    opacity: 0.5,
+  },
+  headerButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  headerButtonTextDisabled: {
+    color: '#C7C7CC',
+  },
+
+  // Cover Image
+  coverSection: {
+    height: 200,
+    backgroundColor: '#F6F6F6',
+    position: 'relative',
+  },
+  coverImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  coverPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coverPlaceholderText: {
+    marginTop: 8,
+    fontSize: 16,
+    color: '#C7C7CC',
+    fontWeight: '500',
+  },
+  coverOverlay: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Form
+  formContainer: {
+    padding: 16,
+  },
+  section: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 16,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  textArea: {
+    height: 100,
+    textAlignVertical: 'top',
+  },
+
+  // Date & Time
+  dateTimeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  dateTimeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  dateTimeButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // Location Suggestions
+  suggestionsContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    maxHeight: 200,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  suggestionText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#000000',
+    flex: 1,
+  },
+
+  // Select Button
+  selectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  selectButtonText: {
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // ============================================
+  // NEW: Payment-specific styles
+  // ============================================
+  paymentStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  statusReady: {
+    backgroundColor: '#E8F5E8',
+  },
+  statusPending: {
+    backgroundColor: '#FFF3E0',
+  },
+  statusText: {
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  pricingConfig: {
+    backgroundColor: '#F0F7FF',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 12,
+  },
+  pricingSummary: {
+    marginTop: 16,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  summaryTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 12,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  summaryLabel: {
+    fontSize: 14,
+    color: '#000000',
+  },
+  summaryValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  summaryLabelSmall: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  summaryValueSmall: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  summaryRowHighlight: {
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+    marginTop: 4,
+  },
+  summaryLabelEarnings: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#34C759',
+  },
+  summaryValueEarnings: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#34C759',
+  },
+
+  // Co-hosts (existing styles preserved)
+  coHostsList: {
+    marginBottom: 16,
+  },
+  coHostItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  coHostInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  coHostAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  coHostAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+  },
+  coHostAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+    backgroundColor: '#3797EF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coHostAvatarText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  coHostDetails: {
+    flex: 1,
+  },
+  coHostName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  coHostRole: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  removeCoHostButton: {
+    padding: 8,
+  },
+  addCoHostButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    borderStyle: 'dashed',
+  },
+  addCoHostButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+
+  // Privacy Settings
+  privacyButton: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  privacyButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  privacyButtonText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  privacyLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  privacyDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+
+  // Permissions
+  permissionsList: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 4,
+  },
+  permissionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  permissionLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // Modals (existing styles preserved)
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 34,
+  },
+  coHostModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '80%',
+    paddingBottom: 34,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+
+  // Category Modal
+  categoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  categoryText: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  categoryTextSelected: {
+    color: '#3797EF',
+    fontWeight: '600',
+  },
+
+  // Privacy Modal
+  privacyOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  privacyOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  privacyOptionText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  privacyOptionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  privacyOptionDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+
+  // Co-host Search
+  searchContainer: {
+    padding: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#000000',
+    paddingVertical: 8,
+  },
+  searchResultsList: {
+    flex: 1,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  searchResultAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginRight: 12,
+  },
+  searchResultAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+  },
+  searchResultAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+    backgroundColor: '#C7C7CC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchResultAvatarText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  searchResultInfo: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  searchResultDisplayName: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  emptySearchResults: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptySearchText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+});

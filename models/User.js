@@ -1,4 +1,4 @@
-// models/User.js - Remove QR code storage, add unique identifier
+// models/User.js - Enhanced with Payment Accounts
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -27,7 +27,6 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     required: false,
   },
-  // Replace qrCode with a unique share code
   shareCode: {
     type: String,
     unique: true,
@@ -62,6 +61,38 @@ const UserSchema = new mongoose.Schema({
     of: String,
     required: false,
   },
+
+  // ============================================
+  // NEW: PAYMENT ACCOUNTS FOR HOST EARNINGS
+  // ============================================
+  paymentAccounts: {
+    stripe: {
+      accountId: String,                    // Stripe Connect Express account ID
+      onboardingComplete: { type: Boolean, default: false },
+      detailsSubmitted: { type: Boolean, default: false },
+      chargesEnabled: { type: Boolean, default: false },
+      payoutsEnabled: { type: Boolean, default: false },
+      accountLink: String,                  // Temporary onboarding link
+      accountLinkExpiresAt: Date,
+      createdAt: Date,
+      lastUpdated: Date
+    },
+    paypal: {
+      email: String,                        // PayPal email for simple transfers
+      verified: { type: Boolean, default: false },
+      connectedAt: Date
+    }
+  },
+
+  // Payment history and earnings
+  earnings: {
+    totalEarned: { type: Number, default: 0 },        // Lifetime earnings
+    availableBalance: { type: Number, default: 0 },    // Available for payout
+    pendingBalance: { type: Number, default: 0 },      // Pending settlements
+    lastPayoutAt: Date,
+    currency: { type: String, default: 'USD' }
+  },
+
   photos: [
     {
       type: mongoose.Schema.Types.ObjectId,
@@ -118,7 +149,44 @@ const UserSchema = new mongoose.Schema({
   }],
   resetPasswordToken: String,
   resetPasswordExpires: Date,
-});
+}, { timestamps: true });
+
+// ============================================
+// NEW: PAYMENT ACCOUNT METHODS
+// ============================================
+
+// Check if user can receive payments
+UserSchema.methods.canReceivePayments = function() {
+  return this.paymentAccounts?.stripe?.chargesEnabled || 
+         this.paymentAccounts?.paypal?.verified;
+};
+
+// Get primary payment method
+UserSchema.methods.getPrimaryPaymentMethod = function() {
+  if (this.paymentAccounts?.stripe?.chargesEnabled) {
+    return 'stripe';
+  }
+  if (this.paymentAccounts?.paypal?.verified) {
+    return 'paypal';
+  }
+  return null;
+};
+
+// Update earnings after successful payment
+UserSchema.methods.addEarnings = function(amount, currency = 'USD') {
+  if (!this.earnings) {
+    this.earnings = {
+      totalEarned: 0,
+      availableBalance: 0,
+      pendingBalance: 0,
+      currency: currency
+    };
+  }
+  
+  this.earnings.totalEarned += amount;
+  this.earnings.pendingBalance += amount; // Will move to available after settlement
+  return this.save();
+};
 
 // Generate unique share code before saving
 UserSchema.pre('save', async function(next) {
@@ -134,46 +202,26 @@ UserSchema.pre('save', async function(next) {
 
   // Generate share code if new user
   if (this.isNew && !this.shareCode) {
-    this.shareCode = await this.generateUniqueShareCode();
+    let shareCode;
+    let isUnique = false;
+    
+    while (!isUnique) {
+      shareCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const existingUser = await this.constructor.findOne({ shareCode });
+      if (!existingUser) {
+        isUnique = true;
+      }
+    }
+    
+    this.shareCode = shareCode;
   }
-  
+
   next();
 });
 
-// Generate unique share code
-UserSchema.methods.generateUniqueShareCode = async function() {
-  let shareCode;
-  let isUnique = false;
-  
-  while (!isUnique) {
-    // Generate a random 8-character alphanumeric code
-    shareCode = crypto.randomBytes(4).toString('hex').toUpperCase();
-    
-    // Check if this code already exists
-    const existingUser = await mongoose.model('User').findOne({ shareCode });
-    if (!existingUser) {
-      isUnique = true;
-    }
-  }
-  
-  return shareCode;
-};
-
-// Regenerate share code method
-UserSchema.methods.regenerateShareCode = async function() {
-  this.shareCode = await this.generateUniqueShareCode();
-  return this.save();
-};
-
-UserSchema.methods.matchPassword = async function (enteredPassword) {
+// Password comparison method
+UserSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
-};
-
-UserSchema.methods.createPasswordResetToken = function() {
-  const resetToken = crypto.randomBytes(32).toString('hex');
-  this.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-  this.resetPasswordExpires = Date.now() + 10 * 60 * 1000; 
-  return resetToken;
 };
 
 module.exports = mongoose.model('User', UserSchema);
