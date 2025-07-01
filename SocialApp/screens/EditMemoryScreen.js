@@ -1,5 +1,5 @@
-// SocialApp/screens/EditMemoryScreen.js - Edit memory functionality for creators
-import React, { useState, useEffect, useContext } from 'react';
+// SocialApp/screens/EditMemoryScreen.js - FIXED VERSION
+import React, { useState, useEffect, useContext, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   SafeAreaView, StatusBar, ActivityIndicator, Alert,
@@ -18,6 +18,55 @@ export default function EditMemoryScreen({ route, navigation }) {
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // ✅ FIXED: Move handleSave outside useEffect to avoid stale closure
+  const handleSave = useCallback(async () => {
+    if (!title.trim()) {
+      Alert.alert('Error', 'Memory title is required.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      
+      // 🔍 DEBUG: Log all state values before sending
+      console.log('🐛 DEBUG - State values before save:');
+      console.log('  - title state:', JSON.stringify(title));
+      console.log('  - description state:', JSON.stringify(description));
+      console.log('  - title.trim():', JSON.stringify(title.trim()));
+      console.log('  - description.trim():', JSON.stringify(description.trim()));
+      
+      const updateData = {
+        title: title.trim(),
+        description: description.trim()
+      };
+      
+      // 🔍 DEBUG: Log the exact data being sent
+      console.log('🐛 DEBUG - updateData object:', JSON.stringify(updateData));
+      console.log('🐛 DEBUG - Sending PUT request to:', `/api/memories/${memoryId}`);
+      
+      const response = await api.put(`/api/memories/${memoryId}`, updateData);
+      
+      // 🔍 DEBUG: Log the response from backend
+      console.log('🐛 DEBUG - Backend response:', JSON.stringify(response.data));
+      
+      Alert.alert(
+        'Success',
+        'Memory updated successfully!',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
+      
+    } catch (error) {
+      console.error('❌ Error updating memory:', error);
+      console.log('🐛 DEBUG - Error response:', error.response?.data);
+      Alert.alert(
+        'Error',
+        error.response?.data?.message || 'Failed to update memory.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [title, description, memoryId, navigation]); // ✅ FIXED: Add dependencies
 
   useEffect(() => {
     navigation.setOptions({
@@ -45,7 +94,7 @@ export default function EditMemoryScreen({ route, navigation }) {
       ),
       headerRight: () => (
         <TouchableOpacity
-          onPress={handleSave}
+          onPress={handleSave} // ✅ FIXED: Now uses the current handleSave function
           style={styles.headerButton}
           activeOpacity={0.7}
           disabled={saving || !title.trim()}
@@ -60,7 +109,7 @@ export default function EditMemoryScreen({ route, navigation }) {
         </TouchableOpacity>
       ),
     });
-  }, [navigation, saving, title]);
+  }, [navigation, saving, title, handleSave]); // ✅ FIXED: Add handleSave to dependencies
 
   useEffect(() => {
     fetchMemory();
@@ -86,6 +135,11 @@ export default function EditMemoryScreen({ route, navigation }) {
       setTitle(memoryData.title || '');
       setDescription(memoryData.description || '');
       
+      // 🔍 DEBUG: Log initial values
+      console.log('🐛 DEBUG - Initial memory data loaded:');
+      console.log('  - title:', JSON.stringify(memoryData.title));
+      console.log('  - description:', JSON.stringify(memoryData.description));
+      
     } catch (error) {
       console.error('Error fetching memory:', error);
       Alert.alert(
@@ -98,39 +152,7 @@ export default function EditMemoryScreen({ route, navigation }) {
     }
   };
 
-  const handleSave = async () => {
-    if (!title.trim()) {
-      Alert.alert('Error', 'Memory title is required.');
-      return;
-    }
-
-    try {
-      setSaving(true);
-      
-      const updateData = {
-        title: title.trim(),
-        description: description.trim()
-      };
-
-      await api.put(`/api/memories/${memoryId}`, updateData);
-      
-      Alert.alert(
-        'Success',
-        'Memory updated successfully!',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
-      
-    } catch (error) {
-      console.error('Error updating memory:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to update memory.'
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  // Rest of the component remains the same...
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -179,7 +201,10 @@ export default function EditMemoryScreen({ route, navigation }) {
                 <TextInput
                   style={styles.input}
                   value={title}
-                  onChangeText={setTitle}
+                  onChangeText={(text) => {
+                    console.log('🐛 DEBUG - Title changed to:', JSON.stringify(text));
+                    setTitle(text);
+                  }}
                   placeholder="e.g., Beach Trip 2024, Birthday Party..."
                   placeholderTextColor="#8E8E93"
                   maxLength={50}
@@ -193,7 +218,10 @@ export default function EditMemoryScreen({ route, navigation }) {
                 <TextInput
                   style={[styles.input, styles.textArea]}
                   value={description}
-                  onChangeText={setDescription}
+                  onChangeText={(text) => {
+                    console.log('🐛 DEBUG - Description changed to:', JSON.stringify(text));
+                    setDescription(text);
+                  }}
                   placeholder="What made this moment special?"
                   placeholderTextColor="#8E8E93"
                   multiline
@@ -245,6 +273,7 @@ export default function EditMemoryScreen({ route, navigation }) {
   );
 }
 
+// Styles remain the same as in the original file...
 const styles = StyleSheet.create({
   container: {
     flex: 1,

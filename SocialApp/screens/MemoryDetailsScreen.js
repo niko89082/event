@@ -285,7 +285,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
   const addParticipant = async (userId) => {
     try {
-      await api.post(`/api/memories/${memoryId}/participants`, { userId });
+      await api.put(`/api/memories/${memoryId}/participants`, { participantId : userId });
       
       const user = searchResults.find(u => u._id === userId);
       if (user) {

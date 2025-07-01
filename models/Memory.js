@@ -154,6 +154,24 @@ memorySchema.pre('save', function(next) {
   
   next();
 });
+// ✅ INSTANCE METHOD: Remove participant (FIXED)
+memorySchema.methods.removeParticipant = function(userId) {
+  // Cannot remove creator
+  if (this.creator.equals(userId)) {
+    throw new Error('Cannot remove creator from memory');
+  }
+  
+  // ✅ FIXED: Added null/undefined checks to prevent the error
+  this.participants = this.participants.filter(p => {
+    // Check if p exists and has the equals method
+    if (!p || typeof p.equals !== 'function') {
+      return false; // Remove null/undefined entries
+    }
+    return !p.equals(userId);
+  });
+  
+  return this.save();
+};
 
 // ✅ INDEXES for better performance
 memorySchema.index({ creator: 1, createdAt: -1 });

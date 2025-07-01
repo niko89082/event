@@ -341,10 +341,12 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // ✅ PUT: Add participant to memory
-// ✅ PUT: Add participant to memory (FIXED)
 router.put('/:id/participants', auth, async (req, res) => {
   try {
-    const { participantId } = req.body;
+    // ✅ FIXED: Accept both userId and participantId for compatibility
+    const { participantId, userId } = req.body;
+    const targetUserId = participantId || userId;  // Use either field
+    
     const memory = await Memory.findById(req.params.id);
     
     if (!memory) {
@@ -356,18 +358,18 @@ router.put('/:id/participants', auth, async (req, res) => {
     }
     
     // Check if user exists
-    const participant = await User.findById(participantId);
+    const participant = await User.findById(targetUserId);
     if (!participant) {
       return res.status(404).json({ message: 'User not found' });
     }
     
     // Check if user is already a participant
-    if (memory.participants.includes(participantId) || memory.creator.equals(participantId)) {
+    if (memory.participants.includes(targetUserId) || memory.creator.equals(targetUserId)) {
       return res.status(400).json({ message: 'User is already a participant' });
     }
     
-    // Add participant directly to the array (instead of calling addParticipant method)
-    memory.participants.push(participantId);
+    // Add participant directly to the array
+    memory.participants.push(targetUserId);
     await memory.save();
     
     // Populate participants for response
@@ -394,6 +396,16 @@ router.put('/:memoryId', auth, async (req, res) => {
     const { title, description } = req.body;
     const userId = req.user.id;
     
+    // 🔍 DEBUG: Log everything received from frontend
+    console.log('🐛 BACKEND DEBUG - Update memory request:');
+    console.log('  - memoryId:', memoryId);
+    console.log('  - userId:', userId);
+    console.log('  - req.body:', JSON.stringify(req.body));
+    console.log('  - title received:', JSON.stringify(title));
+    console.log('  - description received:', JSON.stringify(description));
+    console.log('  - title type:', typeof title);
+    console.log('  - description type:', typeof description);
+    
     // Validate input
     if (!title || !title.trim()) {
       return res.status(400).json({ message: 'Memory title is required' });
@@ -413,35 +425,64 @@ router.put('/:memoryId', auth, async (req, res) => {
       return res.status(404).json({ message: 'Memory not found' });
     }
     
+    // 🔍 DEBUG: Log current memory state
+    console.log('🐛 BACKEND DEBUG - Current memory in DB:');
+    console.log('  - current title:', JSON.stringify(memory.title));
+    console.log('  - current description:', JSON.stringify(memory.description));
+    
     // Only memory creator can update
     if (!memory.creator.equals(userId)) {
       return res.status(403).json({ message: 'Only memory creator can edit this memory' });
     }
     
+    // 🔍 DEBUG: Log the values we're about to assign
+    const newTitle = title.trim();
+    const newDescription = description ? description.trim() : '';
+    
+    console.log('🐛 BACKEND DEBUG - Values being assigned:');
+    console.log('  - newTitle:', JSON.stringify(newTitle));
+    console.log('  - newDescription:', JSON.stringify(newDescription));
+    
     // Update memory
-    memory.title = title.trim();
-    memory.description = description ? description.trim() : '';
+    memory.title = newTitle;
+    memory.description = newDescription;
     memory.updatedAt = new Date();
     
+    // 🔍 DEBUG: Log memory state before saving
+    console.log('🐛 BACKEND DEBUG - Memory object before save:');
+    console.log('  - memory.title:', JSON.stringify(memory.title));
+    console.log('  - memory.description:', JSON.stringify(memory.description));
+    
     await memory.save();
+    
+    // 🔍 DEBUG: Log memory state after saving
+    console.log('🐛 BACKEND DEBUG - Memory object after save:');
+    console.log('  - memory.title:', JSON.stringify(memory.title));
+    console.log('  - memory.description:', JSON.stringify(memory.description));
     
     // Populate creator and participants for response
     await memory.populate('creator', 'username fullName profilePicture');
     await memory.populate('participants', 'username fullName profilePicture');
     
-    res.json({
+    // 🔍 DEBUG: Log final response data
+    const responseData = {
       message: 'Memory updated successfully',
       memory
-    });
+    };
+    console.log('🐛 BACKEND DEBUG - Response being sent:');
+    console.log('  - response message:', responseData.message);
+    console.log('  - response memory title:', JSON.stringify(responseData.memory.title));
+    console.log('  - response memory description:', JSON.stringify(responseData.memory.description));
+    
+    res.json(responseData);
     
   } catch (error) {
-    console.error('Error updating memory:', error);
+    console.error('❌ Error updating memory:', error);
     res.status(500).json({ message: 'Failed to update memory' });
   }
 });
-
 // ✅ DELETE: Remove participant from memory
-router.delete('/:memoryId/participants/:participantId', auth, async (req, res) => {
+router.delete('/:id/participants/:participantId', auth, async (req, res) => {
   try {
     const memory = await Memory.findById(req.params.id);
     
@@ -456,7 +497,20 @@ router.delete('/:memoryId/participants/:participantId', auth, async (req, res) =
       return res.status(403).json({ message: 'Access denied' });
     }
     
-    await memory.removeParticipant(req.params.participantId);
+    // ✅ FIXED: Manual participant removal instead of using the buggy method
+    const participantIdToRemove = req.params.participantId;
+    
+    // Cannot remove creator
+    if (memory.creator.equals(participantIdToRemove)) {
+      return res.status(400).json({ message: 'Cannot remove creator from memory' });
+    }
+    
+    // Remove participant from array
+    memory.participants = memory.participants.filter(p => 
+      p && !p.equals(participantIdToRemove)  // ✅ FIXED: Added null check
+    );
+    
+    await memory.save();
     await memory.populate('participants', 'username fullName profilePicture');
     
     res.json({ 
