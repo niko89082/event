@@ -85,7 +85,8 @@ const EventSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: true,
+    required: false,  // Changed from true to false
+    default: ''       // Added default empty string
   },
   time: {
     type: Date,
@@ -639,6 +640,162 @@ EventSchema.methods.canUserGetRefund = function(userId) {
     
     default:
       return { eligible: false, reason: 'Unknown refund policy' };
+  }
+};
+
+// ============================================
+// PRIVACY AND PERMISSION METHODS
+// ============================================
+
+/**
+ * Check if user can view this event
+ * @param {string} userId - User ID to check
+ * @param {Array} userFollowing - Array of user IDs that the user follows
+ * @returns {boolean} True if user can view the event
+ */
+EventSchema.methods.canUserView = function(userId, userFollowing = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host);
+  
+  // Host can always view their own event
+  if (userIdStr === hostIdStr) return true;
+  
+  // Co-hosts can view
+  if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
+  
+  // Check based on privacy level
+  switch (this.privacyLevel) {
+    case 'public':
+      return this.permissions?.appearInSearch !== false;
+    
+    case 'friends':
+      return userFollowing.includes(hostIdStr);
+    
+    case 'private':
+      return this.invitedUsers?.includes(userId) || 
+             this.attendees?.includes(userId);
+    
+    case 'secret':
+      return this.invitedUsers?.includes(userId) || 
+             this.attendees?.includes(userId);
+    
+    default:
+      return false;
+  }
+};
+
+/**
+ * Check if user can join this event
+ * @param {string} userId - User ID to check
+ * @param {Array} userFollowing - Array of user IDs that the user follows
+ * @returns {boolean} True if user can join the event
+ */
+EventSchema.methods.canUserJoin = function(userId, userFollowing = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host);
+  
+  // Host is already "attending" their own event
+  if (userIdStr === hostIdStr) return false;
+  
+  // Can't join if already attending
+  if (this.attendees && this.attendees.includes(userId)) return false;
+  
+  // Can't join if banned
+  if (this.bannedUsers && this.bannedUsers.includes(userId)) return false;
+  
+  // Can't join if event has passed
+  const eventEndTime = new Date(this.time).getTime() + (3 * 60 * 60 * 1000);
+  if (Date.now() > eventEndTime) return false;
+  
+  // Check capacity
+  if (this.attendees && this.maxAttendees && this.attendees.length >= this.maxAttendees) {
+    return false;
+  }
+  
+  // Check permissions based on privacy level and settings
+  switch (this.permissions?.canJoin) {
+    case 'anyone':
+      return this.privacyLevel === 'public';
+    
+    case 'followers':
+      return userFollowing.includes(hostIdStr);
+    
+    case 'friends':
+      return userFollowing.includes(hostIdStr);
+    
+    case 'approval-required':
+      return true; // Can request to join
+    
+    case 'invited-only':
+      return this.invitedUsers?.includes(userId);
+    
+    default:
+      return this.privacyLevel === 'public';
+  }
+};
+
+/**
+ * Check if user can invite others to this event
+ * @param {string} userId - User ID to check
+ * @returns {boolean} True if user can invite others
+ */
+EventSchema.methods.canUserInvite = function(userId) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host);
+  
+  // Host can always invite
+  if (userIdStr === hostIdStr) return true;
+  
+  // Co-hosts can invite
+  if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
+  
+  // Check permissions
+  switch (this.permissions?.canInvite) {
+    case 'anyone':
+      return true;
+    
+    case 'attendees':
+      return this.attendees?.includes(userId);
+    
+    case 'host-only':
+      return false; // Already checked host above
+    
+    default:
+      return this.attendees?.includes(userId);
+  }
+};
+
+/**
+ * Check if user can share this event
+ * @param {string} userId - User ID to check
+ * @returns {boolean} True if user can share the event
+ */
+EventSchema.methods.canUserShare = function(userId) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host);
+  
+  // Host can always share
+  if (userIdStr === hostIdStr) return true;
+  
+  // Co-hosts can share
+  if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
+  
+  // Secret events cannot be shared by non-hosts
+  if (this.privacyLevel === 'secret') return false;
+  
+  // Check permissions
+  switch (this.permissions?.canShare) {
+    case 'anyone':
+      return true;
+    
+    case 'attendees':
+      return this.attendees?.includes(userId);
+    
+    case 'host-only':
+      return false; // Already checked host above
+    
+    default:
+      return this.attendees?.includes(userId);
   }
 };
 

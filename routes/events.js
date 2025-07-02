@@ -1374,16 +1374,36 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
     });
 
     /* geo JSON (optional) */
-    if (geo) {
-      try {
-        const g = typeof geo === 'string' ? JSON.parse(geo) : geo;
-        if (g && Array.isArray(g.coordinates) && g.coordinates.length === 2) {
-          event.geo = g;
-        }
-      } catch (error) {
-        console.log('Invalid geo format during creation:', error);
+    /* geo JSON from coordinates field */
+  if (req.body.coordinates) {
+    try {
+      const coords = typeof req.body.coordinates === 'string' 
+        ? JSON.parse(req.body.coordinates) 
+        : req.body.coordinates;
+      
+      if (Array.isArray(coords) && coords.length === 2) {
+        event.geo = {
+          type: 'Point',
+          coordinates: [parseFloat(coords[0]), parseFloat(coords[1])]
+        };
+        console.log('✅ Geo coordinates set:', event.geo);
+      } else {
+        console.log('⚠️ Invalid coordinates format, skipping geo');
       }
+    } catch (error) {
+      console.log('❌ Error parsing coordinates:', error);
     }
+  } else if (geo) {
+    // Fallback for old geo format
+    try {
+      const g = typeof geo === 'string' ? JSON.parse(geo) : geo;
+      if (g && Array.isArray(g.coordinates) && g.coordinates.length === 2) {
+        event.geo = g;
+      }
+    } catch (error) {
+      console.log('❌ Invalid geo format during creation:', error);
+    }
+  }
 
     if (req.file) {
       event.coverImage = `/uploads/covers/${req.file.filename}`;
