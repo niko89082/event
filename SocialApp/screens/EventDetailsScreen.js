@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Fixed with original UI design, photos, and new functionality
+// screens/EventDetailsScreen.js - Fixed with original UI design, photos, and new payment functionality
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -21,6 +21,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useStripe } from '@stripe/stripe-react-native';
 
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
@@ -32,6 +33,7 @@ export default function EventDetailsScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const { eventId } = route.params;
 
   // State
@@ -41,10 +43,48 @@ export default function EventDetailsScreen() {
   const [photosLoading, setPhotosLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [requestLoading, setRequestLoading] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [attendeeCount, setAttendeeCount] = useState(0);
   const [permissions, setPermissions] = useState({});
   const [showShareModal, setShowShareModal] = useState(false);
+
+  // Payment helper functions
+  const isPaidEvent = () => {
+    return event?.pricing && !event.pricing.isFree && event.pricing.amount > 0;
+  };
+
+  const getCurrentPrice = () => {
+    if (!isPaidEvent()) return 0;
+    
+    // Check if early bird pricing is active
+    if (event.pricing.earlyBirdPricing?.enabled && 
+        event.pricing.earlyBirdPricing?.deadline && 
+        new Date() < new Date(event.pricing.earlyBirdPricing.deadline)) {
+      return event.pricing.earlyBirdPricing.amount;
+    }
+    
+    return event.pricing.amount;
+  };
+
+  const getFormattedPrice = () => {
+    if (!isPaidEvent()) return 'Free';
+    
+    const currentPrice = getCurrentPrice();
+    const dollarAmount = (currentPrice / 100).toFixed(2);
+    return `$${dollarAmount}`;
+  };
+
+  const hasUserPaid = () => {
+    if (!event?.paymentHistory || !currentUser?._id) return false;
+    
+    return event.paymentHistory.some(payment => 
+      payment.user && 
+      String(payment.user) === String(currentUser._id) && 
+      payment.status === 'succeeded'
+    );
+  };
 
   // Fetch event details
   const fetchEvent = async (isRefresh = false) => {
@@ -93,6 +133,167 @@ export default function EventDetailsScreen() {
     }, [eventId])
   );
 
+  // Initialize Stripe Payment Sheet
+  const initializeStripePayment = async () => {
+    try {
+      const currentPrice = getCurrentPrice();
+      
+      // Create payment intent on backend
+      const response = await api.post(`/api/events/create-payment-intent/${eventId}`, {
+        amount: currentPrice,
+        currency: event.pricing.currency || 'usd'
+      });
+
+      const { paymentIntent, ephemeralKey, customer } = response.data;
+
+      const { error } = await initPaymentSheet({
+        merchantDisplayName: 'EventApp',
+        customerId: customer,
+        customerEphemeralKeySecret: ephemeralKey,
+        paymentIntentClientSecret: paymentIntent,
+        allowsDelayedPaymentMethods: true,
+        defaultBillingDetails: {
+          name: currentUser?.username,
+          email: currentUser?.email
+        }
+      });
+
+      if (error) {
+        console.error('Payment sheet initialization error:', error);
+        Alert.alert('Payment Error', 'Failed to initialize payment. Please try again.');
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Payment initialization error:', error);
+      Alert.alert('Payment Error', 'Failed to set up payment. Please try again.');
+      return false;
+    }
+  };
+
+  // Handle Stripe payment flow
+  const handleStripePayment = async () => {
+    try {
+      setPaymentLoading(true);
+
+      // Initialize payment sheet
+      const initialized = await initializeStripePayment();
+      if (!initialized) return;
+
+      // Present payment sheet
+      const { error } = await presentPaymentSheet();
+
+      if (error) {
+        console.error('Payment presentation error:', error);
+        if (error.code !== 'Canceled') {
+          Alert.alert('Payment Error', error.message);
+        }
+        return;
+      }
+
+      // Payment succeeded - confirm attendance
+      await confirmAttendanceAfterPayment(true);
+
+    } catch (error) {
+      console.error('Stripe payment error:', error);
+      Alert.alert('Payment Error', 'Failed to process payment. Please try again.');
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  // Handle PayPal payment flow
+  const handlePayPalPayment = async () => {
+    try {
+      setPaymentLoading(true);
+      
+      // Create PayPal order
+      const response = await api.post(`/api/events/create-paypal-order/${eventId}`, {
+        amount: getCurrentPrice(),
+        currency: event.pricing.currency || 'usd'
+      });
+
+      const { approvalUrl, orderId } = response.data;
+
+      // Open PayPal in browser
+      const supported = await Linking.canOpenURL(approvalUrl);
+      if (supported) {
+        await Linking.openURL(approvalUrl);
+        
+        // Show modal for user to return after payment
+        setShowPaymentModal(true);
+      } else {
+        Alert.alert('Error', 'Cannot open PayPal payment page');
+      }
+
+    } catch (error) {
+      console.error('PayPal payment error:', error);
+      Alert.alert('Payment Error', 'Failed to initialize PayPal payment. Please try again.');
+      setPaymentLoading(false);
+    }
+  };
+
+  // Show payment options modal
+  const showPaymentOptions = () => {
+    if (!event?.host) {
+      Alert.alert('Error', 'Host payment information not available');
+      return;
+    }
+
+    const hostPaymentMethods = event.host.paymentAccounts;
+    const hasStripe = hostPaymentMethods?.stripe?.chargesEnabled;
+    const hasPayPal = hostPaymentMethods?.paypal?.verified;
+
+    if (!hasStripe && !hasPayPal) {
+      Alert.alert('Error', 'Host has not set up payment methods');
+      return;
+    }
+
+    const options = [];
+    
+    if (hasStripe) {
+      options.push({
+        text: 'Pay with Card (Stripe)',
+        onPress: handleStripePayment
+      });
+    }
+    
+    if (hasPayPal) {
+      options.push({
+        text: 'Pay with PayPal',
+        onPress: handlePayPalPayment
+      });
+    }
+
+    options.push({
+      text: 'Cancel',
+      style: 'cancel'
+    });
+
+    Alert.alert(
+      'Choose Payment Method',
+      `Pay ${getFormattedPrice()} to join this event`,
+      options
+    );
+  };
+
+  // Confirm attendance after successful payment
+  const confirmAttendanceAfterPayment = async (isStripe = false) => {
+    try {
+      await api.post(`/api/events/attend/${eventId}`, {
+        paymentConfirmed: true,
+        ...(isStripe && { paymentMethod: 'stripe' })
+      });
+      
+      Alert.alert('Success', 'Payment successful! You are now attending this event!');
+      fetchEvent(); // Refresh to show updated state
+    } catch (error) {
+      console.error('Attendance confirmation error:', error);
+      Alert.alert('Error', 'Payment succeeded but failed to confirm attendance. Please contact support.');
+    }
+  };
+
   // Handle join request
   const handleJoinRequest = async () => {
     if (!event) return;
@@ -100,6 +301,13 @@ export default function EventDetailsScreen() {
     try {
       setRequestLoading(true);
 
+      // Check if this is a paid event and user hasn't paid
+      if (isPaidEvent() && !hasUserPaid()) {
+        showPaymentOptions();
+        return;
+      }
+
+      // Free event or user already paid
       if (event.permissions?.canJoin === 'approval-required') {
         setShowRequestModal(true);
       } else {
@@ -118,9 +326,13 @@ export default function EventDetailsScreen() {
 
   // Handle leave event
   const handleLeaveEvent = async () => {
+    const leaveMessage = isPaidEvent() && hasUserPaid() 
+      ? 'Are you sure you want to leave this event? Your payment will be preserved and you can rejoin without paying again.'
+      : 'Are you sure you want to leave this event?';
+
     Alert.alert(
       'Leave Event',
-      'Are you sure you want to leave this event?',
+      leaveMessage,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -150,7 +362,8 @@ export default function EventDetailsScreen() {
       if (!event) return;
       
       const eventLink = `https://yourapp.com/events/${eventId}`;
-      const message = `Check out this event: ${event.title}\n\n${event.description}\n\n📅 ${new Date(event.time).toLocaleDateString()}\n📍 ${event.location}\n\nJoin here: ${eventLink}`;
+      const priceText = isPaidEvent() ? `\n💰 ${getFormattedPrice()}` : '\n🆓 Free Event';
+      const message = `Check out this event: ${event.title}\n\n${event.description}${priceText}\n\n📅 ${new Date(event.time).toLocaleDateString()}\n📍 ${event.location}\n\nJoin here: ${eventLink}`;
       
       // iOS-specific iMessage sharing
       const url = `sms:&body=${encodeURIComponent(message)}`;
@@ -178,7 +391,8 @@ export default function EventDetailsScreen() {
       if (!event) return;
       
       const eventLink = `https://yourapp.com/events/${eventId}`;
-      const message = `Check out this event: ${event.title}\n\n${event.description}\n\n📅 ${new Date(event.time).toLocaleDateString()}\n📍 ${event.location}`;
+      const priceText = isPaidEvent() ? ` (${getFormattedPrice()})` : ' (Free)';
+      const message = `Check out this event: ${event.title}${priceText}\n\n${event.description}\n\n📅 ${new Date(event.time).toLocaleDateString()}\n📍 ${event.location}`;
       
       await Share.share({
         message: message,
@@ -289,6 +503,31 @@ export default function EventDetailsScreen() {
     );
   };
 
+  // Get join button text and styling
+  const getJoinButtonInfo = () => {
+    if (isPast) {
+      return { text: 'Event Ended', disabled: true };
+    }
+
+    if (isAttending) {
+      return { text: 'Leave Event', isLeave: true, disabled: false };
+    }
+
+    if (event.permissions?.canJoin === 'approval-required') {
+      return { text: 'Request to Join', disabled: false };
+    }
+
+    if (isPaidEvent() && !hasUserPaid()) {
+      return { 
+        text: `${getFormattedPrice()} to Join`, 
+        disabled: false, 
+        isPaid: true 
+      };
+    }
+
+    return { text: 'Join Event', disabled: false };
+  };
+
   const renderActionButtons = () => {
     if (isHost || isCoHost) {
       return (
@@ -334,55 +573,43 @@ export default function EventDetailsScreen() {
       );
     }
 
-    if (isAttending) {
-      return (
-        <View style={styles.actionContainer}>
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.leaveAction]}
-              onPress={handleLeaveEvent}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.leaveActionText}>Leave Event</Text>
-            </TouchableOpacity>
-
-            {canShare && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.secondaryAction]}
-                onPress={handleShare}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="share" size={18} color="#3797EF" />
-                <Text style={styles.secondaryActionText}>Share</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      );
-    }
+    const joinButtonInfo = getJoinButtonInfo();
 
     return (
       <View style={styles.actionContainer}>
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.primaryAction]}
-            onPress={handleJoinRequest}
-            disabled={requestLoading}
+            style={[
+              styles.actionButton, 
+              joinButtonInfo.isLeave ? styles.leaveAction : styles.primaryAction,
+              joinButtonInfo.disabled && styles.disabledAction
+            ]}
+            onPress={joinButtonInfo.isLeave ? handleLeaveEvent : handleJoinRequest}
+            disabled={joinButtonInfo.disabled || requestLoading || paymentLoading}
             activeOpacity={0.8}
           >
-            <LinearGradient
-              colors={['#3797EF', '#3797EF']}
-              style={styles.gradientButton}
-            >
-              {requestLoading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="add" size={18} color="#FFFFFF" />
-                  <Text style={styles.primaryActionText}>Join Event</Text>
-                </>
-              )}
-            </LinearGradient>
+            {joinButtonInfo.isLeave ? (
+              <Text style={styles.leaveActionText}>{joinButtonInfo.text}</Text>
+            ) : (
+              <LinearGradient
+                colors={joinButtonInfo.isPaid ? ['#FF6B35', '#FF8E53'] : ['#3797EF', '#3797EF']}
+                style={styles.gradientButton}
+              >
+                {(requestLoading || paymentLoading) ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    {joinButtonInfo.isPaid && (
+                      <Ionicons name="card" size={18} color="#FFFFFF" />
+                    )}
+                    {!joinButtonInfo.isPaid && !joinButtonInfo.disabled && (
+                      <Ionicons name="add" size={18} color="#FFFFFF" />
+                    )}
+                    <Text style={styles.primaryActionText}>{joinButtonInfo.text}</Text>
+                  </>
+                )}
+              </LinearGradient>
+            )}
           </TouchableOpacity>
 
           {canShare && (
@@ -478,6 +705,17 @@ export default function EventDetailsScreen() {
 
           {/* Privacy Badge */}
           {renderPrivacyBadge()}
+
+          {/* Price Badge for Paid Events */}
+          {isPaidEvent() && (
+            <View style={styles.priceBadge}>
+              <Text style={styles.priceBadgeText}>{getFormattedPrice()}</Text>
+              {event.pricing.earlyBirdPricing?.enabled && 
+               new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
+                <Text style={styles.earlyBirdText}>Early Bird!</Text>
+              )}
+            </View>
+          )}
         </View>
 
         {/* Event Information */}
@@ -544,6 +782,32 @@ export default function EventDetailsScreen() {
               <Text style={styles.detailCardContent}>{event.location}</Text>
             </View>
 
+            {/* Pricing Card for Paid Events */}
+            {isPaidEvent() && (
+              <View style={styles.detailCard}>
+                <View style={styles.detailCardHeader}>
+                  <Ionicons name="card" size={24} color="#FF6B35" />
+                  <Text style={styles.detailCardTitle}>Pricing</Text>
+                </View>
+                <Text style={styles.detailCardContent}>{getFormattedPrice()}</Text>
+                {event.pricing.earlyBirdPricing?.enabled && 
+                 new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
+                  <Text style={styles.detailCardSubContent}>
+                    Early bird until {new Date(event.pricing.earlyBirdPricing.deadline).toLocaleDateString()}
+                  </Text>
+                )}
+                {event.pricing.description && (
+                  <Text style={styles.detailCardSubContent}>{event.pricing.description}</Text>
+                )}
+                {hasUserPaid() && (
+                  <View style={styles.paidStatus}>
+                    <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                    <Text style={styles.paidStatusText}>Payment Confirmed</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Attendees Card */}
             <TouchableOpacity 
               style={styles.detailCard}
@@ -594,6 +858,46 @@ export default function EventDetailsScreen() {
           {renderActionButtons()}
         </View>
       </ScrollView>
+
+      {/* PayPal Payment Return Modal */}
+      <Modal
+        visible={showPaymentModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPaymentModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.paymentModal}>
+            <Text style={styles.paymentModalTitle}>Payment Processing</Text>
+            <Text style={styles.paymentModalText}>
+              Please return to the app after completing your PayPal payment.
+            </Text>
+            <View style={styles.paymentModalButtons}>
+              <TouchableOpacity
+                style={styles.paymentModalButton}
+                onPress={() => {
+                  setShowPaymentModal(false);
+                  setPaymentLoading(false);
+                }}
+              >
+                <Text style={styles.paymentModalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.paymentModalButton, styles.paymentModalButtonPrimary]}
+                onPress={async () => {
+                  setShowPaymentModal(false);
+                  await confirmAttendanceAfterPayment(false);
+                  setPaymentLoading(false);
+                }}
+              >
+                <Text style={[styles.paymentModalButtonText, styles.paymentModalButtonTextPrimary]}>
+                  Payment Complete
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Share Modal */}
       <Modal
@@ -745,6 +1049,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  priceBadge: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    backgroundColor: '#FF6B35',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  priceBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  earlyBirdText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 2,
+  },
 
   // Content
   contentContainer: {
@@ -843,6 +1168,18 @@ const styles = StyleSheet.create({
     marginLeft: 36,
     marginTop: 2,
   },
+  paidStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginLeft: 36,
+  },
+  paidStatusText: {
+    color: '#34C759',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
 
   // Photos Section
   photosSection: {
@@ -939,13 +1276,63 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  disabledAction: {
+    opacity: 0.6,
+  },
 
-  // Share Modal
+  // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
+  
+  // Payment Modal
+  paymentModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 34,
+  },
+  paymentModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  paymentModalText: {
+    fontSize: 16,
+    color: '#666666',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  paymentModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  paymentModalButton: {
+    flex: 1,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  paymentModalButtonPrimary: {
+    backgroundColor: '#3797EF',
+  },
+  paymentModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  paymentModalButtonTextPrimary: {
+    color: '#FFFFFF',
+  },
+
+  // Share Modal
   shareModal: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,

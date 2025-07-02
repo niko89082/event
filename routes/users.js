@@ -669,29 +669,57 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
     const { eventId } = req.params;
     const { limit = 50, offset = 0 } = req.query;
 
+    console.log(`📸 Fetching photos for event ${eventId}, user ${userId}`);
+
     // Verify user has access to this event
-    const event = await Event.findById(eventId);
+    const event = await Event.findById(eventId)
+      .populate('host', '_id username')
+      .populate('attendees', '_id username');
+      
     if (!event) {
+      console.log(`❌ Event not found: ${eventId}`);
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    const isHost = String(event.host) === String(userId);
-    const isAttendee = event.attendees && event.attendees.includes(userId);
+    const isHost = String(event.host._id) === String(userId);
+    const isAttendee = event.attendees && event.attendees.some(attendee => 
+      String(attendee._id) === String(userId)
+    );
+    
+    console.log(`🔍 Access check - isHost: ${isHost}, isAttendee: ${isAttendee}`);
     
     if (!isHost && !isAttendee) {
-      return res.status(403).json({ message: 'Access denied' });
+      console.log(`❌ Access denied for user ${userId} to event ${eventId}`);
+      return res.status(403).json({ 
+        message: 'Access denied - you must be attending this event to view photos' 
+      });
     }
 
-    // Get photos from this event
-    const photos = await Photo.find({
+    // FIXED: Get ALL photos from this event (not just user's own photos)
+    let photoQuery = {
       event: eventId,
-      user: userId // Only user's own photos for privacy
-    })
-    .populate('user', 'username profilePicture')
-    .populate('event', 'title time')
-    .sort({ uploadDate: -1 })
-    .limit(parseInt(limit))
-    .skip(parseInt(offset));
+      isDeleted: { $ne: true }
+    };
+
+    // If user is not the host, only show photos they can see
+    if (!isHost) {
+      photoQuery = {
+        ...photoQuery,
+        $or: [
+          { user: userId }, // User's own photos
+          { isPrivate: { $ne: true } } // Public photos
+        ]
+      };
+    }
+
+    const photos = await Photo.find(photoQuery)
+      .populate('user', 'username profilePicture')
+      .populate('event', 'title time')
+      .sort({ uploadDate: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(offset));
+
+    console.log(`✅ Found ${photos.length} photos for event ${eventId}`);
 
     res.json({
       photos,
@@ -702,12 +730,13 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
         location: event.location
       },
       total: photos.length,
-      hasMore: photos.length === parseInt(limit)
+      hasMore: photos.length === parseInt(limit),
+      canUpload: isHost || isAttendee
     });
 
   } catch (error) {
-    console.error('Get event photos error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Get event photos error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

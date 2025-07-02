@@ -261,13 +261,24 @@ const UserSchema = new mongoose.Schema({
 UserSchema.methods.canReceivePayments = function() {
   const accounts = this.paymentAccounts || {};
   
+  console.log(`🔍 Checking payment capabilities for user ${this._id}:`, {
+    hasPayPal: !!(accounts.paypal?.verified && accounts.paypal?.email),
+    hasStripe: !!(accounts.stripe?.chargesEnabled && accounts.stripe?.onboardingComplete),
+    hasManual: !!(accounts.manual?.enabled),
+    paypalEmail: accounts.paypal?.email,
+    paypalVerified: accounts.paypal?.verified,
+    stripeChargesEnabled: accounts.stripe?.chargesEnabled
+  });
+  
   // Check PayPal
   if (accounts.paypal?.verified && accounts.paypal?.email) {
+    console.log(`✅ PayPal payments enabled for ${accounts.paypal.email}`);
     return true;
   }
   
   // Check Stripe
   if (accounts.stripe?.chargesEnabled && accounts.stripe?.onboardingComplete) {
+    console.log(`✅ Stripe payments enabled for account ${accounts.stripe.accountId}`);
     return true;
   }
   
@@ -277,9 +288,11 @@ UserSchema.methods.canReceivePayments = function() {
     accounts.manual?.cashappHandle || 
     accounts.manual?.instructions
   )) {
+    console.log(`✅ Manual payments enabled`);
     return true;
   }
   
+  console.log(`❌ No payment methods enabled for user ${this._id}`);
   return false;
 };
 
@@ -309,6 +322,29 @@ UserSchema.methods.getPrimaryPaymentMethod = function() {
   }
   
   return null;
+};
+
+/**
+ * Get available payment methods for this user
+ * @returns {Array<string>} Array of available payment method types
+ */
+UserSchema.methods.getAvailablePaymentMethods = function() {
+  const accounts = this.paymentAccounts || {};
+  const methods = [];
+  
+  if (accounts.paypal?.verified && accounts.paypal?.email) {
+    methods.push('paypal');
+  }
+  
+  if (accounts.stripe?.chargesEnabled && accounts.stripe?.onboardingComplete) {
+    methods.push('stripe');
+  }
+  
+  if (accounts.manual?.enabled) {
+    methods.push('manual');
+  }
+  
+  return methods;
 };
 
 /**
@@ -372,6 +408,8 @@ UserSchema.methods.setupPayPalAccount = function(email) {
     this.paymentAccounts = {};
   }
   
+  console.log(`💰 Setting up PayPal account for user ${this._id} with email: ${email}`);
+  
   this.paymentAccounts.paypal = {
     email: email.toLowerCase().trim(),
     verified: true, // Simplified verification for now
@@ -381,8 +419,47 @@ UserSchema.methods.setupPayPalAccount = function(email) {
   
   // Set as primary if no primary method exists
   if (!this.paymentAccounts.primary?.type) {
+    console.log(`🎯 Setting PayPal as primary payment method`);
     this.paymentAccounts.primary = {
       type: 'paypal',
+      isVerified: true,
+      canReceivePayments: true,
+      lastUpdated: new Date()
+    };
+  }
+  
+  return this.save();
+};
+
+/**
+ * Setup Stripe Connect account
+ * @param {string} accountId - Stripe account ID
+ * @param {object} accountData - Account configuration
+ * @returns {Promise<boolean>} Success status
+ */
+UserSchema.methods.setupStripeAccount = function(accountId, accountData = {}) {
+  if (!this.paymentAccounts) {
+    this.paymentAccounts = {};
+  }
+  
+  console.log(`💳 Setting up Stripe account for user ${this._id} with ID: ${accountId}`);
+  
+  this.paymentAccounts.stripe = {
+    accountId: accountId,
+    onboardingComplete: accountData.onboardingComplete || false,
+    detailsSubmitted: accountData.detailsSubmitted || false,
+    chargesEnabled: accountData.chargesEnabled || false,
+    payoutsEnabled: accountData.payoutsEnabled || false,
+    createdAt: new Date(),
+    lastUpdated: new Date(),
+    country: accountData.country || 'US'
+  };
+  
+  // Set as primary if no primary method exists and charges are enabled
+  if (!this.paymentAccounts.primary?.type && accountData.chargesEnabled) {
+    console.log(`🎯 Setting Stripe as primary payment method`);
+    this.paymentAccounts.primary = {
+      type: 'stripe',
       isVerified: true,
       canReceivePayments: true,
       lastUpdated: new Date()
@@ -429,6 +506,8 @@ UserSchema.methods.addEarnings = function(amount, provider = 'stripe', currency 
     this.earnings.byProvider[provider].totalEarned += amount;
     this.earnings.byProvider[provider].lastPayment = new Date();
   }
+  
+  console.log(`💰 Added $${(amount/100).toFixed(2)} earnings via ${provider} for user ${this._id}`);
   
   return this.save();
 };
