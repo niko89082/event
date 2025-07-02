@@ -1626,7 +1626,7 @@ router.post('/attend/:eventId', protect, async (req, res) => {
     }
 
     // ============================================
-    // CRITICAL FIX: PROPER PAYMENT VALIDATION
+    // FIXED: PROPER PAYMENT VALIDATION
     // ============================================
     if (event.isPaidEvent()) {
       console.log(`💳 Processing payment for paid event ${event._id}`);
@@ -1651,14 +1651,35 @@ router.post('/attend/:eventId', protect, async (req, res) => {
         });
       }
 
-      // CRITICAL: User needs to pay - MUST provide payment confirmation
+      // CRITICAL FIX: Check if host can receive payments with PROPER validation
       if (!req.body.paymentConfirmed) {
         const currentPrice = event.getCurrentPrice();
         
-        // Verify host can receive payments
+        // ✅ FIXED: Use the User model's canReceivePayments method
         if (!event.host.canReceivePayments()) {
+          console.log(`❌ Host payment validation failed:`, {
+            hostId: event.host._id,
+            paymentAccounts: event.host.paymentAccounts,
+            paypalVerified: event.host.paymentAccounts?.paypal?.verified,
+            stripeEnabled: event.host.paymentAccounts?.stripe?.chargesEnabled
+          });
+          
           return res.status(400).json({ 
             message: 'Host cannot currently receive payments. Please try again later.',
+            needsPaymentSetup: true,
+            debug: {
+              hasPayPal: !!event.host.paymentAccounts?.paypal?.verified,
+              hasStripe: !!event.host.paymentAccounts?.stripe?.chargesEnabled
+            }
+          });
+        }
+
+        // ✅ FIXED: Get available payment methods properly
+        const availablePaymentMethods = event.host.getAvailablePaymentMethods();
+        
+        if (availablePaymentMethods.length === 0) {
+          return res.status(400).json({ 
+            message: 'Host has no available payment methods configured',
             needsPaymentSetup: true
           });
         }
@@ -1670,7 +1691,11 @@ router.post('/attend/:eventId', protect, async (req, res) => {
           amount: currentPrice,
           currency: event.pricing.currency || 'usd',
           eventTitle: event.title,
-          hostPaymentMethods: event.host.getAvailablePaymentMethods()
+          hostPaymentMethods: {
+            paypal: !!event.host.paymentAccounts?.paypal?.verified,
+            stripe: !!event.host.paymentAccounts?.stripe?.chargesEnabled,
+            availableMethods: availablePaymentMethods
+          }
         });
       }
 
@@ -1724,14 +1749,18 @@ router.post('/attend/:eventId', protect, async (req, res) => {
       message: responseMessage, 
       event,
       paymentRequired: event.isPaidEvent(),
-      alreadyPaid: event.isPaidEvent() ? event.hasUserPaid(req.user._id) : false
+      alreadyPaid: event.isPaidEvent() ? true : false
     });
 
   } catch (error) {
-    console.error('❌ Attend event error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('❌ Event attendance error:', error);
+    res.status(500).json({ 
+      message: 'Failed to process attendance',
+      error: error.message
+    });
   }
 });
+
 
 // ============================================
 // ENHANCED: UNATTEND EVENT (KEEPS PAYMENT HISTORY)
@@ -1742,11 +1771,25 @@ router.delete('/attend/:eventId', protect, async (req, res) => {
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
     if (!event.attendees.includes(req.user._id)) {
-      return res.status(400).json({ message: 'You are not attending' });
+      return res.status(400).json({ message: 'You are not attending this event' });
     }
+
+    // ✅ ENHANCED: Check if user had paid for this event
+    const userPayment = event.payments?.find(p => 
+      p.user.toString() === req.user._id.toString() && 
+      p.status === 'succeeded'
+    );
 
     // Remove from attendees
     event.attendees.pull(req.user._id);
+    
+    // ✅ ENHANCED: Mark payment as eligible for re-attendance without double charge
+    if (userPayment) {
+      userPayment.leftEventAt = new Date();
+      userPayment.canReattendWithoutPayment = true;
+      console.log(`🔄 User ${req.user._id} left paid event ${event._id} - payment preserved for re-attendance`);
+    }
+    
     await event.save();
 
     // Remove from user's attending events
@@ -1754,18 +1797,140 @@ router.delete('/attend/:eventId', protect, async (req, res) => {
       $pull: { attendingEvents: event._id }
     });
 
-    // NOTE: Payment history is preserved - user can re-attend without paying again
-    const hadPaidBefore = event.hasUserPaid(req.user._id);
+    // ✅ ENHANCED: Provide better response with payment info
+    const responseMessage = userPayment 
+      ? 'You have left the event. Your payment is preserved if you want to rejoin.'
+      : 'You have left the event successfully.';
 
     res.json({ 
-      message: 'Left event successfully', 
+      message: responseMessage, 
       event,
-      canReattendWithoutPayment: hadPaidBefore
+      canReattendWithoutPayment: !!userPayment
     });
 
   } catch (error) {
     console.error('❌ Unattend event error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+router.get('/debug/payment-status/:eventId', protect, async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId).populate('host', 'paymentAccounts username email');
+    
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const host = event.host;
+    const paymentAccounts = host.paymentAccounts || {};
+
+    const debugInfo = {
+      eventId: event._id,
+      eventTitle: event.title,
+      isPaidEvent: event.isPaidEvent(),
+      eventPrice: event.pricing?.ticketPrice,
+      host: {
+        id: host._id,
+        username: host.username,
+        email: host.email
+      },
+      paymentAccounts: {
+        hasAnyAccount: !!paymentAccounts,
+        paypal: {
+          exists: !!paymentAccounts.paypal,
+          email: paymentAccounts.paypal?.email,
+          verified: paymentAccounts.paypal?.verified,
+          connectedAt: paymentAccounts.paypal?.connectedAt
+        },
+        stripe: {
+          exists: !!paymentAccounts.stripe,
+          accountId: paymentAccounts.stripe?.accountId,
+          chargesEnabled: paymentAccounts.stripe?.chargesEnabled,
+          onboardingComplete: paymentAccounts.stripe?.onboardingComplete
+        },
+        primary: {
+          type: paymentAccounts.primary?.type,
+          canReceivePayments: paymentAccounts.primary?.canReceivePayments
+        }
+      },
+      canReceivePayments: host.canReceivePayments(),
+      availablePaymentMethods: host.getAvailablePaymentMethods(),
+      primaryPaymentMethod: host.getPrimaryPaymentMethod()
+    };
+
+    console.log('🔍 Payment Debug Info:', JSON.stringify(debugInfo, null, 2));
+
+    res.json({
+      success: true,
+      debug: debugInfo,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Debug payment status error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+// ============================================
+// DEBUG: VALIDATE USER PAYMENT METHODS
+// ============================================
+router.get('/debug/user-payments/:userId?', protect, async (req, res) => {
+  try {
+    const userId = req.params.userId || req.user._id;
+    const user = await User.findById(userId).select('paymentAccounts username email');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const paymentAccounts = user.paymentAccounts || {};
+
+    const debugInfo = {
+      userId: user._id,
+      username: user.username,
+      email: user.email,
+      paymentAccounts: {
+        hasAnyAccount: !!paymentAccounts,
+        paypal: {
+          exists: !!paymentAccounts.paypal,
+          email: paymentAccounts.paypal?.email,
+          verified: paymentAccounts.paypal?.verified,
+          connectedAt: paymentAccounts.paypal?.connectedAt
+        },
+        stripe: {
+          exists: !!paymentAccounts.stripe,
+          accountId: paymentAccounts.stripe?.accountId,
+          chargesEnabled: paymentAccounts.stripe?.chargesEnabled,
+          onboardingComplete: paymentAccounts.stripe?.onboardingComplete,
+          detailsSubmitted: paymentAccounts.stripe?.detailsSubmitted
+        },
+        primary: paymentAccounts.primary
+      },
+      canReceivePayments: user.canReceivePayments(),
+      availablePaymentMethods: user.getAvailablePaymentMethods(),
+      primaryPaymentMethod: user.getPrimaryPaymentMethod(),
+      needsPaymentSetup: user.needsPaymentSetup()
+    };
+
+    console.log('👤 User Payment Debug Info:', JSON.stringify(debugInfo, null, 2));
+
+    res.json({
+      success: true,
+      debug: debugInfo,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Debug user payments error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
@@ -2197,11 +2362,17 @@ router.get('/:eventId/attendees', protect, async (req, res) => {
 // ========================================
 
 // Get Event by ID with Privacy Check - MUST BE LAST
+// ============================================
+// URGENT FIX: Get Event by ID with PROPER PAYMENT DATA POPULATION
+// ============================================
 router.get('/:eventId', protect, async (req, res) => {
   try {
+    console.log(`🔍 GET Event Details: ${req.params.eventId} for user ${req.user._id}`);
+    
     const event = await Event.findById(req.params.eventId)
-      .populate('host', 'username profilePicture')
-      .populate('coHosts', 'username')
+      // ✅ CRITICAL FIX: Include paymentAccounts in host population
+      .populate('host', 'username profilePicture paymentAccounts')
+      .populate('coHosts', 'username paymentAccounts')
       .populate('attendees invitedUsers', 'username')
       .populate('joinRequests.user', 'username profilePicture')
       .populate({
@@ -2209,7 +2380,18 @@ router.get('/:eventId', protect, async (req, res) => {
         populate: { path: 'user', select: 'username isPrivate followers' }
       });
 
-    if (!event) return res.status(404).json({ message: 'Event not found' });
+    if (!event) {
+      console.log(`❌ Event not found: ${req.params.eventId}`);
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    console.log(`✅ Event found: ${event.title}`);
+    console.log(`🔍 Host payment data check:`, {
+      hostId: event.host._id,
+      hasPaymentAccounts: !!event.host.paymentAccounts,
+      paypalVerified: event.host.paymentAccounts?.paypal?.verified,
+      stripeEnabled: event.host.paymentAccounts?.stripe?.chargesEnabled
+    });
 
     // Check if user can view this event
     const permission = await EventPrivacyService.checkPermission(
@@ -2219,6 +2401,7 @@ router.get('/:eventId', protect, async (req, res) => {
     );
 
     if (!permission.allowed) {
+      console.log(`❌ Permission denied: ${permission.reason}`);
       return res.status(403).json({ message: permission.reason });
     }
 
@@ -2227,30 +2410,81 @@ router.get('/:eventId', protect, async (req, res) => {
     
     // Hide attendee list if not public
     if (!event.permissions.showAttendeesToPublic && 
-        String(event.host) !== String(req.user._id) &&
-        !event.coHosts.some(c => String(c) === String(req.user._id))) {
+        String(event.host._id) !== String(req.user._id) &&
+        !event.coHosts.some(c => String(c._id) === String(req.user._id))) {
       eventObj.attendees = eventObj.attendees.slice(0, 3); // Show only first 3
     }
 
-    // Add user's relationship to event
+    // ✅ ENHANCED: Add detailed user relationship to event
+    const isHost = String(event.host._id) === String(req.user._id);
+    const isCoHost = event.coHosts.some(c => String(c._id) === String(req.user._id));
+    const isAttending = event.attendees.some(a => String(a._id) === String(req.user._id));
+    const isInvited = event.invitedUsers.some(i => String(i._id) === String(req.user._id));
+    const hasRequestedToJoin = event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id));
+
     eventObj.userRelation = {
-      isHost: String(event.host._id) === String(req.user._id),
-      isCoHost: event.coHosts.some(c => String(c._id) === String(req.user._id)),
-      isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
-      isInvited: event.invitedUsers.some(i => String(i._id) === String(req.user._id)),
-      hasRequestedToJoin: event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id))
+      isHost,
+      isCoHost,
+      isAttending,
+      isInvited,
+      hasRequestedToJoin
     };
+
+    // ✅ ENHANCED: Add payment status for current user
+    if (event.isPaidEvent && event.isPaidEvent()) {
+      eventObj.userPaymentStatus = {
+        hasUserPaid: event.hasUserPaid ? event.hasUserPaid(req.user._id) : false,
+        currentPrice: event.getCurrentPrice ? event.getCurrentPrice() : event.pricing?.amount || 0,
+        currency: event.pricing?.currency || 'usd'
+      };
+    }
+
+    // ✅ ENHANCED: Add host payment capabilities with debug info
+    if (event.host.paymentAccounts) {
+      eventObj.hostPaymentCapabilities = {
+        canReceivePayments: event.host.canReceivePayments ? event.host.canReceivePayments() : false,
+        availablePaymentMethods: event.host.getAvailablePaymentMethods ? event.host.getAvailablePaymentMethods() : [],
+        primaryPaymentMethod: event.host.getPrimaryPaymentMethod ? event.host.getPrimaryPaymentMethod() : null,
+        paymentMethods: {
+          paypal: {
+            available: !!event.host.paymentAccounts.paypal?.verified,
+            email: event.host.paymentAccounts.paypal?.email
+          },
+          stripe: {
+            available: !!event.host.paymentAccounts.stripe?.chargesEnabled,
+            accountId: event.host.paymentAccounts.stripe?.accountId
+          }
+        }
+      };
+    } else {
+      eventObj.hostPaymentCapabilities = {
+        canReceivePayments: false,
+        availablePaymentMethods: [],
+        primaryPaymentMethod: null,
+        paymentMethods: {
+          paypal: { available: false },
+          stripe: { available: false }
+        }
+      };
+    }
 
     // Add timing metadata with 3-hour buffer
     const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000);
     eventObj.isOver = Date.now() > eventEndTime;
     eventObj.canCheckIn = Date.now() <= eventEndTime;
 
+    console.log(`✅ Sending event data with payment capabilities:`, {
+      eventId: eventObj._id,
+      canReceivePayments: eventObj.hostPaymentCapabilities.canReceivePayments,
+      availableMethods: eventObj.hostPaymentCapabilities.availablePaymentMethods,
+      isPaidEvent: event.isPaidEvent ? event.isPaidEvent() : false
+    });
+
     res.json(eventObj);
 
   } catch (e) { 
-    console.error('Get event error:', e);
-    res.status(500).json({ message: 'Server error' }); 
+    console.error('❌ Get event error:', e);
+    res.status(500).json({ message: 'Server error', error: e.message }); 
   }
 });
 
@@ -2567,6 +2801,5 @@ router.post('/setup-paypal', protect, async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;

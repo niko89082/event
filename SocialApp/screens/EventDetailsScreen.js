@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Fixed with original UI design, photos, and new payment functionality
+// screens/EventDetailsScreen.js - Fixed with payment functionality and existing leave logic
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -133,71 +133,59 @@ export default function EventDetailsScreen() {
     }, [eventId])
   );
 
-  // Initialize Stripe Payment Sheet
-  const initializeStripePayment = async () => {
-    try {
-      const currentPrice = getCurrentPrice();
-      
-      // Create payment intent on backend
-      const response = await api.post(`/api/events/create-payment-intent/${eventId}`, {
-        amount: currentPrice,
-        currency: event.pricing.currency || 'usd'
-      });
-
-      const { paymentIntent, ephemeralKey, customer } = response.data;
-
-      const { error } = await initPaymentSheet({
-        merchantDisplayName: 'EventApp',
-        customerId: customer,
-        customerEphemeralKeySecret: ephemeralKey,
-        paymentIntentClientSecret: paymentIntent,
-        allowsDelayedPaymentMethods: true,
-        defaultBillingDetails: {
-          name: currentUser?.username,
-          email: currentUser?.email
-        }
-      });
-
-      if (error) {
-        console.error('Payment sheet initialization error:', error);
-        Alert.alert('Payment Error', 'Failed to initialize payment. Please try again.');
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Payment initialization error:', error);
-      Alert.alert('Payment Error', 'Failed to set up payment. Please try again.');
-      return false;
-    }
-  };
-
   // Handle Stripe payment flow
   const handleStripePayment = async () => {
     try {
       setPaymentLoading(true);
+      
+      // Create payment intent
+      const response = await api.post(`/api/events/create-payment-intent/${eventId}`, {
+        amount: getCurrentPrice(),
+        currency: event.pricing.currency || 'usd'
+      });
 
-      // Initialize payment sheet
-      const initialized = await initializeStripePayment();
-      if (!initialized) return;
+      const { paymentIntent, ephemeralKey, customer, publishableKey } = response.data;
 
-      // Present payment sheet
-      const { error } = await presentPaymentSheet();
+      // Initialize Stripe with payment intent
+      const { error } = await initPaymentSheet({
+        merchantDisplayName: 'Event Payment',
+        customerId: customer,
+        customerEphemeralKeySecret: ephemeralKey,
+        paymentIntentClientSecret: paymentIntent,
+        defaultBillingDetails: {
+          name: currentUser.username
+        }
+      });
 
       if (error) {
-        console.error('Payment presentation error:', error);
-        if (error.code !== 'Canceled') {
-          Alert.alert('Payment Error', error.message);
+        Alert.alert('Payment Error', error.message);
+        return;
+      }
+
+      // Present payment sheet
+      const { error: paymentError } = await presentPaymentSheet();
+
+      if (paymentError) {
+        if (paymentError.code !== 'Canceled') {
+          Alert.alert('Payment Cancelled', paymentError.message);
         }
         return;
       }
 
-      // Payment succeeded - confirm attendance
+      // Payment successful - confirm attendance
       await confirmAttendanceAfterPayment(true);
 
     } catch (error) {
       console.error('Stripe payment error:', error);
-      Alert.alert('Payment Error', 'Failed to process payment. Please try again.');
+      
+      if (error.response?.data?.needsPaymentSetup) {
+        Alert.alert(
+          'Payment Setup Required', 
+          'The host needs to complete their payment setup. Please contact them or try again later.'
+        );
+      } else {
+        Alert.alert('Payment Error', 'Failed to process payment. Please try again.');
+      }
     } finally {
       setPaymentLoading(false);
     }
@@ -229,29 +217,47 @@ export default function EventDetailsScreen() {
 
     } catch (error) {
       console.error('PayPal payment error:', error);
-      Alert.alert('Payment Error', 'Failed to initialize PayPal payment. Please try again.');
+      
+      // ✅ FIXED: Better error messages
+      if (error.response?.data?.needsPaymentSetup) {
+        Alert.alert(
+          'Payment Setup Required', 
+          'The host needs to complete their payment setup. Please contact them or try again later.'
+        );
+      } else {
+        Alert.alert('Payment Error', 'Failed to initialize PayPal payment. Please try again.');
+      }
+      
       setPaymentLoading(false);
     }
   };
 
-  // Show payment options modal
+  // Show payment options modal with proper validation
   const showPaymentOptions = () => {
     if (!event?.host) {
       Alert.alert('Error', 'Host payment information not available');
       return;
     }
 
+    // ✅ FIXED: Check both payment method types properly
     const hostPaymentMethods = event.host.paymentAccounts;
     const hasStripe = hostPaymentMethods?.stripe?.chargesEnabled;
     const hasPayPal = hostPaymentMethods?.paypal?.verified;
 
+    console.log('🔍 Payment methods check:', {
+      hasStripe,
+      hasPayPal,
+      paymentAccounts: hostPaymentMethods
+    });
+
     if (!hasStripe && !hasPayPal) {
-      Alert.alert('Error', 'Host has not set up payment methods');
+      Alert.alert('Error', 'Host has not set up payment methods yet. Please contact the host.');
       return;
     }
 
     const options = [];
     
+    // Add Stripe option if available
     if (hasStripe) {
       options.push({
         text: 'Pay with Card (Stripe)',
@@ -259,6 +265,7 @@ export default function EventDetailsScreen() {
       });
     }
     
+    // Add PayPal option if available
     if (hasPayPal) {
       options.push({
         text: 'Pay with PayPal',
@@ -294,7 +301,41 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // Handle join request
+  // Enhanced attend event function
+  const attendEvent = async () => {
+    try {
+      if (isPaidEvent() && !hasUserPaid()) {
+        // Show payment options for paid events
+        showPaymentOptions();
+        return;
+      }
+
+      // For free events or if user already paid
+      setRequestLoading(true);
+      const response = await api.post(`/api/events/attend/${eventId}`);
+      
+      if (response.data.alreadyPaid) {
+        Alert.alert('Success', 'Welcome back! You are now attending this event.');
+      } else {
+        Alert.alert('Success', response.data.message);
+      }
+      
+      fetchEvent(); // Refresh event data
+    } catch (error) {
+      console.error('Attend event error:', error);
+      
+      if (error.response?.status === 402) {
+        // Payment required - should have been handled above
+        showPaymentOptions();
+      } else {
+        Alert.alert('Error', error.response?.data?.message || 'Failed to join event');
+      }
+    } finally {
+      setRequestLoading(false);
+    }
+  };
+
+  // Handle join request (approval required events)
   const handleJoinRequest = async () => {
     if (!event) return;
 
@@ -311,9 +352,7 @@ export default function EventDetailsScreen() {
       if (event.permissions?.canJoin === 'approval-required') {
         setShowRequestModal(true);
       } else {
-        await api.post(`/api/events/attend/${eventId}`);
-        Alert.alert('Success', 'You\'re now attending this event!');
-        fetchEvent(); // Refresh to show updated state
+        await attendEvent();
       }
     } catch (error) {
       console.error('Join request error:', error);
@@ -324,32 +363,51 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // Handle leave event
+  // Enhanced leave event function with refund protection
   const handleLeaveEvent = async () => {
-    const leaveMessage = isPaidEvent() && hasUserPaid() 
-      ? 'Are you sure you want to leave this event? Your payment will be preserved and you can rejoin without paying again.'
-      : 'Are you sure you want to leave this event?';
+    try {
+      // Check if user paid for this event
+      const userPayment = event.paymentHistory?.find(p => 
+        p.user === currentUser._id && p.status === 'succeeded'
+      );
 
-    Alert.alert(
-      'Leave Event',
-      leaveMessage,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete(`/api/events/attend/${eventId}`);
-              Alert.alert('Success', 'You have left the event');
-              fetchEvent();
-            } catch (error) {
-              Alert.alert('Error', 'Failed to leave event');
+      let confirmMessage = 'Are you sure you want to leave this event?';
+      
+      if (userPayment) {
+        confirmMessage += '\n\nNote: Your payment will remain valid if you want to rejoin later.';
+      }
+
+      Alert.alert(
+        'Leave Event',
+        confirmMessage,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Leave', 
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                setRequestLoading(true);
+                // ✅ FIXED: Use existing DELETE endpoint
+                const response = await api.delete(`/api/events/attend/${eventId}`);
+                
+                Alert.alert('Left Event', response.data.message);
+                fetchEvent(); // Refresh event data
+                
+              } catch (error) {
+                console.error('Leave event error:', error);
+                Alert.alert('Error', 'Failed to leave event');
+              } finally {
+                setRequestLoading(false);
+              }
             }
           }
-        }
-      ]
-    );
+        ]
+      );
+    } catch (error) {
+      console.error('Leave event preparation error:', error);
+      Alert.alert('Error', 'Unable to process request');
+    }
   };
 
   // Share functionality
