@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Fixed with payment functionality and existing leave logic
+// screens/EventDetailsScreen.js - Complete file with deep link payment handling and full UI
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -23,6 +23,7 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import { LinearGradient } from 'expo-linear-gradient';
 import { useStripe } from '@stripe/stripe-react-native';
 import { WebView } from 'react-native-webview';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
@@ -53,6 +54,67 @@ export default function EventDetailsScreen() {
   const [attendeeCount, setAttendeeCount] = useState(0);
   const [permissions, setPermissions] = useState({});
   const [showShareModal, setShowShareModal] = useState(false);
+
+  // 🔧 ENHANCED: Deep link handling for payment returns with AsyncStorage persistence
+  useEffect(() => {
+    const handlePaymentReturn = async (url) => {
+      console.log('🔗 EventDetailsScreen received deep link:', url);
+      
+      if (url.includes('/payment/success') && payPalOrderId) {
+        console.log('✅ Payment success via deep link, capturing payment...');
+        
+        try {
+          setPaymentLoading(true);
+          
+          // Capture the PayPal payment
+          const response = await api.post(`/api/events/capture-paypal-payment/${eventId}`, {
+            orderId: payPalOrderId
+          });
+          
+          if (response.data.success) {
+            // Add user to event attendees
+            await confirmAttendanceAfterPayment('paypal', payPalOrderId, response.data.captureId);
+            Alert.alert('Success!', 'Payment completed and you\'re now attending the event!');
+            
+            // Clear the stored order ID
+            setPayPalOrderId(null);
+            await AsyncStorage.removeItem(`paypal_order_${eventId}`);
+          }
+        } catch (error) {
+          console.error('Payment capture error:', error);
+          Alert.alert('Error', 'Payment completed but there was an issue confirming your attendance. Please contact support.');
+        } finally {
+          setPaymentLoading(false);
+        }
+      } else if (url.includes('/payment/cancel')) {
+        console.log('❌ Payment cancelled via deep link');
+        Alert.alert('Payment Cancelled', 'Your payment was cancelled.');
+        setPayPalOrderId(null);
+        await AsyncStorage.removeItem(`paypal_order_${eventId}`);
+      }
+    };
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handlePaymentReturn(url);
+    });
+
+    // Check for stored PayPal order ID on component mount
+    const checkStoredOrderId = async () => {
+      try {
+        const storedOrderId = await AsyncStorage.getItem(`paypal_order_${eventId}`);
+        if (storedOrderId) {
+          setPayPalOrderId(storedOrderId);
+          console.log('🔍 Restored PayPal order ID:', storedOrderId);
+        }
+      } catch (error) {
+        console.error('Error checking stored order ID:', error);
+      }
+    };
+
+    checkStoredOrderId();
+
+    return () => subscription?.remove();
+  }, [payPalOrderId, eventId]);
 
   // Payment helper functions
   const isPaidEvent = () => {
@@ -213,53 +275,59 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // Handle PayPal payment flow with WebView
-  // In EventDetailsScreen.js, update handlePayPalPayment
-const handlePayPalPayment = async () => {
-  try {
-    setPaymentLoading(true);
-    
-    console.log('🔍 Creating PayPal order...');
-    
-    // Create PayPal order
-    const response = await api.post(`/api/events/create-paypal-order/${eventId}`, {
-      amount: getCurrentPrice(),
-      currency: event.pricing.currency || 'USD'
-    });
-
-    console.log('🔍 PayPal order response:', response.data);
-
-    const { approvalUrl, orderId } = response.data;
-
-    if (!approvalUrl || !orderId) {
-      throw new Error('Invalid PayPal response - missing approval URL or order ID');
-    }
-
-    // Store order ID for later verification
-    setPayPalOrderId(orderId);
-
-    // Open PayPal in external browser
-    const supported = await Linking.canOpenURL(approvalUrl);
-    if (supported) {
-      console.log('🔍 Opening PayPal URL:', approvalUrl);
-      await Linking.openURL(approvalUrl);
+  // 🔧 ENHANCED: Handle PayPal payment flow with deep links and AsyncStorage
+  const handlePayPalPayment = async () => {
+    try {
+      setPaymentLoading(true);
       
-      // Show modal for user to return after payment
-      setShowPaymentModal(true);
-    } else {
-      Alert.alert('Error', 'Cannot open PayPal payment page');
+      console.log('🔍 Creating PayPal order...');
+      
+      // Create PayPal order
+      const response = await api.post(`/api/events/create-paypal-order/${eventId}`, {
+        amount: getCurrentPrice(),
+        currency: event.pricing.currency || 'USD'
+      });
+
+      console.log('🔍 PayPal order response:', response.data);
+
+      const { approvalUrl, orderId } = response.data;
+
+      if (!approvalUrl || !orderId) {
+        throw new Error('Invalid PayPal response - missing approval URL or order ID');
+      }
+
+      // Store order ID for later verification and in AsyncStorage for persistence
+      setPayPalOrderId(orderId);
+      await AsyncStorage.setItem(`paypal_order_${eventId}`, orderId);
+
+      console.log('💾 Stored PayPal order ID:', orderId);
+
+      // Open PayPal in external browser
+      const supported = await Linking.canOpenURL(approvalUrl);
+      if (supported) {
+        console.log('🔍 Opening PayPal URL:', approvalUrl);
+        await Linking.openURL(approvalUrl);
+        
+        // Show informational modal
+        Alert.alert(
+          'Payment in Progress',
+          'Complete your payment in PayPal, then return to the app. Your payment will be processed automatically.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', 'Cannot open PayPal payment page');
+      }
+
+    } catch (error) {
+      console.error('PayPal payment error:', error);
+      console.error('PayPal error details:', error.response?.data);
+      handlePaymentError(error);
+    } finally {
+      setPaymentLoading(false);
     }
+  };
 
-  } catch (error) {
-    console.error('PayPal payment error:', error);
-    console.error('PayPal error details:', error.response?.data);
-    handlePaymentError(error);
-  } finally {
-    setPaymentLoading(false);
-  }
-};
-
-  // Handle PayPal WebView navigation
+  // Handle PayPal WebView navigation (keeping for backward compatibility)
   const handlePayPalWebViewNavigation = async (navigationState) => {
     const { url } = navigationState;
     
