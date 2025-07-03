@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useStripe } from '@stripe/stripe-react-native';
+import { WebView } from 'react-native-webview';
 
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
@@ -46,6 +47,9 @@ export default function EventDetailsScreen() {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showPayPalWebView, setShowPayPalWebView] = useState(false);
+  const [payPalOrderId, setPayPalOrderId] = useState(null);
+  const [payPalApprovalUrl, setPayPalApprovalUrl] = useState(null);
   const [attendeeCount, setAttendeeCount] = useState(0);
   const [permissions, setPermissions] = useState({});
   const [showShareModal, setShowShareModal] = useState(false);
@@ -86,6 +90,22 @@ export default function EventDetailsScreen() {
     );
   };
 
+  // Error handling helper
+  const handlePaymentError = (error) => {
+    console.error('Payment error:', error);
+    
+    let errorMessage = 'Payment failed. Please try again.';
+    
+    if (error.response?.data?.needsPaymentSetup) {
+      errorMessage = 'The host needs to complete their payment setup. Please contact them.';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    }
+    
+    Alert.alert('Payment Error', errorMessage);
+    setPaymentLoading(false);
+  };
+
   // Fetch event details
   const fetchEvent = async (isRefresh = false) => {
     try {
@@ -101,6 +121,16 @@ export default function EventDetailsScreen() {
       setEvent(eventData);
       setAttendeeCount(eventData.attendees?.length || 0);
       setPermissions(eventData.permissions || {});
+
+      // Debug payment data in development
+      if (__DEV__) {
+        console.log('🔍 Event Payment Debug:', {
+          eventId: eventData._id,
+          isPaidEvent: eventData.pricing && !eventData.pricing.isFree,
+          hostPaymentCapabilities: eventData.hostPaymentCapabilities,
+          userPaymentStatus: eventData.userPaymentStatus
+        });
+      }
 
     } catch (error) {
       console.error('Error fetching event:', error);
@@ -139,7 +169,7 @@ export default function EventDetailsScreen() {
       setPaymentLoading(true);
       
       // Create payment intent
-      const response = await api.post(`/api/events/create-payment-intent/${eventId}`, {
+      const response = await api.post(`/api/events/create-stripe-payment-intent/${eventId}`, {
         amount: getCurrentPrice(),
         currency: event.pricing.currency || 'usd'
       });
@@ -173,81 +203,108 @@ export default function EventDetailsScreen() {
       }
 
       // Payment successful - confirm attendance
-      await confirmAttendanceAfterPayment(true);
+      await confirmAttendanceAfterPayment('stripe');
 
     } catch (error) {
       console.error('Stripe payment error:', error);
-      
-      if (error.response?.data?.needsPaymentSetup) {
-        Alert.alert(
-          'Payment Setup Required', 
-          'The host needs to complete their payment setup. Please contact them or try again later.'
-        );
-      } else {
-        Alert.alert('Payment Error', 'Failed to process payment. Please try again.');
-      }
+      handlePaymentError(error);
     } finally {
       setPaymentLoading(false);
     }
   };
 
-  // Handle PayPal payment flow
-  const handlePayPalPayment = async () => {
-    try {
-      setPaymentLoading(true);
+  // Handle PayPal payment flow with WebView
+  // In EventDetailsScreen.js, update handlePayPalPayment
+const handlePayPalPayment = async () => {
+  try {
+    setPaymentLoading(true);
+    
+    console.log('🔍 Creating PayPal order...');
+    
+    // Create PayPal order
+    const response = await api.post(`/api/events/create-paypal-order/${eventId}`, {
+      amount: getCurrentPrice(),
+      currency: event.pricing.currency || 'USD'
+    });
+
+    console.log('🔍 PayPal order response:', response.data);
+
+    const { approvalUrl, orderId } = response.data;
+
+    if (!approvalUrl || !orderId) {
+      throw new Error('Invalid PayPal response - missing approval URL or order ID');
+    }
+
+    // Store order ID for later verification
+    setPayPalOrderId(orderId);
+
+    // Open PayPal in external browser
+    const supported = await Linking.canOpenURL(approvalUrl);
+    if (supported) {
+      console.log('🔍 Opening PayPal URL:', approvalUrl);
+      await Linking.openURL(approvalUrl);
       
-      // Create PayPal order
-      const response = await api.post(`/api/events/create-paypal-order/${eventId}`, {
-        amount: getCurrentPrice(),
-        currency: event.pricing.currency || 'usd'
-      });
+      // Show modal for user to return after payment
+      setShowPaymentModal(true);
+    } else {
+      Alert.alert('Error', 'Cannot open PayPal payment page');
+    }
 
-      const { approvalUrl, orderId } = response.data;
+  } catch (error) {
+    console.error('PayPal payment error:', error);
+    console.error('PayPal error details:', error.response?.data);
+    handlePaymentError(error);
+  } finally {
+    setPaymentLoading(false);
+  }
+};
 
-      // Open PayPal in browser
-      const supported = await Linking.canOpenURL(approvalUrl);
-      if (supported) {
-        await Linking.openURL(approvalUrl);
+  // Handle PayPal WebView navigation
+  const handlePayPalWebViewNavigation = async (navigationState) => {
+    const { url } = navigationState;
+    
+    // Check if user completed payment
+    if (url.includes('success') || url.includes('approved')) {
+      setShowPayPalWebView(false);
+      
+      try {
+        setPaymentLoading(true);
+        // Capture the payment
+        const response = await api.post(`/api/events/capture-paypal-payment/${eventId}`, {
+          orderId: payPalOrderId
+        });
         
-        // Show modal for user to return after payment
-        setShowPaymentModal(true);
-      } else {
-        Alert.alert('Error', 'Cannot open PayPal payment page');
+        if (response.data.success) {
+          await confirmAttendanceAfterPayment('paypal', payPalOrderId, response.data.captureId);
+        } else {
+          throw new Error('Payment capture failed');
+        }
+      } catch (error) {
+        handlePaymentError(error);
+      } finally {
+        setPaymentLoading(false);
       }
-
-    } catch (error) {
-      console.error('PayPal payment error:', error);
-      
-      // ✅ FIXED: Better error messages
-      if (error.response?.data?.needsPaymentSetup) {
-        Alert.alert(
-          'Payment Setup Required', 
-          'The host needs to complete their payment setup. Please contact them or try again later.'
-        );
-      } else {
-        Alert.alert('Payment Error', 'Failed to initialize PayPal payment. Please try again.');
-      }
-      
-      setPaymentLoading(false);
+    } else if (url.includes('cancel')) {
+      setShowPayPalWebView(false);
+      Alert.alert('Payment Cancelled', 'Payment was cancelled by user.');
     }
   };
 
   // Show payment options modal with proper validation
   const showPaymentOptions = () => {
-    if (!event?.host) {
+    if (!event?.hostPaymentCapabilities) {
       Alert.alert('Error', 'Host payment information not available');
       return;
     }
 
-    // ✅ FIXED: Check both payment method types properly
-    const hostPaymentMethods = event.host.paymentAccounts;
-    const hasStripe = hostPaymentMethods?.stripe?.chargesEnabled;
-    const hasPayPal = hostPaymentMethods?.paypal?.verified;
+    const { paymentMethods } = event.hostPaymentCapabilities;
+    const hasStripe = paymentMethods?.stripe?.available;
+    const hasPayPal = paymentMethods?.paypal?.available;
 
     console.log('🔍 Payment methods check:', {
       hasStripe,
       hasPayPal,
-      paymentAccounts: hostPaymentMethods
+      hostPaymentCapabilities: event.hostPaymentCapabilities
     });
 
     if (!hasStripe && !hasPayPal) {
@@ -260,7 +317,7 @@ export default function EventDetailsScreen() {
     // Add Stripe option if available
     if (hasStripe) {
       options.push({
-        text: 'Pay with Card (Stripe)',
+        text: '💳 Pay with Card (Stripe)',
         onPress: handleStripePayment
       });
     }
@@ -268,7 +325,7 @@ export default function EventDetailsScreen() {
     // Add PayPal option if available
     if (hasPayPal) {
       options.push({
-        text: 'Pay with PayPal',
+        text: '🅿️ Pay with PayPal',
         onPress: handlePayPalPayment
       });
     }
@@ -286,12 +343,19 @@ export default function EventDetailsScreen() {
   };
 
   // Confirm attendance after successful payment
-  const confirmAttendanceAfterPayment = async (isStripe = false) => {
+  const confirmAttendanceAfterPayment = async (provider, orderId = null, captureId = null) => {
     try {
-      await api.post(`/api/events/attend/${eventId}`, {
+      const paymentData = {
         paymentConfirmed: true,
-        ...(isStripe && { paymentMethod: 'stripe' })
-      });
+        provider
+      };
+
+      if (provider === 'paypal') {
+        paymentData.paypalOrderId = orderId;
+        paymentData.paypalCaptureId = captureId;
+      }
+
+      await api.post(`/api/events/attend/${eventId}`, paymentData);
       
       Alert.alert('Success', 'Payment successful! You are now attending this event!');
       fetchEvent(); // Refresh to show updated state
@@ -337,48 +401,31 @@ export default function EventDetailsScreen() {
 
   // Handle join request (approval required events)
   const handleJoinRequest = async () => {
-  if (!event) return;
+    if (!event) return;
 
-  try {
-    setRequestLoading(true);
+    try {
+      setRequestLoading(true);
 
-    // ✅ FIXED: Check if this is a paid event and user hasn't paid
-    if (isPaidEvent() && !hasUserPaid()) {
-      showPaymentOptions();
-      return;
+      // Check if this is a paid event and user hasn't paid
+      if (isPaidEvent() && !hasUserPaid()) {
+        showPaymentOptions();
+        return;
+      }
+
+      // Free event or user already paid
+      if (event.permissions?.canJoin === 'approval-required') {
+        setShowRequestModal(true);
+      } else {
+        await attendEvent();
+      }
+    } catch (error) {
+      console.error('Join request error:', error);
+      const message = error.response?.data?.message || 'Failed to join event';
+      Alert.alert('Error', message);
+    } finally {
+      setRequestLoading(false);
     }
-
-    // Free event or user already paid
-    if (event.permissions?.canJoin === 'approval-required') {
-      setShowRequestModal(true);
-    } else {
-      await attendEvent();
-    }
-  } catch (error) {
-    console.error('Join request error:', error);
-    const message = error.response?.data?.message || 'Failed to join event';
-    Alert.alert('Error', message);
-  } finally {
-    setRequestLoading(false);
-  }
-};
-
-// ✅ ADDED: Debug function to log payment data (remove in production)
-const debugPaymentData = () => {
-  if (__DEV__ && event?.host) {
-    console.log('🔍 Payment Debug Data:', {
-      eventId: event._id,
-      hostId: event.host._id,
-      hostPaymentAccounts: event.host.paymentAccounts,
-      isPaidEvent: isPaidEvent(),
-      currentPrice: getCurrentPrice(),
-      hasUserPaid: hasUserPaid(),
-      userPaymentHistory: event.paymentHistory?.filter(p => 
-        String(p.user) === String(currentUser?._id)
-      )
-    });
-  }
-};
+  };
 
   // Enhanced leave event function with refund protection
   const handleLeaveEvent = async () => {
@@ -405,7 +452,6 @@ const debugPaymentData = () => {
             onPress: async () => {
               try {
                 setRequestLoading(true);
-                // ✅ FIXED: Use existing DELETE endpoint
                 const response = await api.delete(`/api/events/attend/${eventId}`);
                 
                 Alert.alert('Left Event', response.data.message);
@@ -934,44 +980,39 @@ const debugPaymentData = () => {
         </View>
       </ScrollView>
 
-      {/* PayPal Payment Return Modal */}
+      {/* PayPal WebView Modal */}
       <Modal
-        visible={showPaymentModal}
-        transparent={true}
+        visible={showPayPalWebView}
+        transparent={false}
         animationType="slide"
-        onRequestClose={() => setShowPaymentModal(false)}
+        onRequestClose={() => setShowPayPalWebView(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.paymentModal}>
-            <Text style={styles.paymentModalTitle}>Payment Processing</Text>
-            <Text style={styles.paymentModalText}>
-              Please return to the app after completing your PayPal payment.
-            </Text>
-            <View style={styles.paymentModalButtons}>
-              <TouchableOpacity
-                style={styles.paymentModalButton}
-                onPress={() => {
-                  setShowPaymentModal(false);
-                  setPaymentLoading(false);
-                }}
-              >
-                <Text style={styles.paymentModalButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.paymentModalButton, styles.paymentModalButtonPrimary]}
-                onPress={async () => {
-                  setShowPaymentModal(false);
-                  await confirmAttendanceAfterPayment(false);
-                  setPaymentLoading(false);
-                }}
-              >
-                <Text style={[styles.paymentModalButtonText, styles.paymentModalButtonTextPrimary]}>
-                  Payment Complete
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <SafeAreaView style={styles.webViewContainer}>
+          <View style={styles.webViewHeader}>
+            <TouchableOpacity
+              style={styles.webViewCloseButton}
+              onPress={() => setShowPayPalWebView(false)}
+            >
+              <Ionicons name="close" size={24} color="#000000" />
+            </TouchableOpacity>
+            <Text style={styles.webViewTitle}>PayPal Payment</Text>
+            <View style={{ width: 24 }} />
           </View>
-        </View>
+          
+          {payPalApprovalUrl && (
+            <WebView
+              source={{ uri: payPalApprovalUrl }}
+              onNavigationStateChange={handlePayPalWebViewNavigation}
+              startInLoadingState={true}
+              renderLoading={() => (
+                <View style={styles.webViewLoading}>
+                  <ActivityIndicator size="large" color="#3797EF" />
+                  <Text style={styles.webViewLoadingText}>Loading PayPal...</Text>
+                </View>
+              )}
+            />
+          )}
+        </SafeAreaView>
       </Modal>
 
       {/* Share Modal */}
@@ -1355,56 +1396,49 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
 
+  // WebView Modal
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  webViewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
+  },
+  webViewCloseButton: {
+    padding: 8,
+  },
+  webViewTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  webViewLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  webViewLoadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+
   // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
-  },
-  
-  // Payment Modal
-  paymentModal: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    paddingBottom: 34,
-  },
-  paymentModalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  paymentModalText: {
-    fontSize: 16,
-    color: '#666666',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  paymentModalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  paymentModalButton: {
-    flex: 1,
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  paymentModalButtonPrimary: {
-    backgroundColor: '#3797EF',
-  },
-  paymentModalButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666666',
-  },
-  paymentModalButtonTextPrimary: {
-    color: '#FFFFFF',
   },
 
   // Share Modal

@@ -67,6 +67,315 @@ router.put('/visibility', protect, async (req, res) => {
     return res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
+// ============================================
+// PAYMENT MANAGEMENT ROUTES
+// Add these to routes/profile.js around line 50
+// ============================================
+
+/**
+ * Get current user's payment methods
+ */
+router.get('/payment-methods', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('paymentAccounts earnings');
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const paymentAccounts = user.paymentAccounts || {};
+    
+    const paymentMethods = {
+      paypal: {
+        connected: !!paymentAccounts.paypal?.verified,
+        email: paymentAccounts.paypal?.email,
+        connectedAt: paymentAccounts.paypal?.connectedAt,
+        canEdit: true
+      },
+      stripe: {
+        connected: !!paymentAccounts.stripe?.chargesEnabled,
+        accountId: paymentAccounts.stripe?.accountId,
+        onboardingComplete: paymentAccounts.stripe?.onboardingComplete,
+        chargesEnabled: paymentAccounts.stripe?.chargesEnabled,
+        connectedAt: paymentAccounts.stripe?.connectedAt,
+        canEdit: false // Stripe requires going through their onboarding
+      },
+      primary: {
+        type: paymentAccounts.primary?.type,
+        canReceivePayments: user.canReceivePayments()
+      },
+      earnings: {
+        total: user.earnings?.totalEarned || 0,
+        available: user.earnings?.availableBalance || 0,
+        pending: user.earnings?.pendingBalance || 0,
+        currency: user.earnings?.currency || 'USD'
+      }
+    };
+
+    res.json({
+      success: true,
+      paymentMethods
+    });
+
+  } catch (error) {
+    console.error('❌ Get payment methods error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get payment methods',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Setup PayPal payments
+ */
+router.post('/setup-paypal', protect, async (req, res) => {
+  try {
+    const { paypalEmail } = req.body;
+    
+    // Validate input
+    if (!paypalEmail || !paypalEmail.includes('@')) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Valid PayPal email address is required' 
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Initialize payment accounts if not exists
+    if (!user.paymentAccounts) {
+      user.paymentAccounts = {};
+    }
+
+    // Set up PayPal account
+    user.paymentAccounts.paypal = {
+      email: paypalEmail.toLowerCase().trim(),
+      verified: true,
+      connectedAt: new Date(),
+      country: 'US'
+    };
+
+    // Set as primary if no primary method exists
+    if (!user.paymentAccounts.primary?.type) {
+      user.paymentAccounts.primary = {
+        type: 'paypal',
+        isVerified: true,
+        canReceivePayments: true,
+        lastUpdated: new Date()
+      };
+    }
+
+    await user.save();
+
+    console.log(`✅ PayPal setup successful for user ${req.user._id}`);
+    
+    res.json({
+      success: true,
+      message: 'PayPal account connected successfully',
+      provider: 'paypal',
+      accountEmail: paypalEmail
+    });
+
+  } catch (error) {
+    console.error('❌ PayPal setup error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to setup PayPal payments',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Update PayPal email address
+ */
+router.put('/paypal-email', protect, async (req, res) => {
+  try {
+    const { paypalEmail } = req.body;
+    
+    // Validate input
+    if (!paypalEmail || !paypalEmail.includes('@')) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Valid PayPal email address is required' 
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    if (!user.paymentAccounts?.paypal?.verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No PayPal account found. Please connect PayPal first.' 
+      });
+    }
+
+    const oldEmail = user.paymentAccounts.paypal.email;
+
+    // Update PayPal account
+    user.paymentAccounts.paypal.email = paypalEmail.toLowerCase().trim();
+    user.paymentAccounts.paypal.updatedAt = new Date();
+
+    await user.save();
+
+    console.log(`✅ PayPal email updated for user ${req.user._id}: ${oldEmail} -> ${paypalEmail}`);
+    
+    res.json({
+      success: true,
+      message: 'PayPal email updated successfully',
+      paypalEmail: paypalEmail
+    });
+
+  } catch (error) {
+    console.error('❌ Update PayPal email error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to update PayPal email',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Remove PayPal account
+ */
+router.delete('/paypal', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    if (!user.paymentAccounts?.paypal?.verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No PayPal account to remove' 
+      });
+    }
+
+    const removedEmail = user.paymentAccounts.paypal.email;
+
+    // Remove PayPal account
+    delete user.paymentAccounts.paypal;
+
+    // If PayPal was primary, switch to Stripe or clear primary
+    if (user.paymentAccounts.primary?.type === 'paypal') {
+      if (user.paymentAccounts.stripe?.chargesEnabled) {
+        user.paymentAccounts.primary = {
+          type: 'stripe',
+          isVerified: true,
+          canReceivePayments: true,
+          lastUpdated: new Date()
+        };
+      } else {
+        delete user.paymentAccounts.primary;
+      }
+    }
+
+    await user.save();
+
+    console.log(`✅ PayPal account removed for user ${req.user._id}: ${removedEmail}`);
+    
+    res.json({
+      success: true,
+      message: 'PayPal account removed successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Remove PayPal error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to remove PayPal account',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Set primary payment method
+ */
+router.put('/primary-payment', protect, async (req, res) => {
+  try {
+    const { provider } = req.body; // 'paypal' or 'stripe'
+    
+    if (!['paypal', 'stripe'].includes(provider)) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Provider must be either "paypal" or "stripe"' 
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const paymentAccounts = user.paymentAccounts || {};
+
+    // Validate that the requested provider is available
+    if (provider === 'paypal' && !paymentAccounts.paypal?.verified) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'PayPal account is not connected' 
+      });
+    }
+
+    if (provider === 'stripe' && !paymentAccounts.stripe?.chargesEnabled) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Stripe account is not properly configured' 
+      });
+    }
+
+    // Set as primary
+    user.paymentAccounts.primary = {
+      type: provider,
+      isVerified: true,
+      canReceivePayments: true,
+      lastUpdated: new Date()
+    };
+
+    await user.save();
+
+    console.log(`✅ Primary payment method set to ${provider} for user ${req.user._id}`);
+    res.json({
+      success: true,
+      message: `${provider === 'paypal' ? 'PayPal' : 'Stripe'} set as primary payment method`,
+      primaryProvider: provider
+    });
+
+  } catch (error) {
+    console.error('❌ Set primary payment error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to set primary payment method',
+      error: error.message 
+    });
+  }
+});
 
 // Update profile
 router.put('/', protect, async (req, res) => {

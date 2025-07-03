@@ -10,7 +10,9 @@ import {
   ScrollView,
   SafeAreaView,
   ActivityIndicator,
-  Dimensions
+  Dimensions,
+  Modal,
+  TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -27,10 +29,18 @@ export default function UserSettingsScreen({ navigation }) {
   const [selectedImages, setSelectedImages] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
+  
+  // Payment states
+  const [paymentMethods, setPaymentMethods] = useState({});
+  const [showPayPalModal, setShowPayPalModal] = useState(false);
+  const [paypalEmail, setPaypalEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   useEffect(() => {
     requestLibraryPermission();
     fetchSettings();
+    fetchPaymentMethods();
   }, []);
 
   const requestLibraryPermission = async () => {
@@ -54,6 +64,23 @@ export default function UserSettingsScreen({ navigation }) {
       Alert.alert('Error', 'Failed to load settings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPaymentMethods = async () => {
+    try {
+      const response = await api.get('/profile/payment-methods');
+      console.log('Payment methods response:', response.data);
+      setPaymentMethods(response.data.paymentMethods || {});
+      
+      // Set current PayPal email if exists
+      if (response.data.paymentMethods?.paypal?.email) {
+        setPaypalEmail(response.data.paymentMethods.paypal.email);
+      }
+    } catch (error) {
+      console.error('Error fetching payment methods:', error);
+      // Initialize empty payment methods if API fails
+      setPaymentMethods({});
     }
   };
 
@@ -118,6 +145,91 @@ export default function UserSettingsScreen({ navigation }) {
     }
   };
 
+  // Payment functions
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handlePayPalUpdate = async () => {
+    if (!validateEmail(paypalEmail)) {
+      setEmailError('Please enter a valid email address');
+      return;
+    }
+
+    try {
+      setPaymentLoading(true);
+      setEmailError('');
+
+      const isNewSetup = !paymentMethods.paypal?.connected;
+      const endpoint = isNewSetup ? '/profile/setup-paypal' : '/profile/paypal-email';
+      const method = isNewSetup ? 'POST' : 'PUT';
+
+      const response = await api.request({
+        method,
+        url: endpoint,
+        data: { paypalEmail: paypalEmail.trim() }
+      });
+
+      if (response.data.success) {
+        Alert.alert(
+          'Success!', 
+          isNewSetup ? 'PayPal account connected successfully!' : 'PayPal email updated successfully!',
+          [{ text: 'OK', onPress: () => setShowPayPalModal(false) }]
+        );
+        fetchPaymentMethods(); // Refresh data
+      }
+
+    } catch (error) {
+      console.error('PayPal update error:', error);
+      const message = error.response?.data?.message || 'Failed to update PayPal account';
+      Alert.alert('Error', message);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const handleRemovePayPal = () => {
+    Alert.alert(
+      'Remove PayPal Account',
+      'Are you sure you want to remove your PayPal account? You won\'t be able to receive payments until you add a new payment method.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Remove', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setPaymentLoading(true);
+              await api.delete('/profile/paypal');
+              Alert.alert('Success', 'PayPal account removed successfully');
+              fetchPaymentMethods();
+            } catch (error) {
+              console.error('Remove PayPal error:', error);
+              Alert.alert('Error', 'Failed to remove PayPal account');
+            } finally {
+              setPaymentLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleSetPrimary = async (provider) => {
+    try {
+      setPaymentLoading(true);
+      await api.put('/profile/primary-payment', { provider });
+      Alert.alert('Success', `${provider === 'paypal' ? 'PayPal' : 'Stripe'} is now your primary payment method`);
+      fetchPaymentMethods();
+    } catch (error) {
+      console.error('Set primary error:', error);
+      Alert.alert('Error', 'Failed to update primary payment method');
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     Alert.alert(
       'Logout',
@@ -150,6 +262,10 @@ export default function UserSettingsScreen({ navigation }) {
 
   const handleManageEvents = () => {
     navigation.navigate('SelectShareableEventsScreen');
+  };
+
+  const handlePaymentSettings = () => {
+    navigation.navigate('PaymentSettings');
   };
 
   const handlePrivacyPolicy = () => {
@@ -249,6 +365,107 @@ export default function UserSettingsScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Payments Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Payments</Text>
+          
+          {/* Payment Status Overview */}
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={handlePaymentSettings}
+            activeOpacity={0.8}
+          >
+            <View style={styles.menuItemLeft}>
+              <View style={[styles.menuIcon, { backgroundColor: '#FF9500' }]}>
+                <Ionicons name="card-outline" size={18} color="#FFFFFF" />
+              </View>
+              <View style={styles.paymentInfo}>
+                <Text style={styles.menuItemText}>Payment Methods</Text>
+                <Text style={styles.menuItemSubtext}>
+                  {paymentMethods.primary?.canReceivePayments 
+                    ? `Connected: ${paymentMethods.primary.type === 'paypal' ? 'PayPal' : 'Stripe'}`
+                    : 'Set up payment methods'
+                  }
+                </Text>
+              </View>
+            </View>
+            <View style={styles.paymentStatusRow}>
+              {paymentMethods.primary?.canReceivePayments ? (
+                <View style={styles.connectedBadge}>
+                  <Ionicons name="checkmark" size={16} color="#34C759" />
+                </View>
+              ) : (
+                <View style={styles.setupRequiredBadge}>
+                  <Ionicons name="alert-circle" size={16} color="#FF9500" />
+                </View>
+              )}
+              <Ionicons name="chevron-forward" size={18} color="#C7C7CC" />
+            </View>
+          </TouchableOpacity>
+
+          {/* Quick PayPal Setup (if not connected) */}
+          {!paymentMethods.paypal?.connected && (
+            <View style={styles.card}>
+              <View style={styles.quickSetupHeader}>
+                <Ionicons name="logo-paypal" size={24} color="#0070BA" />
+                <Text style={styles.quickSetupTitle}>Quick PayPal Setup</Text>
+              </View>
+              <Text style={styles.quickSetupDescription}>
+                Connect your PayPal email to start receiving payments in 30 seconds
+              </Text>
+              <TouchableOpacity
+                style={styles.quickSetupButton}
+                onPress={() => setShowPayPalModal(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add" size={16} color="#FFFFFF" />
+                <Text style={styles.quickSetupButtonText}>Connect PayPal</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Earnings Quick View (if user has earnings) */}
+          {paymentMethods.earnings?.total > 0 && (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={handlePaymentSettings}
+              activeOpacity={0.8}
+            >
+              <View style={styles.menuItemLeft}>
+                <View style={[styles.menuIcon, { backgroundColor: '#34C759' }]}>
+                  <Ionicons name="trending-up-outline" size={18} color="#FFFFFF" />
+                </View>
+                <View>
+                  <Text style={styles.menuItemText}>Earnings</Text>
+                  <Text style={styles.menuItemSubtext}>
+                    Total: ${(paymentMethods.earnings.total / 100).toFixed(2)}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#C7C7CC" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Events Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Events</Text>
+          
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={handleManageEvents}
+            activeOpacity={0.8}
+          >
+            <View style={styles.menuItemLeft}>
+              <View style={[styles.menuIcon, { backgroundColor: '#5856D6' }]}>
+                <Ionicons name="calendar-outline" size={18} color="#FFFFFF" />
+              </View>
+              <Text style={styles.menuItemText}>Manage Shared Events</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#C7C7CC" />
+          </TouchableOpacity>
+        </View>
+
         {/* Privacy Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Privacy</Text>
@@ -277,25 +494,6 @@ export default function UserSettingsScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Events Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Events</Text>
-          
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={handleManageEvents}
-            activeOpacity={0.8}
-          >
-            <View style={styles.menuItemLeft}>
-              <View style={[styles.menuIcon, { backgroundColor: '#FF9500' }]}>
-                <Ionicons name="calendar-outline" size={18} color="#FFFFFF" />
-              </View>
-              <Text style={styles.menuItemText}>Manage Shared Events</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#C7C7CC" />
-          </TouchableOpacity>
-        </View>
-
         {/* Support Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Support</Text>
@@ -307,7 +505,7 @@ export default function UserSettingsScreen({ navigation }) {
               activeOpacity={0.8}
             >
               <View style={styles.menuItemLeft}>
-                <View style={[styles.menuIcon, { backgroundColor: '#5856D6' }]}>
+                <View style={[styles.menuIcon, { backgroundColor: '#FF2D92' }]}>
                   <Ionicons name="help-circle-outline" size={18} color="#FFFFFF" />
                 </View>
                 <Text style={styles.menuItemText}>Help & Support</Text>
@@ -339,7 +537,7 @@ export default function UserSettingsScreen({ navigation }) {
               activeOpacity={0.8}
             >
               <View style={styles.menuItemLeft}>
-                <View style={[styles.menuIcon, { backgroundColor: '#FF2D92' }]}>
+                <View style={[styles.menuIcon, { backgroundColor: '#007AFF' }]}>
                   <Ionicons name="document-text-outline" size={18} color="#FFFFFF" />
                 </View>
                 <Text style={styles.menuItemText}>Terms of Service</Text>
@@ -366,6 +564,80 @@ export default function UserSettingsScreen({ navigation }) {
           <Text style={styles.versionText}>Version 1.0.0</Text>
         </View>
       </ScrollView>
+
+      {/* PayPal Setup/Edit Modal */}
+      <Modal
+        visible={showPayPalModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPayPalModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {paymentMethods.paypal?.connected ? 'Update PayPal Email' : 'Connect PayPal Account'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowPayPalModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              Enter your PayPal email address. Payments will be sent directly to this account.
+            </Text>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>PayPal Email</Text>
+              <TextInput
+                style={[styles.emailInput, emailError && styles.inputError]}
+                placeholder="your-email@example.com"
+                value={paypalEmail}
+                onChangeText={(text) => {
+                  setPaypalEmail(text);
+                  setEmailError('');
+                }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+              />
+              {emailError && (
+                <View style={styles.errorContainer}>
+                  <Ionicons name="alert-circle" size={16} color="#FF3B30" />
+                  <Text style={styles.errorText}>{emailError}</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setShowPayPalModal(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.saveButton, (!paypalEmail.trim() || paymentLoading) && styles.buttonDisabled]}
+                onPress={handlePayPalUpdate}
+                disabled={!paypalEmail.trim() || paymentLoading}
+              >
+                {paymentLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.saveButtonText}>
+                    {paymentMethods.paypal?.connected ? 'Update' : 'Connect'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -516,6 +788,66 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   
+  // Payment specific styles
+  paymentInfo: {
+    flex: 1,
+  },
+  paymentStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  connectedBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#F0F9F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  setupRequiredBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#FFF8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  
+  // Quick Setup Styles
+  quickSetupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  quickSetupTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginLeft: 8,
+  },
+  quickSetupDescription: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  quickSetupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0070BA',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  quickSetupButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  
   // Privacy Styles
   privacyRow: {
     flexDirection: 'row',
@@ -562,5 +894,109 @@ const styles = StyleSheet.create({
   versionText: {
     fontSize: 13,
     color: '#8E8E93',
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 34,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    flex: 1,
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalDescription: {
+    fontSize: 14,
+    color: '#8E8E93',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+
+  // Input Styles
+  inputContainer: {
+    marginBottom: 24,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 8,
+  },
+  emailInput: {
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  inputError: {
+    borderColor: '#FF3B30',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  errorText: {
+    marginLeft: 4,
+    fontSize: 14,
+    color: '#FF3B30',
+  },
+
+  // Modal Actions
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: '#3797EF',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });

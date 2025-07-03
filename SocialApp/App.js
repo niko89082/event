@@ -35,7 +35,7 @@ import EditMemoryScreen from './screens/EditMemoryScreen'; // NEW
 import MemoryParticipantsScreen from './screens/MemoryParticipantsScreen'; // NEW
 import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
-
+import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
@@ -91,7 +91,6 @@ function AppNavigator({ onLogout }) {
               component={MainTabNavigator}
               options={{ headerShown: false }}
             />
-            
             {/* Global Screens */}
             <RootStack.Screen 
               name="CreateMemoryScreen" 
@@ -188,6 +187,14 @@ function AppNavigator({ onLogout }) {
               name="EditMemoryScreen" 
               component={EditMemoryScreen}
               options={{ headerShown: true, title: 'Edit Memory' }}
+            />
+            <RootStack.Screen 
+              name="PaymentSettings" 
+              component={PaymentSettingsScreen}
+              options={{
+                headerTitle: 'Payment Settings',
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="MemoryParticipantsScreen" 
