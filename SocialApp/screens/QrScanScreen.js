@@ -1,407 +1,187 @@
-// // screens/QrScanScreen.js
-// import React, { useState } from 'react';
-// import { View, Text, Button, StyleSheet, TouchableOpacity, Image } from 'react-native';
-// import {
-//   CameraView,
-//   CameraType,
-//   useCameraPermissions
-// } from 'expo-camera'; // "expo-camera"
-// import api from '../services/api';
-// import { useRoute, useNavigation } from '@react-navigation/native';
+// File: SocialApp/screens/QrScanScreen.js
+// Enhanced QR Scanner with event check-in support
 
-// export default function QrScanScreen() {
-//   const route = useRoute();
-//   const navigation = useNavigation();
-
-//   // We'll expect route.params.eventId if scanning is for an event check-in
-//   const { eventId } = route.params || {};
-
-//   // Request camera permissions
-//   const [permission, requestPermission] = useCameraPermissions();
-//   // Which camera? front or back
-//   const [cameraType, setCameraType] = useState('back');
-
-//   // Whether scanning is active
-//   const [scanned, setScanned] = useState(false);
-//   const [scannedData, setScannedData] = useState('');
-
-//   // If you want to display checkin results (success/not_attendee)
-//   const [checkInResult, setCheckInResult] = useState(null);
-
-//   if (!permission) {
-//     // Permission is still loading
-//     return <View />;
-//   }
-
-//   if (!permission.granted) {
-//     // Permission not granted yet
-//     return (
-//       <View style={styles.permissionContainer}>
-//         <Text style={styles.permissionText}>We need your permission to use the camera</Text>
-//         <Button title="Grant Permission" onPress={requestPermission} />
-//       </View>
-//     );
-//   }
-
-//   // Flip camera front/back
-//   const toggleCameraFacing = () => {
-//     setCameraType((prev) => (prev === 'back' ? 'front' : 'back'));
-//   };
-
-//   // Called whenever the camera successfully scans a code
-//   // By default, it scans many barcodes, but we filter to "qr" with `barcodeScannerSettings`
-//   const handleBarcodeScanned = async (scanningResult) => {
-//     // scanningResult has shape: { data, type, ... }
-//     if (scanned) return; // If we've already scanned, ignore further scans
-
-//     setScanned(true);
-//     const { data: scannedUserId } = scanningResult;
-
-//     setScannedData(scannedUserId || '');
-
-//     // If we're doing event check-in logic:
-//     if (eventId) {
-//       try {
-//         // Suppose your endpoint is /events/:eventId/checkin
-//         const res = await api.post(`/events/${eventId}/checkin`, {
-//           scannedUserId,
-//         });
-//         setCheckInResult(res.data); // e.g. { status: 'success', user: {...} } or not_attendee
-//       } catch (err) {
-//         console.log('Check-in error =>', err.response?.data || err);
-//         setCheckInResult({
-//           status: 'error',
-//           message: err.response?.data?.message || 'Failed to check in user.',
-//         });
-//       }
-//     }
-//   };
-
-//   // For scanning again or closing popup
-//   const resetScan = () => {
-//     setScanned(false);
-//     setScannedData('');
-//     setCheckInResult(null);
-//   };
-
-//   // If user wants to override or add an attendee
-//   const handleOverride = async () => {
-//     if (!checkInResult?.user?._id || !eventId) return;
-//     try {
-//       // e.g. /events/:eventId/attend
-//       await api.post(`/events/${eventId}/attend`, {
-//         userId: checkInResult.user._id,
-//       });
-//       // Switch status to success
-//       setCheckInResult((prev) => ({
-//         ...prev,
-//         status: 'success',
-//       }));
-//     } catch (err) {
-//       console.log('Override error =>', err.response?.data || err);
-//     }
-//   };
-
-//   // Go to user profile if success
-//   const handleViewProfile = () => {
-//     if (checkInResult?.user?._id) {
-//       navigation.navigate('ProfileScreen', { userId: checkInResult.user._id });
-//     }
-//     resetScan();
-//   };
-
-//   // Render the final "Pop-up" or result info if we have checkInResult
-//   const renderCheckInPopup = () => {
-//     if (!checkInResult) return null;
-
-//     // If "success"
-//     if (checkInResult.status === 'success') {
-//       return (
-//         <View style={[styles.resultContainer, styles.successBg]}>
-//           <Text style={styles.resultText}>Checked In!</Text>
-//           {checkInResult.user?.profilePicture && (
-//             <Image
-//               source={{ uri: checkInResult.user.profilePicture }}
-//               style={styles.profilePic}
-//             />
-//           )}
-//           <Text style={styles.resultName}>{checkInResult.user?.username}</Text>
-//           <Button title="View Profile" onPress={handleViewProfile} />
-//           <Button title="Close" onPress={resetScan} />
-//         </View>
-//       );
-//     }
-
-//     // If "not_attendee"
-//     if (checkInResult.status === 'not_attendee') {
-//       return (
-//         <View style={[styles.resultContainer, styles.errorBg]}>
-//           <Text style={styles.resultText}>User not in Attendees</Text>
-//           {checkInResult.user?.profilePicture && (
-//             <Image
-//               source={{ uri: checkInResult.user.profilePicture }}
-//               style={styles.profilePic}
-//             />
-//           )}
-//           <Text style={styles.resultName}>{checkInResult.user?.username}</Text>
-//           <Text style={styles.resultText}>Allow them in anyway?</Text>
-//           <View style={styles.actionRow}>
-//             <Button title="Yes" onPress={handleOverride} />
-//             <Button title="No" onPress={resetScan} />
-//           </View>
-//         </View>
-//       );
-//     }
-
-//     // If "error"
-//     if (checkInResult.status === 'error') {
-//       return (
-//         <View style={[styles.resultContainer, styles.errorBg]}>
-//           <Text style={styles.resultText}>Error: {checkInResult.message}</Text>
-//           <Button title="Close" onPress={resetScan} />
-//         </View>
-//       );
-//     }
-
-//     return null;
-//   };
-
-//   // If we have scanned but no checkInResult => show scanned data
-//   if (scanned && !checkInResult && scannedData) {
-//     return (
-//       <View style={styles.container}>
-//         <Text style={styles.resultText}>Scanned: {scannedData}</Text>
-//         <Button title="Scan Again" onPress={resetScan} />
-//         <Button title="Go Back" onPress={() => navigation.goBack()} />
-//       </View>
-//     );
-//   }
-
-//   return (
-//     <View style={styles.container}>
-//       {/* The camera preview, only if we haven't scanned or we want to keep scanning */}
-//       {!scanned && !checkInResult && (
-//         <CameraView
-//           style={styles.camera}
-//           facing={cameraType} // 'front' or 'back'
-//           onBarcodeScanned={handleBarcodeScanned}
-//           // Only scan QR codes
-//           barcodeScannerSettings={{
-//             barcodeTypes: ['qr'],
-//           }}
-//         >
-//           <View style={styles.overlay}>
-//             <TouchableOpacity style={styles.flipButton} onPress={toggleCameraFacing}>
-//               <Text style={styles.flipText}>Flip Camera</Text>
-//             </TouchableOpacity>
-//           </View>
-//         </CameraView>
-//       )}
-
-//       {/* Render pop-up if we have checkInResult (success, not_attendee, or error) */}
-//       {renderCheckInPopup()}
-//     </View>
-//   );
-// }
-
-// const styles = StyleSheet.create({
-//   container: { flex: 1, backgroundColor: '#000' },
-//   permissionContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-//   permissionText: { marginBottom: 12, textAlign: 'center' },
-
-//   camera: { flex: 1 },
-//   overlay: {
-//     flex: 1,
-//     backgroundColor: 'transparent',
-//     justifyContent: 'flex-end',
-//     margin: 20,
-//   },
-//   flipButton: {
-//     alignSelf: 'flex-end',
-//     backgroundColor: 'rgba(0,0,0,0.3)',
-//     padding: 10,
-//     borderRadius: 8,
-//   },
-//   flipText: {
-//     color: '#fff',
-//     fontSize: 16,
-//   },
-
-//   // CheckIn result container popup
-//   resultContainer: {
-//     position: 'absolute',
-//     top: '25%',
-//     left: '10%',
-//     right: '10%',
-//     padding: 16,
-//     borderRadius: 10,
-//     alignItems: 'center',
-//     zIndex: 999,
-//   },
-//   successBg: {
-//     backgroundColor: 'rgba(0, 200, 0, 0.9)',
-//   },
-//   errorBg: {
-//     backgroundColor: 'rgba(200, 0, 0, 0.9)',
-//   },
-//   resultText: {
-//     fontSize: 18,
-//     color: '#fff',
-//     marginBottom: 12,
-//     textAlign: 'center',
-//   },
-//   resultName: {
-//     fontSize: 16,
-//     color: '#fff',
-//     marginBottom: 12,
-//   },
-//   profilePic: {
-//     width: 80, height: 80,
-//     borderRadius: 40,
-//     marginBottom: 12,
-//   },
-//   actionRow: {
-//     flexDirection: 'row',
-//     justifyContent: 'space-between',
-//     width: '60%',
-//     marginTop: 10,
-//   },
-// });
-
-// screens/QrScanScreen.js - Optimized QR Scanner
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert,
-  SafeAreaView, StatusBar, Dimensions, Animated,
-  Platform, Vibration
+  View, Text, StyleSheet, TouchableOpacity, Alert, Modal,
+  SafeAreaView, StatusBar, Vibration, Image, Animated
 } from 'react-native';
-import { Camera } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useNavigation } from '@react-navigation/native';
-import api from '../services/api';
+import { useRoute, useNavigation } from '@react-navigation/native';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+import api from '../services/api';
+import { AuthContext } from '../services/AuthContext';
+import { API_BASE_URL } from '@env';
 
 export default function QrScanScreen() {
+  const route = useRoute();
   const navigation = useNavigation();
-  const [hasPermission, setHasPermission] = useState(null);
-  const [scanned, setScanned] = useState(false);
-  const [isFlashOn, setIsFlashOn] = useState(false);
-  const [scanningActive, setScanningActive] = useState(true);
+  const { currentUser } = useContext(AuthContext);
   
-  // Animation values
-  const scanLineAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  // Route params - eventId indicates this is for event check-in
+  const { eventId, eventTitle } = route.params || {};
+  const isEventCheckin = !!eventId;
+
+  // Camera state
+  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraFacing, setCameraFacing] = useState('back');
+  const [isFlashOn, setIsFlashOn] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [scanningActive, setScanningActive] = useState(true);
+
+  // Animation
+  const [scanAnimation] = useState(new Animated.Value(0));
+
+  // Check-in state
+  const [checkinResult, setCheckinResult] = useState(null);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [pendingUser, setPendingUser] = useState(null);
 
   useEffect(() => {
-    navigation.setOptions({
-      headerShown: false,
-    });
-    
-    getCameraPermissions();
-    startAnimations();
-    
-    // Fade in the interface
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
+    startScanAnimation();
   }, []);
 
-  const getCameraPermissions = async () => {
-    const { status } = await Camera.requestCameraPermissionsAsync();
-    setHasPermission(status === 'granted');
-  };
-
-  const startAnimations = () => {
-    // Scanning line animation
-    const scanAnimation = Animated.loop(
+  const startScanAnimation = () => {
+    Animated.loop(
       Animated.sequence([
-        Animated.timing(scanLineAnim, {
+        Animated.timing(scanAnimation, {
           toValue: 1,
           duration: 2000,
           useNativeDriver: true,
         }),
-        Animated.timing(scanLineAnim, {
+        Animated.timing(scanAnimation, {
           toValue: 0,
           duration: 2000,
           useNativeDriver: true,
         }),
       ])
-    );
-
-    // Pulse animation for corners
-    const pulseAnimation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-
-    scanAnimation.start();
-    pulseAnimation.start();
+    ).start();
   };
 
-  const handleBarCodeScanned = async ({ type, data }) => {
+  const handleBarcodeScanned = ({ data }) => {
     if (scanned || !scanningActive) return;
 
     setScanned(true);
     setScanningActive(false);
-    
-    // Haptic feedback
-    if (Platform.OS === 'ios') {
-      Vibration.vibrate();
+    Vibration.vibrate(100);
+
+    console.log('📱 QR Code scanned:', data.substring(0, 20) + '...');
+
+    if (isEventCheckin) {
+      handleEventCheckin(data);
     } else {
-      Vibration.vibrate(100);
+      handleUserProfileScan(data);
     }
+  };
 
+  const handleEventCheckin = async (qrData) => {
     try {
-      let qrData;
+      console.log('🎉 Processing event check-in for:', eventId);
       
-      // Try to parse as JSON first
-      try {
-        qrData = JSON.parse(data);
-      } catch {
-        // If not JSON, treat as direct share code
-        qrData = data;
-      }
+      const response = await api.post(`/api/events/${eventId}/checkin`, {
+        qrCode: qrData,
+        confirmEntry: false
+      });
 
-      // Call the optimized scan API
+      console.log('✅ Check-in response:', response.data);
+
+      if (response.data.success) {
+        // Success - show confirmation
+        setCheckinResult(response.data);
+        showSuccessAlert(response.data);
+      } else if (response.data.status === 'requires_confirmation') {
+        // Show host confirmation dialog
+        setPendingUser(response.data.user);
+        setShowConfirmation(true);
+      } else if (response.data.status === 'already_checked_in') {
+        // Already checked in
+        showAlreadyCheckedInAlert(response.data.user);
+      } else {
+        // Other errors
+        showErrorAlert(response.data.message);
+      }
+    } catch (error) {
+      console.error('❌ Check-in error:', error);
+      const errorMessage = error.response?.data?.message || 'Check-in failed. Please try again.';
+      showErrorAlert(errorMessage);
+    }
+  };
+
+  const confirmNonAttendeeEntry = async () => {
+    try {
+      const response = await api.post(`/api/events/${eventId}/checkin`, {
+        qrCode: pendingUser.shareCode || 'unknown',
+        confirmEntry: true
+      });
+
+      setShowConfirmation(false);
+      setPendingUser(null);
+
+      if (response.data.success) {
+        showSuccessAlert(response.data);
+      } else {
+        showErrorAlert(response.data.message);
+      }
+    } catch (error) {
+      console.error('❌ Confirm entry error:', error);
+      showErrorAlert('Failed to confirm entry. Please try again.');
+    }
+  };
+
+  const showSuccessAlert = (data) => {
+    const isGuest = data.status === 'guest_checked_in';
+    const name = isGuest ? data.guestPass.guestName : data.user.username;
+    const wasAdded = data.wasAdded ? ' (Added to attendees)' : '';
+    
+    Alert.alert(
+      '✅ Check-in Successful!',
+      `${name} has been checked in${wasAdded}`,
+      [
+        { text: 'Scan Another', onPress: resetScanner },
+        { text: 'Done', onPress: () => navigation.goBack() }
+      ]
+    );
+  };
+
+  const showAlreadyCheckedInAlert = (user) => {
+    Alert.alert(
+      '⚠️ Already Checked In',
+      `${user.username} is already checked in to this event.`,
+      [
+        { text: 'Scan Another', onPress: resetScanner },
+        { text: 'Done', onPress: () => navigation.goBack() }
+      ]
+    );
+  };
+
+  const showErrorAlert = (message) => {
+    Alert.alert(
+      '❌ Check-in Error',
+      message,
+      [
+        { text: 'Try Again', onPress: resetScanner },
+        { text: 'Cancel', onPress: () => navigation.goBack() }
+      ]
+    );
+  };
+
+  const handleUserProfileScan = async (qrData) => {
+    try {
       const response = await api.post('/api/qr/scan', {
         qrData: qrData
       });
 
       if (response.data.success) {
         const user = response.data.user;
-        
         Alert.alert(
-          'User Found!',
-          `Connect with ${user.username}?`,
+          '👤 User Found',
+          `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
           [
+            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
             {
-              text: 'Cancel',
-              style: 'cancel',
-              onPress: () => resetScanner(),
-            },
-            {
-              text: 'View Profile',
-              onPress: () => {
-                navigation.navigate('ProfileScreen', { userId: user._id });
-              },
-            },
-            {
-              text: user.isFollowing ? 'Already Following' : 'Follow',
+              text: user.isFollowing ? 'View Profile' : 'Follow',
               onPress: user.isFollowing ? 
                 () => navigation.navigate('ProfileScreen', { userId: user._id }) :
                 () => handleQuickFollow(qrData),
@@ -410,234 +190,241 @@ export default function QrScanScreen() {
           ]
         );
       } else {
-        Alert.alert(
-          'Invalid QR Code',
-          response.data.message || 'This QR code is not recognized.',
-          [{ text: 'Try Again', onPress: resetScanner }]
-        );
+        showErrorAlert(response.data.message || 'User not found');
       }
     } catch (error) {
-      console.error('QR scan error:', error);
-      
-      let errorMessage = 'Unable to process this QR code. Please try again.';
-      if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      }
-      
-      Alert.alert(
-        'Scan Error',
-        errorMessage,
-        [{ text: 'Try Again', onPress: resetScanner }]
-      );
+      console.error('❌ Profile scan error:', error);
+      showErrorAlert('Unable to process QR code. Please try again.');
     }
   };
 
   const handleQuickFollow = async (qrData) => {
     try {
-      let shareCode;
-      
-      if (typeof qrData === 'string') {
-        shareCode = qrData;
-      } else if (qrData && qrData.shareCode) {
-        shareCode = qrData.shareCode;
-      }
-
       const response = await api.post('/api/qr/quick-follow', {
-        shareCode: shareCode
+        shareCode: qrData
       });
 
       if (response.data.success) {
-        const action = response.data.action;
-        const message = action === 'followed' 
+        const message = response.data.action === 'followed' 
           ? 'You are now following this user!'
           : 'Follow request sent successfully!';
 
-        Alert.alert(
-          'Success!',
-          message,
-          [
-            {
-              text: 'View Profile',
-              onPress: () => {
-                // We need to get the user ID from the scan response
-                // Let's navigate back and let them manually navigate
-                navigation.goBack();
-              },
-            },
-            {
-              text: 'OK',
-              onPress: () => navigation.goBack(),
-            },
-          ]
-        );
+        Alert.alert('Success!', message, [
+          { text: 'OK', onPress: () => navigation.goBack() }
+        ]);
       }
     } catch (error) {
-      console.error('Quick follow error:', error);
-      Alert.alert(
-        'Follow Error',
-        error.response?.data?.message || 'Unable to follow this user. Please try again.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
+      console.error('❌ Quick follow error:', error);
+      showErrorAlert('Unable to follow user. Please try again.');
     }
   };
 
   const resetScanner = () => {
     setScanned(false);
     setScanningActive(true);
+    setCheckinResult(null);
+    setShowConfirmation(false);
+    setPendingUser(null);
+  };
+
+  const toggleCameraFacing = () => {
+    setCameraFacing(current => current === 'back' ? 'front' : 'back');
   };
 
   const toggleFlash = () => {
     setIsFlashOn(!isFlashOn);
   };
 
-  const renderPermissionRequest = () => (
-    <View style={styles.permissionContainer}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={styles.permissionBackground}
-      >
-        <View style={styles.permissionContent}>
-          <Ionicons name="camera-outline" size={80} color="#FFFFFF" />
-          <Text style={styles.permissionTitle}>Camera Access Required</Text>
-          <Text style={styles.permissionSubtitle}>
-            We need access to your camera to scan QR codes and connect with other users.
-          </Text>
-          <TouchableOpacity
-            style={styles.permissionButton}
-            onPress={getCameraPermissions}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.permissionButtonText}>Grant Permission</Text>
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
-    </View>
-  );
-
-  const renderHeader = () => (
-    <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
-      <TouchableOpacity
-        onPress={() => navigation.goBack()}
-        style={styles.headerButton}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-      </TouchableOpacity>
-      
-      <Text style={styles.headerTitle}>Scan QR Code</Text>
-      
-      <TouchableOpacity
-        onPress={toggleFlash}
-        style={[styles.headerButton, isFlashOn && styles.flashActive]}
-        activeOpacity={0.8}
-      >
-        <Ionicons 
-          name={isFlashOn ? "flash" : "flash-off"} 
-          size={24} 
-          color="#FFFFFF" 
-        />
-      </TouchableOpacity>
-    </Animated.View>
-  );
-
-  const renderScanningOverlay = () => (
-    <Animated.View style={[styles.overlay, { opacity: fadeAnim }]}>
-      {/* Top overlay */}
-      <View style={styles.overlayTop}>
-        <Text style={styles.instructionText}>
-          Position the QR code within the frame
-        </Text>
-      </View>
-
-      {/* Middle section with scanning frame */}
-      <View style={styles.overlayMiddle}>
-        <View style={styles.overlayLeft} />
-        
-        <View style={styles.scanFrame}>
-          {/* Corner indicators */}
-          <Animated.View style={[styles.cornerContainer, { transform: [{ scale: pulseAnim }] }]}>
-            <View style={[styles.corner, styles.topLeft]} />
-            <View style={[styles.corner, styles.topRight]} />
-            <View style={[styles.corner, styles.bottomLeft]} />
-            <View style={[styles.corner, styles.bottomRight]} />
-          </Animated.View>
-
-          {/* Scanning line */}
-          <Animated.View
-            style={[
-              styles.scanLine,
-              {
-                transform: [
-                  {
-                    translateY: scanLineAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, 200],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          />
-        </View>
-        
-        <View style={styles.overlayRight} />
-      </View>
-
-      {/* Bottom overlay */}
-      <View style={styles.overlayBottom}>
-        <View style={styles.bottomActions}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('QrScreen')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="qr-code-outline" size={24} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>My QR</Text>
-          </TouchableOpacity>
-
-          {scanned && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={resetScanner}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh-outline" size={24} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>Scan Again</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <Text style={styles.helpText}>
-          Point your camera at a QR code to scan it
-        </Text>
-      </View>
-    </Animated.View>
-  );
-
-  if (hasPermission === null) {
+  if (!permission) {
     return <View style={styles.container} />;
   }
 
-  if (hasPermission === false) {
-    return renderPermissionRequest();
+  if (!permission.granted) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <LinearGradient
+          colors={['#667eea', '#764ba2']}
+          style={styles.permissionContainer}
+        >
+          <View style={styles.permissionContent}>
+            <Ionicons name="camera-outline" size={80} color="#FFFFFF" />
+            <Text style={styles.permissionTitle}>Camera Access Required</Text>
+            <Text style={styles.permissionSubtitle}>
+              {isEventCheckin 
+                ? 'We need camera access to scan attendee QR codes for check-in.'
+                : 'We need camera access to scan QR codes and connect with other users.'
+              }
+            </Text>
+            <TouchableOpacity
+              style={styles.permissionButton}
+              onPress={requestPermission}
+            >
+              <Text style={styles.permissionButtonText}>Grant Permission</Text>
+            </TouchableOpacity>
+          </View>
+        </LinearGradient>
+      </SafeAreaView>
+    );
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" backgroundColor="#000000" />
       
-      <Camera
-        style={styles.camera}
-        type={Camera.Constants.Type.back}
-        flashMode={isFlashOn ? Camera.Constants.FlashMode.torch : Camera.Constants.FlashMode.off}
-        onBarCodeScanned={scanningActive ? handleBarCodeScanned : undefined}
-        barCodeScannerSettings={{
-          barCodeTypes: ['qr'],
-        }}
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="chevron-back" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+        
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>
+            {isEventCheckin ? 'Event Check-in' : 'Scan QR Code'}
+          </Text>
+          {isEventCheckin && eventTitle && (
+            <Text style={styles.headerSubtitle}>{eventTitle}</Text>
+          )}
+        </View>
+        
+        <TouchableOpacity
+          style={styles.flashButton}
+          onPress={toggleFlash}
+        >
+          <Ionicons 
+            name={isFlashOn ? "flash" : "flash-off"} 
+            size={24} 
+            color={isFlashOn ? "#FFD700" : "#FFFFFF"} 
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* Camera View */}
+      <View style={styles.cameraContainer}>
+        <CameraView
+          style={styles.camera}
+          facing={cameraFacing}
+          onBarcodeScanned={scanningActive ? handleBarcodeScanned : undefined}
+          barcodeScannerSettings={{
+            barcodeTypes: ['qr'],
+          }}
+          flash={isFlashOn ? 'on' : 'off'}
+        >
+          {/* Scan Overlay */}
+          <View style={styles.scanOverlay}>
+            <View style={styles.scanFrame}>
+              <Animated.View
+                style={[
+                  styles.scanLine,
+                  {
+                    transform: [
+                      {
+                        translateY: scanAnimation.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, 200],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              />
+            </View>
+            
+            {/* Instructions */}
+            <View style={styles.instructionsContainer}>
+              <Text style={styles.instructionsText}>
+                {isEventCheckin 
+                  ? 'Scan attendee QR codes to check them in'
+                  : 'Point your camera at a QR code to scan'
+                }
+              </Text>
+            </View>
+          </View>
+        </CameraView>
+      </View>
+
+      {/* Bottom Controls */}
+      <View style={styles.bottomControls}>
+        <TouchableOpacity
+          style={styles.flipButton}
+          onPress={toggleCameraFacing}
+        >
+          <Ionicons name="camera-reverse" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+        
+        {isEventCheckin && (
+          <TouchableOpacity
+            style={styles.manualButton}
+            onPress={() => {
+              // Navigate to attendee list for manual check-in
+              navigation.replace('AttendeeListScreen', { eventId });
+            }}
+          >
+            <Ionicons name="list" size={24} color="#FFFFFF" />
+            <Text style={styles.manualButtonText}>Manual</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Confirmation Modal */}
+      <Modal
+        visible={showConfirmation}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowConfirmation(false)}
       >
-        {renderHeader()}
-        {renderScanningOverlay()}
-      </Camera>
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmationModal}>
+            <View style={styles.confirmationHeader}>
+              <Ionicons name="person-add" size={40} color="#FF9500" />
+              <Text style={styles.confirmationTitle}>Not Registered</Text>
+            </View>
+            
+            {pendingUser && (
+              <View style={styles.userInfo}>
+                <Image
+                  source={{
+                    uri: pendingUser.profilePicture
+                      ? `http://${API_BASE_URL}:3000${pendingUser.profilePicture}`
+                      : 'https://placehold.co/60x60.png?text=👤'
+                  }}
+                  style={styles.userAvatar}
+                />
+                <Text style={styles.userName}>{pendingUser.username}</Text>
+                {pendingUser.bio && (
+                  <Text style={styles.userBio}>{pendingUser.bio}</Text>
+                )}
+              </View>
+            )}
+            
+            <Text style={styles.confirmationMessage}>
+              This person is not registered for the event. Allow them to enter?
+            </Text>
+            
+            <View style={styles.confirmationButtons}>
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.rejectButton]}
+                onPress={() => {
+                  setShowConfirmation(false);
+                  setPendingUser(null);
+                  resetScanner();
+                }}
+              >
+                <Text style={styles.rejectButtonText}>Reject</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.allowButton]}
+                onPress={confirmNonAttendeeEntry}
+              >
+                <Text style={styles.allowButtonText}>Allow Entry</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -647,17 +434,111 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
-  
-  // Camera
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 20,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerContent: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  headerSubtitle: {
+    color: '#CCCCCC',
+    fontSize: 14,
+    marginTop: 2,
+  },
+  flashButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraContainer: {
+    flex: 1,
+  },
   camera: {
     flex: 1,
   },
-
-  // Permission Request
-  permissionContainer: {
+  scanOverlay: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  permissionBackground: {
+  scanFrame: {
+    width: 250,
+    height: 250,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    borderRadius: 20,
+    backgroundColor: 'transparent',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  scanLine: {
+    width: '100%',
+    height: 2,
+    backgroundColor: '#00FF00',
+    position: 'absolute',
+    top: 0,
+  },
+  instructionsContainer: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+  },
+  instructionsText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  bottomControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 30,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+  },
+  flipButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  manualButton: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  manualButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  permissionContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -667,185 +548,171 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   permissionTitle: {
-    fontSize: 24,
-    fontWeight: '700',
     color: '#FFFFFF',
-    marginTop: 24,
-    marginBottom: 16,
+    fontSize: 24,
+    fontWeight: '600',
+    marginTop: 20,
     textAlign: 'center',
   },
   permissionSubtitle: {
+    color: '#CCCCCC',
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.8)',
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 32,
+    marginTop: 10,
+    lineHeight: 24,
   },
   permissionButton: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 32,
-    paddingVertical: 16,
-    borderRadius: 16,
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 25,
+    marginTop: 30,
   },
   permissionButtonText: {
+    color: '#667eea',
     fontSize: 16,
     fontWeight: '600',
-    color: '#667eea',
   },
-
-  // Header
-  header: {
-    flexDirection: 'row',
+  modalOverlay: {
+  flex: 1,
+  justifyContent: 'center',
+  alignItems: 'center',
+  backgroundColor: 'rgba(0,0,0,0.8)', // Darker background to compensate for no blur
+},
+  confirmationModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 30,
+    margin: 20,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
-    paddingBottom: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    minWidth: 300,
   },
-  headerButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
+  confirmationHeader: {
     alignItems: 'center',
-  },
-  flashActive: {
-    backgroundColor: 'rgba(255, 193, 7, 0.3)',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-
-  // Overlay
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  overlayTop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    paddingBottom: 20,
-  },
-  overlayMiddle: {
-    flexDirection: 'row',
-    height: 250,
-  },
-  overlayLeft: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-  },
-  overlayRight: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-  },
-  overlayBottom: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'flex-start',
-    alignItems: 'center',
-    paddingTop: 30,
-  },
-
-  // Instruction Text
-  instructionText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-
-  // Scan Frame
-  scanFrame: {
-    width: 250,
-    height: 250,
-    position: 'relative',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cornerContainer: {
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-  },
-  corner: {
-    position: 'absolute',
-    width: 30,
-    height: 30,
-    borderColor: '#00FF88',
-    borderWidth: 4,
-  },
-  topLeft: {
-    top: 0,
-    left: 0,
-    borderRightWidth: 0,
-    borderBottomWidth: 0,
-  },
-  topRight: {
-    top: 0,
-    right: 0,
-    borderLeftWidth: 0,
-    borderBottomWidth: 0,
-  },
-  bottomLeft: {
-    bottom: 0,
-    left: 0,
-    borderRightWidth: 0,
-    borderTopWidth: 0,
-  },
-  bottomRight: {
-    bottom: 0,
-    right: 0,
-    borderLeftWidth: 0,
-    borderTopWidth: 0,
-  },
-
-  // Scan Line
-  scanLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: '#00FF88',
-    shadowColor: '#00FF88',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 4,
-  },
-
-  // Bottom Actions
-  bottomActions: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 40,
     marginBottom: 20,
   },
-  actionButton: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    minWidth: 80,
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+  confirmationTitle: {
+    fontSize: 20,
     fontWeight: '600',
-    marginTop: 4,
+    color: '#333333',
+    marginTop: 10,
   },
-  helpText: {
+  userInfo: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  userAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    marginBottom: 10,
+  },
+  userName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333333',
+  },
+  userBio: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: '#666666',
+    textAlign: 'center',
+    marginTop: 5,
+  },
+  confirmationMessage: {
+    fontSize: 16,
+    color: '#333333',
+    textAlign: 'center',
+    marginBottom: 30,
+    lineHeight: 22,
+  },
+  confirmationButtons: {
+    flexDirection: 'row',
+    gap: 15,
+  },
+  confirmButton: {
+    paddingHorizontal: 25,
+    paddingVertical: 12,
+    borderRadius: 25,
+    minWidth: 100,
+  },
+  rejectButton: {
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#DDDDDD',
+  },
+  allowButton: {
+    backgroundColor: '#34C759',
+  },
+  rejectButtonText: {
+    color: '#333333',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  allowButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
     textAlign: 'center',
   },
 });
+
+// // =============================================================================
+// // File: SocialApp/screens/EventDetailsScreen.js
+// // Add QR Scanner button for hosts
+// // =============================================================================
+
+// // Find the host actions section and add this button after the existing host controls
+
+// // Add this import at the top
+// import { Ionicons } from '@expo/vector-icons';
+
+// // Add this function inside the EventDetailsScreen component
+// const handleOpenScanner = () => {
+//   navigation.navigate('QrScanScreen', { 
+//     eventId: eventId,
+//     eventTitle: event.title 
+//   });
+// };
+
+// // Add this button in the host actions section (around line 600-700 in the existing JSX)
+// // Look for where other host buttons are rendered and add:
+
+// {/* QR Scanner Button for Check-in */}
+// {(isHost || isCoHost) && !isPast && (
+//   <TouchableOpacity
+//     style={styles.actionButton}
+//     onPress={handleOpenScanner}
+//     activeOpacity={0.8}
+//   >
+//     <LinearGradient
+//       colors={['#667eea', '#764ba2']}
+//       style={styles.gradientButton}
+//     >
+//       <Ionicons name="qr-code-outline" size={20} color="#FFFFFF" />
+//       <Text style={styles.actionButtonText}>Check-in Scanner</Text>
+//     </LinearGradient>
+//   </TouchableOpacity>
+// )}
+
+// // Add these styles to the existing StyleSheet
+// const additionalStyles = StyleSheet.create({
+//   actionButton: {
+//     marginVertical: 8,
+//     borderRadius: 12,
+//     overflow: 'hidden',
+//   },
+//   gradientButton: {
+//     flexDirection: 'row',
+//     alignItems: 'center',
+//     justifyContent: 'center',
+//     paddingVertical: 14,
+//     paddingHorizontal: 20,
+//     gap: 8,
+//   },
+//   actionButtonText: {
+//     color: '#FFFFFF',
+//     fontSize: 16,
+//     fontWeight: '600',
+//   },
+// });

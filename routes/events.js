@@ -2236,80 +2236,229 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
 router.post('/:eventId/checkin', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { scannedUserId, userId, manualCheckIn } = req.body;
+    const { qrCode, scannedUserId, userId, confirmEntry, manualCheckIn } = req.body;
+    
+    console.log('🔍 Check-in request:', { eventId, qrCode: !!qrCode, scannedUserId, userId, confirmEntry, manualCheckIn });
 
+    // Get event with necessary populations
     const event = await Event.findById(eventId)
+      .populate('host', 'username profilePicture')
+      .populate('coHosts', 'username profilePicture')
       .populate('attendees', '_id username profilePicture')
       .populate('checkedIn', '_id username profilePicture');
 
     if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
     }
 
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts.some(
-      (c) => String(c) === String(req.user._id)
+    // Verify host permissions
+    const isHost = String(event.host._id) === String(req.user._id);
+    const isCoHost = event.coHosts.some(coHost => 
+      String(coHost._id) === String(req.user._id)
     );
+    
     if (!isHost && !isCoHost) {
-      return res.status(401).json({
-        message: 'User not authorized to check in attendees',
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can check in attendees' 
       });
     }
 
-    const targetUserId = scannedUserId || userId;
-    if (!targetUserId) {
-      return res.status(400).json({ message: 'No user ID provided for check-in' });
+    let targetUser = null;
+    let guestPass = null;
+    let targetUserId = scannedUserId || userId;
+
+    // Handle QR code scanning
+    if (qrCode) {
+      console.log('🔍 Processing QR code:', qrCode.substring(0, 20) + '...');
+      
+      // Try to find registered user first by shareCode
+      targetUser = await User.findOne({ shareCode: qrCode })
+        .select('_id username profilePicture bio');
+      
+      if (targetUser) {
+        console.log('✅ Found registered user:', targetUser.username);
+        targetUserId = targetUser._id;
+      } else {
+        // Try to find guest pass
+        console.log('🔍 Looking for guest pass...');
+        const GuestPass = require('../models/GuestPass');
+        guestPass = await GuestPass.findOne({ 
+          'qrData.code': qrCode,
+          event: eventId
+        });
+        
+        if (guestPass) {
+          console.log('✅ Found guest pass:', guestPass.guestName);
+          // Handle guest pass check-in
+          return await handleGuestPassCheckin(guestPass, req.user._id, res);
+        }
+      }
+      
+      if (!targetUser && !guestPass) {
+        console.log('❌ No user or guest pass found for QR code');
+        return res.status(404).json({ 
+          success: false, 
+          message: 'QR code not recognized. Please try again.' 
+        });
+      }
     }
 
-    const user = await User.findById(targetUserId).select('username profilePicture');
-    if (!user) {
-      return res.status(404).json({ message: 'User not found in system' });
+    // Handle manual check-in by user ID
+    if (targetUserId && !targetUser) {
+      targetUser = await User.findById(targetUserId)
+        .select('_id username profilePicture bio');
+      
+      if (!targetUser) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
     }
 
-    const isAttendee = event.attendees.some((a) => a._id.equals(targetUserId));
-    if (!isAttendee) {
-      return res.json({
-        status: 'not_attendee',
-        user: {
-          _id: user._id,
-          username: user.username,
-          profilePicture: user.profilePicture || null,
-        },
+    if (!targetUser) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No user specified for check-in' 
       });
     }
 
-    const isAlreadyCheckedIn = event.checkedIn.some((id) =>
-      String(id) === String(targetUserId)
-    );
-    if (isAlreadyCheckedIn) {
-      return res.json({
-        status: 'already_checked_in',
-        user: {
-          _id: user._id,
-          username: user.username,
-          profilePicture: user.profilePicture || null,
-        },
-      });
-    }
+    // Handle registered user check-in
+    return await handleUserCheckin(event, targetUser, confirmEntry, manualCheckIn, res);
 
-    event.checkedIn.push(targetUserId);
-    await event.save();
-
-    return res.json({
-      status: 'success',
-      user: {
-        _id: user._id,
-        username: user.username,
-        profilePicture: user.profilePicture || null,
-      },
-      manualCheckIn: manualCheckIn || false
+  } catch (error) {
+    console.error('❌ Check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error during check-in',
+      error: error.message 
     });
-  } catch (err) {
-    console.error('Check-in error:', err);
-    return res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
+// Helper function for user check-in
+async function handleUserCheckin(event, user, confirmEntry, manualCheckIn, res) {
+  try {
+    const isAttendee = event.attendees.some(attendee => 
+      String(attendee._id) === String(user._id)
+    );
+    
+    // Check if already checked in
+    const alreadyCheckedIn = event.checkedIn.some(checkedUser => 
+      String(checkedUser._id) === String(user._id)
+    );
+    
+    if (alreadyCheckedIn) {
+      return res.json({
+        success: false,
+        status: 'already_checked_in',
+        message: 'User is already checked in',
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture
+        }
+      });
+    }
+    
+    // If not an attendee, require host confirmation unless already confirmed
+    if (!isAttendee && !confirmEntry) {
+      return res.json({
+        success: false,
+        status: 'requires_confirmation',
+        message: 'User is not registered for this event. Allow entry?',
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture,
+          bio: user.bio
+        }
+      });
+    }
+    
+    // Add to attendees if not already there and host confirmed
+    if (!isAttendee && confirmEntry) {
+      event.attendees.push(user._id);
+      console.log('➕ Added non-attendee to attendees list');
+    }
+    
+    // Check in the user
+    event.checkedIn.push(user._id);
+    await event.save();
+    
+    console.log('✅ User checked in successfully:', user.username);
+    
+    return res.json({
+      success: true,
+      status: 'checked_in',
+      message: `${user.username} checked in successfully`,
+      user: {
+        _id: user._id,
+        username: user.username,
+        profilePicture: user.profilePicture
+      },
+      wasAdded: !isAttendee,
+      manualCheckIn: manualCheckIn || false
+    });
+    
+  } catch (error) {
+    console.error('❌ User check-in error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check in user',
+      error: error.message
+    });
+  }
+}
+
+// Helper function for guest pass check-in
+async function handleGuestPassCheckin(guestPass, scannedById, res) {
+  try {
+    // Validate guest pass
+    if (!guestPass.isValid()) {
+      return res.json({
+        success: false,
+        status: 'invalid_guest_pass',
+        message: guestPass.status === 'used' 
+          ? 'This guest pass has already been used' 
+          : 'Guest pass is expired or invalid',
+        guestPass: {
+          guestName: guestPass.guestName,
+          status: guestPass.status,
+          usedAt: guestPass.usedAt
+        }
+      });
+    }
+    
+    // Mark guest pass as used
+    await guestPass.markAsUsed(scannedById);
+    
+    console.log('✅ Guest pass checked in successfully:', guestPass.guestName);
+    
+    return res.json({
+      success: true,
+      status: 'guest_checked_in',
+      message: `${guestPass.guestName} checked in successfully`,
+      guestPass: {
+        guestName: guestPass.guestName,
+        paymentAmount: guestPass.payment.amount,
+        paymentStatus: guestPass.payment.status
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Guest pass check-in error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check in guest pass',
+      error: error.message
+    });
+  }
+}
 // Get Event Attendees
 router.get('/:eventId/attendees', protect, async (req, res) => {
   try {

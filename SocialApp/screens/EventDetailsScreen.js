@@ -326,7 +326,12 @@ export default function EventDetailsScreen() {
       setPaymentLoading(false);
     }
   };
-
+  const handleOpenScanner = () => {
+    navigation.navigate('QrScanScreen', { 
+      eventId: eventId,
+      eventTitle: event.title 
+    });
+  };
   // Handle PayPal WebView navigation (keeping for backward compatibility)
   const handlePayPalWebViewNavigation = async (navigationState) => {
     const { url } = navigationState;
@@ -735,7 +740,22 @@ export default function EventDetailsScreen() {
                 <Text style={styles.primaryActionText}>Edit Event</Text>
               </LinearGradient>
             </TouchableOpacity>
-
+            {/* QR Scanner Button for Check-in */}
+            {(isHost || isCoHost) && !isPast && (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.scannerAction]}
+                onPress={handleOpenScanner}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={['#667eea', '#764ba2']}
+                  style={styles.gradientButton}
+                >
+                  <Ionicons name="qr-code-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.actionText}>Check-in Scanner</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
             {canInvite && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.secondaryAction]}
@@ -1419,12 +1439,18 @@ const styles = StyleSheet.create({
   primaryAction: {
     flex: 2,
   },
-  gradientButton: {
+ gradientButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 20,
+    gap: 8,
+  },
+  scannerAction: {
+    marginVertical: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   primaryActionText: {
     marginLeft: 6,
@@ -1445,6 +1471,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#3797EF',
+  },
+  actionText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   leaveAction: {
     backgroundColor: '#FF3B30',
