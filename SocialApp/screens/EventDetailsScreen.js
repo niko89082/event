@@ -337,31 +337,48 @@ export default function EventDetailsScreen() {
 
   // Handle join request (approval required events)
   const handleJoinRequest = async () => {
-    if (!event) return;
+  if (!event) return;
 
-    try {
-      setRequestLoading(true);
+  try {
+    setRequestLoading(true);
 
-      // Check if this is a paid event and user hasn't paid
-      if (isPaidEvent() && !hasUserPaid()) {
-        showPaymentOptions();
-        return;
-      }
-
-      // Free event or user already paid
-      if (event.permissions?.canJoin === 'approval-required') {
-        setShowRequestModal(true);
-      } else {
-        await attendEvent();
-      }
-    } catch (error) {
-      console.error('Join request error:', error);
-      const message = error.response?.data?.message || 'Failed to join event';
-      Alert.alert('Error', message);
-    } finally {
-      setRequestLoading(false);
+    // ✅ FIXED: Check if this is a paid event and user hasn't paid
+    if (isPaidEvent() && !hasUserPaid()) {
+      showPaymentOptions();
+      return;
     }
-  };
+
+    // Free event or user already paid
+    if (event.permissions?.canJoin === 'approval-required') {
+      setShowRequestModal(true);
+    } else {
+      await attendEvent();
+    }
+  } catch (error) {
+    console.error('Join request error:', error);
+    const message = error.response?.data?.message || 'Failed to join event';
+    Alert.alert('Error', message);
+  } finally {
+    setRequestLoading(false);
+  }
+};
+
+// ✅ ADDED: Debug function to log payment data (remove in production)
+const debugPaymentData = () => {
+  if (__DEV__ && event?.host) {
+    console.log('🔍 Payment Debug Data:', {
+      eventId: event._id,
+      hostId: event.host._id,
+      hostPaymentAccounts: event.host.paymentAccounts,
+      isPaidEvent: isPaidEvent(),
+      currentPrice: getCurrentPrice(),
+      hasUserPaid: hasUserPaid(),
+      userPaymentHistory: event.paymentHistory?.filter(p => 
+        String(p.user) === String(currentUser?._id)
+      )
+    });
+  }
+};
 
   // Enhanced leave event function with refund protection
   const handleLeaveEvent = async () => {
