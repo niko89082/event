@@ -1,11 +1,11 @@
 /*************************************************
  * server.js (main server file) - UPDATED WITH MEMORY PHOTO SUPPORT
  *************************************************/
+require('dotenv').config(); 
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const mongoose = require('mongoose');
-const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
@@ -34,10 +34,6 @@ const Notification = require('./models/Notification');
 
 // Import the new EventPrivacyService
 const EventPrivacyService = require('./services/eventPrivacyService');
-
-// Load environment
-dotenv.config();
-
 // ✅ UPDATED: Ensure ALL uploads directories exist (including memory photos)
 const uploadsDir = path.join(__dirname, 'uploads');
 const photosDir = path.join(__dirname, 'uploads', 'photos');

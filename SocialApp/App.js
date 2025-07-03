@@ -1,10 +1,11 @@
-// App.js - Add new memory screens to navigation
+// App.js - Complete file with deep link handling
 import React, { useContext, useEffect } from 'react';
-import { View, Text, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ActivityIndicator, Alert, Linking } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthContext, AuthProvider } from './services/AuthContext';
+import * as Linking from 'expo-linking';
 
 import LoginScreen from './screens/Auth/LoginScreen';
 import RegisterScreen from './screens/Auth/RegisterScreen';
@@ -31,8 +32,8 @@ import AttendeeListScreen from './screens/AttendeeListScreen';
 import EditEventScreen from './screens/EditEventScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import MemoryDetailsScreen from './screens/MemoryDetailsScreen';
-import EditMemoryScreen from './screens/EditMemoryScreen'; // NEW
-import MemoryParticipantsScreen from './screens/MemoryParticipantsScreen'; // NEW
+import EditMemoryScreen from './screens/EditMemoryScreen';
+import MemoryParticipantsScreen from './screens/MemoryParticipantsScreen';
 import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
@@ -65,11 +66,51 @@ function AppNavigator({ onLogout }) {
     userId: currentUser?._id
   });
 
+  // 🔧 ADD: Deep link handling for payment returns
+  useEffect(() => {
+    const handleDeepLink = (url) => {
+      console.log('🔗 Deep link received:', url);
+      
+      if (url.includes('/payment/success')) {
+        console.log('✅ Payment success detected from deep link');
+        // Store payment success state for EventDetailsScreen to pick up
+        // You can use AsyncStorage or a global state manager for this
+        Alert.alert(
+          'Payment Successful!',
+          'Your payment has been processed successfully. Returning to event...',
+          [{ text: 'OK' }]
+        );
+      } else if (url.includes('/payment/cancel')) {
+        console.log('❌ Payment cancelled detected from deep link');
+        Alert.alert(
+          'Payment Cancelled',
+          'Your payment was cancelled.',
+          [{ text: 'OK' }]
+        );
+      }
+    };
+
+    // Listen for deep links when app is already open
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handleDeepLink(url);
+    });
+
+    // Check if app was opened via deep link
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        console.log('🔗 App opened with deep link:', url);
+        handleDeepLink(url);
+      }
+    });
+
+    return () => subscription?.remove();
+  }, []);
+
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color={palette.primary} />
-        <Text style={{ marginTop: 16, color: palette.textSecondary }}>Loading...</Text>
+        <ActivityIndicator size="large" color={palette.primary || '#3797EF'} />
+        <Text style={{ marginTop: 16, color: palette.textSecondary || '#8E8E93' }}>Loading...</Text>
       </View>
     );
   }
@@ -182,7 +223,6 @@ function AppNavigator({ onLogout }) {
               component={MemoryDetailsScreen}
               options={{ headerShown: true, title: 'Memory' }}
             />
-            {/* NEW: Memory management screens */}
             <RootStack.Screen 
               name="EditMemoryScreen" 
               component={EditMemoryScreen}
