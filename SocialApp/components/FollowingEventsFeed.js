@@ -1,5 +1,5 @@
-// components/FollowingEventsFeed.js - FIXED: Correct API endpoint and vertical layout
-import React, { useEffect, useState } from 'react';
+// SocialApp/components/FollowingEventsFeed.js - Enhanced with scroll event handling for animated header
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, ActivityIndicator,
   RefreshControl, TouchableOpacity
@@ -8,7 +8,14 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import EventCard from './EventCard';
 
-export default function FollowingEventsFeed({ navigation, currentUserId, refreshing: externalRefreshing, onRefresh: externalOnRefresh }) {
+export default function FollowingEventsFeed({ 
+  navigation, 
+  currentUserId, 
+  refreshing: externalRefreshing, 
+  onRefresh: externalOnRefresh,
+  onScroll: parentOnScroll,
+  scrollEventThrottle = 16 
+}) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -27,7 +34,7 @@ export default function FollowingEventsFeed({ navigation, currentUserId, refresh
         setLoading(true);
       }
 
-      // FIXED: Correct API endpoint
+      // Correct API endpoint for following events
       const { data } = await api.get(`/api/events/following-events?page=${pageNum}&limit=12`);
       
       if (pageNum === 1) {
@@ -72,13 +79,25 @@ export default function FollowingEventsFeed({ navigation, currentUserId, refresh
     }
   };
 
+  // Enhanced scroll handler that combines internal logic with parent callback
+  const handleScroll = useCallback((event) => {
+    // Call parent's scroll handler for header animation
+    if (parentOnScroll) {
+      parentOnScroll(event);
+    }
+    
+    // Add any internal scroll logic here if needed
+  }, [parentOnScroll]);
+
   const renderEventItem = ({ item }) => (
-    <EventCard 
-      event={item}
-      currentUserId={currentUserId}
-      navigation={navigation}
-      onAttend={handleAttend}
-    />
+    <View style={styles.eventWrapper}>
+      <EventCard 
+        event={item}
+        currentUserId={currentUserId}
+        navigation={navigation}
+        onAttend={handleAttend}
+      />
+    </View>
   );
 
   const renderEmptyState = () => (
@@ -105,6 +124,7 @@ export default function FollowingEventsFeed({ navigation, currentUserId, refresh
     return (
       <View style={styles.footer}>
         <ActivityIndicator size="small" color="#3797EF" />
+        <Text style={styles.loadingText}>Loading more events...</Text>
       </View>
     );
   };
@@ -123,7 +143,6 @@ export default function FollowingEventsFeed({ navigation, currentUserId, refresh
       data={events}
       renderItem={renderEventItem}
       keyExtractor={item => item._id}
-      // FIXED: NO numColumns for vertical layout
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
@@ -131,13 +150,25 @@ export default function FollowingEventsFeed({ navigation, currentUserId, refresh
           onRefresh={handleRefresh}
           tintColor="#3797EF"
           colors={["#3797EF"]}
+          title="Pull to refresh events"
+          titleColor="#8E8E93"
+          progressBackgroundColor="#FFFFFF"
         />
       }
+      onScroll={handleScroll}
+      scrollEventThrottle={scrollEventThrottle}
       ListEmptyComponent={renderEmptyState}
       ListFooterComponent={renderFooter}
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
+      // Enhanced props for better performance
+      bounces={true}
+      alwaysBounceVertical={true}
+      removeClippedSubviews={true}
+      initialNumToRender={5}
+      maxToRenderPerBatch={5}
+      windowSize={10}
     />
   );
 }
@@ -148,6 +179,10 @@ const styles = StyleSheet.create({
   },
   emptyContainer: {
     flex: 1,
+  },
+  eventWrapper: {
+    marginBottom: 12,
+    marginHorizontal: 16,
   },
   centered: {
     flex: 1,

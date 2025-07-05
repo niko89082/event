@@ -1,5 +1,5 @@
-// components/EventsFeed.js - FIXED: Use correct API endpoint for discover events
-import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle } from 'react';
+// SocialApp/components/EventsFeed.js - Enhanced with scroll event handling for animated header
+import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle, useCallback } from 'react';
 import {
   View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text,
 } from 'react-native';
@@ -7,7 +7,14 @@ import api from '../services/api';
 import EventCard from './EventCard';
 import { AuthContext } from '../services/AuthContext';
 
-const EventsFeed = forwardRef(({ navigation, refreshing: externalRefreshing, onRefresh: externalOnRefresh, feedType = "discover" }, ref) => {
+const EventsFeed = forwardRef(({ 
+  navigation, 
+  refreshing: externalRefreshing, 
+  onRefresh: externalOnRefresh, 
+  feedType = "discover",
+  onScroll: parentOnScroll,
+  scrollEventThrottle = 16 
+}, ref) => {
   const { currentUser } = useContext(AuthContext);
   const uid = currentUser?._id;
 
@@ -40,7 +47,7 @@ const EventsFeed = forwardRef(({ navigation, refreshing: externalRefreshing, onR
 
       console.log('🟡 [EventsFeed] fetching page', pageNum);
       
-      // FIXED: Use /api/events with discovery parameters instead of /api/feed
+      // Use /api/events with discovery parameters
       const res = await api.get(`/api/events?page=${pageNum}&limit=12&discover=true`);
       console.log('🟢 EventsFeed response:', res.status, 'events:', res.data.events?.length);
 
@@ -81,13 +88,33 @@ const EventsFeed = forwardRef(({ navigation, refreshing: externalRefreshing, onR
     }
   };
 
+  const handleRefresh = async () => {
+    if (externalOnRefresh) {
+      await externalOnRefresh();
+    } else {
+      await fetchPage(1, true);
+    }
+  };
+
+  // Enhanced scroll handler that combines internal logic with parent callback
+  const handleScroll = useCallback((event) => {
+    // Call parent's scroll handler for header animation
+    if (parentOnScroll) {
+      parentOnScroll(event);
+    }
+    
+    // Add any internal scroll logic here if needed
+  }, [parentOnScroll]);
+
   const renderEvent = ({ item }) => (
-    <EventCard 
-      event={item}
-      currentUserId={uid}
-      navigation={navigation}
-      onAttend={handleAttend}
-    />
+    <View style={styles.eventWrapper}>
+      <EventCard 
+        event={item}
+        currentUserId={uid}
+        navigation={navigation}
+        onAttend={handleAttend}
+      />
+    </View>
   );
 
   const renderEmptyState = () => (
@@ -104,6 +131,7 @@ const EventsFeed = forwardRef(({ navigation, refreshing: externalRefreshing, onR
     return (
       <View style={styles.footer}>
         <ActivityIndicator size="small" color="#3797EF" />
+        <Text style={styles.loadingText}>Loading more events...</Text>
       </View>
     );
   };
@@ -122,24 +150,37 @@ const EventsFeed = forwardRef(({ navigation, refreshing: externalRefreshing, onR
       data={data}
       renderItem={renderEvent}
       keyExtractor={item => item._id}
-      // NO numColumns for vertical layout
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
           refreshing={refreshing || externalRefreshing}
-          onRefresh={externalOnRefresh || (() => fetchPage(1, true))}
+          onRefresh={handleRefresh}
           tintColor="#3797EF"
           colors={["#3797EF"]}
+          title="Pull to refresh events"
+          titleColor="#8E8E93"
+          progressBackgroundColor="#FFFFFF"
         />
       }
+      onScroll={handleScroll}
+      scrollEventThrottle={scrollEventThrottle}
       ListEmptyComponent={renderEmptyState}
       ListFooterComponent={renderFooter}
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={data.length === 0 ? styles.emptyContainer : styles.container}
+      // Enhanced props for better performance
+      bounces={true}
+      alwaysBounceVertical={true}
+      removeClippedSubviews={true}
+      initialNumToRender={5}
+      maxToRenderPerBatch={5}
+      windowSize={10}
     />
   );
 });
+
+export default EventsFeed;
 
 const styles = StyleSheet.create({
   container: {
@@ -147,6 +188,10 @@ const styles = StyleSheet.create({
   },
   emptyContainer: {
     flex: 1,
+  },
+  eventWrapper: {
+    marginBottom: 12,
+    marginHorizontal: 16,
   },
   centered: {
     flex: 1,
@@ -167,8 +212,8 @@ const styles = StyleSheet.create({
     paddingTop: 100,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 24,
+    fontWeight: '700',
     color: '#000000',
     marginBottom: 8,
     textAlign: 'center',
@@ -178,11 +223,10 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 22,
+    marginBottom: 32,
   },
   footer: {
     paddingVertical: 20,
     alignItems: 'center',
   },
 });
-
-export default EventsFeed;

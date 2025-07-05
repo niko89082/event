@@ -1,4 +1,5 @@
-import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext } from 'react';
+// SocialApp/components/EventsHub.js - Enhanced with scroll event handling for animated header
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,19 +14,25 @@ import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
 import EventsFeed from './EventsFeed';
 
-// SIMPLIFIED: Only Following and For You tabs as discussed
+// Following and For You tabs as in existing structure
 const EVENTS_TABS = [
   { key: 'following', label: 'Following', icon: 'people-outline' },
   { key: 'for-you', label: 'For You', icon: 'star-outline' },
 ];
 
-const EventsHub = forwardRef(({ navigation, refreshing: externalRefreshing, onRefresh: externalOnRefresh }, ref) => {
+const EventsHub = forwardRef(({ 
+  navigation, 
+  refreshing: externalRefreshing, 
+  onRefresh: externalOnRefresh,
+  onScroll: parentOnScroll,
+  scrollEventThrottle = 16 
+}, ref) => {
   const { currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('following');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  // ENHANCED: Expose refresh method to parent with better async handling
+  // Expose refresh method to parent
   useImperativeHandle(ref, () => ({
     refresh: async () => {
       console.log('🔄 EventsHub: Manual refresh triggered');
@@ -33,7 +40,14 @@ const EventsHub = forwardRef(({ navigation, refreshing: externalRefreshing, onRe
     }
   }));
 
-  // ENHANCED: Better refresh handling
+  // Enhanced scroll handler that combines internal logic with parent callback
+  const handleScroll = useCallback((event) => {
+    // Call parent's scroll handler for header animation
+    if (parentOnScroll) {
+      parentOnScroll(event);
+    }
+  }, [parentOnScroll]);
+
   const handleRefresh = async () => {
     console.log('🔄 EventsHub: Refresh triggered for tab:', activeTab);
     setRefreshing(true);
@@ -41,7 +55,7 @@ const EventsHub = forwardRef(({ navigation, refreshing: externalRefreshing, onRe
     
     try {
       // Add a small delay to ensure proper refresh
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 300));
       
       // The individual feed components will handle their own refresh
       // This is mainly for coordinating the refresh state
@@ -78,71 +92,59 @@ const EventsHub = forwardRef(({ navigation, refreshing: externalRefreshing, onRe
         size={18} 
         color={activeTab === tabKey ? '#3797EF' : '#8E8E93'} 
       />
-      <Text 
-        style={[
-          styles.tabButtonText,
-          activeTab === tabKey && styles.activeTabButtonText
-        ]}
-      >
+      <Text style={[
+        styles.tabButtonText,
+        activeTab === tabKey && styles.activeTabButtonText
+      ]}>
         {label}
       </Text>
     </TouchableOpacity>
   );
 
-  const renderContent = () => {
-    if (error) {
-      return (
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
-          <Text style={styles.errorTitle}>Something went wrong</Text>
-          <Text style={styles.errorMessage}>{error}</Text>
-          <TouchableOpacity
-            style={styles.retryButton}
-            onPress={handleRefresh}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.retryButtonText}>Try Again</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
+  const renderActiveTab = () => {
+    const commonProps = {
+      navigation,
+      refreshing: refreshing || externalRefreshing || false,
+      onRefresh: handleInternalRefresh,
+      onScroll: handleScroll,
+      scrollEventThrottle,
+    };
 
     switch (activeTab) {
       case 'following':
-        return (
-          <FollowingEventsFeed 
-            navigation={navigation}
-            currentUserId={currentUser?._id}
-            refreshing={refreshing || externalRefreshing}
-            onRefresh={handleInternalRefresh}
-          />
-        );
+        return <FollowingEventsFeed {...commonProps} />;
       case 'for-you':
+        return <EventsFeed {...commonProps} />;
       default:
-        return (
-          <EventsFeed 
-            navigation={navigation}
-            currentUserId={currentUser?._id}
-            refreshing={refreshing || externalRefreshing}
-            onRefresh={handleInternalRefresh}
-            feedType="discover"
-          />
-        );
+        return null;
     }
   };
 
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Ionicons name="cloud-offline-outline" size={64} color="#8E8E93" />
+        <Text style={styles.errorTitle}>Connection Error</Text>
+        <Text style={styles.errorMessage}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+          <Text style={styles.retryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* Tab Headers */}
-      <View style={styles.tabContainer}>
-        <View style={styles.tabScrollContent}>
-          {EVENTS_TABS.map(tab => renderTabButton(tab.key, tab.label, tab.icon))}
-        </View>
+      {/* Tab Selection */}
+      <View style={styles.tabsContainer}>
+        {EVENTS_TABS.map(tab => 
+          renderTabButton(tab.key, tab.label, tab.icon)
+        )}
       </View>
 
-      {/* Content - FIXED: Removed ScrollView to prevent VirtualizedList nesting */}
+      {/* Active Tab Content */}
       <View style={styles.contentContainer}>
-        {renderContent()}
+        {renderActiveTab()}
       </View>
     </View>
   );
@@ -153,23 +155,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  tabContainer: {
+  
+  // Tab Selection
+  tabsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E1E1E1',
-    paddingVertical: 12,
-  },
-  tabScrollContent: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    justifyContent: 'center',
+    borderBottomColor: '#F0F0F0',
   },
   tabButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
-    marginHorizontal: 8,
+    marginRight: 8,
     borderRadius: 20,
     backgroundColor: '#F8F9FA',
   },
@@ -186,15 +187,19 @@ const styles = StyleSheet.create({
     color: '#3797EF',
     fontWeight: '600',
   },
+  
+  // Content
   contentContainer: {
     flex: 1,
   },
+  
   // Error state styles
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
+    backgroundColor: '#FFFFFF',
   },
   errorTitle: {
     fontSize: 20,

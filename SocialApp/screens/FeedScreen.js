@@ -1,5 +1,5 @@
-// SocialApp/screens/FeedScreen.js - FIXED: Restore pull-to-refresh functionality
-import React, { useLayoutEffect, useState, useRef } from 'react';
+// SocialApp/screens/FeedScreen.js - Enhanced with animated header AND tab bar
+import React, { useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -8,11 +8,13 @@ import {
   StatusBar, 
   SafeAreaView,
   Alert,
+  Animated,
 } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import PostsFeed from '../components/PostsFeed';
 import EventsHub from '../components/EventsHub';
+import { useAnimatedHeader } from '../hooks/useAnimatedHeader';
 
 const Tab = createMaterialTopTabNavigator();
 
@@ -22,11 +24,22 @@ export default function FeedScreen({ navigation }) {
   const postsRef = useRef(null);
   const eventsRef = useRef(null);
 
+  // Animated header hook with tab bar support
+  const { handleScroll, resetHeader, getHeaderStyle, getTabBarStyle } = useAnimatedHeader();
+
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: false, // We'll create our own header
+      headerShown: false, // We handle our own header
     });
   }, [navigation]);
+
+  // Reset header when switching tabs
+  const handleTabChange = useCallback((newTab) => {
+    if (newTab !== activeTab) {
+      setActiveTab(newTab);
+      resetHeader();
+    }
+  }, [activeTab, resetHeader]);
 
   const handleNotificationPress = () => {
     try {
@@ -45,14 +58,15 @@ export default function FeedScreen({ navigation }) {
     try {
       navigation.navigate('SearchScreen');
     } catch (error) {
-      // Try through parent navigator
       navigation.getParent()?.navigate('SearchScreen');
     }
   };
 
-  // FIXED: Enhanced refresh handling for both tabs
   const handleGlobalRefresh = async () => {
     setRefreshing(true);
+    // Reset header to visible during refresh
+    resetHeader();
+    
     try {
       if (activeTab === 'Posts' && postsRef.current?.refresh) {
         await postsRef.current.refresh();
@@ -66,112 +80,131 @@ export default function FeedScreen({ navigation }) {
     }
   };
 
-  // FIXED: Tab components with proper refresh support
+  // Enhanced tab components with scroll handling
   function PostsTabScreen({ navigation }) {
     return (
-      <PostsFeed 
-        navigation={navigation} 
-        ref={postsRef}
-        refreshing={refreshing}
-        onRefresh={handleGlobalRefresh}
-      />
+      <View style={styles.tabScreenContainer}>
+        <PostsFeed 
+          navigation={navigation} 
+          ref={postsRef}
+          refreshing={refreshing}
+          onRefresh={handleGlobalRefresh}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+        />
+      </View>
     );
   }
 
   function EventsTabScreen({ navigation }) {
     return (
-      <EventsHub 
-        navigation={navigation} 
-        ref={eventsRef}
-        refreshing={refreshing}
-        onRefresh={handleGlobalRefresh}
-      />
+      <View style={styles.tabScreenContainer}>
+        <EventsHub 
+          navigation={navigation} 
+          ref={eventsRef}
+          refreshing={refreshing}
+          onRefresh={handleGlobalRefresh}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+        />
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Custom Header */}
-      <View style={styles.header}>
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Social</Text>
-          <View style={styles.headerButtons}>
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={handleSearchPress}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="search-outline" size={24} color="#000" />
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={handleNotificationPress}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="notifications-outline" size={24} color="#000" />
-            </TouchableOpacity>
+      {/* Animated Header */}
+      <Animated.View style={[styles.animatedHeaderContainer, getHeaderStyle()]}>
+        <SafeAreaView style={styles.safeAreaHeader}>
+          <View style={styles.header}>
+            <View style={styles.headerContent}>
+              <Text style={styles.headerTitle}>Social</Text>
+              <View style={styles.headerButtons}>
+                <TouchableOpacity 
+                  style={styles.headerButton}
+                  onPress={handleSearchPress}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="search-outline" size={24} color="#000" />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.headerButton}
+                  onPress={handleNotificationPress}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="notifications-outline" size={24} color="#000" />
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
+        </SafeAreaView>
+      </Animated.View>
+
+      {/* Animated Tab Bar */}
+      <Animated.View style={[styles.animatedTabBarContainer, getTabBarStyle()]}>
+        <View style={styles.customTabBar}>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'Posts' && styles.activeTabButton
+            ]}
+            onPress={() => handleTabChange('Posts')}
+            activeOpacity={0.8}
+          >
+            <Text style={[
+              styles.tabButtonText,
+              activeTab === 'Posts' && styles.activeTabButtonText
+            ]}>
+              Posts
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'Events' && styles.activeTabButton
+            ]}
+            onPress={() => handleTabChange('Events')}
+            activeOpacity={0.8}
+          >
+            <Text style={[
+              styles.tabButtonText,
+              activeTab === 'Events' && styles.activeTabButtonText
+            ]}>
+              Events
+            </Text>
+          </TouchableOpacity>
+        </View>
+        
+        {/* Tab Indicator */}
+        <Animated.View 
+          style={[
+            styles.tabIndicator,
+            {
+              left: activeTab === 'Posts' ? '12.5%' : '62.5%',
+            }
+          ]} 
+        />
+      </Animated.View>
+
+      {/* Content Container */}
+      <View style={styles.contentContainer}>
+        {/* Static spacers for header and tab bar when visible */}
+        <View style={styles.headerSpacer} />
+        <View style={styles.tabBarSpacer} />
+        
+        {/* Active Tab Content */}
+        <View style={styles.tabContentContainer}>
+          {activeTab === 'Posts' ? (
+            <PostsTabScreen navigation={navigation} />
+          ) : (
+            <EventsTabScreen navigation={navigation} />
+          )}
         </View>
       </View>
-
-      {/* Tab Navigator for Posts and Events */}
-      <Tab.Navigator
-        screenOptions={{
-          tabBarActiveTintColor: '#3797EF',
-          tabBarInactiveTintColor: '#8E8E93',
-          tabBarIndicatorStyle: {
-            backgroundColor: '#3797EF',
-            height: 2,
-          },
-          tabBarStyle: {
-            backgroundColor: '#FFFFFF',
-            elevation: 0,
-            shadowOpacity: 0,
-            borderBottomWidth: 1,
-            borderBottomColor: '#E1E1E1',
-          },
-          tabBarLabelStyle: {
-            fontSize: 16,
-            fontWeight: '600',
-            textTransform: 'none',
-            marginTop: 0,
-            marginBottom: 0,
-          },
-          tabBarPressColor: '#F2F2F7',
-          tabBarContentContainerStyle: {
-            paddingHorizontal: 16,
-          },
-        }}
-        screenListeners={{
-          state: (e) => {
-            // Track which tab is active for refresh purposes
-            const state = e.data.state;
-            if (state) {
-              const activeIndex = state.index;
-              const routeName = state.routes[activeIndex].name;
-              setActiveTab(routeName);
-            }
-          },
-        }}
-      >
-        <Tab.Screen 
-          name="Posts" 
-          component={PostsTabScreen}
-          options={{
-            tabBarLabel: 'Posts',
-          }}
-        />
-        <Tab.Screen 
-          name="Events" 
-          component={EventsTabScreen}
-          options={{
-            tabBarLabel: 'Events',
-          }}
-        />
-      </Tab.Navigator>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -180,31 +213,135 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  header: {
+  
+  // Animated Header Styles
+  animatedHeaderContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  
+  safeAreaHeader: {
+    backgroundColor: '#FFFFFF',
+  },
+  
+  header: {
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
   },
+  
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  
   headerTitle: {
     fontSize: 24,
     fontWeight: '700',
     color: '#000000',
   },
+  
   headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  
   headerButton: {
     padding: 8,
     borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+
+  // Animated Tab Bar Styles
+  animatedTabBarContainer: {
+    position: 'absolute',
+    top: 100, // Position below header (adjust based on actual header height)
+    left: 0,
+    right: 0,
+    zIndex: 999,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+
+  customTabBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+
+  tabButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+
+  activeTabButton: {
+    // Active state styling handled by text color
+  },
+
+  tabButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+
+  activeTabButtonText: {
+    color: '#3797EF',
+  },
+
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    width: '25%',
+    height: 2,
+    backgroundColor: '#3797EF',
+    borderRadius: 1,
+  },
+
+  // Content Container Styles
+  contentContainer: {
+    flex: 1,
+  },
+  
+  headerSpacer: {
+    height: 100, // Space for header when visible
+  },
+
+  tabBarSpacer: {
+    height: 50, // Space for tab bar when visible
+  },
+
+  tabContentContainer: {
+    flex: 1,
+  },
+
+  tabScreenContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
   },
 });
