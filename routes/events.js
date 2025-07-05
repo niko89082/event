@@ -2233,6 +2233,7 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
 });
 
 // Check-in endpoint
+// Enhanced unified check-in endpoint
 router.post('/:eventId/checkin', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -2273,10 +2274,44 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
 
     // Handle QR code scanning
     if (qrCode) {
-      console.log('🔍 Processing QR code:', qrCode.substring(0, 20) + '...');
+      console.log('🔍 Processing QR code:', qrCode.substring(0, 50) + '...');
+      
+      let shareCodeToFind = null;
+      
+      // Handle different QR code formats
+      if (typeof qrCode === 'string') {
+        try {
+          // Try to parse as JSON first (new format)
+          const parsedData = JSON.parse(qrCode);
+          console.log('✅ Parsed JSON QR data:', parsedData);
+          
+          if (parsedData.type === 'user_profile' && parsedData.shareCode) {
+            shareCodeToFind = parsedData.shareCode;
+            console.log('📱 Extracted shareCode from JSON:', shareCodeToFind);
+          } else {
+            console.log('❌ JSON QR data missing shareCode');
+          }
+        } catch (parseError) {
+          // Not JSON, treat as direct share code (old format)
+          shareCodeToFind = qrCode;
+          console.log('📝 QR data is not JSON, treating as direct share code:', shareCodeToFind);
+        }
+      } else if (qrCode && typeof qrCode === 'object') {
+        // Already parsed JSON object
+        shareCodeToFind = qrCode.shareCode;
+        console.log('📱 QR data already parsed, shareCode:', shareCodeToFind);
+      }
+
+      if (!shareCodeToFind) {
+        console.log('❌ No shareCode found in QR data');
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid QR code format' 
+        });
+      }
       
       // Try to find registered user first by shareCode
-      targetUser = await User.findOne({ shareCode: qrCode })
+      targetUser = await User.findOne({ shareCode: shareCodeToFind })
         .select('_id username profilePicture bio');
       
       if (targetUser) {
@@ -2284,10 +2319,10 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
         targetUserId = targetUser._id;
       } else {
         // Try to find guest pass
-        console.log('🔍 Looking for guest pass...');
+        console.log('🔍 Looking for guest pass with code:', shareCodeToFind);
         const GuestPass = require('../models/GuestPass');
         guestPass = await GuestPass.findOne({ 
-          'qrData.code': qrCode,
+          'qrData.code': shareCodeToFind,
           event: eventId
         });
         
@@ -2299,7 +2334,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       }
       
       if (!targetUser && !guestPass) {
-        console.log('❌ No user or guest pass found for QR code');
+        console.log('❌ No user or guest pass found for shareCode:', shareCodeToFind);
         return res.status(404).json({ 
           success: false, 
           message: 'QR code not recognized. Please try again.' 
@@ -2340,7 +2375,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
   }
 });
 
-// Helper function for user check-in
+// Helper function for user check-in (same as before)
 async function handleUserCheckin(event, user, confirmEntry, manualCheckIn, res) {
   try {
     const isAttendee = event.attendees.some(attendee => 
@@ -2415,7 +2450,7 @@ async function handleUserCheckin(event, user, confirmEntry, manualCheckIn, res) 
   }
 }
 
-// Helper function for guest pass check-in
+// Helper function for guest pass check-in (same as before)
 async function handleGuestPassCheckin(guestPass, scannedById, res) {
   try {
     // Validate guest pass
@@ -2459,6 +2494,7 @@ async function handleGuestPassCheckin(guestPass, scannedById, res) {
     });
   }
 }
+
 // Get Event Attendees
 router.get('/:eventId/attendees', protect, async (req, res) => {
   try {
