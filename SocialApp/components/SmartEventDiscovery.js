@@ -294,7 +294,6 @@ export default function SmartEventDiscovery({ navigation, currentUserId }) {
         data={events}
         renderItem={renderEventCard}
         keyExtractor={item => item._id}
-        numColumns={2}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -303,15 +302,14 @@ export default function SmartEventDiscovery({ navigation, currentUserId }) {
             tintColor="#3797EF"
             colors={["#3797EF"]}
           />
-        }
-        ListHeaderComponent={renderDiscoveryHeader}
-        ListEmptyComponent={renderEmptyState}
-        contentContainerStyle={[
-          styles.eventsList,
-          events.length === 0 && styles.emptyList
-        ]}
-        columnWrapperStyle={events.length > 0 ? styles.eventRow : undefined}
-      />
+      }
+      ListHeaderComponent={renderDiscoveryHeader}
+      ListEmptyComponent={renderEmptyState}
+      contentContainerStyle={[
+        styles.eventsList,
+        events.length === 0 && styles.emptyList
+      ]}
+    />
     </View>
   );
 }

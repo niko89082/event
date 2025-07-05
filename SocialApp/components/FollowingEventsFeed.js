@@ -1,4 +1,4 @@
-// components/FollowingEventsFeed.js - NEW following events feed
+// components/FollowingEventsFeed.js - FIXED: Correct API endpoint and vertical layout
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, ActivityIndicator,
@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import EventCard from './EventCard';
 
-export default function FollowingEventsFeed({ navigation, currentUserId }) {
+export default function FollowingEventsFeed({ navigation, currentUserId, refreshing: externalRefreshing, onRefresh: externalOnRefresh }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -27,6 +27,7 @@ export default function FollowingEventsFeed({ navigation, currentUserId }) {
         setLoading(true);
       }
 
+      // FIXED: Correct API endpoint
       const { data } = await api.get(`/api/events/following-events?page=${pageNum}&limit=12`);
       
       if (pageNum === 1) {
@@ -63,20 +64,21 @@ export default function FollowingEventsFeed({ navigation, currentUserId }) {
     }
   };
 
-  const handleRefresh = () => {
-    fetchEvents(1, true);
+  const handleRefresh = async () => {
+    if (externalOnRefresh) {
+      await externalOnRefresh();
+    } else {
+      await fetchEvents(1, true);
+    }
   };
 
-  const renderEvent = ({ item }) => (
-    <View style={styles.eventWrapper}>
-      <EventCard
-        event={item}
-        currentUserId={currentUserId}
-        navigation={navigation}
-        onAttend={handleAttend}
-        compact={false}
-      />
-    </View>
+  const renderEventItem = ({ item }) => (
+    <EventCard 
+      event={item}
+      currentUserId={currentUserId}
+      navigation={navigation}
+      onAttend={handleAttend}
+    />
   );
 
   const renderEmptyState = () => (
@@ -84,123 +86,113 @@ export default function FollowingEventsFeed({ navigation, currentUserId }) {
       <View style={styles.emptyIconContainer}>
         <Ionicons name="people-outline" size={64} color="#C7C7CC" />
       </View>
-      <Text style={styles.emptyTitle}>No events from friends</Text>
+      <Text style={styles.emptyTitle}>No Events from Friends</Text>
       <Text style={styles.emptySubtitle}>
-        Follow more people to see their events here
+        When people you follow create events, they'll appear here.
       </Text>
-      <TouchableOpacity
-        style={styles.findFriendsButton}
+      <TouchableOpacity 
+        style={styles.discoverButton}
         onPress={() => navigation.navigate('SearchScreen')}
         activeOpacity={0.8}
       >
-        <Ionicons name="search" size={20} color="#FFFFFF" />
-        <Text style={styles.findFriendsButtonText}>Find Friends</Text>
+        <Text style={styles.discoverButtonText}>Discover Events</Text>
       </TouchableOpacity>
     </View>
   );
 
-  if (loading && events.length === 0) {
+  const renderFooter = () => {
+    if (!loading || page === 1) return null;
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.footer}>
+        <ActivityIndicator size="small" color="#3797EF" />
+      </View>
+    );
+  };
+
+  if (loading && page === 1) {
+    return (
+      <View style={styles.centered}>
         <ActivityIndicator size="large" color="#3797EF" />
-        <Text style={styles.loadingText}>Loading events...</Text>
+        <Text style={styles.loadingText}>Loading events from friends...</Text>
       </View>
     );
   }
 
-  if (events.length === 0 && !loading) {
-    return renderEmptyState();
-  }
-
   return (
-    <View style={styles.container}>
-      <FlatList
-        data={events}
-        keyExtractor={item => item._id}
-        renderItem={renderEvent}
-        onEndReached={handleLoadMore}
-        onEndReachedThreshold={0.4}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-          />
-        }
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-        numColumns={2}
-        columnWrapperStyle={styles.row}
-      />
-    </View>
+    <FlatList
+      data={events}
+      renderItem={renderEventItem}
+      keyExtractor={item => item._id}
+      // FIXED: NO numColumns for vertical layout
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing || externalRefreshing}
+          onRefresh={handleRefresh}
+          tintColor="#3797EF"
+          colors={["#3797EF"]}
+        />
+      }
+      ListEmptyComponent={renderEmptyState}
+      ListFooterComponent={renderFooter}
+      onEndReached={handleLoadMore}
+      onEndReachedThreshold={0.1}
+      contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
+    />
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
+    paddingBottom: 20,
   },
-  loadingContainer: {
+  emptyContainer: {
+    flex: 1,
+  },
+  centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF',
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
   },
-  listContent: {
-    paddingHorizontal: 8,
-    paddingVertical: 16,
-  },
-  row: {
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-  },
-  eventWrapper: {
-    width: '48%',
-    marginBottom: 16,
-  },
-  
-  // Empty State
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
+    paddingTop: 100,
   },
   emptyIconContainer: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F8F9FA',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 24,
+    fontWeight: '700',
     color: '#000000',
     marginBottom: 8,
     textAlign: 'center',
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
     marginBottom: 32,
   },
-  findFriendsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  discoverButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
+    paddingHorizontal: 32,
     paddingVertical: 16,
     borderRadius: 12,
     shadowColor: '#3797EF',
@@ -209,10 +201,13 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  findFriendsButtonText: {
+  discoverButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-    marginLeft: 8,
+  },
+  footer: {
+    paddingVertical: 20,
+    alignItems: 'center',
   },
 });

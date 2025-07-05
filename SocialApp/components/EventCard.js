@@ -301,17 +301,19 @@ export default function EventCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    marginHorizontal: 16,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    overflow: 'hidden',
-  },
+  backgroundColor: '#FFFFFF',
+  borderRadius: 16,
+  marginHorizontal: 16,
+  marginBottom: 20,
+  borderWidth: 0.5,
+  borderColor: 'rgba(0, 0, 0, 0.06)', // Very faint border
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.1,
+  shadowRadius: 8,
+  elevation: 4,
+  overflow: 'hidden',
+},
   compactCard: {
     marginHorizontal: 8,
     marginBottom: 12,

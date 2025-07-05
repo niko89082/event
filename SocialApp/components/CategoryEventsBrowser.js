@@ -146,19 +146,16 @@ export default function CategoryEventsBrowser({ navigation, currentUserId }) {
           <FlatList
             data={categoryEvents}
             keyExtractor={item => item._id}
-            renderItem={renderEvent}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => fetchCategoryEvents(selectedCategory, true)}
-                tintColor="#3797EF"
-                colors={["#3797EF"]}
+            renderItem={({ item }) => (
+              <EventCard 
+                event={item}
+                currentUserId={currentUserId}
+                navigation={navigation}
+                onAttend={handleAttend}
               />
-            }
+            )}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.eventsListContent}
-            numColumns={2}
-            columnWrapperStyle={styles.eventsRow}
           />
         )}
       </View>
@@ -273,18 +270,9 @@ const styles = StyleSheet.create({
 
   // Events List
   eventsListContent: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 16,
     paddingVertical: 16,
   },
-  eventsRow: {
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-  },
-  eventWrapper: {
-    width: '48%',
-    marginBottom: 16,
-  },
-
   // Loading & Empty States
   loadingContainer: {
     flex: 1,

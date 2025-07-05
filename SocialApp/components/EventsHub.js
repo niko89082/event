@@ -1,4 +1,3 @@
-// SocialApp/components/EventsHub.js - ENHANCED: Better refresh support
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext } from 'react';
 import {
   View,
@@ -6,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  ScrollView,
   RefreshControl,
   Alert,
 } from 'react-native';
@@ -142,25 +140,9 @@ const EventsHub = forwardRef(({ navigation, refreshing: externalRefreshing, onRe
         </View>
       </View>
 
-      {/* Content - Enhanced with refresh control */}
+      {/* Content - FIXED: Removed ScrollView to prevent VirtualizedList nesting */}
       <View style={styles.contentContainer}>
-        <ScrollView
-          style={styles.scrollContainer}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing || externalRefreshing || false}
-              onRefresh={handleInternalRefresh}
-              tintColor="#3797EF"
-              colors={["#3797EF"]}
-              title="Pull to refresh"
-              titleColor="#8E8E93"
-            />
-          }
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-        >
-          {renderContent()}
-        </ScrollView>
+        {renderContent()}
       </View>
     </View>
   );
@@ -175,71 +157,69 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 12,
   },
   tabScrollContent: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
+    paddingHorizontal: 20,
+    justifyContent: 'center',
   },
   tabButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    marginHorizontal: 8,
     borderRadius: 20,
     backgroundColor: '#F8F9FA',
-    minWidth: 120,
-    justifyContent: 'center',
   },
   activeTabButton: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: '#E8F4FD',
   },
   tabButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '500',
     color: '#8E8E93',
     marginLeft: 6,
   },
   activeTabButtonText: {
     color: '#3797EF',
+    fontWeight: '600',
   },
   contentContainer: {
     flex: 1,
   },
-  scrollContainer: {
-    flex: 1,
-  },
+  // Error state styles
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    minHeight: 300,
+    paddingHorizontal: 40,
   },
   errorTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
-    color: '#000',
+    color: '#000000',
     marginTop: 16,
     marginBottom: 8,
+    textAlign: 'center',
   },
   errorMessage: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    marginBottom: 20,
+    lineHeight: 22,
+    marginBottom: 24,
   },
   retryButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     borderRadius: 8,
   },
   retryButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
   },
 });

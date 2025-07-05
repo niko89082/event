@@ -1,10 +1,10 @@
-// screens/PostDetailsScreen.js - Fixed Original Implementation
+// screens/PostDetailsScreen.js - Fixed Implementation with Likes Functionality
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, FlatList,
   SafeAreaView, StatusBar, KeyboardAvoidingView, Platform,
-  Dimensions, ActionSheetIOS, ScrollView
+  Dimensions, ActionSheetIOS, ScrollView, Share
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -36,70 +36,11 @@ export default function PostDetailsScreen() {
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
 
-  /* ─── fetch post ─────────────────────────────────────────── */
-  useEffect(() => { 
-    if (postId) fetchPost(); 
-  }, [postId]);
-
-  const fetchPost = async () => {
-    try {
-      setLoading(true);
-      console.log('🟡 Fetching post:', postId);
-      const { data } = await api.get(`/api/photos/${postId}`);
-      console.log('🟢 Post data received:', data);
-      setPost(data);
-      setCaption(data.caption || '');
-      setSelectedEvent(data.event?._id || null);
-      setIsLiked(data.likes?.includes(currentUser?._id) || false);
-      setLikeCount(data.likes?.length || 0);
-    } catch (e) {
-      console.error('❌ Post fetch error:', e.response?.data || e);
-      Alert.alert('Error', 'Unable to load post.');
-      navigation.goBack();
-    } finally { 
-      setLoading(false); 
-    }
-  };
-
-  /* ─── fetch user's events for linking ───────────────────── */
-  const fetchUserEvents = async () => {
-    try {
-      setEventsLoading(true);
-      console.log('🟡 Fetching user events...');
-      
-      // Get user's attending events + hosted events
-      const [attendingRes, hostedRes] = await Promise.all([
-        api.get(`/api/events?attendee=${currentUser._id}&limit=50`),
-        api.get(`/api/events?host=${currentUser._id}&limit=50`)
-      ]);
-
-      const attending = attendingRes.data.events || attendingRes.data || [];
-      const hosted = hostedRes.data.events || hostedRes.data || [];
-
-      // Combine and remove duplicates
-      const allEvents = [...hosted, ...attending];
-      const uniqueEvents = allEvents.filter((event, index, self) => 
-        index === self.findIndex(e => e._id === event._id)
-      );
-
-      // Sort by date (most recent first)
-      const sortedEvents = uniqueEvents.sort((a, b) => 
-        new Date(b.time) - new Date(a.time)
-      );
-
-      console.log('🟢 Found events:', sortedEvents.length);
-      setUserEvents(sortedEvents);
-    } catch (e) {
-      console.error('❌ Error fetching events:', e);
-    } finally {
-      setEventsLoading(false);
-    }
-  };
-
-  /* ─── helpers ────────────────────────────────────────────── */
+  /* ─── computed values ────────────────────────────────────── */
   const isOwner = post?.user?._id === currentUser?._id;
-  const imgPath = post?.paths?.[0] || null;
-  const imgURL = imgPath ? `http://${API_BASE_URL}:3000${imgPath}` : null;
+  const imgURL = post?.paths?.[0] 
+    ? `http://${API_BASE_URL}:3000${post.paths[0]}` 
+    : null;
 
   // Helper function to get profile picture URL with better error handling
   const getProfilePictureUrl = (user) => {
@@ -124,21 +65,101 @@ export default function PostDetailsScreen() {
     return `http://${API_BASE_URL}:3000${path}`;
   };
 
+  /* ─── FIXED: Remove duplicate header by setting navigation options ─── */
+  useEffect(() => {
+    navigation.setOptions({
+      headerShown: false, // This removes the MainApp header
+    });
+  }, [navigation]);
+
+  /* ─── fetch post ─────────────────────────────────────────── */
+  useEffect(() => { 
+    if (postId) fetchPost(); 
+  }, [postId]);
+
+  const fetchPost = async () => {
+    try {
+      setLoading(true);
+      console.log('🟡 Fetching post:', postId);
+      const { data } = await api.get(`/api/photos/${postId}`);
+      console.log('🟢 Post data received:', data);
+      setPost(data);
+      setCaption(data.caption || '');
+      setSelectedEvent(data.event?._id || null);
+      setIsLiked(data.likes?.includes(currentUser?._id) || false);
+      setLikeCount(data.likes?.length || 0);
+    } catch (e) {
+      console.error('❌ Post fetch error:', e.response?.data || e);
+      Alert.alert('Error', 'Unable to load post.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // FIXED: Use correct API endpoint for user events
+  const fetchUserEvents = async () => {
+    try {
+      setEventsLoading(true);
+      // FIXED: Use the correct endpoint from ProfileScreen
+      const { data } = await api.get(`/api/users/${currentUser._id}/events`, {
+        params: {
+          includePast: 'false', // Only upcoming events for editing
+          limit: 50,
+          type: 'hosted' // Only show events user is hosting
+        }
+      });
+      setUserEvents(data.events || []);
+    } catch (e) {
+      console.error('Events fetch error:', e);
+      Alert.alert('Error', 'Failed to load your events');
+    } finally {
+      setEventsLoading(false);
+    }
+  };
+
   const handleLike = async () => {
     try {
       const response = await api.post(`/api/photos/like/${postId}`);
       setIsLiked(!isLiked);
       setLikeCount(response.data.likeCount);
+      
+      // Update the post state with new likes data for the likes viewer
+      setPost(prev => ({
+        ...prev,
+        likes: response.data.likes,
+        likeCount: response.data.likeCount
+      }));
     } catch (e) {
       console.error('Like error:', e.response?.data || e);
     }
   };
 
-  const sharePost = () => {
-    navigation.navigate('SelectChatScreen', {
-      shareType: 'post',
-      shareId: postId,
-    });
+  // FIXED: Navigate to likes screen
+  const viewLikes = () => {
+    if (likeCount > 0) {
+      navigation.navigate('PostLikesScreen', { 
+        postId: postId,
+        likeCount: likeCount 
+      });
+    }
+  };
+
+  // FIXED: Updated sharePost function - no longer navigates to chat screens
+  const sharePost = async () => {
+    try {
+      const result = await Share.share({
+        message: `Check out this post: ${post.caption || 'Awesome moment!'} - Share on your social app!`,
+        url: `https://yourapp.com/posts/${postId}`, // Replace with your app's URL scheme
+        title: 'Check out this post!',
+      });
+      
+      if (result.action === Share.sharedAction) {
+        console.log('Post shared successfully');
+      }
+    } catch (error) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Failed to share post');
+    }
   };
 
   const showPostOptions = () => {
@@ -358,8 +379,47 @@ export default function PostDetailsScreen() {
     );
   };
 
+  const renderEmptyComments = () => (
+    <View style={styles.emptyCommentsContainer}>
+      <Ionicons name="chatbubble-outline" size={48} color="#C7C7CC" />
+      <Text style={styles.emptyCommentsTitle}>No comments yet</Text>
+      <Text style={styles.emptyCommentsSubtitle}>Be the first to share your thoughts! 💭</Text>
+    </View>
+  );
+
   const renderHeader = () => (
     <View style={styles.headerContainer}>
+      {/* FIXED: User info with event below username (like PostCard) */}
+      <View style={styles.authorContainer}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('ProfileScreen', { userId: post.user?._id })}
+          style={styles.authorInfo}
+        >
+          <Image
+            source={{ uri: getProfilePictureUrl(post.user) }}
+            style={styles.authorAvatar}
+            onError={(error) => {
+              console.log('Author avatar load error:', error);
+            }}
+          />
+          <View style={styles.authorTextContainer}>
+            <Text style={styles.authorUsername}>{post.user?.username || 'Unknown'}</Text>
+            {/* FIXED: Event context below username like PostCard */}
+            {post.event && (
+              <TouchableOpacity
+                onPress={() =>
+                  navigation.navigate('EventDetailsScreen', { eventId: post.event._id })
+                }
+                style={styles.eventContext}
+              >
+                <Ionicons name="calendar-outline" size={12} color="#3797EF" />
+                <Text style={styles.eventContextText}>from {post.event.title}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+      </View>
+
       {/* Image Section */}
       <View style={styles.imageContainer}>
         {imgURL ? (
@@ -382,9 +442,11 @@ export default function PostDetailsScreen() {
             />
           </TouchableOpacity>
           
-          {/* Like count next to heart */}
+          {/* FIXED: Like count much closer to heart and clickable */}
           {likeCount > 0 && (
-            <Text style={styles.likeCount}>{likeCount}</Text>
+            <TouchableOpacity onPress={viewLikes}>
+              <Text style={styles.likeCount}>{likeCount}</Text>
+            </TouchableOpacity>
           )}
           
           <TouchableOpacity onPress={sharePost} style={styles.actionButton}>
@@ -393,48 +455,21 @@ export default function PostDetailsScreen() {
         </View>
       </View>
 
-      {/* Caption and Meta */}
-      <View style={styles.captionContainer}>
-        <View style={styles.authorContainer}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('ProfileScreen', { userId: post.user?._id })}
-            style={styles.authorInfo}
-          >
-            <Image
-              source={{ uri: getProfilePictureUrl(post.user) }}
-              style={styles.authorAvatar}
-              onError={(error) => {
-                console.log('Author avatar load error:', error);
-              }}
-            />
-            <View style={styles.authorTextContainer}>
-              <Text style={styles.authorUsername}>{post.user?.username || 'Unknown'}</Text>
-              <Text style={styles.postTime}>
-                {new Date(post.uploadDate).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </View>
+      {/* FIXED: Upload date below like and share */}
+      <View style={styles.postDateContainer}>
+        <Text style={styles.postDate}>
+          {new Date(post.uploadDate).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric'
+          })}
+        </Text>
+      </View>
 
+      {/* Caption */}
+      <View style={styles.captionContainer}>
         {post.caption && (
           <Text style={styles.captionText}>{post.caption}</Text>
-        )}
-
-        {post.event && (
-          <TouchableOpacity
-            onPress={() =>
-              navigation.navigate('EventDetailsScreen', { eventId: post.event._id })
-            }
-            style={styles.eventLink}
-          >
-            <Ionicons name="calendar-outline" size={16} color="#3797EF" />
-            <Text style={styles.eventLinkText}>View Event</Text>
-          </TouchableOpacity>
         )}
       </View>
 
@@ -472,7 +507,7 @@ export default function PostDetailsScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Custom Header */}
+      {/* FIXED: Custom header to prevent MainApp header showing */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -499,151 +534,118 @@ export default function PostDetailsScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <FlatList
+          style={styles.commentsList}
           data={post.comments || []}
-          keyExtractor={(comment, index) => `${comment._id}-${index}`}
+          keyExtractor={(item) => item._id}
           renderItem={renderComment}
           ListHeaderComponent={renderHeader}
-          style={styles.commentsList}
+          ListEmptyComponent={post.comments?.length === 0 ? renderEmptyComments : null}
           showsVerticalScrollIndicator={false}
-          ListEmptyComponent={() => (
-            <View style={styles.noCommentsContainer}>
-              <Ionicons name="chatbubble-outline" size={48} color="#C7C7CC" />
-              <Text style={styles.noCommentsText}>No comments yet</Text>
-              <Text style={styles.noCommentsSubtext}>Be the first to comment!</Text>
-            </View>
-          )}
+          contentContainerStyle={{ paddingBottom: 20 }}
         />
 
         {/* Comment Input */}
         <View style={styles.commentInputContainer}>
           <Image
             source={{ uri: getProfilePictureUrl(currentUser) }}
-            style={styles.inputAvatar}
-            onError={(error) => {
-              console.log('Input avatar load error:', error);
-            }}
+            style={styles.commentInputAvatar}
           />
           <TextInput
+            style={styles.commentInput}
+            placeholder="Add a comment..."
+            placeholderTextColor="#8E8E93"
             value={newComment}
             onChangeText={setNewComment}
-            placeholder="Add a comment..."
-            style={styles.commentInput}
             multiline
-            maxLength={500}
-            textAlignVertical="center"
           />
           <TouchableOpacity
             onPress={postComment}
-            disabled={!newComment.trim() || commentsLoading}
             style={[
-              styles.sendButton,
-              (!newComment.trim() || commentsLoading) && styles.sendButtonDisabled
+              styles.commentPostButton,
+              { opacity: newComment.trim() ? 1 : 0.5 }
             ]}
+            disabled={!newComment.trim() || commentsLoading}
           >
             {commentsLoading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <ActivityIndicator size="small" color="#3797EF" />
             ) : (
-              <Ionicons 
-                name="send" 
-                size={18} 
-                color={newComment.trim() ? "#FFFFFF" : "#C7C7CC"} 
-              />
+              <Text style={styles.commentPostText}>Post</Text>
             )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
 
-      {/* Edit Modal */}
-      <Modal transparent visible={showEdit} animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowEdit(false)}>
-                <Text style={styles.modalCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Edit Post</Text>
-              <TouchableOpacity onPress={saveEdit}>
-                <Text style={styles.modalSave}>Save</Text>
-              </TouchableOpacity>
-            </View>
+      {/* FIXED: Edit Modal with proper functionality */}
+      <Modal
+        visible={showEdit}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowEdit(false)}
+      >
+        <SafeAreaView style={styles.editModalContainer}>
+          <View style={styles.editModalHeader}>
+            <TouchableOpacity onPress={() => setShowEdit(false)}>
+              <Text style={styles.editModalCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.editModalTitle}>Edit Post</Text>
+            <TouchableOpacity onPress={saveEdit}>
+              <Text style={styles.editModalSave}>Save</Text>
+            </TouchableOpacity>
+          </View>
 
-            <ScrollView style={styles.modalContent}>
-              <Text style={styles.modalLabel}>Caption</Text>
+          <ScrollView style={styles.editModalContent}>
+            {/* Caption */}
+            <View style={styles.editSection}>
+              <Text style={styles.editSectionTitle}>Caption</Text>
               <TextInput
-                multiline
+                style={styles.editCaptionInput}
                 value={caption}
                 onChangeText={setCaption}
-                style={styles.modalInput}
                 placeholder="Write a caption..."
-                maxLength={2000}
+                multiline
+                textAlignVertical="top"
               />
+            </View>
 
-              <Text style={styles.modalLabel}>Link to Event</Text>
-              <Text style={styles.modalSubLabel}>
-                Link this post to an event you've attended or hosted
-              </Text>
-              
+            {/* Event Selection */}
+            <View style={styles.editSection}>
+              <Text style={styles.editSectionTitle}>Event (Optional)</Text>
               {eventsLoading ? (
-                <ActivityIndicator size="small" color="#3797EF" style={styles.eventsLoader} />
-              ) : userEvents.length === 0 ? (
-                <Text style={styles.noEventsText}>
-                  No events available to link
-                </Text>
+                <ActivityIndicator size="small" color="#3797EF" />
               ) : (
-                <View style={styles.eventsList}>
-                  {/* No Event Option */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <TouchableOpacity
-                    style={styles.eventOption}
+                    style={[
+                      styles.eventOption,
+                      !selectedEvent && styles.eventOptionSelected
+                    ]}
                     onPress={() => setSelectedEvent(null)}
                   >
-                    <Ionicons
-                      name={selectedEvent === null ? 'radio-button-on' : 'radio-button-off'}
-                      size={20}
-                      color="#3797EF"
-                    />
-                    <View style={styles.eventOptionContent}>
-                      <Text style={styles.eventOptionTitle}>No Event</Text>
-                      <Text style={styles.eventOptionDate}>Don't link to any event</Text>
-                    </View>
+                    <Text style={[
+                      styles.eventOptionText,
+                      !selectedEvent && styles.eventOptionSelectedText
+                    ]}>None</Text>
                   </TouchableOpacity>
-
-                  {/* User Events */}
                   {userEvents.map((event) => (
                     <TouchableOpacity
                       key={event._id}
-                      style={styles.eventOption}
-                      onPress={() => setSelectedEvent(selectedEvent === event._id ? null : event._id)}
+                      style={[
+                        styles.eventOption,
+                        selectedEvent === event._id && styles.eventOptionSelected
+                      ]}
+                      onPress={() => setSelectedEvent(event._id)}
                     >
-                      <Ionicons
-                        name={selectedEvent === event._id ? 'radio-button-on' : 'radio-button-off'}
-                        size={20}
-                        color="#3797EF"
-                      />
-                      <View style={styles.eventOptionContent}>
-                        <Text style={styles.eventOptionTitle}>{event.title}</Text>
-                        <Text style={styles.eventOptionDate}>
-                          {new Date(event.time).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric'
-                          })}
-                        </Text>
-                      </View>
+                      <Text style={[
+                        styles.eventOptionText,
+                        selectedEvent === event._id && styles.eventOptionSelectedText
+                      ]}>{event.title}</Text>
                     </TouchableOpacity>
                   ))}
-                </View>
+                </ScrollView>
               )}
-
-              <TouchableOpacity
-                onPress={handleDeletePost}
-                style={styles.deleteButton}
-              >
-                <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-                <Text style={styles.deleteButtonText}>Delete Post</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -654,42 +656,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#8E8E93',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  errorTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#000000',
-    marginTop: 16,
-    marginBottom: 32,
-  },
-  goBackButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 32,
-    paddingVertical: 16,
-    borderRadius: 12,
-  },
-  goBackText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Header
+  
+  // FIXED: Custom header to prevent MainApp header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -698,6 +666,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
+    backgroundColor: '#FFFFFF',
   },
   headerButton: {
     padding: 4,
@@ -721,6 +690,46 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     backgroundColor: '#FFFFFF',
+  },
+
+  // FIXED: Author section styles - now includes event context below username
+  authorContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  authorInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  authorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: '#F6F6F6',
+  },
+  authorTextContainer: {
+    flex: 1,
+  },
+  authorUsername: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  
+  // FIXED: Event context styles (like PostCard)
+  eventContext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  eventContextText: {
+    fontSize: 12,
+    color: '#3797EF',
+    marginLeft: 4,
+    fontWeight: '500',
   },
 
   // Image
@@ -754,14 +763,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionButton: {
-    marginRight: 16,
     padding: 4,
   },
+  // FIXED: Like count much closer to heart and clickable
   likeCount: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
+    marginLeft: 4,
     marginRight: 16,
+  },
+
+  // FIXED: Post date below actions
+  postDateContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  postDate: {
+    fontSize: 12,
+    color: '#8E8E93',
   },
 
   // Caption
@@ -769,49 +789,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 16,
   },
-  authorContainer: {
-    marginBottom: 12,
-  },
-  authorInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  authorAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    marginRight: 12,
-    backgroundColor: '#F6F6F6',
-  },
-  authorTextContainer: {
-    flex: 1,
-  },
-  authorUsername: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  postTime: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
   captionText: {
     fontSize: 14,
     color: '#000000',
     lineHeight: 18,
-    marginBottom: 8,
-  },
-  eventLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  eventLinkText: {
-    fontSize: 14,
-    color: '#3797EF',
-    fontWeight: '500',
-    marginLeft: 6,
   },
 
   // Comments Header
@@ -827,12 +808,31 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
+  // FIXED: Empty comments state
+  emptyCommentsContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 32,
+  },
+  emptyCommentsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyCommentsSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
   // Comments
   commentItem: {
     flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 8,
-    alignItems: 'flex-start',
   },
   commentAvatarContainer: {
     marginRight: 12,
@@ -847,16 +847,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   commentBubble: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F6F6F6',
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    maxWidth: '85%',
   },
   commentUsername: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#3797EF',
+    color: '#000000',
     marginBottom: 2,
   },
   commentText: {
@@ -868,7 +867,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 4,
-    paddingLeft: 12,
+    paddingHorizontal: 12,
   },
   commentTime: {
     fontSize: 12,
@@ -881,24 +880,6 @@ const styles = StyleSheet.create({
   commentOptionsText: {
     fontSize: 12,
     color: '#8E8E93',
-    fontWeight: '600',
-  },
-
-  // No Comments
-  noCommentsContainer: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  noCommentsText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#8E8E93',
-    marginTop: 12,
-  },
-  noCommentsSubtext: {
-    fontSize: 14,
-    color: '#C7C7CC',
-    marginTop: 4,
   },
 
   // Comment Input
@@ -907,11 +888,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
     borderTopWidth: 0.5,
     borderTopColor: '#E1E1E1',
+    backgroundColor: '#FFFFFF',
   },
-  inputAvatar: {
+  commentInputAvatar: {
     width: 32,
     height: 32,
     borderRadius: 8,
@@ -920,137 +901,129 @@ const styles = StyleSheet.create({
   },
   commentInput: {
     flex: 1,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F6F6F6',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    fontSize: 14,
     maxHeight: 100,
-    marginRight: 8,
+    fontSize: 14,
+    color: '#000000',
   },
-  sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#3797EF',
-    justifyContent: 'center',
-    alignItems: 'center',
+  commentPostButton: {
+    marginLeft: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  sendButtonDisabled: {
-    backgroundColor: '#F0F0F0',
+  commentPostText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3797EF',
   },
 
-  // Modal
-  modalOverlay: {
+  // Edit Modal
+  editModalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContainer: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
   },
-  modalHeader: {
+  editModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  modalCancel: {
+  editModalCancel: {
     fontSize: 16,
     color: '#8E8E93',
   },
-  modalTitle: {
+  editModalTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000000',
   },
-  modalSave: {
+  editModalSave: {
     fontSize: 16,
     fontWeight: '600',
     color: '#3797EF',
   },
-  modalContent: {
+  editModalContent: {
     flex: 1,
-    padding: 20,
+    padding: 16,
   },
-  modalLabel: {
+  editSection: {
+    marginBottom: 24,
+  },
+  editSectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
     marginBottom: 8,
   },
-  modalSubLabel: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 16,
-  },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
+  editCaptionInput: {
+    backgroundColor: '#F6F6F6',
     borderRadius: 12,
     padding: 12,
-    fontSize: 14,
     minHeight: 80,
-    textAlignVertical: 'top',
-    marginBottom: 24,
-  },
-  eventsLoader: {
-    marginVertical: 20,
-  },
-  noEventsText: {
     fontSize: 14,
-    color: '#8E8E93',
-    fontStyle: 'italic',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  eventsList: {
-    marginBottom: 20,
+    color: '#000000',
   },
   eventOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
+    backgroundColor: '#F6F6F6',
+    borderRadius: 20,
     paddingHorizontal: 16,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    marginBottom: 8,
+    paddingVertical: 8,
+    marginRight: 8,
   },
-  eventOptionContent: {
-    marginLeft: 12,
-    flex: 1,
+  eventOptionSelected: {
+    backgroundColor: '#3797EF',
   },
-  eventOptionTitle: {
+  eventOptionText: {
     fontSize: 14,
     fontWeight: '500',
     color: '#000000',
   },
-  eventOptionDate: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 2,
+  eventOptionSelectedText: {
+    color: '#FFFFFF',
   },
-  deleteButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+
+  // Loading & Error States
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
-    backgroundColor: '#FFF0F0',
-    borderWidth: 1,
-    borderColor: '#FF3B30',
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginTop: 20,
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
-  deleteButtonText: {
+  loadingText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    marginTop: 12,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 32,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  goBackButton: {
+    backgroundColor: '#3797EF',
+    borderRadius: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    marginTop: 16,
+  },
+  goBackText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FF3B30',
-    marginLeft: 8,
+    color: '#FFFFFF',
   },
 });

@@ -37,6 +37,7 @@ import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
 import ErrorBoundary from './components/ErrorBoundary';
+import PostLikesScreen from './screens/PostsLikesScreen';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
 import { StatusBar } from 'react-native';
@@ -129,6 +130,11 @@ function AppNavigator({ onLogout }) {
             <RootStack.Screen 
               name="MainApp" 
               component={MainTabNavigator}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen 
+              name="PostLikesScreen" 
+              component={PostLikesScreen}
               options={{ headerShown: false }}
             />
             {/* Global Screens */}
