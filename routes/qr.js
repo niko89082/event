@@ -17,17 +17,22 @@ router.get('/my-code', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Create QR data object
+    const qrDataObject = {
+      type: 'user_profile',
+      shareCode: user.shareCode,
+      username: user.username,
+      appVersion: '1.0'
+    };
+
+    console.log('📱 Generated QR data:', qrDataObject);
+
     // Return data needed for QR code generation
     res.json({
       shareCode: user.shareCode,
       username: user.username,
       profilePicture: user.profilePicture,
-      qrData: {
-        type: 'user_profile',
-        shareCode: user.shareCode,
-        username: user.username,
-        appVersion: '1.0'
-      }
+      qrData: qrDataObject // This will be JSON.stringify'd on the client
     });
   } catch (error) {
     console.error('Get share code error:', error);
@@ -45,12 +50,30 @@ router.post('/scan', protect, async (req, res) => {
 
     let targetShareCode;
 
+    console.log('🔍 Processing QR scan:', { qrData, shareCode });
+
     // Handle different QR data formats
     if (typeof qrData === 'string') {
-      // Direct share code
-      targetShareCode = qrData;
-    } else if (qrData && qrData.shareCode) {
-      // JSON format
+      // Try to parse as JSON first
+      try {
+        const parsedData = JSON.parse(qrData);
+        console.log('✅ Parsed JSON QR data:', parsedData);
+        
+        if (parsedData.shareCode) {
+          targetShareCode = parsedData.shareCode;
+        } else if (parsedData.type === 'user_profile' && parsedData.shareCode) {
+          targetShareCode = parsedData.shareCode;
+        } else {
+          // If JSON doesn't have shareCode, treat the string as direct share code
+          targetShareCode = qrData;
+        }
+      } catch (parseError) {
+        console.log('📝 QR data is not JSON, treating as direct share code');
+        // If not JSON, treat as direct share code
+        targetShareCode = qrData;
+      }
+    } else if (qrData && typeof qrData === 'object') {
+      // Already parsed JSON object
       targetShareCode = qrData.shareCode;
     } else if (shareCode) {
       // Fallback to shareCode parameter
@@ -62,16 +85,21 @@ router.post('/scan', protect, async (req, res) => {
       });
     }
 
+    console.log('🎯 Looking for user with shareCode:', targetShareCode);
+
     // Find user by share code
     const targetUser = await User.findOne({ shareCode: targetShareCode })
       .select('_id username profilePicture bio isPublic followers');
 
     if (!targetUser) {
+      console.log('❌ No user found with shareCode:', targetShareCode);
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
+
+    console.log('✅ Found user:', targetUser.username);
 
     // Check if scanning own code
     if (String(targetUser._id) === String(req.user._id)) {

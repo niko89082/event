@@ -168,35 +168,52 @@ export default function QrScanScreen() {
   };
 
   const handleUserProfileScan = async (qrData) => {
-    try {
-      const response = await api.post('/api/qr/scan', {
-        qrData: qrData
-      });
+  try {
+    console.log('📱 Raw QR data scanned:', qrData);
+    console.log('📱 QR data type:', typeof qrData);
+    console.log('📱 QR data length:', qrData.length);
 
-      if (response.data.success) {
-        const user = response.data.user;
-        Alert.alert(
-          '👤 User Found',
-          `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
-            {
-              text: user.isFollowing ? 'View Profile' : 'Follow',
-              onPress: user.isFollowing ? 
-                () => navigation.navigate('ProfileScreen', { userId: user._id }) :
-                () => handleQuickFollow(qrData),
-              style: user.isFollowing ? 'default' : 'destructive'
-            },
-          ]
-        );
-      } else {
-        showErrorAlert(response.data.message || 'User not found');
-      }
-    } catch (error) {
-      console.error('❌ Profile scan error:', error);
-      showErrorAlert('Unable to process QR code. Please try again.');
+    // Try to parse if it looks like JSON
+    let parsedData = null;
+    try {
+      parsedData = JSON.parse(qrData);
+      console.log('✅ Successfully parsed QR JSON:', parsedData);
+    } catch (parseError) {
+      console.log('📝 QR data is not JSON, treating as direct share code');
     }
-  };
+
+    const response = await api.post('/api/qr/scan', {
+      qrData: qrData // Send raw data, let backend handle parsing
+    });
+
+    console.log('🔍 QR scan response:', response.data);
+
+    if (response.data.success) {
+      const user = response.data.user;
+      Alert.alert(
+        '👤 User Found',
+        `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+          {
+            text: user.isFollowing ? 'View Profile' : 'Follow',
+            onPress: user.isFollowing ? 
+              () => navigation.navigate('ProfileScreen', { userId: user._id }) :
+              () => handleQuickFollow(parsedData?.shareCode || qrData),
+            style: user.isFollowing ? 'default' : 'destructive'
+          },
+        ]
+      );
+    } else {
+      console.error('❌ QR scan failed:', response.data.message);
+      showErrorAlert(response.data.message || 'User not found');
+    }
+  } catch (error) {
+    console.error('❌ Profile scan error:', error);
+    console.error('❌ Error details:', error.response?.data);
+    showErrorAlert('Unable to process QR code. Please try again.');
+  }
+};
 
   const handleQuickFollow = async (qrData) => {
     try {
