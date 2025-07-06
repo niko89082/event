@@ -1,4 +1,4 @@
-// SocialApp/components/EventsHub.js - Complete file updated for swipe functionality
+// SocialApp/components/EventsHub.js - FIXED: Always visible sub-tabs with better layout
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
@@ -8,13 +8,14 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
 import EventsFeed from './EventsFeed';
 
-// Following and For You tabs as in existing structure
+// Following and For You tabs
 const EVENTS_TABS = [
   { key: 'following', label: 'Following', icon: 'people-outline' },
   { key: 'for-you', label: 'For You', icon: 'star-outline' },
@@ -25,7 +26,8 @@ const EventsHub = forwardRef(({
   refreshing: externalRefreshing, 
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
-  scrollEventThrottle = 16 
+  scrollEventThrottle = 16,
+  headerStyle // Receive header animation style from parent
 }, ref) => {
   const { currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('following');
@@ -89,8 +91,8 @@ const EventsHub = forwardRef(({
     >
       <Ionicons 
         name={icon} 
-        size={18} 
-        color={activeTab === tabKey ? '#3797EF' : '#8E8E93'} 
+        size={16} 
+        color={activeTab === tabKey ? '#FFFFFF' : '#8E8E93'} 
       />
       <Text style={[
         styles.tabButtonText,
@@ -99,14 +101,6 @@ const EventsHub = forwardRef(({
         {label}
       </Text>
     </TouchableOpacity>
-  );
-
-  const renderTabBar = () => (
-    <View style={styles.tabBar}>
-      {EVENTS_TABS.map(tab => 
-        renderTabButton(tab.key, tab.label, tab.icon)
-      )}
-    </View>
   );
 
   const renderError = () => (
@@ -156,7 +150,16 @@ const EventsHub = forwardRef(({
 
   return (
     <View style={styles.container}>
-      {renderTabBar()}
+      {/* FIXED: Static tab bar that's always visible */}
+      <View style={styles.stickyTabBarContainer}>
+        <View style={styles.tabBar}>
+          {EVENTS_TABS.map(tab => 
+            renderTabButton(tab.key, tab.label, tab.icon)
+          )}
+        </View>
+      </View>
+      
+      {/* Content area */}
       <View style={styles.contentContainer}>
         {renderActiveTabContent()}
       </View>
@@ -170,50 +173,86 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   
-  // FIXED: Tab Bar with proper spacing to avoid header overlap
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#F8F9FA',
-    marginHorizontal: 16,
-    marginTop: 8, // Reduced from 16 to avoid header overlap
-    borderRadius: 12,
-    padding: 4,
+  // FIXED: Always visible sticky tab bar - properly spaced from main header
+  stickyTabBarContainer: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     elevation: 2,
+    zIndex: 10,
+    marginTop: 16, // Increased margin for better spacing from main header
+    marginBottom: 16, // Added bottom margin to match top spacing
+    paddingHorizontal: 16,
   },
+  
+  tabBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12, // Space between oval tabs
+  },
+  
   tabButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: 'transparent',
+    borderRadius: 20, // Oval shape
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    minWidth: 80,
   },
+  
   activeTabButton: {
-    backgroundColor: '#E8F4FD',
+    backgroundColor: '#3797EF',
+    borderColor: '#3797EF',
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
+  
   tabButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: '#8E8E93',
-    marginLeft: 6,
+    marginLeft: 5,
   },
+  
   activeTabButtonText: {
-    color: '#3797EF',
+    color: '#FFFFFF',
     fontWeight: '600',
   },
-  
-  // Content
+
+  // Content container
   contentContainer: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+
+  // Loading and error states
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
   
-  // Error state styles
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -221,6 +260,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     backgroundColor: '#FFFFFF',
   },
+  
   errorTitle: {
     fontSize: 20,
     fontWeight: '600',
@@ -229,6 +269,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
+  
   errorMessage: {
     fontSize: 16,
     color: '#8E8E93',
@@ -236,12 +277,14 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: 24,
   },
+  
   retryButton: {
     backgroundColor: '#3797EF',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
+  
   retryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
