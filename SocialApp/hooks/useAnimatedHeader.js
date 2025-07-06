@@ -1,12 +1,11 @@
-// hooks/useAnimatedHeader.js
+// hooks/useAnimatedHeader.js - UPDATED: More aggressive tab movement
 import { useRef, useCallback } from 'react';
 import { Animated } from 'react-native';
 
-const HEADER_HEIGHT = 100; // Approximate header height
-const TAB_BAR_HEIGHT = 44; // Reduced tab bar height for minimal design
-const TOTAL_HIDE_HEIGHT = HEADER_HEIGHT + TAB_BAR_HEIGHT; // Total height to hide
-const SCROLL_THRESHOLD = 50; // Minimum scroll to trigger hide
-const SHOW_THRESHOLD = 30; // Minimum reverse scroll to show
+const HEADER_HEIGHT = 85; // Reduced header height since no subtitle
+const TAB_BAR_HEIGHT = 36; // Actual tab bar height
+const SCROLL_THRESHOLD = 30; // Lower threshold for quicker response
+const SHOW_THRESHOLD = 20; // Lower threshold for showing
 
 export const useAnimatedHeader = () => {
   const headerTranslateY = useRef(new Animated.Value(0)).current;
@@ -20,12 +19,12 @@ export const useAnimatedHeader = () => {
     const animations = [
       Animated.timing(headerTranslateY, {
         toValue: headerToValue,
-        duration: 250,
+        duration: 200, // Faster animation
         useNativeDriver: true,
       }),
       Animated.timing(tabBarTranslateY, {
         toValue: tabBarToValue,
-        duration: 250,
+        duration: 200, // Faster animation
         useNativeDriver: true,
       })
     ];
@@ -34,7 +33,7 @@ export const useAnimatedHeader = () => {
       animations.push(
         Animated.timing(headerOpacity, {
           toValue: opacity,
-          duration: 200,
+          duration: 150, // Faster opacity change
           useNativeDriver: true,
         })
       );
@@ -62,10 +61,11 @@ export const useAnimatedHeader = () => {
         animateHeader(0, 0, 1); // header: 0, tabBar: 0, opacity: 1
       }
     } else if (scrollDirection.current === 'down' && currentScrollY > SCROLL_THRESHOLD) {
-      // Scrolling down past threshold - hide header and tab bar
+      // Scrolling down past threshold - hide header and move tabs up more
       if (isHeaderVisible.current) {
         isHeaderVisible.current = false;
-        animateHeader(-HEADER_HEIGHT, -TAB_BAR_HEIGHT, 0.3); // header: -100, tabBar: -50, opacity: 0.3
+        // FIXED: Move tabs up more aggressively (increased tabBar offset)
+        animateHeader(-HEADER_HEIGHT, -TAB_BAR_HEIGHT - 10, 0.2); // Extra -10px for tabs
       }
     } else if (scrollDirection.current === 'up' && Math.abs(scrollDelta) > SHOW_THRESHOLD) {
       // Scrolling up with enough velocity - show header and tab bar

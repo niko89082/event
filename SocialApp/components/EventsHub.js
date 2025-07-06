@@ -1,4 +1,4 @@
-// SocialApp/components/EventsHub.js - Enhanced with scroll event handling for animated header
+// SocialApp/components/EventsHub.js - Complete file updated for swipe functionality
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
@@ -101,10 +101,35 @@ const EventsHub = forwardRef(({
     </TouchableOpacity>
   );
 
-  const renderActiveTab = () => {
+  const renderTabBar = () => (
+    <View style={styles.tabBar}>
+      {EVENTS_TABS.map(tab => 
+        renderTabButton(tab.key, tab.label, tab.icon)
+      )}
+    </View>
+  );
+
+  const renderError = () => (
+    <View style={styles.errorContainer}>
+      <Ionicons name="cloud-offline-outline" size={64} color="#8E8E93" />
+      <Text style={styles.errorTitle}>Connection Error</Text>
+      <Text style={styles.errorMessage}>{error}</Text>
+      <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+        <Text style={styles.retryButtonText}>Try Again</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderActiveTabContent = () => {
+    if (error) {
+      return renderError();
+    }
+
+    // Pass scroll handling and refresh props to child components
     const commonProps = {
       navigation,
-      refreshing: refreshing || externalRefreshing || false,
+      currentUserId: currentUser?._id,
+      refreshing: refreshing || externalRefreshing,
       onRefresh: handleInternalRefresh,
       onScroll: handleScroll,
       scrollEventThrottle,
@@ -112,39 +137,28 @@ const EventsHub = forwardRef(({
 
     switch (activeTab) {
       case 'following':
-        return <FollowingEventsFeed {...commonProps} />;
+        return (
+          <FollowingEventsFeed
+            {...commonProps}
+          />
+        );
       case 'for-you':
-        return <EventsFeed {...commonProps} />;
+        return (
+          <EventsFeed
+            {...commonProps}
+            feedType="discover"
+          />
+        );
       default:
         return null;
     }
   };
 
-  if (error) {
-    return (
-      <View style={styles.errorContainer}>
-        <Ionicons name="cloud-offline-outline" size={64} color="#8E8E93" />
-        <Text style={styles.errorTitle}>Connection Error</Text>
-        <Text style={styles.errorMessage}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
-          <Text style={styles.retryButtonText}>Try Again</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
-      {/* Tab Selection */}
-      <View style={styles.tabsContainer}>
-        {EVENTS_TABS.map(tab => 
-          renderTabButton(tab.key, tab.label, tab.icon)
-        )}
-      </View>
-
-      {/* Active Tab Content */}
+      {renderTabBar()}
       <View style={styles.contentContainer}>
-        {renderActiveTab()}
+        {renderActiveTabContent()}
       </View>
     </View>
   );
@@ -156,23 +170,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   
-  // Tab Selection
-  tabsContainer: {
+  // FIXED: Tab Bar with proper spacing to avoid header overlap
+  tabBar: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    backgroundColor: '#F8F9FA',
+    marginHorizontal: 16,
+    marginTop: 8, // Reduced from 16 to avoid header overlap
+    borderRadius: 12,
+    padding: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   tabButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    justifyContent: 'center',
     paddingVertical: 12,
-    marginRight: 8,
-    borderRadius: 20,
-    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
   },
   activeTabButton: {
     backgroundColor: '#E8F4FD',

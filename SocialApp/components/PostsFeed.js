@@ -1,4 +1,4 @@
-// SocialApp/components/PostsFeed.js - Enhanced with scroll event handling for animated header
+// SocialApp/components/PostsFeed.js - Complete file updated for swipe functionality
 import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle, useCallback } from 'react';
 import {
   View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text, TouchableOpacity
@@ -143,22 +143,38 @@ const PostsFeed = forwardRef(({
             ? "Follow some people to see their posts here"
             : debugInfo?.fallbackUsed 
               ? "Your friends haven't posted yet, but here are some trending posts!"
-              : "Follow some people or attend events to see posts from other attendees"
+              : "Start following friends or create your first post!"
           }
         </Text>
-        {debugInfo?.friendsCount === 0 && (
-          <TouchableOpacity 
-            style={styles.discoverButton}
-            onPress={() => navigation.navigate('SearchScreen')}
-          >
-            <Text style={styles.discoverButtonText}>Discover People</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => navigation.navigate('SearchScreen')}
+        >
+          <Text style={styles.actionButtonText}>
+            {debugInfo?.friendsCount === 0 ? 'Find People' : 'Explore'}
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   };
 
-  if (loading && page === 1) {
+  const renderFooter = () => {
+    if (!loading || page === 1) return null;
+    return (
+      <View style={styles.footer}>
+        <ActivityIndicator size="small" color="#3797EF" />
+        <Text style={styles.loadingText}>Loading more posts...</Text>
+      </View>
+    );
+  };
+
+  // Show error state if there's an error
+  if (error && data.length === 0) {
+    return renderError();
+  }
+
+  // Show loading state on initial load
+  if (loading && page === 1 && data.length === 0) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3797EF" />
@@ -167,109 +183,125 @@ const PostsFeed = forwardRef(({
     );
   }
 
-  if (error && data.length === 0) {
-    return renderError();
-  }
-
   return (
-    <View style={styles.container}>
-      <FlatList
-        data={data}
-        keyExtractor={item => item._id}
-        renderItem={renderPost}
-        onEndReached={handleLoadMore}
-        onEndReachedThreshold={0.4}
-        refreshControl={
-          <RefreshControl 
-            refreshing={refreshing || externalRefreshing || false}
-            onRefresh={handleRefresh}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-            title="Pull to refresh posts"
-            titleColor="#8E8E93"
-            progressBackgroundColor="#FFFFFF"
-          />
-        }
-        onScroll={handleScroll}
-        scrollEventThrottle={scrollEventThrottle}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={data.length === 0 ? styles.emptyList : styles.listContent}
-        ListEmptyComponent={renderEmpty}
-        ListFooterComponent={() => {
-          if (loading && page > 1) {
-            return (
-              <View style={styles.loadingMore}>
-                <ActivityIndicator size="small" color="#3797EF" />
-                <Text style={styles.loadingMoreText}>Loading more posts...</Text>
-              </View>
-            );
-          }
-          return null;
-        }}
-        // Enhanced props for better performance and UX
-        bounces={true}
-        alwaysBounceVertical={true}
-        removeClippedSubviews={true}
-        initialNumToRender={5}
-        maxToRenderPerBatch={5}
-        windowSize={10}
-        getItemLayout={null} // Let FlatList calculate this for variable heights
-      />
-    </View>
+    <FlatList
+      data={data}
+      renderItem={renderPost}
+      keyExtractor={item => item._id}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing || externalRefreshing}
+          onRefresh={handleRefresh}
+          tintColor="#3797EF"
+          colors={["#3797EF"]}
+          title="Pull to refresh posts"
+          titleColor="#8E8E93"
+          progressBackgroundColor="#FFFFFF"
+        />
+      }
+      onScroll={handleScroll}
+      scrollEventThrottle={scrollEventThrottle}
+      ListEmptyComponent={renderEmpty}
+      ListFooterComponent={renderFooter}
+      onEndReached={handleLoadMore}
+      onEndReachedThreshold={0.1}
+      contentContainerStyle={data.length === 0 ? styles.emptyContentContainer : styles.contentContainer}
+      removeClippedSubviews={true}
+      maxToRenderPerBatch={5}
+      updateCellsBatchingPeriod={50}
+      initialNumToRender={8}
+      windowSize={10}
+    />
   );
 });
 
-export default PostsFeed;
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  postWrapper: {
-    marginBottom: 0, // PostItem handles its own margin
-  },
+  // Loading states
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    paddingVertical: 40,
+    paddingTop: 100,
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
+    textAlign: 'center',
   },
-  loadingMore: {
-    flexDirection: 'row',
+
+  // Content containers
+  contentContainer: {
+    paddingBottom: 20,
+  },
+  emptyContentContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+
+  // Post wrapper
+  postWrapper: {
+    marginBottom: 16,
+  },
+
+  // Empty state
+  emptyContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 20,
+    paddingHorizontal: 40,
+    paddingTop: 60,
   },
-  loadingMoreText: {
-    marginLeft: 8,
-    fontSize: 14,
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 20,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
     color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
   },
+  actionButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // Error state
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 40,
+    paddingTop: 60,
   },
   errorTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#000',
+    color: '#000000',
     marginTop: 16,
     marginBottom: 8,
+    textAlign: 'center',
   },
   errorMessage: {
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
+    lineHeight: 22,
     marginBottom: 24,
   },
   retryButton: {
@@ -283,44 +315,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
+
+  // Footer
+  footer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    backgroundColor: '#FFFFFF',
-    paddingTop: 60,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#000',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  discoverButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  discoverButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  emptyList: {
-    flexGrow: 1,
-  },
-  listContent: {
-    paddingBottom: 20,
+    justifyContent: 'center',
+    paddingVertical: 20,
+    gap: 12,
   },
 });
+
+export default PostsFeed;
