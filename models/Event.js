@@ -1,4 +1,4 @@
-// models/Event.js - Enhanced with Multi-Provider Payment Support
+// models/Event.js - Enhanced with Multi-Provider Payment Support + Phase 1 Form System
 const mongoose = require('mongoose');
 
 // Enhanced Payment History Schema with Multi-Provider Support
@@ -257,6 +257,39 @@ const EventSchema = new mongoose.Schema({
   // ENHANCED: PAYMENT HISTORY WITH MULTI-PROVIDER SUPPORT
   // ============================================
   paymentHistory: [PaymentHistorySchema],
+
+  // ============================================
+  // PHASE 1: CHECK-IN FORM INTEGRATION
+  // ============================================
+  checkInForm: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Form'
+  },
+  requiresFormForCheckIn: {
+    type: Boolean,
+    default: false
+  },
+  
+  // Form submission tracking
+  formSubmissions: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'FormSubmission'
+  }],
+  
+  // Check-in QR code settings
+  checkInQR: {
+    isActive: {
+      type: Boolean,
+      default: false
+    },
+    generatedAt: Date,
+    expiresAt: Date,
+    code: String, // Unique code for this event's check-in
+    viewCount: {
+      type: Number,
+      default: 0
+    }
+  },
 
   // Privacy and permissions system
   privacyLevel: {
@@ -644,6 +677,213 @@ EventSchema.methods.canUserGetRefund = function(userId) {
 };
 
 // ============================================
+// PHASE 1: FORM AND CHECK-IN METHODS
+// ============================================
+
+/**
+ * Check if event has a check-in form
+ * @returns {boolean} True if event has a form
+ */
+EventSchema.methods.hasCheckInForm = function() {
+  return !!(this.checkInForm && this.requiresFormForCheckIn);
+};
+
+/**
+ * Get check-in form with questions
+ * @returns {Promise} Form document or null
+ */
+EventSchema.methods.getCheckInForm = function() {
+  if (!this.checkInForm) return Promise.resolve(null);
+  
+  return this.model('Form').findById(this.checkInForm);
+};
+
+/**
+ * Check if user has submitted the check-in form
+ * @param {string} userId - User ID to check
+ * @returns {Promise<boolean>} True if user has submitted
+ */
+EventSchema.methods.hasUserSubmittedForm = async function(userId) {
+  if (!this.checkInForm) return true; // No form = always considered submitted
+  
+  const FormSubmission = this.model('FormSubmission');
+  return await FormSubmission.hasUserSubmitted(this.checkInForm, userId, this._id);
+};
+
+/**
+ * Generate or refresh check-in QR code
+ * @param {number} validityHours - How long the QR code should be valid (default 24 hours)
+ * @returns {string} Generated QR code
+ */
+EventSchema.methods.generateCheckInQR = function(validityHours = 24) {
+  const crypto = require('crypto');
+  
+  this.checkInQR = {
+    isActive: true,
+    generatedAt: new Date(),
+    expiresAt: new Date(Date.now() + validityHours * 60 * 60 * 1000),
+    code: crypto.randomBytes(16).toString('hex'),
+    viewCount: 0
+  };
+  
+  return this.save().then(() => this.checkInQR.code);
+};
+
+/**
+ * Get check-in QR data for scanning
+ * @returns {Object} QR data object
+ */
+EventSchema.methods.getCheckInQRData = function() {
+  if (!this.checkInQR || !this.checkInQR.isActive) {
+    return null;
+  }
+  
+  // Check if QR code is expired
+  if (this.checkInQR.expiresAt && new Date() > this.checkInQR.expiresAt) {
+    return null;
+  }
+  
+  return {
+    type: 'event_checkin',
+    eventId: this._id.toString(),
+    qrCode: this.checkInQR.code,
+    hasForm: this.hasCheckInForm(),
+    formId: this.checkInForm ? this.checkInForm.toString() : null,
+    generatedAt: this.checkInQR.generatedAt,
+    expiresAt: this.checkInQR.expiresAt
+  };
+};
+
+/**
+ * Increment QR code view count
+ */
+EventSchema.methods.incrementQRViews = function() {
+  if (this.checkInQR) {
+    this.checkInQR.viewCount += 1;
+    return this.save();
+  }
+  return Promise.resolve();
+};
+
+/**
+ * Deactivate check-in QR code
+ */
+EventSchema.methods.deactivateCheckInQR = function() {
+  if (this.checkInQR) {
+    this.checkInQR.isActive = false;
+    return this.save();
+  }
+  return Promise.resolve();
+};
+
+/**
+ * Can user check in to this event?
+ * @param {string} userId - User ID to check
+ * @returns {Promise<Object>} Check-in eligibility info
+ */
+EventSchema.methods.canUserCheckIn = async function(userId) {
+  const userIdStr = String(userId);
+  
+  // Check if user is already checked in
+  const isCheckedIn = this.checkedIn.some(id => String(id) === userIdStr);
+  if (isCheckedIn) {
+    return {
+      canCheckIn: false,
+      reason: 'already_checked_in',
+      message: 'User is already checked in'
+    };
+  }
+  
+  // Check if event has started (allow check-in 30 minutes before)
+  const eventTime = new Date(this.time);
+  const now = new Date();
+  const thirtyMinutesBefore = new Date(eventTime.getTime() - 30 * 60 * 1000);
+  
+  if (now < thirtyMinutesBefore) {
+    return {
+      canCheckIn: false,
+      reason: 'too_early',
+      message: 'Check-in opens 30 minutes before event start'
+    };
+  }
+  
+  // Check if event has ended (allow check-in up to 2 hours after start)
+  const twoHoursAfter = new Date(eventTime.getTime() + 2 * 60 * 60 * 1000);
+  if (now > twoHoursAfter) {
+    return {
+      canCheckIn: false,
+      reason: 'too_late',
+      message: 'Check-in window has closed'
+    };
+  }
+  
+  // Check if form is required and not submitted
+  if (this.requiresFormForCheckIn && this.checkInForm) {
+    const hasSubmitted = await this.hasUserSubmittedForm(userId);
+    if (!hasSubmitted) {
+      return {
+        canCheckIn: true,
+        requiresForm: true,
+        formId: this.checkInForm,
+        message: 'User must complete form to check in'
+      };
+    }
+  }
+  
+  return {
+    canCheckIn: true,
+    requiresForm: false,
+    message: 'User can check in'
+  };
+};
+
+/**
+ * Check in a user (after form submission if required)
+ * @param {string} userId - User ID to check in
+ * @param {Object} options - Additional options
+ * @returns {Promise<Object>} Check-in result
+ */
+EventSchema.methods.checkInUser = async function(userId, options = {}) {
+  const { bypassFormCheck = false, checkedInBy } = options;
+  
+  // Verify user can check in
+  if (!bypassFormCheck) {
+    const eligibility = await this.canUserCheckIn(userId);
+    if (!eligibility.canCheckIn) {
+      throw new Error(eligibility.message);
+    }
+    
+    if (eligibility.requiresForm) {
+      throw new Error('User must complete form before checking in');
+    }
+  }
+  
+  // Add to checked in list if not already there
+  const userIdStr = String(userId);
+  const isAlreadyCheckedIn = this.checkedIn.some(id => String(id) === userIdStr);
+  
+  if (!isAlreadyCheckedIn) {
+    this.checkedIn.push(userId);
+    
+    // Add to attendees if not already there
+    const isAttendee = this.attendees.some(id => String(id) === userIdStr);
+    if (!isAttendee) {
+      this.attendees.push(userId);
+    }
+    
+    await this.save();
+  }
+  
+  return {
+    success: true,
+    wasAlreadyCheckedIn: isAlreadyCheckedIn,
+    addedToAttendees: !isAlreadyCheckedIn && !this.attendees.some(id => String(id) === userIdStr),
+    checkedInAt: new Date(),
+    checkedInBy: checkedInBy || userId
+  };
+};
+
+// ============================================
 // PRIVACY AND PERMISSION METHODS
 // ============================================
 
@@ -826,6 +1066,21 @@ EventSchema.virtual('priceInDollars').get(function() {
 });
 
 // ============================================
+// PHASE 1: CHECK-IN STATS VIRTUAL
+// ============================================
+EventSchema.virtual('checkInStats').get(function() {
+  return {
+    totalAttendees: this.attendees ? this.attendees.length : 0,
+    totalCheckedIn: this.checkedIn ? this.checkedIn.length : 0,
+    checkInRate: this.attendees && this.attendees.length > 0 
+      ? ((this.checkedIn ? this.checkedIn.length : 0) / this.attendees.length * 100).toFixed(1)
+      : 0,
+    hasForm: this.hasCheckInForm(),
+    formSubmissions: this.formSubmissions ? this.formSubmissions.length : 0
+  };
+});
+
+// ============================================
 // INDEXES FOR PERFORMANCE
 // ============================================
 EventSchema.index({ time: 1 });
@@ -835,5 +1090,10 @@ EventSchema.index({ 'paymentHistory.user': 1 });
 EventSchema.index({ 'paymentHistory.status': 1 });
 EventSchema.index({ privacyLevel: 1 });
 EventSchema.index({ geo: '2dsphere' });
+
+// PHASE 1: New indexes for form system
+EventSchema.index({ checkInForm: 1 });
+EventSchema.index({ requiresFormForCheckIn: 1 });
+EventSchema.index({ 'checkInQR.isActive': 1, 'checkInQR.expiresAt': 1 });
 
 module.exports = mongoose.model('Event', EventSchema);

@@ -27,6 +27,7 @@ const followRoutes = require('./routes/follow');
 const usersRoutes = require('./routes/users');
 const memoryRoutes = require('./routes/memories');
 const qrRoutes = require('./routes/qr');
+const formsRoutes = require('./routes/forms');
 
 // Import middleware and models
 const protect = require('./middleware/auth');
@@ -307,6 +308,7 @@ app.use('/api/messages', messageRoutes(io, connectedUsers));
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/checkin', checkinRoutes);
+app.use('/api/forms', formsRoutes); 
 app.use('/api/profile', profileRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api', feedRoutes);

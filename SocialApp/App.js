@@ -37,6 +37,8 @@ import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
 import ErrorBoundary from './components/ErrorBoundary';
+import FormBuilderScreen from './screens/FormBuilderScreen';
+import FormLibraryScreen from './screens/FormLibraryScreen';
 import PostLikesScreen from './screens/PostsLikesScreen';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
@@ -232,6 +234,16 @@ function AppNavigator({ onLogout }) {
               name="EditMemoryScreen" 
               component={EditMemoryScreen}
               options={{ headerShown: true, title: 'Edit Memory' }}
+            />
+            <RootStack.Screen 
+              name="FormBuilderScreen" 
+              component={FormBuilderScreen}
+              options={{ headerShown: true, title: 'Create Form' }}
+            />
+            <RootStack.Screen 
+              name="FormLibraryScreen" 
+              component={FormLibraryScreen}
+              options={{ headerShown: true, title: 'Select Form' }}
             />
             <RootStack.Screen 
               name="PaymentSettings" 
