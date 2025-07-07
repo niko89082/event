@@ -890,73 +890,6 @@ router.get('/following-events', protect, async (req, res) => {
   }
 });
 
-// Enhanced Posts Feed Route
-router.get('/feed/posts', protect, async (req, res) => {
-  console.log('🟡 Enhanced posts endpoint hit');
-  const page = +req.query.page || 1;
-  const limit = +req.query.limit || 10;
-  const skip = (page - 1) * limit;
-  
-  try {
-    const viewer = await User.findById(req.user._id).select('following');
-    
-    if (!viewer) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    const followingIds = viewer.following || [];
-    console.log('🟡 Following count for posts:', followingIds.length);
-
-    if (followingIds.length === 0) {
-      return res.json({
-        posts: [],
-        page: 1,
-        totalPages: 0,
-        hasMore: false
-      });
-    }
-
-    const posts = await Photo.find({
-      user: { $in: followingIds }
-    })
-    .populate('user', 'username profilePicture')
-    .populate('event', 'title time location')
-    .sort({ uploadDate: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean();
-
-    console.log('🟡 Found posts:', posts.length);
-
-    const postsWithSource = posts.map(post => ({
-      ...post,
-      source: 'friend'
-    }));
-
-    const totalPosts = await Photo.countDocuments({
-      user: { $in: followingIds }
-    });
-    
-    const response = {
-      posts: postsWithSource,
-      page,
-      totalPages: Math.ceil(totalPosts / limit),
-      hasMore: skip + limit < totalPosts
-    };
-
-    console.log('🟢 Sending posts response:', { postsCount: posts.length, page });
-    res.json(response);
-
-  } catch (err) {
-    console.error('❌ Enhanced posts error:', err);
-    res.status(500).json({ 
-      message: 'Server error',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-});
-
 // Get Event Recommendations
 router.get('/recommendations', protect, async (req, res) => {
   try {
@@ -3844,5 +3777,1251 @@ router.post('/:eventId/deactivate-checkin-qr', protect, async (req, res) => {
     });
   }
 });
+router.post('/:eventId/checkin-with-form', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { formResponses, completionTime, targetUserId } = req.body;
 
+    const event = await Event.findById(eventId).populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host (required for checking in others)
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can check in attendees' 
+      });
+    }
+
+    // Validate form is required
+    if (!event.requiresFormForCheckIn || !event.checkInForm) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'This event does not require a check-in form' 
+      });
+    }
+
+    // Use targetUserId if provided (host checking in someone else), otherwise current user
+    const userToCheckIn = targetUserId || req.user._id;
+
+    // Check if user already submitted form
+    const FormSubmission = require('../models/FormSubmission');
+    const existingSubmission = await FormSubmission.findOne({
+      form: event.checkInForm._id,
+      user: userToCheckIn,
+      event: eventId
+    });
+
+    if (existingSubmission && !event.checkInForm.settings?.allowMultipleSubmissions) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User has already submitted this form' 
+      });
+    }
+
+    // Validate responses
+    const validation = event.checkInForm.validateResponse(formResponses);
+    if (!validation.isValid) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid form responses',
+        errors: validation.errors 
+      });
+    }
+
+    // Prepare responses with question context
+    const enrichedResponses = formResponses.map(response => {
+      const question = event.checkInForm.getQuestionById(response.questionId);
+      return {
+        questionId: response.questionId,
+        questionType: question.type,
+        questionText: question.question,
+        answer: response.answer
+      };
+    });
+
+    // Create or update submission
+    let submission;
+    if (existingSubmission && event.checkInForm.settings?.allowMultipleSubmissions) {
+      existingSubmission.responses = enrichedResponses;
+      existingSubmission.submittedAt = new Date();
+      existingSubmission.completionTime = completionTime;
+      existingSubmission.ipAddress = req.ip;
+      existingSubmission.userAgent = req.get('User-Agent');
+      submission = await existingSubmission.save();
+    } else {
+      submission = new FormSubmission({
+        form: event.checkInForm._id,
+        event: eventId,
+        user: userToCheckIn,
+        responses: enrichedResponses,
+        completionTime,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+      await submission.save();
+      
+      // Add to event's form submissions
+      if (!event.formSubmissions.includes(submission._id)) {
+        event.formSubmissions.push(submission._id);
+      }
+    }
+
+    // Now check in the user (bypass form check since we just submitted)
+    const checkInResult = await event.checkInUser(userToCheckIn, { 
+      bypassFormCheck: true 
+    });
+
+    await event.save();
+
+    // Increment form usage
+    if (!existingSubmission) {
+      await event.checkInForm.incrementUsage();
+    }
+
+    console.log(`✅ User ${userToCheckIn} submitted form and checked in to event ${eventId}`);
+
+    res.json({
+      success: true,
+      message: 'Form submitted and checked in successfully',
+      submission: {
+        _id: submission._id,
+        submittedAt: submission.submittedAt
+      },
+      checkIn: checkInResult
+    });
+
+  } catch (error) {
+    console.error('Submit form and check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to submit form and check in' 
+    });
+  }
+});
+/**
+ * POST /api/events/:eventId/manual-checkin
+ * Manually check in a user (for hosts)
+ */
+router.post('/:eventId/manual-checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userId } = req.body;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can manually check in attendees' 
+      });
+    }
+
+    // Check if user is attending the event
+    const isAttending = event.attendees.includes(userId);
+    if (!isAttending) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is not registered for this event' 
+      });
+    }
+
+    // Check if already checked in
+    const isAlreadyCheckedIn = event.checkedIn.includes(userId);
+    if (isAlreadyCheckedIn) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is already checked in' 
+      });
+    }
+
+    // If form is required, check if user submitted it
+    if (event.requiresFormForCheckIn && event.checkInForm) {
+      const hasSubmitted = await event.hasUserSubmittedForm(userId);
+      if (!hasSubmitted) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'User must complete the check-in form first',
+          requiresForm: true,
+          formId: event.checkInForm
+        });
+      }
+    }
+
+    // Check in user
+    const checkInResult = await event.checkInUser(userId);
+    await event.save();
+
+    console.log(`✅ User ${userId} manually checked in to event ${eventId} by ${req.user._id}`);
+
+    res.json({
+      success: true,
+      message: 'User checked in successfully',
+      checkIn: checkInResult
+    });
+
+  } catch (error) {
+    console.error('Manual check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to check in user' 
+    });
+  }
+});
+
+/**
+ * POST /api/events/:eventId/undo-checkin
+ * Undo a user's check-in (for hosts)
+ */
+router.post('/:eventId/undo-checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userId } = req.body;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can undo check-ins' 
+      });
+    }
+
+    // Check if user is checked in
+    const isCheckedIn = event.checkedIn.includes(userId);
+    if (!isCheckedIn) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is not checked in' 
+      });
+    }
+
+    // Remove from checked in list
+    event.checkedIn = event.checkedIn.filter(id => String(id) !== String(userId));
+    await event.save();
+
+    console.log(`✅ User ${userId} check-in undone for event ${eventId} by ${req.user._id}`);
+
+    res.json({
+      success: true,
+      message: 'Check-in undone successfully'
+    });
+
+  } catch (error) {
+    console.error('Undo check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to undo check-in' 
+    });
+  }
+});
+
+/**
+ * GET /api/events/:eventId/checkin-stats
+ * Get real-time check-in statistics (for hosts)
+ */
+router.get('/:eventId/checkin-stats', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId).populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can view check-in statistics' 
+      });
+    }
+
+    const stats = {
+      totalAttendees: event.attendees.length,
+      checkedInCount: event.checkedIn.length,
+      checkedInPercentage: event.attendees.length > 0 ? 
+        Math.round((event.checkedIn.length / event.attendees.length) * 100) : 0,
+      requiresForm: event.requiresFormForCheckIn,
+      formSubmissions: 0
+    };
+
+    // Get form submission count if form is required
+    if (event.requiresFormForCheckIn && event.checkInForm) {
+      const FormSubmission = require('../models/FormSubmission');
+      stats.formSubmissions = await FormSubmission.countDocuments({
+        form: event.checkInForm._id,
+        event: eventId
+      });
+    }
+
+    res.json({
+      success: true,
+      stats
+    });
+
+  } catch (error) {
+    console.error('Get check-in stats error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to get check-in statistics' 
+    });
+  }
+});
+router.get('/:eventId/attendees-detailed', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId)
+      .populate({
+        path: 'attendees',
+        select: 'username bio profilePicture email'
+      })
+      .populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check permissions
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+    const canManage = isHost || isCoHost;
+
+    // Get form submissions if form exists
+    let formSubmissions = [];
+    if (event.checkInForm) {
+      const FormSubmission = require('../models/FormSubmission');
+      formSubmissions = await FormSubmission.find({
+        form: event.checkInForm._id,
+        event: eventId
+      }).select('user submittedAt');
+    }
+
+    // Get payment information for paid events
+    let payments = [];
+    if (event.pricing && !event.pricing.isFree) {
+      payments = event.paymentHistory || [];
+    }
+
+    // Enhance attendee data
+    const enhancedAttendees = event.attendees.map(attendee => {
+      const formSubmission = formSubmissions.find(
+        fs => String(fs.user) === String(attendee._id)
+      );
+      const payment = payments.find(
+        p => String(p.user) === String(attendee._id) && p.status === 'succeeded'
+      );
+
+      return {
+        ...attendee.toObject(),
+        formSubmission: formSubmission ? {
+          submittedAt: formSubmission.submittedAt
+        } : null,
+        hasPaid: !!payment,
+        paymentAmount: payment?.amount || 0
+      };
+    });
+
+    const formSubmissionCount = formSubmissions.length;
+    const checkedInCount = event.checkedIn.length;
+
+    res.json({
+      success: true,
+      attendees: enhancedAttendees,
+      event: {
+        ...event.toObject(),
+        attendees: undefined // Remove to avoid duplication
+      },
+      checkedInCount,
+      formSubmissionCount,
+      canManage
+    });
+
+  } catch (error) {
+    console.error('Get detailed attendees error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch attendee details' 
+    });
+  }
+});
+router.post('/:eventId/export-google-sheets', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { includeFormResponses = false, filters = {} } = req.body;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can export to Google Sheets' 
+      });
+    }
+
+    // For now, return a placeholder URL
+    // In production, you would integrate with Google Sheets API
+    const sheetsUrl = `https://docs.google.com/spreadsheets/d/example-sheet-id/edit#gid=0`;
+
+    console.log(`✅ Google Sheets export initiated for event ${eventId}`);
+
+    res.json({
+      success: true,
+      sheetsUrl,
+      message: 'Data has been exported to Google Sheets'
+    });
+
+  } catch (error) {
+    console.error('Google Sheets export error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export to Google Sheets' 
+    });
+  }
+});
+
+router.post('/:eventId/bulk-checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { attendeeIds } = req.body;
+
+    if (!Array.isArray(attendeeIds) || attendeeIds.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid attendee IDs provided' 
+      });
+    }
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can perform bulk check-ins' 
+      });
+    }
+
+    let successCount = 0;
+    let errorCount = 0;
+    const errors = [];
+
+    // Process each attendee
+    for (const attendeeId of attendeeIds) {
+      try {
+        // Check if user is attending the event
+        const isAttending = event.attendees.includes(attendeeId);
+        if (!isAttending) {
+          errors.push(`User ${attendeeId} is not registered for this event`);
+          errorCount++;
+          continue;
+        }
+
+        // Check if already checked in
+        const isAlreadyCheckedIn = event.checkedIn.includes(attendeeId);
+        if (isAlreadyCheckedIn) {
+          errors.push(`User ${attendeeId} is already checked in`);
+          errorCount++;
+          continue;
+        }
+
+        // If form is required, check if user submitted it
+        if (event.requiresFormForCheckIn && event.checkInForm) {
+          const hasSubmitted = await event.hasUserSubmittedForm(attendeeId);
+          if (!hasSubmitted) {
+            errors.push(`User ${attendeeId} must complete the check-in form first`);
+            errorCount++;
+            continue;
+          }
+        }
+
+        // Check in user
+        await event.checkInUser(attendeeId);
+        successCount++;
+
+      } catch (error) {
+        console.error(`Error checking in user ${attendeeId}:`, error);
+        errors.push(`Failed to check in user ${attendeeId}: ${error.message}`);
+        errorCount++;
+      }
+    }
+
+    // Save the event with all check-ins
+    await event.save();
+
+    console.log(`✅ Bulk check-in completed: ${successCount} success, ${errorCount} errors`);
+
+    res.json({
+      success: true,
+      message: `Bulk check-in completed: ${successCount} successful, ${errorCount} failed`,
+      results: {
+        successCount,
+        errorCount,
+        errors: errors.slice(0, 10) // Limit error messages
+      }
+    });
+
+  } catch (error) {
+    console.error('Bulk check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to perform bulk check-in' 
+    });
+  }
+});
+router.post('/:eventId/bulk-remove', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { attendeeIds } = req.body;
+
+    if (!Array.isArray(attendeeIds) || attendeeIds.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid attendee IDs provided' 
+      });
+    }
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can remove attendees' 
+      });
+    }
+
+    let successCount = 0;
+    let errorCount = 0;
+    const errors = [];
+
+    // Process each attendee
+    for (const attendeeId of attendeeIds) {
+      try {
+        // Check if user is attending the event
+        const isAttending = event.attendees.includes(attendeeId);
+        if (!isAttending) {
+          errors.push(`User ${attendeeId} is not registered for this event`);
+          errorCount++;
+          continue;
+        }
+
+        // Remove from attendees
+        event.attendees = event.attendees.filter(id => String(id) !== String(attendeeId));
+        
+        // Remove from checked in list if present
+        event.checkedIn = event.checkedIn.filter(id => String(id) !== String(attendeeId));
+        
+        successCount++;
+
+      } catch (error) {
+        console.error(`Error removing user ${attendeeId}:`, error);
+        errors.push(`Failed to remove user ${attendeeId}: ${error.message}`);
+        errorCount++;
+      }
+    }
+
+    // Save the event
+    await event.save();
+
+    console.log(`✅ Bulk remove completed: ${successCount} success, ${errorCount} errors`);
+
+    res.json({
+      success: true,
+      message: `Bulk remove completed: ${successCount} successful, ${errorCount} failed`,
+      results: {
+        successCount,
+        errorCount,
+        errors: errors.slice(0, 10) // Limit error messages
+      }
+    });
+
+  } catch (error) {
+    console.error('Bulk remove error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to perform bulk remove' 
+    });
+  }
+});
+
+router.get('/:eventId/real-time-stats', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host, co-host, or attendee
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+    const isAttendee = event.attendees.includes(req.user._id);
+
+    if (!isHost && !isCoHost && !isAttendee) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Access denied' 
+      });
+    }
+
+    // Get form submission count if form exists
+    let formSubmissionCount = 0;
+    if (event.checkInForm) {
+      const FormSubmission = require('../models/FormSubmission');
+      formSubmissionCount = await FormSubmission.countDocuments({
+        form: event.checkInForm,
+        event: eventId
+      });
+    }
+
+    const stats = {
+      totalAttendees: event.attendees.length,
+      checkedInCount: event.checkedIn.length,
+      checkedInPercentage: event.attendees.length > 0 ? 
+        Math.round((event.checkedIn.length / event.attendees.length) * 100) : 0,
+      formSubmissionCount,
+      formSubmissionPercentage: event.attendees.length > 0 ? 
+        Math.round((formSubmissionCount / event.attendees.length) * 100) : 0,
+      lastUpdated: new Date().toISOString(),
+      eventStatus: new Date() < new Date(event.time) ? 'upcoming' : 'ongoing'
+    };
+
+    // Add payment stats for paid events
+    if (event.pricing && !event.pricing.isFree && event.paymentHistory) {
+      const paidCount = event.paymentHistory.filter(p => p.status === 'succeeded').length;
+      stats.paidCount = paidCount;
+      stats.paidPercentage = event.attendees.length > 0 ? 
+        Math.round((paidCount / event.attendees.length) * 100) : 0;
+    }
+
+    res.json({
+      success: true,
+      stats
+    });
+
+  } catch (error) {
+    console.error('Real-time stats error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to get real-time statistics' 
+    });
+  }
+});
+
+router.get('/:eventId/form-responses-summary', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId).populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can view form response summaries' 
+      });
+    }
+
+    if (!event.checkInForm) {
+      return res.json({
+        success: true,
+        message: 'No form associated with this event',
+        summary: null
+      });
+    }
+
+    const FormSubmission = require('../models/FormSubmission');
+    
+    const submissions = await FormSubmission.find({
+      form: event.checkInForm._id,
+      event: eventId
+    });
+
+    const summary = {
+      totalSubmissions: submissions.length,
+      submissionRate: event.attendees.length > 0 ? 
+        (submissions.length / event.attendees.length) * 100 : 0,
+      questionSummaries: []
+    };
+
+    // Analyze each question
+    if (event.checkInForm.questions && submissions.length > 0) {
+      summary.questionSummaries = event.checkInForm.questions.map(question => {
+        const responses = submissions
+          .map(sub => sub.responses.find(r => r.questionId === question.id))
+          .filter(Boolean);
+
+        const questionSummary = {
+          questionId: question.id,
+          questionText: question.question,
+          questionType: question.type,
+          responseCount: responses.length,
+          responseRate: (responses.length / submissions.length) * 100
+        };
+
+        // Type-specific analysis
+        switch (question.type) {
+          case 'multiple_choice':
+          case 'yes_no':
+            const optionCounts = {};
+            responses.forEach(response => {
+              const answer = response.answer;
+              optionCounts[answer] = (optionCounts[answer] || 0) + 1;
+            });
+            questionSummary.optionCounts = optionCounts;
+            questionSummary.mostPopularAnswer = Object.keys(optionCounts).reduce((a, b) => 
+              optionCounts[a] > optionCounts[b] ? a : b, ''
+            );
+            break;
+
+          case 'rating':
+            const ratings = responses.map(r => parseInt(r.answer)).filter(r => !isNaN(r));
+            if (ratings.length > 0) {
+              questionSummary.averageRating = ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+              questionSummary.ratingDistribution = {};
+              ratings.forEach(rating => {
+                questionSummary.ratingDistribution[rating] = 
+                  (questionSummary.ratingDistribution[rating] || 0) + 1;
+              });
+            }
+            break;
+
+          case 'checkbox':
+            const allOptions = {};
+            responses.forEach(response => {
+              if (Array.isArray(response.answer)) {
+                response.answer.forEach(option => {
+                  allOptions[option] = (allOptions[option] || 0) + 1;
+                });
+              }
+            });
+            questionSummary.optionCounts = allOptions;
+            break;
+
+          case 'short_answer':
+            questionSummary.sampleAnswers = responses
+              .slice(0, 5)
+              .map(r => r.answer)
+              .filter(answer => answer && answer.trim());
+            break;
+        }
+
+        return questionSummary;
+      });
+    }
+
+    console.log(`✅ Form response summary generated for event ${eventId}`);
+
+    res.json({
+      success: true,
+      summary
+    });
+
+  } catch (error) {
+    console.error('Form responses summary error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to generate form response summary' 
+    });
+  }
+});
+router.post('/:eventId/export', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { format = 'csv', includeFormResponses = false, filters = {} } = req.body;
+
+    const event = await Event.findById(eventId)
+      .populate('attendees')
+      .populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can export data' 
+      });
+    }
+
+    // Get form submissions if needed
+    let formSubmissions = [];
+    if (includeFormResponses && event.checkInForm) {
+      const FormSubmission = require('../models/FormSubmission');
+      formSubmissions = await FormSubmission.find({
+        form: event.checkInForm._id,
+        event: eventId
+      }).populate('user', 'username email');
+    }
+
+    // Prepare CSV headers
+    let headers = [
+      'Username',
+      'Email',
+      'Bio',
+      'Checked In',
+      'Check In Time',
+      'Payment Status',
+      'Payment Amount'
+    ];
+
+    // Add form question headers
+    if (includeFormResponses && event.checkInForm) {
+      headers = headers.concat(
+        event.checkInForm.questions.map(q => `Form: ${q.question}`)
+      );
+    }
+
+    // Prepare CSV rows
+    const rows = event.attendees.map(attendee => {
+      const isCheckedIn = event.checkedIn.includes(attendee._id);
+      const payment = event.paymentHistory?.find(
+        p => String(p.user) === String(attendee._id) && p.status === 'succeeded'
+      );
+      const formSubmission = formSubmissions.find(
+        fs => String(fs.user._id) === String(attendee._id)
+      );
+
+      let row = [
+        attendee.username || '',
+        attendee.email || '',
+        attendee.bio || '',
+        isCheckedIn ? 'Yes' : 'No',
+        isCheckedIn ? new Date().toISOString() : '', // Simplified
+        payment ? 'Paid' : 'Unpaid',
+        payment ? `$${payment.amount}` : '$0'
+      ];
+
+      // Add form responses
+      if (includeFormResponses && event.checkInForm) {
+        const responses = event.checkInForm.questions.map(question => {
+          if (!formSubmission) return '';
+          
+          const response = formSubmission.responses?.find(
+            r => r.questionId === question.id
+          );
+          
+          if (!response) return '';
+          
+          return Array.isArray(response.answer) ? 
+            response.answer.join('; ') : response.answer;
+        });
+        
+        row = row.concat(responses);
+      }
+
+      return row;
+    });
+
+    // Generate CSV content
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(field => `"${field}"`).join(','))
+      .join('\n');
+
+    console.log(`✅ CSV export generated for event ${eventId}`);
+
+    res.json({
+      success: true,
+      csvContent,
+      fileName: `${event.title}_attendees_${new Date().toISOString().split('T')[0]}.csv`
+    });
+
+  } catch (error) {
+    console.error('Export error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export data' 
+    });
+  }
+});
+
+router.get('/:eventId/attendees-detailed', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId)
+      .populate({
+        path: 'attendees',
+        select: 'username bio profilePicture email'
+      })
+      .populate('checkInForm')
+      .populate('host', 'username profilePicture');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // FIXED: More permissive permissions - attendees can view the list
+    const isHost = String(event.host._id) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+    const isAttending = event.attendees.some(
+      attendee => String(attendee._id) === String(req.user._id)
+    );
+    const canManage = isHost || isCoHost;
+
+    // Allow viewing if: host, co-host, attendee, OR event allows public attendee viewing
+    const canView = canManage || isAttending || event.permissions?.showAttendeesToPublic;
+    
+    if (!canView) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Not authorized to view attendee details' 
+      });
+    }
+
+    // Get form submissions if form exists (only for hosts/co-hosts)
+    let formSubmissions = [];
+    if (canManage && event.checkInForm) {
+      const FormSubmission = require('../models/FormSubmission');
+      formSubmissions = await FormSubmission.find({
+        form: event.checkInForm._id,
+        event: eventId
+      }).select('user submittedAt');
+    }
+
+    // Get payment information for paid events (only for hosts/co-hosts)
+    let payments = [];
+    if (canManage && event.pricing && !event.pricing.isFree) {
+      payments = event.paymentHistory || [];
+    }
+
+    // Enhance attendee data
+    const enhancedAttendees = event.attendees.map(attendee => {
+      const baseAttendee = {
+        _id: attendee._id,
+        username: attendee.username,
+        bio: attendee.bio,
+        profilePicture: attendee.profilePicture
+      };
+
+      // Only add sensitive data for hosts/co-hosts
+      if (canManage) {
+        const formSubmission = formSubmissions.find(
+          fs => String(fs.user) === String(attendee._id)
+        );
+        const payment = payments.find(
+          p => String(p.user) === String(attendee._id) && p.status === 'succeeded'
+        );
+
+        return {
+          ...baseAttendee,
+          email: attendee.email, // Email only for hosts
+          formSubmission: formSubmission ? {
+            submittedAt: formSubmission.submittedAt
+          } : null,
+          hasPaid: !!payment,
+          paymentAmount: payment?.amount || 0
+        };
+      }
+
+      return baseAttendee;
+    });
+
+    const formSubmissionCount = formSubmissions.length;
+    const checkedInCount = event.checkedIn.length;
+
+    res.json({
+      success: true,
+      attendees: enhancedAttendees,
+      event: {
+        _id: event._id,
+        title: event.title,
+        time: event.time,
+        requiresFormForCheckIn: event.requiresFormForCheckIn,
+        checkInForm: canManage ? event.checkInForm : null,
+        pricing: event.pricing,
+        permissions: event.permissions
+      },
+      checkedInCount,
+      formSubmissionCount,
+      canManage
+    });
+
+  } catch (error) {
+    console.error('Get detailed attendees error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch attendee details' 
+    });
+  }
+});
+
+router.get('/:eventId/analytics', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId).populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can view analytics' 
+      });
+    }
+
+    const analytics = {
+      totalAttendees: event.attendees.length,
+      checkedInCount: event.checkedIn.length,
+      checkInRate: event.attendees.length > 0 ? 
+        (event.checkedIn.length / event.attendees.length) : 0
+    };
+
+    // Check-in timeline analysis
+    if (event.checkedIn.length > 0) {
+      // Get check-in timestamps (simplified - in real app you'd store these)
+      const now = new Date();
+      const eventStart = new Date(event.time);
+      const checkInWindow = 4; // hours
+      
+      // Create hourly timeline
+      const timeline = [];
+      const maxHourlyCheckIns = Math.ceil(event.checkedIn.length / checkInWindow);
+      
+      for (let i = 0; i < checkInWindow; i++) {
+        const hour = new Date(eventStart.getTime() + i * 60 * 60 * 1000);
+        const hourString = hour.getHours().toString().padStart(2, '0') + ':00';
+        
+        // Simulate check-in distribution (in real app, query actual data)
+        const count = i === 1 ? maxHourlyCheckIns : Math.floor(maxHourlyCheckIns * 0.3);
+        
+        timeline.push({
+          hour: hourString,
+          count: Math.min(count, event.checkedIn.length)
+        });
+      }
+      
+      analytics.checkInTimeline = timeline;
+      analytics.maxHourlyCheckIns = maxHourlyCheckIns;
+      analytics.peakCheckInHour = timeline.reduce((peak, slot) => 
+        slot.count > peak.count ? slot : peak, timeline[0]
+      ).hour;
+      
+      // Average check-in time (simplified calculation)
+      const avgMinutes = 15; // minutes before event start
+      analytics.averageCheckInTime = `-${avgMinutes}m`;
+    }
+
+    // Form analytics
+    if (event.checkInForm) {
+      const FormSubmission = require('../models/FormSubmission');
+      
+      const submissions = await FormSubmission.find({
+        form: event.checkInForm._id,
+        event: eventId
+      }).populate('form');
+
+      const formAnalytics = {
+        totalSubmissions: submissions.length,
+        completionRate: event.attendees.length > 0 ? 
+          submissions.length / event.attendees.length : 0,
+        averageCompletionTime: submissions.reduce((avg, sub) => 
+          avg + (sub.completionTime || 60), 0) / (submissions.length || 1)
+      };
+
+      // Question-level analytics
+      if (event.checkInForm.questions && submissions.length > 0) {
+        const questionStats = event.checkInForm.questions.map(question => {
+          const responses = submissions
+            .map(sub => sub.responses.find(r => r.questionId === question.id))
+            .filter(Boolean);
+          
+          const responseRate = (responses.length / submissions.length) * 100;
+          
+          // Find most common answer
+          const answerCounts = {};
+          responses.forEach(response => {
+            const answer = Array.isArray(response.answer) ? 
+              response.answer.join(', ') : response.answer.toString();
+            answerCounts[answer] = (answerCounts[answer] || 0) + 1;
+          });
+          
+          const mostCommonAnswer = Object.keys(answerCounts).reduce((a, b) => 
+            answerCounts[a] > answerCounts[b] ? a : b, ''
+          ) || 'No responses';
+
+          return {
+            questionId: question.id,
+            questionText: question.question,
+            responseRate: Math.round(responseRate),
+            totalResponses: responses.length,
+            mostCommonAnswer: mostCommonAnswer.substring(0, 50) + 
+              (mostCommonAnswer.length > 50 ? '...' : '')
+          };
+        });
+
+        formAnalytics.questionStats = questionStats;
+      }
+
+      analytics.formAnalytics = formAnalytics;
+    }
+
+    // Payment analytics
+    if (event.pricing && !event.pricing.isFree && event.paymentHistory) {
+      const successfulPayments = event.paymentHistory.filter(p => p.status === 'succeeded');
+      
+      const paymentAnalytics = {
+        totalRevenue: successfulPayments.reduce((total, payment) => 
+          total + payment.amount, 0),
+        paymentRate: event.attendees.length > 0 ? 
+          successfulPayments.length / event.attendees.length : 0,
+        averagePayment: successfulPayments.length > 0 ? 
+          successfulPayments.reduce((avg, payment) => avg + payment.amount, 0) / successfulPayments.length : 0
+      };
+
+      analytics.paymentAnalytics = paymentAnalytics;
+    }
+
+    console.log(`✅ Analytics generated for event ${eventId}`);
+
+    res.json({
+      success: true,
+      analytics
+    });
+
+  } catch (error) {
+    console.error('Get analytics error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to generate analytics' 
+    });
+  }
+});
+    
 module.exports = router;

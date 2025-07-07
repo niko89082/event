@@ -1,19 +1,23 @@
-// routes/feed.js - ENHANCED: Fixed posts feed with fallback content and debugging
+// routes/feed.js - PHASE 1: Enhanced Posts Feed with Memory Photos and Privacy Controls
 const express = require('express');
 const Photo = require('../models/Photo');
+const MemoryPhoto = require('../models/MemoryPhoto');
+const Memory = require('../models/Memory');
 const Event = require('../models/Event');
 const User = require('../models/User');
 const protect = require('../middleware/auth');
+
+console.log('🔧 Feed route loaded with Memory Photo support');
 
 const router = express.Router();
 
 /* ─── scoring helper ─── */
 const recencyScore = (d) => {
   const hours = (Date.now() - d.getTime()) / 3.6e6;
-  return Math.exp(-hours / 24); // Adjusted for posts vs events
+  return Math.exp(-hours / 24);
 };
 
-/* ─── Enhanced Posts Feed (FIXED) ─── */
+/* ─── PHASE 1: Enhanced Posts Feed with Memory Photos ─── */
 router.get('/feed/posts', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;
@@ -34,211 +38,213 @@ router.get('/feed/posts', protect, async (req, res) => {
     console.log(`🔍 DEBUG INFO:`);
     console.log(`  - User ID: ${req.user._id}`);
     console.log(`  - Following count: ${followingIds.length}`);
-    console.log(`  - Following IDs: ${followingIds.slice(0, 5)}${followingIds.length > 5 ? '...' : ''}`);
     console.log(`  - Attending events: ${attendingEventIds.length}`);
 
-    /* 2) Fetch posts from TWO sources -------------------------------------- */
-    
-    // Source 1: Posts from users you follow
+    /* 2) Fetch regular posts from followed users --------------------------- */
     const friendPostsQuery = {
       user: { $in: followingIds },
       visibleInEvent: { $ne: false }, // Include both true and undefined
     };
     
-    // Source 2: PUBLIC posts from other attendees of events you attended
-    const eventAttendeesQuery = attendingEventIds.length > 0 ? await Event.find({
-      _id: { $in: attendingEventIds }
-    }).select('attendees') : [];
-    
-    const eventAttendeeIds = eventAttendeesQuery.reduce((acc, event) => {
-      event.attendees.forEach(attendeeId => {
-        if (!acc.includes(attendeeId) && !followingIds.includes(attendeeId) && String(attendeeId) !== String(req.user._id)) {
-          acc.push(attendeeId);
-        }
-      });
-      return acc;
-    }, []);
-
-    const eventAttendeePostsQuery = eventAttendeeIds.length > 0 ? {
-      user: { $in: eventAttendeeIds },
-      event: { $in: attendingEventIds },
-      visibleInEvent: true, // Only public event posts
-    } : null;
-
-    // Execute queries
-    const [friendPosts, eventAttendeePosts] = await Promise.all([
-      Photo.find(friendPostsQuery)
-        .populate('user', 'username profilePicture')
-        .populate('event', 'title time location')
-        .sort({ uploadDate: -1 })
-        .lean(),
-      
-      eventAttendeePostsQuery ? Photo.find(eventAttendeePostsQuery)
-        .populate('user', 'username profilePicture')
-        .populate('event', 'title time location')
-        .sort({ uploadDate: -1 })
-        .lean() : []
-    ]);
-
-    // Debug what we found
-    console.log(`🔍 POSTS FOUND:`);
-    console.log(`  - Friend posts: ${friendPosts.length}`);
-    console.log(`  - Event attendee posts: ${eventAttendeePosts.length}`);
-    
-    // Check total posts from friends in DB for debugging
-    if (followingIds.length > 0) {
-      const totalFriendPostsInDB = await Photo.countDocuments({
-        user: { $in: followingIds }
-      });
-      console.log(`  - Total posts from friends in DB: ${totalFriendPostsInDB}`);
-    }
-
-    /* 3) Score and merge posts ---------------------------------------------- */
-    const allPosts = [];
-    
-    // Add friend posts with source
-    friendPosts.forEach(post => {
-      const recency = recencyScore(post.uploadDate);
-      const engagement = Math.log10((post.likes?.length || 0) + (post.comments?.length || 0) + 1);
-      const score = recency * 0.7 + engagement * 0.3;
-      
-      allPosts.push({
-        ...post,
-        source: 'friend',
-        score
-      });
-    });
-
-    // Add event attendee posts with source
-    eventAttendeePosts.forEach(post => {
-      const recency = recencyScore(post.uploadDate);
-      const engagement = Math.log10((post.likes?.length || 0) + (post.comments?.length || 0) + 1);
-      const score = recency * 0.7 + engagement * 0.3;
-      
-      allPosts.push({
-        ...post,
-        source: 'event_attendee',
-        score
-      });
-    });
-
-    /* 4) FALLBACK: If no posts from friends/events, show trending content ---- */
-    if (allPosts.length === 0) {
-      console.log(`🟡 No friend posts found, fetching fallback content...`);
-      
-      // Fallback to popular recent posts from last 7 days
-      const fallbackPosts = await Photo.find({
-        visibleInEvent: { $ne: false },
-        uploadDate: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }, // Last 7 days
-        user: { $ne: req.user._id } // Don't show user's own posts
-      })
+    // Get regular posts from followed users
+    const friendPosts = await Photo.find(friendPostsQuery)
       .populate('user', 'username profilePicture')
       .populate('event', 'title time location')
-      .sort({ likes: -1, uploadDate: -1 })
-      .limit(limit)
+      .sort({ uploadDate: -1 })
       .lean();
-      
-      console.log(`🟡 Fallback posts found: ${fallbackPosts.length}`);
-      
-      const fallbackWithSource = fallbackPosts.map(post => {
-        const recency = recencyScore(post.uploadDate);
-        const engagement = Math.log10((post.likes?.length || 0) + (post.comments?.length || 0) + 1);
-        const score = recency * 0.3 + engagement * 0.7; // Favor engagement for trending
-        
-        return {
-          ...post,
-          source: 'trending',
-          score
-        };
-      });
-      
-      allPosts.push(...fallbackWithSource);
+
+    console.log(`📸 Found ${friendPosts.length} regular posts from followed users`);
+
+    /* 3) 🔒 PRIVACY-CONTROLLED Memory Photos Query ------------------------- */
+    
+    // Find all memories where current user is a participant (creator OR participant)
+    const userMemories = await Memory.find({
+      $or: [
+        { creator: req.user._id },
+        { participants: req.user._id }
+      ]
+    }).select('_id creator participants');
+
+    const userMemoryIds = userMemories.map(memory => memory._id);
+    console.log(`🧠 User is participant in ${userMemoryIds.length} memories`);
+
+    let memoryPosts = [];
+    
+    if (userMemoryIds.length > 0) {
+      // Get memory photos ONLY from memories where user is a participant
+      // AND from users they follow (to keep feed relevant)
+      const memoryPhotosQuery = {
+        memory: { $in: userMemoryIds }, // 🔒 PRIVACY: Only from user's memories
+        uploadedBy: { $in: followingIds }, // Only from followed users
+        isDeleted: false
+      };
+
+      memoryPosts = await MemoryPhoto.find(memoryPhotosQuery)
+        .populate('uploadedBy', 'username profilePicture')
+        .populate({
+          path: 'memory',
+          select: 'title participants creator',
+          populate: [
+            { path: 'creator', select: 'username' },
+            { path: 'participants', select: 'username' }
+          ]
+        })
+        .sort({ uploadedAt: -1 })
+        .lean();
+
+      console.log(`🔐 Found ${memoryPosts.length} memory photos (privacy-filtered)`);
     }
 
-    /* 5) Sort and paginate -------------------------------------------------- */
-    allPosts.sort((a, b) => b.score - a.score);
-    const totalPosts = allPosts.length;
-    const paginatedPosts = allPosts.slice(skip, skip + limit);
+    /* 4) Transform memory posts to match regular post format --------------- */
+    const transformedMemoryPosts = memoryPosts.map(photo => ({
+      _id: photo._id,
+      url: photo.url,
+      caption: photo.caption || '',
+      uploadDate: photo.uploadedAt, // Map uploadedAt to uploadDate for consistency
+      user: photo.uploadedBy, // Map uploadedBy to user for consistency
+      postType: 'memory', // 🏷️ Mark as memory post
+      memoryInfo: {
+        memoryId: photo.memory._id,
+        memoryTitle: photo.memory.title,
+        participantCount: photo.memory.participants.length + 1, // +1 for creator
+        isCreator: photo.memory.creator._id.toString() === req.user._id.toString()
+      },
+      likeCount: photo.likeCount || 0,
+      commentCount: photo.commentCount || 0,
+      source: 'memory' // Distinguish source
+    }));
 
-    console.log(`🟢 Sending posts: ${paginatedPosts.length} (total: ${totalPosts})`);
+    /* 5) Transform regular posts for consistency ---------------------------- */
+    const transformedFriendPosts = friendPosts.map(post => ({
+      ...post,
+      postType: 'regular', // 🏷️ Mark as regular post
+      source: 'friend'
+    }));
+
+    /* 6) Combine, sort, and paginate all posts ----------------------------- */
+    const allPosts = [...transformedFriendPosts, ...transformedMemoryPosts]
+      .sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
+      .slice(skip, skip + limit); // Apply pagination
+
+    /* 7) Calculate totals for pagination ------------------------------------ */
+    const totalRegularPosts = await Photo.countDocuments(friendPostsQuery);
     
-    return res.json({
-      posts: paginatedPosts,
+    let totalMemoryPosts = 0;
+    if (userMemoryIds.length > 0) {
+      totalMemoryPosts = await MemoryPhoto.countDocuments({
+        memory: { $in: userMemoryIds },
+        uploadedBy: { $in: followingIds },
+        isDeleted: false
+      });
+    }
+
+    const totalPosts = totalRegularPosts + totalMemoryPosts;
+    
+    /* 8) Build response with debugging info -------------------------------- */
+    const response = {
+      posts: allPosts,
       page,
       totalPages: Math.ceil(totalPosts / limit),
       hasMore: skip + limit < totalPosts,
       debug: {
-        friendsCount: followingIds.length,
-        friendPosts: friendPosts.length,
-        eventPosts: eventAttendeePosts.length,
-        fallbackUsed: friendPosts.length + eventAttendeePosts.length === 0,
-        totalInFeed: totalPosts
+        regularPosts: transformedFriendPosts.length,
+        memoryPosts: transformedMemoryPosts.length,
+        totalPosts: allPosts.length,
+        userMemoryCount: userMemoryIds.length,
+        followingCount: followingIds.length
       }
-    });
+    };
+
+    console.log(`🟢 Sending feed response:`, response.debug);
+    res.json(response);
 
   } catch (err) {
-    console.error('❌ /feed/posts error', err);
-    return res.status(500).json({ message: 'Server error' });
+    console.error('❌ Feed posts error:', err);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 });
 
-/* ─── Following Events Feed (EXISTING) ─── */
-router.get('/events/following-events', protect, async (req, res) => {
+/* ─── Fallback Events Feed (unchanged) ─── */
+router.get('/feed/events', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;
   const skip = (page - 1) * limit;
+  
+  console.log(`🟡 [API] /feed/events -> user ${req.user._id} page ${page}`);
 
   try {
     const viewer = await User.findById(req.user._id)
-      .select('following')
-      .populate('following', '_id');
-
-    if (!viewer) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+      .select('following attendingEvents')
+      .populate('following', '_id')
+      .populate('attendingEvents', '_id');
 
     const followingIds = viewer.following.map(u => u._id);
+    const attendingEventIds = viewer.attendingEvents.map(e => e._id);
+    
+    console.log(`🔍 User following: ${followingIds.length}, attending: ${attendingEventIds.length}`);
 
-    if (followingIds.length === 0) {
+    if (followingIds.length === 0 && attendingEventIds.length === 0) {
       return res.json({
         events: [],
-        page,
+        page: 1,
         totalPages: 0,
         hasMore: false
       });
     }
 
-    // Get future events from people you follow
-    const query = {
-      host: { $in: followingIds },
-      time: { $gte: new Date() },
+    // Events from followed users OR events user is attending
+    const eventsQuery = {
       $or: [
-        { privacyLevel: 'public', 'permissions.appearInSearch': true },
-        { privacyLevel: 'friends' },
-        { isPublic: true } // Fallback for older events without privacy system
-      ]
+        { host: { $in: followingIds } },
+        { _id: { $in: attendingEventIds } }
+      ],
+      time: { $gte: new Date() }
     };
 
-    const events = await Event.find(query)
+    const events = await Event.find(eventsQuery)
       .populate('host', 'username profilePicture')
-      .populate('attendees', 'username')
+      .populate('attendees', 'username profilePicture')
       .sort({ time: 1 })
       .skip(skip)
       .limit(limit)
       .lean();
 
-    const totalEvents = await Event.countDocuments(query);
+    console.log(`🎉 Found ${events.length} events for feed`);
 
-    res.json({
-      events,
+    const eventsWithScore = events.map(event => {
+      const isAttending = attendingEventIds.some(id => id.toString() === event._id.toString());
+      const isHosted = followingIds.some(id => id.toString() === event.host._id.toString());
+      
+      return {
+        ...event,
+        isAttending,
+        isHosted,
+        source: isAttending ? 'attending' : 'friend'
+      };
+    });
+
+    const totalEvents = await Event.countDocuments(eventsQuery);
+    
+    const response = {
+      events: eventsWithScore,
       page,
       totalPages: Math.ceil(totalEvents / limit),
       hasMore: skip + limit < totalEvents
-    });
+    };
+
+    console.log(`🟢 Sending events response: ${events.length} events`);
+    res.json(response);
 
   } catch (err) {
-    console.error('Following events error:', err);
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('❌ Feed events error:', err);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: err.message 
+    });
   }
 });
 

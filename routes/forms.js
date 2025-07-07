@@ -631,4 +631,215 @@ router.get('/:formId/stats', protect, async (req, res) => {
   }
 });
 
+
+router.post('/:formId/export', protect, async (req, res) => {
+  try {
+    const { formId } = req.params;
+    const { eventId, format = 'csv' } = req.body;
+
+    const form = await Form.findById(formId);
+    
+    if (!form) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Form not found' 
+      });
+    }
+
+    // Check ownership
+    if (String(form.createdBy) !== String(req.user._id)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Access denied' 
+      });
+    }
+
+    // Get submissions
+    const query = { form: formId };
+    if (eventId) query.event = eventId;
+
+    const submissions = await FormSubmission.find(query)
+      .populate('user', 'username email')
+      .sort({ submittedAt: -1 });
+
+    // Prepare CSV headers
+    const headers = [
+      'Username',
+      'Email',
+      'Submitted At',
+      'Completion Time (s)',
+      ...form.questions.map(q => q.question)
+    ];
+
+    // Prepare CSV rows
+    const rows = submissions.map(submission => {
+      const row = [
+        submission.user?.username || 'Anonymous',
+        submission.user?.email || '',
+        submission.submittedAt.toISOString(),
+        submission.completionTime || '',
+        ...form.questions.map(question => {
+          const response = submission.responses.find(r => r.questionId === question.id);
+          if (!response) return '';
+          return Array.isArray(response.answer) ? response.answer.join('; ') : response.answer;
+        })
+      ];
+      return row;
+    });
+
+    // Generate CSV content
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(field => `"${field}"`).join(','))
+      .join('\n');
+
+    console.log(`✅ Form export generated for form ${formId}`);
+
+    res.json({
+      success: true,
+      csvContent,
+      fileName: `${form.title}_responses_${new Date().toISOString().split('T')[0]}.csv`
+    });
+
+  } catch (error) {
+    console.error('Form export error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export form responses' 
+    });
+  }
+});
+
+/**
+ * GET /api/events/:eventId/form-responses-summary
+ * Get summary of form responses for analytics
+ */
+router.get('/:eventId/form-responses-summary', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId).populate('checkInForm');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can view form response summaries' 
+      });
+    }
+
+    if (!event.checkInForm) {
+      return res.json({
+        success: true,
+        message: 'No form associated with this event',
+        summary: null
+      });
+    }
+
+    const FormSubmission = require('../models/FormSubmission');
+    
+    const submissions = await FormSubmission.find({
+      form: event.checkInForm._id,
+      event: eventId
+    });
+
+    const summary = {
+      totalSubmissions: submissions.length,
+      submissionRate: event.attendees.length > 0 ? 
+        (submissions.length / event.attendees.length) * 100 : 0,
+      questionSummaries: []
+    };
+
+    // Analyze each question
+    if (event.checkInForm.questions && submissions.length > 0) {
+      summary.questionSummaries = event.checkInForm.questions.map(question => {
+        const responses = submissions
+          .map(sub => sub.responses.find(r => r.questionId === question.id))
+          .filter(Boolean);
+
+        const questionSummary = {
+          questionId: question.id,
+          questionText: question.question,
+          questionType: question.type,
+          responseCount: responses.length,
+          responseRate: (responses.length / submissions.length) * 100
+        };
+
+        // Type-specific analysis
+        switch (question.type) {
+          case 'multiple_choice':
+          case 'yes_no':
+            const optionCounts = {};
+            responses.forEach(response => {
+              const answer = response.answer;
+              optionCounts[answer] = (optionCounts[answer] || 0) + 1;
+            });
+            questionSummary.optionCounts = optionCounts;
+            questionSummary.mostPopularAnswer = Object.keys(optionCounts).reduce((a, b) => 
+              optionCounts[a] > optionCounts[b] ? a : b, ''
+            );
+            break;
+
+          case 'rating':
+            const ratings = responses.map(r => parseInt(r.answer)).filter(r => !isNaN(r));
+            if (ratings.length > 0) {
+              questionSummary.averageRating = ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+              questionSummary.ratingDistribution = {};
+              ratings.forEach(rating => {
+                questionSummary.ratingDistribution[rating] = 
+                  (questionSummary.ratingDistribution[rating] || 0) + 1;
+              });
+            }
+            break;
+
+          case 'checkbox':
+            const allOptions = {};
+            responses.forEach(response => {
+              if (Array.isArray(response.answer)) {
+                response.answer.forEach(option => {
+                  allOptions[option] = (allOptions[option] || 0) + 1;
+                });
+              }
+            });
+            questionSummary.optionCounts = allOptions;
+            break;
+
+          case 'short_answer':
+            questionSummary.sampleAnswers = responses
+              .slice(0, 5)
+              .map(r => r.answer)
+              .filter(answer => answer && answer.trim());
+            break;
+        }
+
+        return questionSummary;
+      });
+    }
+
+    console.log(`✅ Form response summary generated for event ${eventId}`);
+
+    res.json({
+      success: true,
+      summary
+    });
+
+  } catch (error) {
+    console.error('Form responses summary error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to generate form response summary' 
+    });
+  }
+});
 module.exports = router;
