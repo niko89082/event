@@ -40,6 +40,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import FormBuilderScreen from './screens/FormBuilderScreen';
 import FormLibraryScreen from './screens/FormLibraryScreen';
 import PostLikesScreen from './screens/PostsLikesScreen';
+import FormSubmissionScreen from './screens/FormSubmissionScreen';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
 import { StatusBar } from 'react-native';
@@ -184,6 +185,11 @@ function AppNavigator({ onLogout }) {
               name="CreateEventScreen" 
               component={CreateEventScreen}
               options={{ headerShown: true, title: 'Create Event' }}
+            />
+             <RootStack.Screen 
+              name="FormSubmissionScreen" 
+              component={FormSubmissionScreen}
+              options={{ headerShown: true, title: 'Form' }}
             />
             <RootStack.Screen 
               name="CreatePostScreen" 

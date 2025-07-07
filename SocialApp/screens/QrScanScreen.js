@@ -1,6 +1,4 @@
-// File: SocialApp/screens/QrScanScreen.js
-// Enhanced QR Scanner with event check-in support
-
+// screens/QrScanScreen.js - Phase 4: Complete Enhanced QR Scanner
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, Modal,
@@ -21,37 +19,67 @@ export default function QrScanScreen() {
   const { currentUser } = useContext(AuthContext);
   
   // Route params - eventId indicates this is for event check-in
-  const { eventId, eventTitle } = route.params || {};
+  const { eventId, eventTitle, mode = 'general' } = route.params || {};
   const isEventCheckin = !!eventId;
 
-  // Camera state
+  // Camera permissions
   const [permission, requestPermission] = useCameraPermissions();
-  const [cameraFacing, setCameraFacing] = useState('back');
-  const [isFlashOn, setIsFlashOn] = useState(false);
+
+  // Camera state
+  const [facing, setFacing] = useState('back');
+  const [flash, setFlash] = useState('off');
   const [scanned, setScanned] = useState(false);
-  const [scanningActive, setScanningActive] = useState(true);
 
-  // Animation
-  const [scanAnimation] = useState(new Animated.Value(0));
-
-  // Check-in state
-  const [checkinResult, setCheckinResult] = useState(null);
+  // Event check-in state
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [pendingUser, setPendingUser] = useState(null);
 
+  // Form status
+  const [requiresForm, setRequiresForm] = useState(false);
+  const [eventData, setEventData] = useState(null);
+
+  // Animation
+  const scanLineAnimation = useState(new Animated.Value(0))[0];
+
   useEffect(() => {
-    startScanAnimation();
+    // Set up navigation header
+    navigation.setOptions({
+      headerShown: false,
+    });
+
+    // Fetch event data if this is event check-in
+    if (isEventCheckin) {
+      fetchEventData();
+    }
+
+    // Start scan line animation
+    startScanLineAnimation();
+
+    return () => {
+      scanLineAnimation.stopAnimation();
+    };
   }, []);
 
-  const startScanAnimation = () => {
+  const fetchEventData = async () => {
+    try {
+      const response = await api.get(`/api/events/${eventId}`);
+      const event = response.data.event;
+      setEventData(event);
+      setRequiresForm(event.requiresFormForCheckIn && !!event.checkInForm);
+    } catch (error) {
+      console.error('Error fetching event data:', error);
+    }
+  };
+
+  const startScanLineAnimation = () => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(scanAnimation, {
+        Animated.timing(scanLineAnimation, {
           toValue: 1,
           duration: 2000,
           useNativeDriver: true,
         }),
-        Animated.timing(scanAnimation, {
+        Animated.timing(scanLineAnimation, {
           toValue: 0,
           duration: 2000,
           useNativeDriver: true,
@@ -60,52 +88,259 @@ export default function QrScanScreen() {
     ).start();
   };
 
-  const handleBarcodeScanned = ({ data }) => {
-    if (scanned || !scanningActive) return;
-
-    setScanned(true);
-    setScanningActive(false);
-    Vibration.vibrate(100);
-
-    console.log('📱 QR Code scanned:', data.substring(0, 20) + '...');
-
-    if (isEventCheckin) {
-      handleEventCheckin(data);
-    } else {
-      handleUserProfileScan(data);
-    }
+  const toggleCameraFacing = () => {
+    setFacing(current => (current === 'back' ? 'front' : 'back'));
   };
 
-  const handleEventCheckin = async (qrData) => {
+  const toggleFlash = () => {
+    setFlash(current => (current === 'off' ? 'on' : 'off'));
+  };
+
+  const resetScanner = () => {
+    setScanned(false);
+    setShowConfirmation(false);
+    setPendingUser(null);
+  };
+
+  // Enhanced event check-in handler with form support
+  const handleEventCheckIn = async (qrData) => {
     try {
-      console.log('🎉 Processing event check-in for:', eventId);
-      
+      console.log('🎯 Processing event check-in:', qrData);
+
       const response = await api.post(`/api/events/${eventId}/checkin`, {
-        qrCode: qrData,
-        confirmEntry: false
+        qrData: qrData
       });
 
       console.log('✅ Check-in response:', response.data);
 
       if (response.data.success) {
-        // Success - show confirmation
-        setCheckinResult(response.data);
-        showSuccessAlert(response.data);
-      } else if (response.data.status === 'requires_confirmation') {
-        // Show host confirmation dialog
-        setPendingUser(response.data.user);
-        setShowConfirmation(true);
-      } else if (response.data.status === 'already_checked_in') {
-        // Already checked in
-        showAlreadyCheckedInAlert(response.data.user);
+        if (response.data.status === 'checked_in') {
+          showSuccessAlert(response.data);
+        } else if (response.data.status === 'guest_checked_in') {
+          showSuccessAlert(response.data);
+        } else {
+          showErrorAlert(response.data.message);
+        }
+      } else if (response.data.requiresForm) {
+        // Event requires form submission - navigate to form
+        Alert.alert(
+          'Form Required',
+          'This event requires a check-in form to be completed.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+            {
+              text: 'Complete Form',
+              onPress: () => {
+                navigation.navigate('FormSubmissionScreen', {
+                  formId: response.data.formId,
+                  eventId: eventId,
+                  isCheckIn: true,
+                  onSubmissionComplete: () => {
+                    // After form completion, attempt check-in again
+                    navigation.goBack();
+                    setTimeout(() => {
+                      handleEventCheckIn(qrData);
+                    }, 500);
+                  }
+                });
+              }
+            }
+          ]
+        );
       } else {
-        // Other errors
+        showErrorAlert(response.data.message || 'Check-in failed');
+      }
+    } catch (error) {
+      console.error('❌ Event check-in error:', error);
+      
+      if (error.response?.data?.requiresForm) {
+        // Handle form requirement from error response
+        Alert.alert(
+          'Form Required',
+          'Please complete the check-in form first.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+            {
+              text: 'Open Form',
+              onPress: () => {
+                navigation.navigate('FormSubmissionScreen', {
+                  formId: error.response.data.formId,
+                  eventId: eventId,
+                  isCheckIn: true,
+                  onSubmissionComplete: () => {
+                    navigation.goBack();
+                    showSuccessAlert({ 
+                      user: { username: 'User' },
+                      message: 'Check-in completed successfully'
+                    });
+                  }
+                });
+              }
+            }
+          ]
+        );
+      } else {
+        const errorMessage = error.response?.data?.message || 
+          'Check-in failed. Please try again.';
+        showErrorAlert(errorMessage);
+      }
+    }
+  };
+
+  const handleHostCheckInWithForm = async (attendeeId) => {
+    try {
+      // First check if the attendee needs to complete a form
+      const eventResponse = await api.get(`/api/events/${eventId}`);
+      const event = eventResponse.data.event;
+      
+      if (event.requiresFormForCheckIn && event.checkInForm) {
+        // Navigate to form for this specific attendee
+        navigation.navigate('FormSubmissionScreen', {
+          formId: event.checkInForm._id || event.checkInForm,
+          eventId: eventId,
+          userId: attendeeId, // Host is filling out form for this user
+          isCheckIn: true,
+          onSubmissionComplete: () => {
+            navigation.goBack();
+            Alert.alert(
+              'Check-in Complete!',
+              'Attendee has been successfully checked in.',
+              [
+                { text: 'Scan Another', onPress: resetScanner },
+                { text: 'Done', onPress: () => navigation.goBack() }
+              ]
+            );
+          }
+        });
+      }
+    } catch (error) {
+      console.error('❌ Host check-in with form error:', error);
+      showErrorAlert('Failed to load check-in form');
+    }
+  };
+
+  const handleUserProfileScan = async (qrData) => {
+    try {
+      console.log('📱 Raw QR data scanned:', qrData);
+      console.log('📱 QR data type:', typeof qrData);
+      console.log('📱 QR data length:', qrData.length);
+
+      // Try to parse if it looks like JSON
+      let parsedData = null;
+      try {
+        parsedData = JSON.parse(qrData);
+        console.log('✅ Successfully parsed QR JSON:', parsedData);
+      } catch (parseError) {
+        console.log('📝 QR data is not JSON, treating as direct share code');
+      }
+
+      const response = await api.post('/api/qr/scan', {
+        qrData: qrData // Send raw data, let backend handle parsing
+      });
+
+      console.log('🔍 QR scan response:', response.data);
+
+      if (response.data.success) {
+        const user = response.data.user;
+        Alert.alert(
+          '👤 User Found',
+          `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+            {
+              text: user.isFollowing ? 'View Profile' : 'Follow',
+              onPress: user.isFollowing ? 
+                () => navigation.navigate('ProfileScreen', { userId: user._id }) :
+                () => handleQuickFollow(parsedData?.shareCode || qrData),
+              style: user.isFollowing ? 'default' : 'default'
+            }
+          ]
+        );
+      } else {
+        showErrorAlert(response.data.message || 'Invalid QR code');
+      }
+    } catch (error) {
+      console.error('❌ User profile scan error:', error);
+      
+      if (error.response?.status === 404) {
+        showErrorAlert('User not found or QR code is invalid');
+      } else {
+        showErrorAlert('Failed to scan QR code. Please try again.');
+      }
+    }
+  };
+
+  const handleQuickFollow = async (shareCode) => {
+    try {
+      const response = await api.post('/api/users/follow-by-code', {
+        shareCode: shareCode
+      });
+
+      if (response.data.success) {
+        Alert.alert(
+          '✅ Followed!',
+          `You are now following ${response.data.user.username}`,
+          [
+            { text: 'View Profile', onPress: () => navigation.navigate('ProfileScreen', { userId: response.data.user._id }) },
+            { text: 'Scan Another', onPress: resetScanner }
+          ]
+        );
+      } else {
         showErrorAlert(response.data.message);
       }
     } catch (error) {
-      console.error('❌ Check-in error:', error);
-      const errorMessage = error.response?.data?.message || 'Check-in failed. Please try again.';
-      showErrorAlert(errorMessage);
+      console.error('❌ Quick follow error:', error);
+      showErrorAlert('Failed to follow user');
+    }
+  };
+
+  const handleBarCodeScanned = ({ type, data }) => {
+    if (scanned) return;
+
+    setScanned(true);
+    Vibration.vibrate(100);
+
+    console.log('📊 QR Code Scanned:', { type, data });
+
+    try {
+      // Try to parse the QR data
+      let qrData;
+      try {
+        qrData = JSON.parse(data);
+        console.log('📋 Parsed QR Data:', qrData);
+      } catch (e) {
+        // Not JSON, treat as string
+        qrData = data;
+        console.log('📋 Raw QR Data:', qrData);
+      }
+
+      if (isEventCheckin) {
+        // Event check-in mode
+        if (typeof qrData === 'object' && qrData.type === 'event_checkin') {
+          // This is an event check-in QR code
+          handleEventCheckIn(qrData);
+        } else if (typeof qrData === 'object' && qrData.type === 'user_profile') {
+          // This is a user profile QR - check them in manually
+          handleHostCheckInWithForm(qrData.userId);
+        } else if (typeof qrData === 'string') {
+          // Could be a user share code
+          handleUserProfileScan(qrData);
+        } else {
+          showErrorAlert('Invalid QR code for event check-in');
+        }
+      } else {
+        // General QR scanning mode
+        if (typeof qrData === 'object' && qrData.type === 'user_profile') {
+          handleUserProfileScan(JSON.stringify(qrData));
+        } else if (typeof qrData === 'string') {
+          handleUserProfileScan(qrData);
+        } else {
+          showErrorAlert('Unsupported QR code format');
+        }
+      }
+    } catch (error) {
+      console.error('❌ QR scanning error:', error);
+      showErrorAlert('Failed to process QR code');
     }
   };
 
@@ -132,12 +367,13 @@ export default function QrScanScreen() {
 
   const showSuccessAlert = (data) => {
     const isGuest = data.status === 'guest_checked_in';
-    const name = isGuest ? data.guestPass.guestName : data.user.username;
+    const name = isGuest ? data.guestPass?.guestName : data.user?.username;
     const wasAdded = data.wasAdded ? ' (Added to attendees)' : '';
+    const formCompleted = data.formSubmitted ? ' (Form completed)' : '';
     
     Alert.alert(
       '✅ Check-in Successful!',
-      `${name} has been checked in${wasAdded}`,
+      `${name} has been checked in${wasAdded}${formCompleted}`,
       [
         { text: 'Scan Another', onPress: resetScanner },
         { text: 'Done', onPress: () => navigation.goBack() }
@@ -167,91 +403,40 @@ export default function QrScanScreen() {
     );
   };
 
-  const handleUserProfileScan = async (qrData) => {
-  try {
-    console.log('📱 Raw QR data scanned:', qrData);
-    console.log('📱 QR data type:', typeof qrData);
-    console.log('📱 QR data length:', qrData.length);
+  const renderFormStatusIndicator = () => {
+    if (!requiresForm) return null;
 
-    // Try to parse if it looks like JSON
-    let parsedData = null;
-    try {
-      parsedData = JSON.parse(qrData);
-      console.log('✅ Successfully parsed QR JSON:', parsedData);
-    } catch (parseError) {
-      console.log('📝 QR data is not JSON, treating as direct share code');
-    }
-
-    const response = await api.post('/api/qr/scan', {
-      qrData: qrData // Send raw data, let backend handle parsing
-    });
-
-    console.log('🔍 QR scan response:', response.data);
-
-    if (response.data.success) {
-      const user = response.data.user;
-      Alert.alert(
-        '👤 User Found',
-        `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: resetScanner },
-          {
-            text: user.isFollowing ? 'View Profile' : 'Follow',
-            onPress: user.isFollowing ? 
-              () => navigation.navigate('ProfileScreen', { userId: user._id }) :
-              () => handleQuickFollow(parsedData?.shareCode || qrData),
-            style: user.isFollowing ? 'default' : 'destructive'
-          },
-        ]
-      );
-    } else {
-      console.error('❌ QR scan failed:', response.data.message);
-      showErrorAlert(response.data.message || 'User not found');
-    }
-  } catch (error) {
-    console.error('❌ Profile scan error:', error);
-    console.error('❌ Error details:', error.response?.data);
-    showErrorAlert('Unable to process QR code. Please try again.');
-  }
-};
-
-  const handleQuickFollow = async (qrData) => {
-    try {
-      const response = await api.post('/api/qr/quick-follow', {
-        shareCode: qrData
-      });
-
-      if (response.data.success) {
-        const message = response.data.action === 'followed' 
-          ? 'You are now following this user!'
-          : 'Follow request sent successfully!';
-
-        Alert.alert('Success!', message, [
-          { text: 'OK', onPress: () => navigation.goBack() }
-        ]);
-      }
-    } catch (error) {
-      console.error('❌ Quick follow error:', error);
-      showErrorAlert('Unable to follow user. Please try again.');
-    }
+    return (
+      <View style={styles.formStatusIndicator}>
+        <Ionicons name="document-text" size={16} color="#FFFFFF" />
+        <Text style={styles.formStatusText}>Form required for check-in</Text>
+      </View>
+    );
   };
 
-  const resetScanner = () => {
-    setScanned(false);
-    setScanningActive(true);
-    setCheckinResult(null);
-    setShowConfirmation(false);
-    setPendingUser(null);
-  };
+  const renderPermissionScreen = () => (
+    <View style={styles.permissionContainer}>
+      <LinearGradient
+        colors={['#667eea', '#764ba2']}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View style={styles.permissionContent}>
+        <Ionicons name="camera-outline" size={80} color="#FFFFFF" />
+        <Text style={styles.permissionTitle}>Camera Access Required</Text>
+        <Text style={styles.permissionSubtitle}>
+          To scan QR codes, we need access to your camera. This allows you to check in to events and connect with other users.
+        </Text>
+        <TouchableOpacity
+          style={styles.permissionButton}
+          onPress={requestPermission}
+        >
+          <Text style={styles.permissionButtonText}>Grant Camera Access</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
-  const toggleCameraFacing = () => {
-    setCameraFacing(current => current === 'back' ? 'front' : 'back');
-  };
-
-  const toggleFlash = () => {
-    setIsFlashOn(!isFlashOn);
-  };
-
+  // Check camera permissions
   if (!permission) {
     return <View style={styles.container} />;
   }
@@ -259,30 +444,16 @@ export default function QrScanScreen() {
   if (!permission.granted) {
     return (
       <SafeAreaView style={styles.container}>
-        <LinearGradient
-          colors={['#667eea', '#764ba2']}
-          style={styles.permissionContainer}
-        >
-          <View style={styles.permissionContent}>
-            <Ionicons name="camera-outline" size={80} color="#FFFFFF" />
-            <Text style={styles.permissionTitle}>Camera Access Required</Text>
-            <Text style={styles.permissionSubtitle}>
-              {isEventCheckin 
-                ? 'We need camera access to scan attendee QR codes for check-in.'
-                : 'We need camera access to scan QR codes and connect with other users.'
-              }
-            </Text>
-            <TouchableOpacity
-              style={styles.permissionButton}
-              onPress={requestPermission}
-            >
-              <Text style={styles.permissionButtonText}>Grant Permission</Text>
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
+        <StatusBar barStyle="light-content" backgroundColor="#667eea" />
+        {renderPermissionScreen()}
       </SafeAreaView>
     );
   }
+
+  const scanLineTranslateY = scanLineAnimation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 250],
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -299,9 +470,9 @@ export default function QrScanScreen() {
         
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>
-            {isEventCheckin ? 'Event Check-in' : 'Scan QR Code'}
+            {isEventCheckin ? `Check-in Scanner` : 'Scan QR Code'}
           </Text>
-          {isEventCheckin && eventTitle && (
+          {eventTitle && (
             <Text style={styles.headerSubtitle}>{eventTitle}</Text>
           )}
         </View>
@@ -311,53 +482,49 @@ export default function QrScanScreen() {
           onPress={toggleFlash}
         >
           <Ionicons 
-            name={isFlashOn ? "flash" : "flash-off"} 
+            name={flash === 'on' ? 'flash' : 'flash-off'} 
             size={24} 
-            color={isFlashOn ? "#FFD700" : "#FFFFFF"} 
+            color={flash === 'on' ? '#FFD700' : '#FFFFFF'} 
           />
         </TouchableOpacity>
       </View>
 
-      {/* Camera View */}
+      {/* Camera */}
       <View style={styles.cameraContainer}>
         <CameraView
           style={styles.camera}
-          facing={cameraFacing}
-          onBarcodeScanned={scanningActive ? handleBarcodeScanned : undefined}
+          facing={facing}
+          flash={flash}
+          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
           barcodeScannerSettings={{
-            barcodeTypes: ['qr'],
+            barcodeTypes: ['qr', 'pdf417'],
           }}
-          flash={isFlashOn ? 'on' : 'off'}
         >
-          {/* Scan Overlay */}
           <View style={styles.scanOverlay}>
             <View style={styles.scanFrame}>
               <Animated.View
                 style={[
                   styles.scanLine,
                   {
-                    transform: [
-                      {
-                        translateY: scanAnimation.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0, 200],
-                        }),
-                      },
-                    ],
+                    transform: [{ translateY: scanLineTranslateY }],
                   },
                 ]}
               />
             </View>
             
-            {/* Instructions */}
             <View style={styles.instructionsContainer}>
               <Text style={styles.instructionsText}>
-                {isEventCheckin 
-                  ? 'Scan attendee QR codes to check them in'
+                {isEventCheckin
+                  ? requiresForm
+                    ? 'Scan attendee QR codes to check them in\nForm will be required after scanning'
+                    : 'Scan attendee QR codes to check them in'
                   : 'Point your camera at a QR code to scan'
                 }
               </Text>
             </View>
+
+            {/* Form Status Indicator */}
+            {renderFormStatusIndicator()}
           </View>
         </CameraView>
       </View>
@@ -528,6 +695,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 20,
+    lineHeight: 22,
+  },
+  formStatusIndicator: {
+    position: 'absolute',
+    top: -150,
+    left: -75,
+    right: -75,
+    backgroundColor: 'rgba(255, 149, 0, 0.9)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  formStatusText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
   },
   bottomControls: {
     flexDirection: 'row',
@@ -591,11 +778,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   modalOverlay: {
-  flex: 1,
-  justifyContent: 'center',
-  alignItems: 'center',
-  backgroundColor: 'rgba(0,0,0,0.8)', // Darker background to compensate for no blur
-},
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.8)',
+  },
   confirmationModal: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -673,63 +860,3 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
-
-// // =============================================================================
-// // File: SocialApp/screens/EventDetailsScreen.js
-// // Add QR Scanner button for hosts
-// // =============================================================================
-
-// // Find the host actions section and add this button after the existing host controls
-
-// // Add this import at the top
-// import { Ionicons } from '@expo/vector-icons';
-
-// // Add this function inside the EventDetailsScreen component
-// const handleOpenScanner = () => {
-//   navigation.navigate('QrScanScreen', { 
-//     eventId: eventId,
-//     eventTitle: event.title 
-//   });
-// };
-
-// // Add this button in the host actions section (around line 600-700 in the existing JSX)
-// // Look for where other host buttons are rendered and add:
-
-// {/* QR Scanner Button for Check-in */}
-// {(isHost || isCoHost) && !isPast && (
-//   <TouchableOpacity
-//     style={styles.actionButton}
-//     onPress={handleOpenScanner}
-//     activeOpacity={0.8}
-//   >
-//     <LinearGradient
-//       colors={['#667eea', '#764ba2']}
-//       style={styles.gradientButton}
-//     >
-//       <Ionicons name="qr-code-outline" size={20} color="#FFFFFF" />
-//       <Text style={styles.actionButtonText}>Check-in Scanner</Text>
-//     </LinearGradient>
-//   </TouchableOpacity>
-// )}
-
-// // Add these styles to the existing StyleSheet
-// const additionalStyles = StyleSheet.create({
-//   actionButton: {
-//     marginVertical: 8,
-//     borderRadius: 12,
-//     overflow: 'hidden',
-//   },
-//   gradientButton: {
-//     flexDirection: 'row',
-//     alignItems: 'center',
-//     justifyContent: 'center',
-//     paddingVertical: 14,
-//     paddingHorizontal: 20,
-//     gap: 8,
-//   },
-//   actionButtonText: {
-//     color: '#FFFFFF',
-//     fontSize: 16,
-//     fontWeight: '600',
-//   },
-// });
