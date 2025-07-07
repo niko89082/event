@@ -1,4 +1,4 @@
-// screens/CreateEventScreen.js - Enhanced with Payment Integration
+// screens/CreateEventScreen.js - Phase 2: Simplified Privacy + Form Toggle
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
@@ -12,10 +12,11 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
-import PaymentSetupComponent from '../components/PaymentSetupComponent'; // NEW
+import PaymentSetupComponent from '../components/PaymentSetupComponent';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+// PHASE 2: Simplified Privacy Levels (auto-calculated permissions)
 const PRIVACY_LEVELS = [
   { 
     key: 'public', 
@@ -48,12 +49,31 @@ const PRIVACY_LEVELS = [
 ];
 
 const CATEGORIES = [
-  'General', 'Music', 'Arts', 'Sports', 'Food', 'Technology', 'Business',
-  'Health', 'Education', 'Travel', 'Photography', 'Gaming', 'Fashion',
-  'Movies', 'Books', 'Fitness', 'Outdoor', 'Indoor'
+  'General', 'Party', 'Social', 'Meeting', 'Club', 'Education', 
+  'Business', 'Professional', 'Entertainment', 'Music', 'Sports',
+  'Food', 'Art', 'Technology', 'Health', 'Travel', 'Celebration'
 ];
 
-// NEW: Refund policy options
+// PHASE 2: Smart form recommendations based on category
+const FORM_RECOMMENDATIONS = {
+  'Club': {
+    title: 'Club meetings often need attendance tracking',
+    suggestions: ['Member check-in', 'Contact info collection']
+  },
+  'Meeting': {
+    title: 'Professional meetings benefit from check-in forms',
+    suggestions: ['Attendee verification', 'Department tracking']
+  },
+  'Business': {
+    title: 'Business events need professional data collection',
+    suggestions: ['Contact information', 'Company details']
+  },
+  'Education': {
+    title: 'Educational events often require registration info',
+    suggestions: ['Student verification', 'Academic details']
+  }
+};
+
 const REFUND_POLICIES = [
   { key: 'no-refund', label: 'No Refunds' },
   { key: 'full-refund-24h', label: 'Full Refund (24h before)' },
@@ -85,19 +105,17 @@ export default function CreateEventScreen({ navigation, route }) {
   const [maxAttendees, setMaxAttendees] = useState('50');
   const [price, setPrice] = useState('0');
   const [tags, setTags] = useState('');
+  
+  // PHASE 2: Simplified privacy (no redundant toggles)
   const [privacyLevel, setPrivacyLevel] = useState('public');
-  const [permissions, setPermissions] = useState({
-    appearInFeed: true,
-    appearInSearch: true,
-    canJoin: 'anyone',
-    canShare: 'attendees',
-    canInvite: 'attendees',
-    showAttendeesToPublic: true
-  });
 
-  // ============================================
-  // NEW: Payment fields
-  // ============================================
+  // PHASE 2: Form integration
+  const [requiresCheckInForm, setRequiresCheckInForm] = useState(false);
+  const [selectedForm, setSelectedForm] = useState(null);
+  const [availableForms, setAvailableForms] = useState([]);
+  const [loadingForms, setLoadingForms] = useState(false);
+
+  // Payment fields
   const [isPaidEvent, setIsPaidEvent] = useState(false);
   const [priceDescription, setPriceDescription] = useState('');
   const [refundPolicy, setRefundPolicy] = useState('no-refund');
@@ -122,10 +140,10 @@ export default function CreateEventScreen({ navigation, route }) {
   const [creating, setCreating] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showFormModal, setShowFormModal] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // NEW: Check payment status on mount
     checkPaymentStatus();
     
     navigation.setOptions({
@@ -166,11 +184,23 @@ export default function CreateEventScreen({ navigation, route }) {
         </TouchableOpacity>
       ),
     });
-  }, [step, title, location, dateTime, creating, coHosts, isPaidEvent, price]);
+  }, [step, title, location, dateTime, creating, coHosts, isPaidEvent, price, requiresCheckInForm, selectedForm]);
 
-  // ============================================
-  // NEW: Payment functions
-  // ============================================
+  // PHASE 2: Load available forms when user wants to add form
+  const loadAvailableForms = async () => {
+    try {
+      setLoadingForms(true);
+      const response = await api.get('/api/forms/my-forms');
+      setAvailableForms(response.data.forms || []);
+    } catch (error) {
+      console.error('Failed to load forms:', error);
+      Alert.alert('Error', 'Failed to load your forms');
+    } finally {
+      setLoadingForms(false);
+    }
+  };
+
+  // Payment functions
   const checkPaymentStatus = async () => {
     try {
       const response = await api.get('/api/events/payment-status');
@@ -188,12 +218,38 @@ export default function CreateEventScreen({ navigation, route }) {
     
     setIsPaidEvent(value);
     if (!value) {
-      // Reset price fields when disabling
       setPrice('0');
       setPriceDescription('');
       setEarlyBirdEnabled(false);
       setEarlyBirdPrice('');
     }
+  };
+
+  // PHASE 2: Form requirement toggle with smart recommendations
+  const handleFormToggle = (value) => {
+    setRequiresCheckInForm(value);
+    if (!value) {
+      setSelectedForm(null);
+    } else {
+      // Load forms when toggled on
+      loadAvailableForms();
+    }
+  };
+
+  // PHASE 2: Handle form selection
+  const handleFormSelect = (form) => {
+    setSelectedForm(form);
+    setShowFormModal(false);
+  };
+
+  const handleCreateNewForm = () => {
+    setShowFormModal(false);
+    navigation.navigate('FormBuilderScreen', {
+      onFormCreated: (newForm) => {
+        setSelectedForm(newForm);
+        loadAvailableForms(); // Refresh the list
+      }
+    });
   };
 
   const calculateEstimatedEarnings = (priceValue) => {
@@ -277,7 +333,10 @@ export default function CreateEventScreen({ navigation, route }) {
     if (step === 1) {
       return title.trim() && location.trim() && dateTime > new Date();
     }
-    // NEW: Add pricing validation for step 2
+    // Step 2 validation including form requirement
+    if (requiresCheckInForm && !selectedForm) {
+      return false;
+    }
     return validatePricing();
   };
 
@@ -302,11 +361,17 @@ export default function CreateEventScreen({ navigation, route }) {
       formData.append('location', location.trim());
       formData.append('category', category);
       formData.append('maxAttendees', parseInt(maxAttendees) || 0);
+      
+      // PHASE 2: Simplified privacy (auto-calculated permissions)
       formData.append('privacyLevel', privacyLevel);
       
-      // ============================================
-      // NEW: Enhanced pricing fields
-      // ============================================
+      // PHASE 2: Form integration
+      if (requiresCheckInForm && selectedForm) {
+        formData.append('checkInFormId', selectedForm._id);
+        formData.append('requiresFormForCheckIn', true);
+      }
+      
+      // Enhanced pricing fields
       formData.append('isPaidEvent', isPaidEvent);
       if (isPaidEvent) {
         formData.append('eventPrice', price);
@@ -318,15 +383,11 @@ export default function CreateEventScreen({ navigation, route }) {
           formData.append('earlyBirdDeadline', earlyBirdDeadline.toISOString());
         }
       } else {
-        // For free events, set price to 0
         formData.append('eventPrice', '0');
       }
       
       // Co-hosts
       formData.append('coHosts', JSON.stringify(coHosts.map(coHost => coHost._id)));
-      
-      // Permissions
-      formData.append('permissions', JSON.stringify(permissions));
       
       // Tags
       if (tags.trim()) {
@@ -377,7 +438,6 @@ export default function CreateEventScreen({ navigation, route }) {
     } catch (error) {
       console.error('Event creation error:', error);
       
-      // NEW: Handle payment setup requirement
       if (error.response?.data?.needsPaymentSetup) {
         setShowPaymentSetup(true);
       } else {
@@ -430,7 +490,6 @@ export default function CreateEventScreen({ navigation, route }) {
     }
   };
 
-  // NEW: Early bird date picker
   const onEarlyBirdDateChange = (event, selectedDate) => {
     setShowEarlyBirdDatePicker(false);
     if (selectedDate) {
@@ -646,7 +705,7 @@ export default function CreateEventScreen({ navigation, route }) {
           </View>
         </Modal>
 
-        {/* NEW: Payment Setup Modal */}
+        {/* Payment Setup Modal */}
         {showPaymentSetup && (
           <PaymentSetupComponent
             onPaymentSetupComplete={() => {
@@ -661,7 +720,7 @@ export default function CreateEventScreen({ navigation, route }) {
     );
   }
 
-  // Step 2: Advanced Settings with Payment Configuration
+  // Step 2: Advanced Settings with Simplified Privacy and Form Toggle
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -671,9 +730,121 @@ export default function CreateEventScreen({ navigation, route }) {
       >
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           <View style={styles.formContainer}>
-            {/* ============================================ */}
-            {/* NEW: Payment Configuration Section */}
-            {/* ============================================ */}
+            
+            {/* PHASE 2: Simplified Privacy Settings */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Privacy Level</Text>
+              <Text style={styles.sectionDescription}>
+                Controls who can see and join your event
+              </Text>
+
+              <TouchableOpacity
+                style={styles.privacyButton}
+                onPress={() => setShowPrivacyModal(true)}
+              >
+                <View style={styles.privacyButtonContent}>
+                  <Ionicons 
+                    name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+                    size={24} 
+                    color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
+                  />
+                  <View style={styles.privacyButtonText}>
+                    <Text style={styles.privacyLabel}>
+                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
+                    </Text>
+                    <Text style={styles.privacyDesc}>
+                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* PHASE 2: Check-in Form Toggle */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Check-in Form</Text>
+              <Text style={styles.sectionDescription}>
+                Collect additional information when attendees check in
+              </Text>
+
+              {/* Smart recommendation banner */}
+              {FORM_RECOMMENDATIONS[category] && (
+                <View style={styles.recommendationBanner}>
+                  <Ionicons name="lightbulb" size={20} color="#FF9500" />
+                  <View style={styles.recommendationText}>
+                    <Text style={styles.recommendationTitle}>Recommendation</Text>
+                    <Text style={styles.recommendationDesc}>
+                      {FORM_RECOMMENDATIONS[category].title}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.formToggleContainer}>
+                <View style={styles.formToggleRow}>
+                  <View style={styles.formToggleText}>
+                    <Text style={styles.formToggleLabel}>Require Check-in Form</Text>
+                    <Text style={styles.formToggleDesc}>
+                      Attendees must fill out a form when checking in
+                    </Text>
+                  </View>
+                  <Switch
+                    value={requiresCheckInForm}
+                    onValueChange={handleFormToggle}
+                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {/* Form Selection */}
+                {requiresCheckInForm && (
+                  <View style={styles.formSelectionContainer}>
+                    {selectedForm ? (
+                      <View style={styles.selectedFormCard}>
+                        <View style={styles.selectedFormInfo}>
+                          <Ionicons name="document-text" size={24} color="#3797EF" />
+                          <View style={styles.selectedFormText}>
+                            <Text style={styles.selectedFormTitle}>{selectedForm.title}</Text>
+                            <Text style={styles.selectedFormDesc}>
+                              {selectedForm.questions?.length || 0} questions
+                            </Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => setSelectedForm(null)}
+                          style={styles.removeFormButton}
+                        >
+                          <Ionicons name="close" size={20} color="#FF3B30" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.formSelectionButtons}>
+                        <TouchableOpacity
+                          style={styles.formSelectionButton}
+                          onPress={() => setShowFormModal(true)}
+                        >
+                          <Ionicons name="list" size={20} color="#3797EF" />
+                          <Text style={styles.formSelectionButtonText}>Choose Existing Form</Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          style={[styles.formSelectionButton, styles.createFormButton]}
+                          onPress={handleCreateNewForm}
+                        >
+                          <Ionicons name="add" size={20} color="#FFFFFF" />
+                          <Text style={[styles.formSelectionButtonText, { color: '#FFFFFF' }]}>
+                            Create New Form
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Event Pricing */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Event Pricing</Text>
               <Text style={styles.sectionDescription}>
@@ -918,72 +1089,6 @@ export default function CreateEventScreen({ navigation, route }) {
                 />
               </View>
             </View>
-
-            {/* Privacy Settings */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Privacy & Permissions</Text>
-
-              <TouchableOpacity
-                style={styles.privacyButton}
-                onPress={() => setShowPrivacyModal(true)}
-              >
-                <View style={styles.privacyButtonContent}>
-                  <Ionicons 
-                    name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
-                    size={24} 
-                    color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
-                  />
-                  <View style={styles.privacyButtonText}>
-                    <Text style={styles.privacyLabel}>
-                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
-                    </Text>
-                    <Text style={styles.privacyDesc}>
-                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-                </View>
-              </TouchableOpacity>
-
-              {/* Permission Toggles */}
-              <View style={styles.permissionsList}>
-                <View style={styles.permissionItem}>
-                  <Text style={styles.permissionLabel}>Show in Feed</Text>
-                  <Switch
-                    value={permissions.appearInFeed}
-                    onValueChange={(value) => 
-                      setPermissions(prev => ({ ...prev, appearInFeed: value }))
-                    }
-                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                    thumbColor="#FFFFFF"
-                  />
-                </View>
-
-                <View style={styles.permissionItem}>
-                  <Text style={styles.permissionLabel}>Show in Search</Text>
-                  <Switch
-                    value={permissions.appearInSearch}
-                    onValueChange={(value) => 
-                      setPermissions(prev => ({ ...prev, appearInSearch: value }))
-                    }
-                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                    thumbColor="#FFFFFF"
-                  />
-                </View>
-
-                <View style={styles.permissionItem}>
-                  <Text style={styles.permissionLabel}>Show Attendee List</Text>
-                  <Switch
-                    value={permissions.showAttendeesToPublic}
-                    onValueChange={(value) => 
-                      setPermissions(prev => ({ ...prev, showAttendeesToPublic: value }))
-                    }
-                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                    thumbColor="#FFFFFF"
-                  />
-                </View>
-              </View>
-            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1114,7 +1219,70 @@ export default function CreateEventScreen({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* NEW: Refund Policy Modal */}
+      {/* Form Selection Modal */}
+      <Modal
+        visible={showFormModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowFormModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Choose Check-in Form</Text>
+              <TouchableOpacity onPress={() => setShowFormModal(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            
+            {loadingForms ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#3797EF" />
+                <Text style={styles.loadingText}>Loading your forms...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={availableForms}
+                keyExtractor={(item) => item._id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.formItem}
+                    onPress={() => handleFormSelect(item)}
+                  >
+                    <View style={styles.formItemContent}>
+                      <Ionicons name="document-text" size={24} color="#3797EF" />
+                      <View style={styles.formItemText}>
+                        <Text style={styles.formItemTitle}>{item.title}</Text>
+                        <Text style={styles.formItemDesc}>
+                          {item.questions?.length || 0} questions • {item.category || 'General'}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+                    </View>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={() => (
+                  <View style={styles.emptyFormsContainer}>
+                    <Ionicons name="document-outline" size={48} color="#C7C7CC" />
+                    <Text style={styles.emptyFormsTitle}>No Forms Yet</Text>
+                    <Text style={styles.emptyFormsDesc}>
+                      Create your first check-in form to collect information from attendees
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.createFirstFormButton}
+                      onPress={handleCreateNewForm}
+                    >
+                      <Text style={styles.createFirstFormButtonText}>Create Your First Form</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Refund Policy Modal */}
       <Modal
         visible={showRefundPolicyModal}
         transparent={true}
@@ -1156,7 +1324,7 @@ export default function CreateEventScreen({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* NEW: Payment Setup Modal */}
+      {/* Payment Setup Modal */}
       {showPaymentSetup && (
         <PaymentSetupComponent
           onPaymentSetupComplete={() => {
@@ -1171,9 +1339,7 @@ export default function CreateEventScreen({ navigation, route }) {
   );
 }
 
-// ============================================
-// ENHANCED STYLES (Added payment-specific styles)
-// ============================================
+// Enhanced Styles with Phase 2 additions
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1332,9 +1498,116 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
-  // ============================================
-  // NEW: Payment-specific styles
-  // ============================================
+  // PHASE 2: Form Toggle Styles
+  recommendationBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFF8E1',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FFE0B2',
+  },
+  recommendationText: {
+    marginLeft: 8,
+    flex: 1,
+  },
+  recommendationTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF9500',
+  },
+  recommendationDesc: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  formToggleContainer: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 16,
+  },
+  formToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  formToggleText: {
+    flex: 1,
+    marginRight: 16,
+  },
+  formToggleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  formToggleDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  formSelectionContainer: {
+    marginTop: 16,
+  },
+  selectedFormCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#E8F5FF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#B3D9FF',
+  },
+  selectedFormInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  selectedFormText: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  selectedFormTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  selectedFormDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  removeFormButton: {
+    padding: 8,
+  },
+  formSelectionButtons: {
+    gap: 12,
+  },
+  formSelectionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  createFormButton: {
+    backgroundColor: '#3797EF',
+    borderColor: '#3797EF',
+  },
+  formSelectionButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+
+  // Payment-specific styles
   paymentStatusBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1413,7 +1686,7 @@ const styles = StyleSheet.create({
     color: '#34C759',
   },
 
-  // Co-hosts (existing styles preserved)
+  // Co-hosts
   coHostsList: {
     marginBottom: 16,
   },
@@ -1488,12 +1761,11 @@ const styles = StyleSheet.create({
     color: '#3797EF',
   },
 
-  // Privacy Settings
+  // Privacy Settings (Simplified)
   privacyButton: {
     backgroundColor: '#F8F8F8',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 16,
   },
   privacyButtonContent: {
     flexDirection: 'row',
@@ -1515,11 +1787,6 @@ const styles = StyleSheet.create({
   },
 
   // Permissions
-  permissionsList: {
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    padding: 4,
-  },
   permissionItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1532,7 +1799,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
-  // Modals (existing styles preserved)
+  // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1610,6 +1877,70 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     marginTop: 2,
+  },
+
+  // Form Selection Modal
+  loadingContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  formItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  formItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  formItemText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  formItemTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  formItemDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  emptyFormsContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptyFormsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+  },
+  emptyFormsDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+  createFirstFormButton: {
+    backgroundColor: '#3797EF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginTop: 16,
+  },
+  createFirstFormButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 
   // Co-host Search

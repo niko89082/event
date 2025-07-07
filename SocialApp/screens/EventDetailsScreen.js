@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Complete file with deep link payment handling and full UI
+// screens/EventDetailsScreen.js - Phase 4: Clean Integration with QR Scanner
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -55,7 +55,10 @@ export default function EventDetailsScreen() {
   const [permissions, setPermissions] = useState({});
   const [showShareModal, setShowShareModal] = useState(false);
 
-  // 🔧 ENHANCED: Deep link handling for payment returns with AsyncStorage persistence
+  // PHASE 4: Check-in related state
+  const [checkedInCount, setCheckedInCount] = useState(0);
+
+  // Deep link handling for payment returns with AsyncStorage persistence
   useEffect(() => {
     const handlePaymentReturn = async (url) => {
       console.log('🔗 EventDetailsScreen received deep link:', url);
@@ -183,6 +186,9 @@ export default function EventDetailsScreen() {
       setEvent(eventData);
       setAttendeeCount(eventData.attendees?.length || 0);
       setPermissions(eventData.permissions || {});
+      
+      // PHASE 4: Set checked-in count
+      setCheckedInCount(eventData.checkedIn?.length || 0);
 
       // Debug payment data in development
       if (__DEV__) {
@@ -217,13 +223,22 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // Refresh on focus
+  // PHASE 4: Refresh on focus (instead of polling)
   useFocusEffect(
     React.useCallback(() => {
       fetchEvent();
       fetchEventPhotos();
     }, [eventId])
   );
+
+  // PHASE 4: QR Scanner navigation
+  const handleOpenScanner = () => {
+    navigation.navigate('QrScanScreen', { 
+      eventId: eventId,
+      eventTitle: event.title,
+      isEventCheckin: true
+    });
+  };
 
   // Handle Stripe payment flow
   const handleStripePayment = async () => {
@@ -275,7 +290,7 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // 🔧 ENHANCED: Handle PayPal payment flow with deep links and AsyncStorage
+  // Enhanced PayPal payment flow with deep links and AsyncStorage
   const handlePayPalPayment = async () => {
     try {
       setPaymentLoading(true);
@@ -326,12 +341,7 @@ export default function EventDetailsScreen() {
       setPaymentLoading(false);
     }
   };
-  const handleOpenScanner = () => {
-    navigation.navigate('QrScanScreen', { 
-      eventId: eventId,
-      eventTitle: event.title 
-    });
-  };
+
   // Handle PayPal WebView navigation (keeping for backward compatibility)
   const handlePayPalWebViewNavigation = async (navigationState) => {
     const { url } = navigationState;
@@ -740,8 +750,9 @@ export default function EventDetailsScreen() {
                 <Text style={styles.primaryActionText}>Edit Event</Text>
               </LinearGradient>
             </TouchableOpacity>
-            {/* QR Scanner Button for Check-in */}
-            {(isHost || isCoHost) && !isPast && (
+
+            {/* PHASE 4: QR Scanner Button for Check-in */}
+            {!isPast && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.scannerAction]}
                 onPress={handleOpenScanner}
@@ -751,11 +762,12 @@ export default function EventDetailsScreen() {
                   colors={['#667eea', '#764ba2']}
                   style={styles.gradientButton}
                 >
-                  <Ionicons name="qr-code-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.actionText}>Check-in Scanner</Text>
+                  <Ionicons name="scan" size={18} color="#FFFFFF" />
+                  <Text style={styles.primaryActionText}>Scan Check-ins</Text>
                 </LinearGradient>
               </TouchableOpacity>
             )}
+
             {canInvite && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.secondaryAction]}
@@ -1017,10 +1029,13 @@ export default function EventDetailsScreen() {
               </View>
             )}
 
-            {/* Attendees Card */}
+            {/* PHASE 4: Enhanced Attendees Card with Check-in Info */}
             <TouchableOpacity 
               style={styles.detailCard}
-              onPress={() => navigation.navigate('AttendeeListScreen', { eventId })}
+              onPress={() => navigation.navigate('AttendeeListScreen', { 
+                eventId,
+                mode: (isHost || isCoHost) ? 'manage' : 'view'
+              })}
               activeOpacity={0.8}
               disabled={!event.permissions?.showAttendeesToPublic && !isHost && !isCoHost}
             >
@@ -1034,7 +1049,27 @@ export default function EventDetailsScreen() {
               <Text style={styles.detailCardContent}>
                 {attendeeCount} {attendeeCount === 1 ? 'person' : 'people'} attending
               </Text>
+              {/* PHASE 4: Show check-in status for hosts */}
+              {(isHost || isCoHost) && checkedInCount > 0 && (
+                <Text style={styles.detailCardSubContent}>
+                  {checkedInCount} checked in ({Math.round((checkedInCount / attendeeCount) * 100) || 0}%)
+                </Text>
+              )}
             </TouchableOpacity>
+
+            {/* PHASE 4: Form Requirement Info */}
+            {event.requiresFormForCheckIn && event.checkInForm && (
+              <View style={styles.detailCard}>
+                <View style={styles.detailCardHeader}>
+                  <Ionicons name="document-text" size={24} color="#FF9500" />
+                  <Text style={styles.detailCardTitle}>Check-in Requirements</Text>
+                </View>
+                <Text style={styles.detailCardContent}>Form required for check-in</Text>
+                <Text style={styles.detailCardSubContent}>
+                  {event.checkInForm.title || 'Check-in form'}
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Event Photos Section */}
@@ -1439,7 +1474,10 @@ const styles = StyleSheet.create({
   primaryAction: {
     flex: 2,
   },
- gradientButton: {
+  scannerAction: {
+    flex: 2,
+  },
+  gradientButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1447,13 +1485,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 8,
   },
-  scannerAction: {
-    marginVertical: 8,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
   primaryActionText: {
-    marginLeft: 6,
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
@@ -1471,11 +1503,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#3797EF',
-  },
-  actionText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
   leaveAction: {
     backgroundColor: '#FF3B30',
