@@ -1,78 +1,89 @@
-// SocialApp/components/PostsFeed.js - Complete file updated for swipe functionality
-import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle, useCallback } from 'react';
+// components/PostsFeed.js - PHASE 2: Updated to handle memory posts
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import {
-  View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text, TouchableOpacity
+  FlatList,
+  View,
+  Text,
+  StyleSheet,
+  RefreshControl,
+  ActivityIndicator,
+  TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import api from '../services/api';
-import PostItem from './PostItem';
 import { AuthContext } from '../services/AuthContext';
+import api from '../services/api';
+import PostItem from './PostItem'; // Updated PostItem with memory support
 
-const PostsFeed = forwardRef(({ 
-  navigation, 
-  refreshing: externalRefreshing, 
-  onRefresh: externalOnRefresh,
+export default function PostsFeed({
+  navigation,
+  refreshing: externalRefreshing = false,
   onScroll: parentOnScroll,
-  scrollEventThrottle = 16 
-}, ref) => {
+  scrollEventThrottle = 16,
+}) {
   const { currentUser } = useContext(AuthContext);
-
   const [data, setData] = useState([]);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [debugInfo, setDebugInfo] = useState(null);
 
-  useEffect(() => { 
-    fetchPage(1); 
+  useEffect(() => {
+    fetchPage(1, true);
   }, []);
 
-  // Expose refresh method to parent
-  useImperativeHandle(ref, () => ({
-    refresh: async () => {
-      console.log('🔄 PostsFeed: Manual refresh triggered');
-      return await fetchPage(1, true);
-    }
-  }));
+  const fetchPage = async (pageNum, reset = false) => {
+    if (loading) return;
 
-  const fetchPage = async (pageNum, isRefresh = false) => {
     try {
-      if (isRefresh) {
-        setRefreshing(true);
-        setError(null);
-      } else if (pageNum === 1) {
-        setLoading(true);
-        setError(null);
+      setLoading(true);
+      setError(null);
+
+      console.log(`🟡 [PostsFeed] Fetching page ${pageNum}, reset: ${reset}`);
+
+      const response = await api.get('/api/feed/posts', {
+        params: { page: pageNum, limit: 10 },
+      });
+
+      const newPosts = response.data.posts || [];
+      const debug = response.data.debug || null;
+
+      console.log(`🟢 [PostsFeed] Received ${newPosts.length} posts:`, {
+        regularPosts: debug?.regularPosts || 0,
+        memoryPosts: debug?.memoryPosts || 0,
+        total: debug?.totalPosts || 0,
+      });
+
+      // 🧠 PHASE 2: Log memory posts for debugging
+      const memoryPosts = newPosts.filter(post => post.postType === 'memory');
+      if (memoryPosts.length > 0) {
+        console.log(`🧠 [PostsFeed] Memory posts received:`, memoryPosts.map(p => ({
+          id: p._id,
+          memoryTitle: p.memoryInfo?.memoryTitle,
+          uploader: p.user?.username,
+          url: p.url
+        })));
       }
 
-      console.log('🟡 [PostsFeed] fetching page', pageNum);
-      
-      const res = await api.get(`/api/feed/posts?page=${pageNum}&limit=12`);
-      console.log('🟢 PostsFeed response:', res.status, 'posts:', res.data.posts?.length);
-
-      const posts = res.data.posts || [];
-      const debug = res.data.debug || {};
-
-      if (pageNum === 1) {
-        setData(posts);
-        setDebugInfo(debug);
+      if (reset) {
+        setData(newPosts);
+        setPage(2);
       } else {
-        setData(prev => [...prev, ...posts]);
+        setData(prev => [...prev, ...newPosts]);
+        setPage(prev => prev + 1);
       }
+
+      setHasMore(response.data.hasMore || false);
+      setDebugInfo(debug);
+
+    } catch (err) {
+      console.error('❌ [PostsFeed] Error:', err.response?.data || err.message);
+      setError(err.response?.data?.message || 'Failed to load posts');
       
-      setPage(res.data.page || pageNum);
-      setTotalPages(res.data.totalPages || 1);
-      setHasMore(res.data.hasMore || false);
-      
-    } catch (error) {
-      console.log('❌ [PostsFeed] error:', error.response?.data || error.message);
-      setError(error.response?.data?.message || 'Failed to load posts');
-      if (pageNum === 1) {
-        setData([]);
-        setDebugInfo(null);
+      // Don't show error if we have some data already
+      if (data.length === 0) {
+        setError('Unable to load posts. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -80,20 +91,16 @@ const PostsFeed = forwardRef(({
     }
   };
 
-  const handleLoadMore = () => {
-    if (!loading && hasMore && page < totalPages) {
-      console.log('📄 Loading more posts, page:', page + 1);
-      fetchPage(page + 1);
-    }
-  };
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchPage(1, true);
+  }, []);
 
-  const handleRefresh = async () => {
-    if (externalOnRefresh) {
-      await externalOnRefresh();
-    } else {
-      await fetchPage(1, true);
+  const handleLoadMore = useCallback(() => {
+    if (hasMore && !loading) {
+      fetchPage(page);
     }
-  };
+  }, [hasMore, loading, page]);
 
   const handleDeletePost = () => {
     fetchPage(1, true);
@@ -109,16 +116,32 @@ const PostsFeed = forwardRef(({
     // Add any internal scroll logic here if needed
   }, [parentOnScroll]);
 
-  const renderPost = ({ item }) => (
-    <View style={styles.postWrapper}>
-      <PostItem
-        post={item}
-        navigation={navigation}
-        onDelete={handleDeletePost}
-        currentUserId={currentUser?._id}
-      />
-    </View>
-  );
+  // 🧠 PHASE 2: Enhanced renderPost to handle memory posts
+  const renderPost = ({ item }) => {
+    const isMemoryPost = item.postType === 'memory';
+    
+    console.log(`🔍 [PostsFeed] Rendering ${isMemoryPost ? 'memory' : 'regular'} post:`, {
+      id: item._id,
+      type: item.postType,
+      user: item.user?.username,
+      memoryTitle: isMemoryPost ? item.memoryInfo?.memoryTitle : null,
+      url: item.url || item.paths?.[0]
+    });
+
+    return (
+      <View style={styles.postWrapper}>
+        <PostItem
+          post={item}
+          navigation={navigation}
+          onDeletePost={handleDeletePost}
+          currentUserId={currentUser?._id}
+          // 🧠 PHASE 2: Pass memory-specific props
+          showEventContext={!isMemoryPost} // Hide event context for memory posts
+          eventContextSource={item.source}
+        />
+      </View>
+    );
+  };
 
   const renderError = () => (
     <View style={styles.errorContainer}>
@@ -168,6 +191,22 @@ const PostsFeed = forwardRef(({
     );
   };
 
+  // 🧠 PHASE 2: Debug footer to show memory post stats
+  const renderDebugFooter = () => {
+    if (!debugInfo || !__DEV__) return null;
+    
+    return (
+      <View style={styles.debugFooter}>
+        <Text style={styles.debugText}>
+          📊 Posts: {data.length} | Regular: {debugInfo.regularPosts} | Memory: {debugInfo.memoryPosts}
+        </Text>
+        <Text style={styles.debugText}>
+          👥 Following: {debugInfo.followingCount} | Memories: {debugInfo.userMemoryCount}
+        </Text>
+      </View>
+    );
+  };
+
   // Show error state if there's an error
   if (error && data.length === 0) {
     return renderError();
@@ -203,91 +242,56 @@ const PostsFeed = forwardRef(({
       onScroll={handleScroll}
       scrollEventThrottle={scrollEventThrottle}
       ListEmptyComponent={renderEmpty}
-      ListFooterComponent={renderFooter}
+      ListFooterComponent={
+        <View>
+          {renderFooter()}
+          {renderDebugFooter()}
+        </View>
+      }
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
-      contentContainerStyle={data.length === 0 ? styles.emptyContentContainer : styles.contentContainer}
+      contentContainerStyle={data.length === 0 ? styles.emptyList : styles.list}
       removeClippedSubviews={true}
       maxToRenderPerBatch={5}
-      updateCellsBatchingPeriod={50}
-      initialNumToRender={8}
       windowSize={10}
+      initialNumToRender={3}
+      getItemLayout={(data, index) => ({
+        length: 500, // Approximate post height
+        offset: 500 * index,
+        index,
+      })}
     />
   );
-});
+}
 
 const styles = StyleSheet.create({
-  // Loading states
+  list: {
+    paddingBottom: 20,
+  },
+  emptyList: {
+    flexGrow: 1,
+  },
+  postWrapper: {
+    marginBottom: 0,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingTop: 100,
+    paddingVertical: 40,
   },
   loadingText: {
-    marginTop: 16,
+    marginTop: 12,
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
   },
-
-  // Content containers
-  contentContainer: {
-    paddingBottom: 20,
-  },
-  emptyContentContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
-  },
-
-  // Post wrapper
-  postWrapper: {
-    marginBottom: 16,
-  },
-
-  // Empty state
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 60,
-  },
-  emptyTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#000000',
-    marginTop: 20,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 32,
-  },
-  actionButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Error state
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 60,
+    paddingHorizontal: 32,
+    paddingVertical: 40,
   },
   errorTitle: {
     fontSize: 20,
@@ -315,15 +319,56 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-
-  // Footer
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  emptyContainer: {
+    flex: 1,
     justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  actionButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 25,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  footer: {
     paddingVertical: 20,
-    gap: 12,
+    alignItems: 'center',
+  },
+  
+  // 🧠 PHASE 2: Debug styles
+  debugFooter: {
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E1E1E1',
+  },
+  debugText: {
+    fontSize: 11,
+    color: '#6C757D',
+    textAlign: 'center',
+    fontFamily: 'monospace',
   },
 });
-
-export default PostsFeed;
