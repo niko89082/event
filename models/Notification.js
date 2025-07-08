@@ -30,10 +30,12 @@ const NotificationSchema = new mongoose.Schema({
       'new_follower',
       'memory_photo_added',
       'memory_invitation',
+      'memory_photo_batch',                   // 🆕 NEW: When multiple friends upload photos
       
       // Event notifications
       'event_invitation',
       'event_reminder',
+      'event_reminder_1_hour',                // 🆕 NEW: Event starting in 1 hour
       'event_update',
       'event_cancelled',
       'event_announcement',
@@ -63,27 +65,19 @@ const NotificationSchema = new mongoose.Schema({
     postId: { type: mongoose.Schema.Types.ObjectId, ref: 'Photo' },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     
-    // Batching support for RSVP notifications
+    // Batching support
     count: { type: Number, default: 1 },
-    lastUpdated: { type: Date, default: Date.now },
+    uploaderIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // For batched memory photos
     
     // Additional context
-    extra: { type: mongoose.Schema.Types.Mixed, default: {} }
+    reminderType: String, // '1_hour', '1_day', etc.
+    announcement: String, // For event announcements
   },
   
-  // In-app notification states
-  isRead: {
-    type: Boolean,
-    default: false,
-  },
-  readAt: {
-    type: Date,
-  },
-  
-  // Actions
+  // Action handling
   actionType: {
     type: String,
-    enum: ['VIEW_PROFILE', 'VIEW_EVENT', 'VIEW_MEMORY', 'VIEW_POST', 'ACCEPT_REQUEST', 'NONE'],
+    enum: ['NONE', 'VIEW_PROFILE', 'VIEW_EVENT', 'VIEW_MEMORY', 'VIEW_POST', 'ACCEPT_REQUEST'],
     default: 'NONE'
   },
   actionData: {
@@ -91,93 +85,45 @@ const NotificationSchema = new mongoose.Schema({
     default: {}
   },
   
-  // Priority for sorting/display
   priority: {
     type: String,
     enum: ['low', 'normal', 'high'],
     default: 'normal'
   },
   
-  // Delivery tracking
-  pushSent: {
+  isRead: {
     type: Boolean,
     default: false,
   },
-  pushSentAt: {
-    type: Date,
-  },
   
-  // Expiry for auto-cleanup
-  expiresAt: {
-    type: Date,
-    default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
-  },
-  
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
-  },
-});
-
-// 🔔 PHASE 3: Enhanced indexes for better performance
-NotificationSchema.index({ user: 1, createdAt: -1 });
-NotificationSchema.index({ user: 1, isRead: 1 });
-NotificationSchema.index({ user: 1, category: 1, createdAt: -1 });
-NotificationSchema.index({ user: 1, type: 1 });
-NotificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // Auto-cleanup
-
-// 🔔 PHASE 3: Virtual for category display
-NotificationSchema.virtual('categoryDisplay').get(function() {
-  return this.category.charAt(0).toUpperCase() + this.category.slice(1);
-});
-
-// 🔔 PHASE 3: Instance methods
-NotificationSchema.methods.markAsRead = function() {
-  this.isRead = true;
-  this.readAt = new Date();
-  return this.save();
-};
-
-NotificationSchema.methods.updateBatchCount = function(newCount) {
-  this.data.count = newCount;
-  this.data.lastUpdated = new Date();
-  this.createdAt = new Date(); // Move to top of notifications
-  return this.save();
-};
-
-// 🔔 PHASE 3: Static methods for batch operations
-NotificationSchema.statics.markAllAsReadForUser = function(userId, category = null) {
-  const query = { user: userId, isRead: false };
-  if (category) {
-    query.category = category;
+  isBatched: {
+    type: Boolean,
+    default: false
   }
-  
-  return this.updateMany(query, {
-    isRead: true,
-    readAt: new Date()
-  });
-};
+}, {
+  timestamps: true,
+});
 
+// Indexes for performance
+NotificationSchema.index({ user: 1, createdAt: -1 });
+NotificationSchema.index({ user: 1, category: 1, isRead: 1 });
+NotificationSchema.index({ user: 1, type: 1, createdAt: -1 });
+
+// Static method to get unread counts by category
 NotificationSchema.statics.getUnreadCountByCategory = function(userId) {
   return this.aggregate([
-    { $match: { user: userId, isRead: false } },
+    { $match: { user: mongoose.Types.ObjectId(userId), isRead: false } },
     { $group: { _id: '$category', count: { $sum: 1 } } },
     { $project: { category: '$_id', count: 1, _id: 0 } }
   ]);
 };
 
-// 🔔 PHASE 3: Auto-populate sender info
-NotificationSchema.pre(/^find/, function() {
-  this.populate('sender', 'username fullName profilePicture');
-});
-
-// JSON transform to include virtuals
-NotificationSchema.set('toJSON', { 
-  virtuals: true,
-  transform: function(doc, ret) {
-    delete ret.__v;
-    return ret;
-  }
-});
+// Instance method to update batch count
+NotificationSchema.methods.updateBatchCount = function(newCount) {
+  this.data.count = newCount;
+  this.isBatched = true;
+  this.updatedAt = new Date();
+  return this.save();
+};
 
 module.exports = mongoose.model('Notification', NotificationSchema);

@@ -90,36 +90,27 @@ export default function NotificationScreen({ navigation }) {
       const targetPage = reset ? 1 : page;
       const categoryParam = activeCategory === 'all' ? '' : `&category=${activeCategory}`;
       
-      console.log(`🔔 Fetching notifications: page=${targetPage}, category=${activeCategory}`);
-
       const response = await api.get(`/api/notifications?page=${targetPage}&limit=20${categoryParam}`);
       
-      console.log(`🔔 Received ${response.data.notifications?.length || 0} notifications`);
-
-      const newNotifications = response.data.notifications || [];
-      
       if (reset) {
-        setNotifications(newNotifications);
-        setPage(2);
+        setNotifications(response.data.notifications);
+        setUnreadCounts(response.data.unreadCounts);
       } else {
-        setNotifications(prev => [...prev, ...newNotifications]);
+        setNotifications(prev => [...prev, ...response.data.notifications]);
+      }
+      
+      setHasMore(response.data.pagination.hasMore);
+      if (!reset) {
         setPage(prev => prev + 1);
       }
-
-      setHasMore(response.data.pagination?.hasMore || false);
       
-      // Update unread counts if provided
-      if (response.data.unreadCounts) {
-        setUnreadCounts(response.data.unreadCounts);
-      }
-
     } catch (error) {
       console.error('Error fetching notifications:', error);
       Alert.alert('Error', 'Failed to load notifications');
     } finally {
       setLoading(false);
-      setRefreshing(false);
       setLoadingMore(false);
+      setRefreshing(false);
     }
   };
 
@@ -127,23 +118,21 @@ export default function NotificationScreen({ navigation }) {
     try {
       const response = await api.get('/api/notifications/unread-count');
       setUnreadCounts(response.data);
-      console.log('🔔 Unread counts:', response.data);
     } catch (error) {
       console.error('Error fetching unread counts:', error);
     }
   };
 
-  const handleLoadMore = useCallback(() => {
-    if (hasMore && !loadingMore && !loading) {
-      fetchNotifications(false);
-    }
-  }, [hasMore, loadingMore, loading, page]);
-
-  const handleRefresh = useCallback(() => {
+  const onRefresh = () => {
     setRefreshing(true);
     fetchNotifications(true);
-    fetchUnreadCounts();
-  }, [activeCategory]);
+  };
+
+  const loadMore = () => {
+    if (!loadingMore && hasMore) {
+      fetchNotifications(false);
+    }
+  };
 
   /* ═══════════════════════════════════════════════════════════════════
      NOTIFICATION ACTIONS
@@ -151,24 +140,17 @@ export default function NotificationScreen({ navigation }) {
 
   const markAllAsRead = async () => {
     try {
-      const categoryToMark = activeCategory === 'all' ? null : activeCategory;
-      await api.post('/api/notifications/mark-all-read', { 
-        category: categoryToMark 
-      });
+      const categoryParam = activeCategory === 'all' ? {} : { category: activeCategory };
+      await api.post('/api/notifications/mark-all-read', categoryParam);
       
       // Update local state
       setNotifications(prev => prev.map(notif => ({ ...notif, isRead: true })));
+      setUnreadCounts(prev => ({
+        ...prev,
+        [activeCategory === 'all' ? 'total' : activeCategory]: 0,
+        ...(activeCategory === 'all' && { social: 0, events: 0, total: 0 })
+      }));
       
-      // Update unread counts
-      if (categoryToMark === 'social') {
-        setUnreadCounts(prev => ({ ...prev, social: 0, total: prev.total - prev.social }));
-      } else if (categoryToMark === 'events') {
-        setUnreadCounts(prev => ({ ...prev, events: 0, total: prev.total - prev.events }));
-      } else {
-        setUnreadCounts({ total: 0, social: 0, events: 0 });
-      }
-      
-      console.log(`🔔 Marked all ${categoryToMark || 'all'} notifications as read`);
     } catch (error) {
       console.error('Error marking all as read:', error);
       Alert.alert('Error', 'Failed to mark notifications as read');
@@ -180,22 +162,25 @@ export default function NotificationScreen({ navigation }) {
       await api.put(`/api/notifications/${notificationId}/read`);
       
       // Update local state
-      setNotifications(prev => prev.map(notif => 
-        notif._id === notificationId ? { ...notif, isRead: true } : notif
-      ));
+      setNotifications(prev => 
+        prev.map(notif => 
+          notif._id === notificationId ? { ...notif, isRead: true } : notif
+        )
+      );
       
       // Update unread counts
       const notification = notifications.find(n => n._id === notificationId);
       if (notification && !notification.isRead) {
         setUnreadCounts(prev => ({
-          ...prev,
           total: Math.max(0, prev.total - 1),
-          [notification.category]: Math.max(0, prev[notification.category] - 1)
+          social: notification.category === 'social' ? Math.max(0, prev.social - 1) : prev.social,
+          events: notification.category === 'events' ? Math.max(0, prev.events - 1) : prev.events
         }));
       }
       
     } catch (error) {
-      console.error('Error marking as read:', error);
+      console.error('Error marking notification as read:', error);
+      Alert.alert('Error', 'Failed to mark notification as read');
     }
   };
 
@@ -207,12 +192,12 @@ export default function NotificationScreen({ navigation }) {
       const notification = notifications.find(n => n._id === notificationId);
       setNotifications(prev => prev.filter(notif => notif._id !== notificationId));
       
-      // Update unread counts if notification was unread
+      // Update unread counts if it was unread
       if (notification && !notification.isRead) {
         setUnreadCounts(prev => ({
-          ...prev,
           total: Math.max(0, prev.total - 1),
-          [notification.category]: Math.max(0, prev[notification.category] - 1)
+          social: notification.category === 'social' ? Math.max(0, prev.social - 1) : prev.social,
+          events: notification.category === 'events' ? Math.max(0, prev.events - 1) : prev.events
         }));
       }
       
@@ -279,6 +264,40 @@ export default function NotificationScreen({ navigation }) {
   };
 
   /* ═══════════════════════════════════════════════════════════════════
+     🆕 ENHANCED NOTIFICATION DISPLAY HELPERS
+  ═══════════════════════════════════════════════════════════════════ */
+
+  const getNotificationIcon = (notification) => {
+    const iconMap = {
+      // Social notifications
+      'friend_request': 'person-add',
+      'friend_request_accepted': 'checkmark-circle',
+      'new_follower': 'people',
+      'memory_invitation': 'images',
+      'memory_photo_added': 'camera',
+      'memory_photo_batch': 'photos',        // 🆕 Multiple photos icon
+      
+      // Event notifications  
+      'event_invitation': 'calendar',
+      'event_reminder': 'time',
+      'event_reminder_1_hour': 'alarm',      // 🆕 Urgent reminder icon
+      'event_rsvp_batch': 'people',
+      
+      // Engagement
+      'post_liked': 'heart',
+      'post_commented': 'chatbubble'
+    };
+    
+    return iconMap[notification.type] || 'notifications';
+  };
+
+  const getNotificationColor = (notification) => {
+    if (notification.priority === 'high') return '#FF3B30'; // Red for urgent
+    if (notification.category === 'events') return '#3797EF'; // Blue for events
+    return '#8E44AD'; // Purple for social
+  };
+
+  /* ═══════════════════════════════════════════════════════════════════
      RENDER FUNCTIONS
   ═══════════════════════════════════════════════════════════════════ */
 
@@ -299,7 +318,7 @@ export default function NotificationScreen({ navigation }) {
               <Ionicons 
                 name={category.icon} 
                 size={20} 
-                color={isActive ? '#FFFFFF' : '#8E8E93'} 
+                color={isActive ? '#3797EF' : '#8E8E93'} 
               />
               <Text style={[
                 styles.categoryTabText,
@@ -308,16 +327,8 @@ export default function NotificationScreen({ navigation }) {
                 {category.label}
               </Text>
               {count > 0 && (
-                <View style={[
-                  styles.unreadBadge,
-                  isActive && styles.unreadBadgeActive
-                ]}>
-                  <Text style={[
-                    styles.unreadBadgeText,
-                    isActive && styles.unreadBadgeTextActive
-                  ]}>
-                    {count > 99 ? '99+' : count}
-                  </Text>
+                <View style={styles.categoryBadge}>
+                  <Text style={styles.categoryBadgeText}>{count}</Text>
                 </View>
               )}
             </View>
@@ -328,46 +339,24 @@ export default function NotificationScreen({ navigation }) {
   );
 
   const renderNotificationItem = ({ item }) => {
-    const isMemoryNotification = item.type === 'memory_photo_added' || item.type === 'memory_invitation';
+    const iconName = getNotificationIcon(item);
+    const iconColor = getNotificationColor(item);
+    const isMemoryNotification = item.category === 'social' && item.type.includes('memory');
     const isEventNotification = item.category === 'events';
-    const isSocialNotification = item.category === 'social';
+    const isSocialNotification = item.category === 'social' && !item.type.includes('memory');
 
     return (
       <TouchableOpacity
-        style={[
-          styles.notificationItem,
-          !item.isRead && styles.unreadNotificationItem,
-          isMemoryNotification && styles.memoryNotificationItem,
-          isEventNotification && styles.eventNotificationItem
-        ]}
+        style={[styles.notificationItem, !item.isRead && styles.unreadNotification]}
         onPress={() => handleNotificationPress(item)}
         activeOpacity={0.8}
       >
-        <View style={styles.notificationContent}>
-          {/* Sender Avatar */}
-          <View style={styles.avatarContainer}>
-            {item.sender?.profilePicture ? (
-              <Image
-                source={{ uri: `${API_BASE_URL}${item.sender.profilePicture}` }}
-                style={styles.senderAvatar}
-              />
-            ) : (
-              <View style={[
-                styles.defaultAvatar,
-                isMemoryNotification && styles.memoryDefaultAvatar,
-                isEventNotification && styles.eventDefaultAvatar
-              ]}>
-                <Ionicons 
-                  name={isMemoryNotification ? 'library' : 
-                       isEventNotification ? 'calendar' : 'person'} 
-                  size={20} 
-                  color={isMemoryNotification ? '#8E44AD' : 
-                         isEventNotification ? '#3797EF' : '#8E8E93'} 
-                />
-              </View>
-            )}
+        <View style={styles.notificationRow}>
+          {/* Main Icon */}
+          <View style={[styles.notificationIconContainer, { backgroundColor: iconColor + '20' }]}>
+            <Ionicons name={iconName} size={20} color={iconColor} />
             
-            {/* Category Icon Badge */}
+            {/* Category Badge */}
             <View style={[
               styles.categoryBadge,
               isMemoryNotification && styles.memoryCategoryBadge,
@@ -499,21 +488,16 @@ export default function NotificationScreen({ navigation }) {
       ) : (
         <FlatList
           data={notifications}
-          keyExtractor={item => item._id}
           renderItem={renderNotificationItem}
+          keyExtractor={(item) => item._id}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderLoadingFooter}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor="#3797EF"
-              colors={["#3797EF"]}
-            />
-          }
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.3}
-          ListFooterComponent={renderLoadingFooter}
         />
       )}
     </SafeAreaView>
@@ -527,59 +511,29 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     padding: 8,
-    marginHorizontal: 8,
   },
   markAllReadText: {
+    color: '#3797EF',
     fontSize: 16,
     fontWeight: '600',
-    color: '#3797EF',
   },
-  
-  // Loading States
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#8E8E93',
-  },
-  loadingFooter: {
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  loadingFooterText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-
-  // Category Tabs
   categoryContainer: {
     flexDirection: 'row',
-    backgroundColor: '#F8F9FA',
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 16,
-    borderRadius: 12,
-    padding: 4,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
   categoryTab: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    marginHorizontal: 4,
   },
   activeCategoryTab: {
-    backgroundColor: '#3797EF',
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    backgroundColor: '#3797EF20',
   },
   categoryTabContent: {
     flexDirection: 'row',
@@ -587,98 +541,53 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   categoryTabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
     marginLeft: 6,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#8E8E93',
   },
   activeCategoryTabText: {
-    color: '#FFFFFF',
+    color: '#3797EF',
   },
-  unreadBadge: {
+  categoryBadge: {
     backgroundColor: '#FF3B30',
     borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     marginLeft: 6,
+    minWidth: 20,
+    alignItems: 'center',
   },
-  unreadBadgeActive: {
-    backgroundColor: '#FFFFFF',
-  },
-  unreadBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
+  categoryBadgeText: {
     color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  unreadBadgeTextActive: {
-    color: '#FF3B30',
-  },
-
-  // Notifications List
   listContainer: {
-    flexGrow: 1,
+    paddingBottom: 20,
   },
   notificationItem: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#F0F0F0',
-  },
-  unreadNotificationItem: {
-    backgroundColor: '#F8F9FA',
-  },
-  memoryNotificationItem: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#8E44AD',
-  },
-  eventNotificationItem: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#3797EF',
-  },
-  notificationContent: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
   },
-
-  // Avatar & Badge
-  avatarContainer: {
-    position: 'relative',
+  unreadNotification: {
+    backgroundColor: '#F8F9FA',
+  },
+  notificationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  notificationIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 12,
-  },
-  senderAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F6F6F6',
-  },
-  defaultAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F6F6F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  memoryDefaultAvatar: {
-    backgroundColor: 'rgba(142, 68, 173, 0.1)',
-  },
-  eventDefaultAvatar: {
-    backgroundColor: 'rgba(55, 151, 239, 0.1)',
-  },
-  categoryBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
+    position: 'relative',
   },
   memoryCategoryBadge: {
     backgroundColor: '#8E44AD',
@@ -687,10 +596,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#3797EF',
   },
   socialCategoryBadge: {
-    backgroundColor: '#34C759',
+    backgroundColor: '#8E8E93',
   },
-
-  // Notification Content
   notificationTextContainer: {
     flex: 1,
   },
@@ -698,42 +605,58 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   notificationMessage: {
     fontSize: 14,
-    color: '#444444',
+    color: '#8E8E93',
     lineHeight: 18,
     marginBottom: 4,
   },
   notificationTime: {
     fontSize: 12,
-    color: '#8E8E93',
+    color: '#C7C7CC',
   },
-
-  // Actions
   notificationActions: {
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    marginLeft: 8,
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    height: 40,
   },
   unreadDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#3797EF',
-    marginBottom: 8,
   },
   deleteButton: {
     padding: 4,
   },
-
-  // Empty State
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  loadingFooter: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  loadingFooterText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#8E8E93',
+  },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 40,
   },
   emptyTitle: {
     fontSize: 20,

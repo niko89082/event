@@ -1,5 +1,5 @@
-// components/PostItem.js - PHASE 2: Enhanced with Memory Photo Support
-import React, { useState, useMemo, useRef } from 'react';
+// components/PostItem.js - FIXED: Proper aspect ratio for memory photos
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, Image, StyleSheet,
   TouchableOpacity, Pressable, Modal, Button, Dimensions, Animated,
@@ -40,6 +40,24 @@ export default function EnhancedPostItem({
   const isMemoryPost = post.postType === 'memory';
   const memoryInfo = post.memoryInfo || {};
 
+  // 🆕 NEW: State for memory photo dimensions
+  const [memoryImageDimensions, setMemoryImageDimensions] = useState({
+    width: SCREEN_WIDTH,
+    height: SCREEN_WIDTH, // Default to square
+  });
+
+  /* ---- state ---------------------------------------------------- */
+  const [liked, setLiked] = useState(post.userLiked || false);
+  const [likeCount, setLikeCount] = useState(post.likeCount || 0);
+  const [modal, setModal] = useState(false);
+  const [showFullCaption, setShowFullCaption] = useState(false);
+
+  // Animation refs
+  const heartScale = useRef(new Animated.Value(0)).current;
+  const scaleValue = useRef(new Animated.Value(1)).current;
+  const lastTap = useRef(0);
+  const DOUBLE_PRESS_DELAY = 300;
+
   /* ---- image url -------------------------------------------------- */
   let imgURL = null;
   if (isMemoryPost) {
@@ -51,45 +69,56 @@ export default function EnhancedPostItem({
     imgURL = first ? `http://${API_BASE_URL}:3000${first}` : null;
   }
 
-  /* ---- like state ------------------------------------------------- */
-  const [liked, setLiked] = useState(
-    post.likes?.some(u => String(u) === String(currentUserId))
-  );
-  const [likes, setLikes] = useState(post.likes?.length || post.likeCount || 0);
-  const [modal, setModal] = useState(false);
-  const [showFullCaption, setShowFullCaption] = useState(false);
+  // 🆕 NEW: Calculate memory photo dimensions to maintain aspect ratio
+  useEffect(() => {
+    if (isMemoryPost && imgURL) {
+      Image.getSize(imgURL, (width, height) => {
+        const containerWidth = SCREEN_WIDTH;
+        const aspectRatio = height / width;
+        const calculatedHeight = Math.min(containerWidth * aspectRatio, SCREEN_WIDTH * 1.5); // Max height 1.5x screen width
 
-  /* ---- double tap animation ---------------------------------------- */
-  const scaleValue = useRef(new Animated.Value(1)).current;
-  const heartScale = useRef(new Animated.Value(0)).current;
-  const lastTap = useRef(null);
+        setMemoryImageDimensions({
+          width: containerWidth,
+          height: calculatedHeight
+        });
+      }, (error) => {
+        console.warn('Failed to get memory image dimensions:', error);
+        // Keep default square dimensions if image sizing fails
+        setMemoryImageDimensions({
+          width: SCREEN_WIDTH,
+          height: SCREEN_WIDTH
+        });
+      });
+    }
+  }, [isMemoryPost, imgURL]);
 
-  // 🧠 PHASE 2: Different like handling for memory photos
+  /* ---- like toggle ----------------------------------------------- */
   const toggleLike = async () => {
+    if (!post?._id) return;
     try {
-      if (isMemoryPost) {
-        // Memory photo like endpoint
-        const { data } = await api.post(`/api/memories/photos/${post._id}/like`);
-        setLiked(data.liked);
-        setLikes(data.likeCount);
-      } else {
-        // Regular photo like endpoint
-        const { data } = await api.post(`/api/photos/like/${post._id}`);
-        setLiked(data.likes.includes(currentUserId));
-        setLikes(data.likeCount);
-      }
-    } catch (e) {
-      console.log('Like error:', e.response?.data || e);
+      const newLiked = !liked;
+      setLiked(newLiked);
+      setLikeCount(prev => newLiked ? prev + 1 : prev - 1);
+
+      const endpoint = isMemoryPost 
+        ? `/api/memories/photos/${post._id}/like`
+        : `/api/photos/${post._id}/like`;
+      
+      await api.post(endpoint);
+    } catch (err) {
+      console.error('Toggle like error:', err);
+      setLiked(!liked);
+      setLikeCount(prev => liked ? prev + 1 : prev - 1);
     }
   };
 
-  /* ---- double tap handler ----------------------------------------- */
+  /* ---- double tap handling --------------------------------------- */
   const handleDoubleTap = () => {
     const now = Date.now();
-    const DOUBLE_PRESS_DELAY = 300;
+    const timeSince = now - lastTap.current;
 
-    if (lastTap.current && (now - lastTap.current) < DOUBLE_PRESS_DELAY) {
-      // Double tap detected!
+    if (timeSince < DOUBLE_PRESS_DELAY) {
+      // Double tap detected
       if (!liked) {
         // Animate heart
         heartScale.setValue(0);
@@ -243,35 +272,51 @@ export default function EnhancedPostItem({
       )}
 
       {/* ---------- main image ---------- */}
-      <Pressable onPress={handleDoubleTap} style={styles.imageContainer}>
-        <Animated.View style={{ transform: [{ scale: scaleValue }] }}>
+      <Pressable onPress={handleDoubleTap} style={[
+        styles.imageContainer,
+        // 🆕 FIXED: Use dynamic dimensions for memory photos
+        isMemoryPost && {
+          width: memoryImageDimensions.width,
+          height: memoryImageDimensions.height,
+          aspectRatio: memoryImageDimensions.width / memoryImageDimensions.height
+        }
+      ]}>
+        <Animated.View style={{ 
+          transform: [{ scale: scaleValue }],
+          width: '100%',
+          height: '100%'
+        }}>
           {imgURL ? (
             <Image
               source={{ uri: imgURL }}
               style={styles.postImage}
-              onError={(e) => console.log('Post image error:', e.nativeEvent?.error)}
+              resizeMode={isMemoryPost ? "contain" : "cover"} // 🆕 FIXED: Use contain for memory photos
+              onError={(e) => console.log('Image error:', e.nativeEvent?.error)}
             />
           ) : (
             <View style={styles.imagePlaceholder}>
-              <Ionicons 
-                name={isMemoryPost ? "library-outline" : "image-outline"} 
-                size={64} 
-                color="#C7C7CC" 
-              />
-              <Text style={styles.placeholderText}>
-                {isMemoryPost ? "Memory Photo" : "Image not available"}
-              </Text>
+              <Ionicons name="image" size={50} color="#C7C7CC" />
+              <Text style={styles.placeholderText}>No image</Text>
             </View>
           )}
-        </Animated.View>
 
-        {/* Heart animation overlay */}
-        <Animated.View style={[styles.heartOverlay, { transform: [{ scale: heartScale }] }]}>
-          <Ionicons name="heart" size={80} color="#FFFFFF" />
+          {/* Animated heart for double tap */}
+          <Animated.View
+            style={[
+              styles.heartOverlay,
+              {
+                opacity: heartScale,
+                transform: [{ scale: heartScale }]
+              }
+            ]}
+            pointerEvents="none"
+          >
+            <Ionicons name="heart" size={80} color={HEART} />
+          </Animated.View>
         </Animated.View>
       </Pressable>
 
-      {/* ---------- action row (like, comment, share) ---------- */}
+      {/* ---------- action row ---------- */}
       <View style={styles.actionRow}>
         <View style={styles.leftActions}>
           <TouchableOpacity onPress={toggleLike} style={styles.actionBtn} activeOpacity={0.8}>
@@ -296,59 +341,55 @@ export default function EnhancedPostItem({
         </View>
       </View>
 
-      {/* ---------- like count ---------- */}
-      {likes > 0 && (
-        <TouchableOpacity onPress={isMemoryPost ? openMemory : openComments} activeOpacity={0.8}>
-          <Text style={styles.likesText}>
-            {likes} like{likes === 1 ? '' : 's'}
-          </Text>
-        </TouchableOpacity>
+      {/* ---------- likes count ---------- */}
+      {likeCount > 0 && (
+        <Text style={styles.likesText}>
+          {likeCount.toLocaleString()} {likeCount === 1 ? 'like' : 'likes'}
+        </Text>
       )}
 
       {/* ---------- caption ---------- */}
-      {displayCaption && (
+      {caption ? (
         <View style={styles.captionContainer}>
           <Text style={styles.captionText}>
-            <Text style={styles.captionUsername}>{post.user?.username} </Text>
+            <Text style={styles.captionUsername}>{post.user?.username || 'Unknown'}</Text>{' '}
             {displayCaption}
           </Text>
-
           {shouldTruncate && !showFullCaption && (
-            <TouchableOpacity onPress={() => setShowFullCaption(true)} activeOpacity={0.8}>
+            <TouchableOpacity onPress={() => setShowFullCaption(true)}>
               <Text style={styles.moreText}>more</Text>
             </TouchableOpacity>
           )}
         </View>
-      )}
+      ) : null}
 
-      {/* 🧠 PHASE 2: Memory-specific footer info */}
+      {/* 🧠 PHASE 2: Memory Footer */}
       {isMemoryPost && (
-        <TouchableOpacity onPress={openMemory} style={styles.memoryFooter} activeOpacity={0.8}>
+        <View style={styles.memoryFooter}>
           <View style={styles.memoryFooterContent}>
             <View style={styles.memoryStats}>
               <Ionicons name="people-outline" size={14} color="#8E8E93" />
               <Text style={styles.memoryStatsText}>
-                {memoryInfo.participantCount} participant{memoryInfo.participantCount === 1 ? '' : 's'}
+                {memoryInfo.participantCount || 0} participants
               </Text>
             </View>
-            <Text style={styles.viewMemoryLink}>View full memory</Text>
+            <TouchableOpacity onPress={openMemory}>
+              <Text style={styles.viewMemoryLink}>View Memory</Text>
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       )}
 
-      {/* ---------- comment preview (for regular posts only) ---------- */}
-      {!isMemoryPost && (post.comments?.length || 0) > 0 && (
+      {/* ---------- comments preview ---------- */}
+      {!isMemoryPost && post.commentCount > 0 && (
         <TouchableOpacity onPress={openComments} style={styles.commentsPreview} activeOpacity={0.8}>
           <Text style={styles.viewCommentsText}>
-            View all {post.comments.length} comments
+            View all {post.commentCount} comments
           </Text>
-
-          {post.comments.length > 0 && (
+          {post.latestComment && (
             <Text style={styles.latestComment}>
-              <Text style={styles.commentUsername}>
-                {post.comments[post.comments.length - 1].user?.username}{' '}
-              </Text>
-              {post.comments[post.comments.length - 1].text}
+              <Text style={styles.commentUsername}>{post.latestComment.user?.username}</Text>{' '}
+              {post.latestComment.text}
             </Text>
           )}
         </TouchableOpacity>
@@ -357,21 +398,17 @@ export default function EnhancedPostItem({
       {/* ---------- timestamp ---------- */}
       <Text style={styles.timestamp}>{stamp}</Text>
 
-      {/* ---------- linked event (for regular posts only) ---------- */}
-      {!isMemoryPost && post.event && !disableEventLink && eventContextSource === 'friend' && (
+      {/* ---------- event link (for event posts) ---------- */}
+      {!disableEventLink && post.event && !showEventContext && (
         <TouchableOpacity onPress={openEvent} style={styles.eventLink} activeOpacity={0.8}>
           <Ionicons name="calendar-outline" size={16} color="#3797EF" />
-          <Text style={styles.eventLinkText}>{post.event.title}</Text>
+          <Text style={styles.eventLinkText}>View Event: {post.event.title}</Text>
         </TouchableOpacity>
       )}
 
-      {/* ---------- owner modal ---------- */}
-      <Modal transparent visible={modal} animationType="fade" onRequestClose={() => setModal(false)}>
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setModal(false)}
-        >
+      {/* ---------- delete modal ---------- */}
+      <Modal visible={modal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <TouchableOpacity
               style={styles.modalOption}
@@ -382,51 +419,48 @@ export default function EnhancedPostItem({
             >
               <Text style={styles.modalOptionText}>Delete Post</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={() => setModal(false)}
-            >
+            <TouchableOpacity style={styles.modalOption} onPress={() => setModal(false)}>
               <Text style={styles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </View>
   );
 }
 
 /* ================================================================== */
-/*                             STYLES                                 */
+/*                           STYLES                                   */
 /* ================================================================== */
 
 const styles = StyleSheet.create({
+  // Container
   postContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFF',
     marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
   },
   
   // 🧠 PHASE 2: Memory post styling
   memoryPostContainer: {
     borderLeftWidth: 3,
     borderLeftColor: MEMORY_PURPLE,
-    backgroundColor: '#FAFBFC', // Subtle background tint
   },
-
-  // 🧠 PHASE 2: Memory badge at top
   memoryBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(142, 68, 173, 0.1)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(142, 68, 173, 0.2)',
+    paddingHorizontal: 15,
+    paddingTop: 10,
+    paddingBottom: 5,
   },
   memoryBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
     color: MEMORY_PURPLE,
+    fontWeight: '600',
     marginLeft: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   // Header
@@ -443,11 +477,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 35,
-    height: 35,
-    borderRadius: 17.5,
-    backgroundColor: '#E1E1E1',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     marginRight: 10,
+    backgroundColor: '#F6F6F6',
   },
   userText: {
     flex: 1,
@@ -488,10 +522,10 @@ const styles = StyleSheet.create({
     padding: 5,
   },
 
-  // Image
+  // Image - FIXED for memory photos
   imageContainer: {
     width: '100%',
-    aspectRatio: 1,
+    aspectRatio: 1, // Default for regular posts, overridden for memory posts
     position: 'relative',
   },
   postImage: {

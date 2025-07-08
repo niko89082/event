@@ -44,8 +44,8 @@ class NotificationService {
   }
 
   getCategoryFromType(type) {
-    const socialTypes = ['friend_request', 'friend_request_accepted', 'new_follower', 'memory_photo_added', 'memory_invitation', 'post_liked', 'post_commented', 'memory_photo_liked'];
-    const eventTypes = ['event_invitation', 'event_reminder', 'event_update', 'event_cancelled', 'event_announcement', 'event_rsvp_batch'];
+    const socialTypes = ['friend_request', 'friend_request_accepted', 'new_follower', 'memory_photo_added', 'memory_invitation', 'memory_photo_batch', 'post_liked', 'post_commented', 'memory_photo_liked'];
+    const eventTypes = ['event_invitation', 'event_reminder', 'event_reminder_1_hour', 'event_update', 'event_cancelled', 'event_announcement', 'event_rsvp_batch'];
     
     if (socialTypes.includes(type)) return 'social';
     if (eventTypes.includes(type)) return 'events';
@@ -102,6 +102,34 @@ class NotificationService {
     });
   }
 
+  /* ═══════════════════════════════════════════════════════════════════
+     🆕 MEMORY INVITATION NOTIFICATION (NEW)
+  ═══════════════════════════════════════════════════════════════════ */
+
+  async sendMemoryInvitation(inviterId, memoryId, invitedUserIds) {
+    const inviter = await User.findById(inviterId).select('username fullName');
+    const memory = await Memory.findById(memoryId).select('title');
+    
+    const notifications = await Promise.all(
+      invitedUserIds.map(userId => 
+        this.createNotification({
+          userId,
+          senderId: inviterId,
+          category: 'social',
+          type: 'memory_invitation',
+          title: 'Memory Invitation',
+          message: `${inviter.username} invited you to contribute to "${memory.title}"`,
+          actionType: 'VIEW_MEMORY',
+          actionData: { memoryId },
+          data: { memoryId },
+          priority: 'high'
+        })
+      )
+    );
+    
+    return notifications;
+  }
+
   async sendMemoryPhotoAdded(uploaderId, memoryId, participantIds) {
     const uploader = await User.findById(uploaderId).select('username fullName');
     const memory = await Memory.findById(memoryId).select('title');
@@ -126,6 +154,75 @@ class NotificationService {
     );
     
     return notifications;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     🆕 BATCHED MEMORY PHOTO UPLOADS (NEW - When multiple friends upload)
+  ═══════════════════════════════════════════════════════════════════ */
+
+  async sendMemoryPhotoBatch(memoryId, uploaderIds, notifyUserId) {
+    const memory = await Memory.findById(memoryId).select('title');
+    const uploaders = await User.find({ _id: { $in: uploaderIds } }).select('username');
+    
+    // Don't notify if user is one of the uploaders
+    if (uploaderIds.includes(notifyUserId)) return null;
+    
+    // Check for existing batch notification in last 2 hours
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const existingNotif = await Notification.findOne({
+      user: notifyUserId,
+      type: 'memory_photo_batch',
+      'data.memoryId': memoryId,
+      createdAt: { $gte: twoHoursAgo }
+    });
+    
+    if (existingNotif) {
+      // Update existing notification with new count
+      const currentUploaders = existingNotif.data.uploaderIds || [];
+      const uniqueUploaders = [...new Set([...currentUploaders, ...uploaderIds])];
+      
+      existingNotif.data.uploaderIds = uniqueUploaders;
+      existingNotif.data.count = uniqueUploaders.length;
+      
+      if (uniqueUploaders.length === 2) {
+        existingNotif.message = `2 friends added photos to "${memory.title}"`;
+      } else {
+        existingNotif.message = `${uniqueUploaders.length} friends added photos to "${memory.title}"`;
+      }
+      
+      existingNotif.updatedAt = new Date();
+      await existingNotif.save();
+      
+      return existingNotif;
+    } else {
+      // Create new batch notification
+      const uploaderNames = uploaders.map(u => u.username);
+      let message;
+      
+      if (uploaderNames.length === 1) {
+        message = `${uploaderNames[0]} added photos to "${memory.title}"`;
+      } else if (uploaderNames.length === 2) {
+        message = `${uploaderNames[0]} and ${uploaderNames[1]} added photos to "${memory.title}"`;
+      } else {
+        message = `${uploaderNames.length} friends added photos to "${memory.title}"`;
+      }
+      
+      return this.createNotification({
+        userId: notifyUserId,
+        senderId: uploaderIds[0], // Use first uploader as sender
+        category: 'social',
+        type: 'memory_photo_batch',
+        title: 'New Memory Photos',
+        message,
+        actionType: 'VIEW_MEMORY',
+        actionData: { memoryId },
+        data: { 
+          memoryId, 
+          uploaderIds,
+          count: uploaderIds.length 
+        }
+      });
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -156,16 +253,42 @@ class NotificationService {
     return notifications;
   }
 
+  /* ═══════════════════════════════════════════════════════════════════
+     🔧 ENHANCED EVENT REMINDER (Updated with 1-hour support)
+  ═══════════════════════════════════════════════════════════════════ */
+
   async sendEventReminder(eventId, reminderType = '1_day') {
     const event = await Event.findById(eventId)
       .populate('attendees', 'username')
-      .select('title time attendees');
+      .select('title time attendees location');
     
     if (!event || event.attendees.length === 0) {
       return [];
     }
     
-    const timeText = reminderType === '1_day' ? 'tomorrow' : 'in 2 hours';
+    let timeText, title, message;
+    
+    switch (reminderType) {
+      case '1_hour':
+        timeText = 'in 1 hour';
+        title = 'Event Starting Soon! ⏰';
+        message = `"${event.title}" starts in 1 hour at ${event.location}`;
+        break;
+      case '1_day':
+        timeText = 'tomorrow';
+        title = 'Event Tomorrow';
+        message = `Don't forget: "${event.title}" is tomorrow`;
+        break;
+      case '2_hours':
+        timeText = 'in 2 hours';
+        title = 'Event Soon';
+        message = `"${event.title}" starts in 2 hours`;
+        break;
+      default:
+        timeText = reminderType;
+        title = `Event ${timeText}`;
+        message = `Don't forget: "${event.title}" is ${timeText}`;
+    }
     
     const notifications = await Promise.all(
       event.attendees.map(attendee => 
@@ -173,12 +296,13 @@ class NotificationService {
           userId: attendee._id,
           senderId: null, // System notification
           category: 'events',
-          type: 'event_reminder',
-          title: `Event ${timeText}`,
-          message: `Don't forget: "${event.title}" is ${timeText}`,
+          type: reminderType === '1_hour' ? 'event_reminder_1_hour' : 'event_reminder',
+          title,
+          message,
           actionType: 'VIEW_EVENT',
           actionData: { eventId },
-          data: { eventId, reminderType }
+          data: { eventId, reminderType },
+          priority: reminderType === '1_hour' ? 'high' : 'normal'
         })
       )
     );
@@ -243,7 +367,7 @@ class NotificationService {
       const newCount = (existingNotif.data.count || 1) + 1;
       await existingNotif.updateBatchCount(newCount);
       
-      existingNotif.message = newCount === 2 ? 
+      existingNotif.message = newCount === 2 ?
         `2 people RSVPed to "${event.title}"` :
         `${newCount} people RSVPed to "${event.title}"`;
       await existingNotif.save();
@@ -316,8 +440,8 @@ class NotificationService {
     return {
       notifications,
       pagination: {
-        page,
-        limit,
+        currentPage: page,
+        totalPages: Math.ceil(notifications.length / limit),
         hasMore: notifications.length === limit
       },
       unreadCounts: {
@@ -328,37 +452,42 @@ class NotificationService {
     };
   }
 
-  async markAsRead(notificationId, userId) {
-    const notification = await Notification.findOne({
-      _id: notificationId,
-      user: userId
-    });
-    
-    if (!notification) {
-      throw new Error('Notification not found');
-    }
-    
-    return notification.markAsRead();
-  }
-
-  async markAllAsRead(userId, category = null) {
-    return Notification.markAllAsReadForUser(userId, category);
-  }
-
-  async deleteNotification(notificationId, userId) {
-    return Notification.findOneAndDelete({
-      _id: notificationId,
-      user: userId
-    });
-  }
-
   async getUnreadCount(userId, category = null) {
     const query = { user: userId, isRead: false };
     if (category) {
       query.category = category;
     }
     
-    return Notification.countDocuments(query);
+    return await Notification.countDocuments(query);
+  }
+
+  async markAsRead(notificationId, userId) {
+    const notification = await Notification.findOneAndUpdate(
+      { _id: notificationId, user: userId },
+      { isRead: true },
+      { new: true }
+    );
+    
+    return notification;
+  }
+
+  async markAllAsRead(userId, category = null) {
+    const query = { user: userId, isRead: false };
+    if (category) {
+      query.category = category;
+    }
+    
+    const result = await Notification.updateMany(query, { isRead: true });
+    return result;
+  }
+
+  async deleteNotification(notificationId, userId) {
+    const notification = await Notification.findOneAndDelete({
+      _id: notificationId,
+      user: userId
+    });
+    
+    return notification;
   }
 }
 

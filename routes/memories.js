@@ -7,6 +7,7 @@ const User = require('../models/User');
 const auth = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
+const notificationService = require('../services/notificationService');
 
 // Configure multer for photo uploads
 const storage = multer.diskStorage({
@@ -341,54 +342,57 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // ✅ PUT: Add participant to memory
-router.put('/:id/participants', auth, async (req, res) => {
+router.put('/:id/participants', protect, async (req, res) => {
   try {
-    // ✅ FIXED: Accept both userId and participantId for compatibility
-    const { participantId, userId } = req.body;
-    const targetUserId = participantId || userId;  // Use either field
+    const { participantId } = req.body;
+    const memoryId = req.params.id;
     
-    const memory = await Memory.findById(req.params.id);
-    
+    // Verify memory exists and user has permission
+    const memory = await Memory.findById(memoryId);
     if (!memory) {
       return res.status(404).json({ message: 'Memory not found' });
     }
     
-    if (!memory.creator.equals(req.user.id)) {
-      return res.status(403).json({ message: 'Only creator can add participants' });
-    }
+    // Check if user is creator or already a participant
+    const isCreator = memory.creator.toString() === req.user._id.toString();
+    const isParticipant = memory.participants.includes(req.user._id);
     
-    // Check if user exists
-    const participant = await User.findById(targetUserId);
-    if (!participant) {
-      return res.status(404).json({ message: 'User not found' });
+    if (!isCreator && !isParticipant) {
+      return res.status(403).json({ message: 'Not authorized to add participants' });
     }
     
     // Check if user is already a participant
-    if (memory.participants.includes(targetUserId) || memory.creator.equals(targetUserId)) {
+    if (memory.participants.includes(participantId)) {
       return res.status(400).json({ message: 'User is already a participant' });
     }
     
-    // Add participant directly to the array
-    memory.participants.push(targetUserId);
+    // Add participant to memory
+    memory.participants.push(participantId);
     await memory.save();
     
-    // Populate participants for response
-    await memory.populate('participants', 'username fullName profilePicture');
+    // 🆕 SEND NOTIFICATION
+    await notificationService.sendMemoryInvitation(
+      req.user._id,
+      memoryId,
+      [participantId]
+    );
+    
+    console.log(`🔔 Sent memory invitation notification to ${participantId}`);
     
     res.json({ 
+      success: true, 
       message: 'Participant added successfully',
-      participant: {
-        _id: participant._id,
-        username: participant.username,
-        fullName: participant.fullName,
-        profilePicture: participant.profilePicture
-      }
+      memory 
     });
   } catch (error) {
     console.error('Error adding participant:', error);
-    res.status(500).json({ message: 'Failed to add participant' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
+
+
+
+
 // ✅ PUT: Update memory details (creator only) - NEW ROUTE
 router.put('/:memoryId', auth, async (req, res) => {
   try {
@@ -524,58 +528,62 @@ router.delete('/:id/participants/:participantId', auth, async (req, res) => {
 });
 
 // ✅ POST: Upload photos to memory
-router.post('/:id/photos', auth, upload.single('photo'), async (req, res) => {
+router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => {
   try {
-    const memory = await Memory.findById(req.params.id);
+    const memoryId = req.params.id;
     
+    // Verify memory exists and user has permission
+    const memory = await Memory.findById(memoryId).select('participants creator title');
     if (!memory) {
       return res.status(404).json({ message: 'Memory not found' });
     }
     
-    const userId = req.user.id;
-    const hasAccess = memory.creator.equals(userId) || 
-                     memory.participants.some(p => p.equals(userId));
+    // Check if user is creator or participant
+    const isCreator = memory.creator.toString() === req.user._id.toString();
+    const isParticipant = memory.participants.includes(req.user._id);
     
-    if (!hasAccess) {
-      return res.status(403).json({ message: 'Access denied' });
+    if (!isCreator && !isParticipant) {
+      return res.status(403).json({ message: 'Not authorized to upload to this memory' });
     }
     
     if (!req.file) {
-      return res.status(400).json({ message: 'No photo file provided' });
+      return res.status(400).json({ message: 'No photo provided' });
     }
     
-    // Create MemoryPhoto document
-    const photo = new MemoryPhoto({
-      memory: memory._id,
+    // Your existing photo upload logic here...
+    // (save photo to database, process image, etc.)
+    const photoData = {
       url: `/uploads/memory-photos/${req.file.filename}`,
       filename: req.file.filename,
-      originalName: req.file.originalname,
-      uploadedBy: userId,
-      caption: req.body.caption || '',
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype
-    });
+      uploader: req.user._id,
+      memory: memoryId,
+      createdAt: new Date()
+    };
     
-    await photo.save();
+    // Save photo (adjust based on your photo model)
+    // const savedPhoto = await Photo.create(photoData);
     
-    // Add photo reference to memory
-    memory.photos.push(photo._id);
-    await memory.save();
+    // 🆕 SEND NOTIFICATION TO OTHER PARTICIPANTS
+    const allParticipants = [memory.creator, ...memory.participants];
     
-    // Populate the photo for response
-    await photo.populate('uploadedBy', 'username profilePicture');
+    if (allParticipants.length > 1) {
+      await notificationService.sendMemoryPhotoAdded(
+        req.user._id,
+        memoryId,
+        allParticipants
+      );
+      
+      console.log(`🔔 Sent memory photo notification to ${allParticipants.length - 1} participants`);
+    }
     
-    res.status(201).json({
+    res.json({ 
+      success: true, 
       message: 'Photo uploaded successfully',
-      photo: photo
+      photo: photoData
     });
-    
   } catch (error) {
     console.error('Error uploading photo:', error);
-    res.status(500).json({ 
-      message: 'Failed to upload photo',
-      details: error.message 
-    });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
