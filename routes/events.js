@@ -3259,7 +3259,274 @@ router.get('/my-payment-methods', protect, async (req, res) => {
     });
   }
 });
+// Add this route to routes/events.js - PUT endpoint for updating events
 
+// ============================================
+// UPDATE EVENT
+// ============================================
+router.put('/:eventId', protect, async (req, res) => {
+  try {
+    console.log(`🔄 Updating event ${req.params.eventId}`);
+    
+    const { eventId } = req.params;
+    const {
+      title,
+      description,
+      category,
+      time,
+      location,
+      maxAttendees,
+      privacyLevel,
+      permissions,
+      tags,
+      coordinates,
+      
+      // Pricing fields
+      isPaidEvent,
+      eventPrice,
+      priceDescription,
+      refundPolicy,
+      earlyBirdEnabled,
+      earlyBirdPrice,
+      earlyBirdDeadline,
+      
+      // Co-hosts
+      coHosts,
+      
+      // Form requirements
+      requiresFormForCheckIn,
+      checkInForm,
+      
+      // Legacy compatibility
+      price,
+      isPublic,
+      openToPublic
+    } = req.body;
+
+    // Find the event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts?.some(
+      (cId) => String(cId) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        message: 'Only the host or co-hosts can update this event' 
+      });
+    }
+
+    // Validate required fields
+    if (!title?.trim()) {
+      return res.status(400).json({ message: 'Event title is required' });
+    }
+
+    if (!time) {
+      return res.status(400).json({ message: 'Event time is required' });
+    }
+
+    if (!location?.trim()) {
+      return res.status(400).json({ message: 'Event location is required' });
+    }
+
+    // Validate event time is in the future (only for major changes)
+    const eventTime = new Date(time);
+    const now = new Date();
+    
+    // Allow updates up to 1 hour before event starts
+    const oneHourBefore = new Date(eventTime.getTime() - (60 * 60 * 1000));
+    
+    if (now > oneHourBefore && String(event.time) !== String(time)) {
+      return res.status(400).json({ 
+        message: 'Cannot change event time less than 1 hour before the event' 
+      });
+    }
+
+    // Handle pricing updates
+    let pricingData = null;
+    
+    if (isPaidEvent || price > 0 || eventPrice > 0) {
+      const finalPrice = eventPrice || price || 0;
+      
+      if (finalPrice <= 0) {
+        return res.status(400).json({ 
+          message: 'Paid events must have a price greater than 0' 
+        });
+      }
+
+      pricingData = {
+        isFree: false,
+        amount: Math.round(finalPrice * 100), // Convert to cents
+        currency: 'USD',
+        description: priceDescription || '',
+        refundPolicy: refundPolicy || 'No refunds',
+        earlyBirdPricing: earlyBirdEnabled ? {
+          enabled: true,
+          amount: Math.round((earlyBirdPrice || finalPrice) * 100),
+          deadline: earlyBirdDeadline ? new Date(earlyBirdDeadline) : null
+        } : { enabled: false }
+      };
+
+      // Validate early bird pricing
+      if (earlyBirdEnabled) {
+        if (!earlyBirdDeadline || new Date(earlyBirdDeadline) >= eventTime) {
+          return res.status(400).json({ 
+            message: 'Early bird deadline must be before the event time' 
+          });
+        }
+        
+        if ((earlyBirdPrice || finalPrice) >= finalPrice) {
+          return res.status(400).json({ 
+            message: 'Early bird price must be less than regular price' 
+          });
+        }
+      }
+    } else {
+      pricingData = {
+        isFree: true,
+        amount: 0,
+        currency: 'USD'
+      };
+    }
+
+    // Handle permissions
+    let permissionsData = {
+      canJoin: 'open', // open, approval-required, invite-only
+      canInvite: 'attendees', // host-only, co-hosts, attendees
+      canShare: 'everyone', // host-only, attendees, everyone
+      showAttendeesToPublic: true,
+      allowGuestPasses: false
+    };
+
+    if (permissions) {
+      permissionsData = { ...permissionsData, ...permissions };
+    }
+
+    // Legacy compatibility
+    if (isPublic === false || openToPublic === false) {
+      permissionsData.canJoin = 'invite-only';
+    }
+
+    // Handle privacy level
+    let finalPrivacyLevel = privacyLevel || 'public';
+    
+    // Legacy compatibility
+    if (isPublic === false) {
+      finalPrivacyLevel = 'private';
+    }
+
+    // Validate and process co-hosts
+    let validCoHosts = [];
+    if (coHosts && Array.isArray(coHosts)) {
+      // Remove duplicates and host from co-hosts
+      const uniqueCoHosts = [...new Set(coHosts)].filter(
+        coHostId => String(coHostId) !== String(req.user._id)
+      );
+      
+      if (uniqueCoHosts.length > 0) {
+        const validUsers = await User.find({
+          _id: { $in: uniqueCoHosts }
+        }).select('_id');
+        
+        validCoHosts = validUsers.map(user => user._id);
+      }
+    }
+
+    // Update event fields
+    event.title = title.trim();
+    event.description = description?.trim() || '';
+    event.category = category || 'General';
+    event.time = new Date(time);
+    event.location = location.trim();
+    event.maxAttendees = parseInt(maxAttendees) || 10;
+    event.privacyLevel = finalPrivacyLevel;
+    event.permissions = permissionsData;
+    event.pricing = pricingData;
+    event.coHosts = validCoHosts;
+    event.tags = Array.isArray(tags) ? tags : [];
+    
+    // Handle coordinates if provided
+    if (coordinates && coordinates.latitude && coordinates.longitude) {
+      event.coordinates = {
+        latitude: parseFloat(coordinates.latitude),
+        longitude: parseFloat(coordinates.longitude)
+      };
+    }
+
+    // Handle form requirements
+    if (requiresFormForCheckIn !== undefined) {
+      event.requiresFormForCheckIn = Boolean(requiresFormForCheckIn);
+      
+      if (requiresFormForCheckIn && checkInForm) {
+        // Validate that the form exists and belongs to the user
+        const form = await Form.findOne({
+          _id: checkInForm,
+          createdBy: req.user._id,
+          isActive: true
+        });
+        
+        if (!form) {
+          return res.status(400).json({ 
+            message: 'Invalid check-in form selected' 
+          });
+        }
+        
+        event.checkInForm = checkInForm;
+      } else if (!requiresFormForCheckIn) {
+        event.checkInForm = undefined;
+      }
+    }
+
+    // Update timestamp
+    event.updatedAt = new Date();
+
+    // Save the event
+    await event.save();
+
+    console.log(`✅ Event updated successfully: ${event._id}`);
+
+    // Populate the updated event for response
+    const updatedEvent = await Event.findById(eventId)
+      .populate('host', 'username profilePicture')
+      .populate('coHosts', 'username profilePicture')
+      .populate('attendees', 'username profilePicture')
+      .populate('checkInForm', 'title description');
+
+    // Send response
+    res.json({
+      success: true,
+      message: 'Event updated successfully',
+      event: updatedEvent
+    });
+
+  } catch (error) {
+    console.error('❌ Update event error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        message: 'Validation error', 
+        errors: validationErrors 
+      });
+    }
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({ 
+        message: 'Invalid event ID format' 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
 /**
  * Update PayPal email address
  */

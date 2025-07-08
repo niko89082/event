@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Phase 4: Clean Integration with QR Scanner
+// screens/EventDetailsScreen.js - Phase 4: Enhanced UI with Photo Upload & Combined Share/Invite
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -17,6 +17,7 @@ import {
   Linking,
   FlatList,
   Dimensions,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -53,7 +54,15 @@ export default function EventDetailsScreen() {
   const [payPalApprovalUrl, setPayPalApprovalUrl] = useState(null);
   const [attendeeCount, setAttendeeCount] = useState(0);
   const [permissions, setPermissions] = useState({});
-  const [showShareModal, setShowShareModal] = useState(false);
+  
+  // Enhanced modals
+  const [showShareInviteModal, setShowShareInviteModal] = useState(false);
+  const [shareInviteMode, setShareInviteMode] = useState('share'); // 'share' or 'invite'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [inviting, setInviting] = useState(false);
 
   // PHASE 4: Check-in related state
   const [checkedInCount, setCheckedInCount] = useState(0);
@@ -237,6 +246,17 @@ export default function EventDetailsScreen() {
       eventId: eventId,
       eventTitle: event.title,
       isEventCheckin: true
+    });
+  };
+
+  // Handle photo upload navigation
+  const handleUploadPhoto = () => {
+    navigation.navigate('CreatePostScreen', { 
+      selectedEventId: eventId,
+      preSelectedEvent: {
+        _id: eventId,
+        title: event.title
+      }
     });
   };
 
@@ -556,9 +576,65 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // Share functionality
-  const handleShare = () => {
-    setShowShareModal(true);
+  // Enhanced Share & Invite functionality
+  const handleShareInvite = (mode = 'share') => {
+    setShareInviteMode(mode);
+    setShowShareInviteModal(true);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSelectedUsers([]);
+  };
+
+  const searchUsers = async (query) => {
+    if (query.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      setSearching(true);
+      const response = await api.get(`/api/users/search?q=${encodeURIComponent(query)}`);
+      setSearchResults(response.data);
+    } catch (error) {
+      console.error('Search error:', error);
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const toggleUserSelection = (user) => {
+    setSelectedUsers(prev => {
+      const isSelected = prev.some(u => u._id === user._id);
+      if (isSelected) {
+        return prev.filter(u => u._id !== user._id);
+      } else {
+        return [...prev, user];
+      }
+    });
+  };
+
+  const handleSendInvites = async () => {
+    if (selectedUsers.length === 0) return;
+
+    try {
+      setInviting(true);
+      await api.post(`/api/events/invite/${eventId}`, {
+        userIds: selectedUsers.map(u => u._id)
+      });
+
+      Alert.alert(
+        'Invites Sent!', 
+        `Successfully invited ${selectedUsers.length} ${selectedUsers.length === 1 ? 'person' : 'people'} to the event.`
+      );
+      setShowShareInviteModal(false);
+      setSelectedUsers([]);
+    } catch (error) {
+      console.error('Invite error:', error);
+      Alert.alert('Error', 'Failed to send invites. Please try again.');
+    } finally {
+      setInviting(false);
+    }
   };
 
   const shareViaMessages = async () => {
@@ -583,7 +659,7 @@ export default function EventDetailsScreen() {
           title: event.title
         });
       }
-      setShowShareModal(false);
+      setShowShareInviteModal(false);
     } catch (error) {
       console.error('Share error:', error);
       Alert.alert('Error', 'Failed to share event');
@@ -603,7 +679,7 @@ export default function EventDetailsScreen() {
         url: eventLink,
         title: event.title
       });
-      setShowShareModal(false);
+      setShowShareInviteModal(false);
     } catch (error) {
       console.error('Share error:', error);
       Alert.alert('Error', 'Failed to share event');
@@ -627,18 +703,10 @@ export default function EventDetailsScreen() {
           }
         ]
       );
-      setShowShareModal(false);
+      setShowShareInviteModal(false);
     } catch (error) {
       console.error('Copy link error:', error);
     }
-  };
-
-  // Navigate to invite users screen
-  const handleInviteUsers = () => {
-    navigation.navigate('InviteUsersScreen', { 
-      eventId,
-      eventTitle: event?.title 
-    });
   };
 
   if (loading) {
@@ -733,120 +801,74 @@ export default function EventDetailsScreen() {
   };
 
   const renderActionButtons = () => {
-    if (isHost || isCoHost) {
-      return (
-        <View style={styles.actionContainer}>
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.primaryAction]}
-              onPress={() => navigation.navigate('EditEventScreen', { eventId })}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['#3797EF', '#3797EF']}
-                style={styles.gradientButton}
-              >
-                <Ionicons name="create" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryActionText}>Edit Event</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-
-            {/* PHASE 4: QR Scanner Button for Check-in */}
-            {!isPast && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.scannerAction]}
-                onPress={handleOpenScanner}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={['#667eea', '#764ba2']}
-                  style={styles.gradientButton}
-                >
-                  <Ionicons name="scan" size={18} color="#FFFFFF" />
-                  <Text style={styles.primaryActionText}>Scan Check-ins</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            )}
-
-            {canInvite && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.secondaryAction]}
-                onPress={handleInviteUsers}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="person-add" size={18} color="#3797EF" />
-                <Text style={styles.secondaryActionText}>Invite</Text>
-              </TouchableOpacity>
-            )}
-
-            {canShare && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.secondaryAction]}
-                onPress={handleShare}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="share" size={18} color="#3797EF" />
-                <Text style={styles.secondaryActionText}>Share</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      );
-    }
-
-    const joinButtonInfo = getJoinButtonInfo();
-
+  if (isHost || isCoHost) {
     return (
       <View style={styles.actionContainer}>
+        {/* Primary Actions Row */}
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[
-              styles.actionButton, 
-              joinButtonInfo.isLeave ? styles.leaveAction : styles.primaryAction,
-              joinButtonInfo.disabled && styles.disabledAction
-            ]}
-            onPress={joinButtonInfo.isLeave ? handleLeaveEvent : handleJoinRequest}
-            disabled={joinButtonInfo.disabled || requestLoading || paymentLoading}
+            style={[styles.actionButton, styles.primaryAction]}
+            onPress={() => navigation.navigate('EditEventScreen', { eventId })}
             activeOpacity={0.8}
           >
-            {joinButtonInfo.isLeave ? (
-              <Text style={styles.leaveActionText}>{joinButtonInfo.text}</Text>
-            ) : (
-              <LinearGradient
-                colors={joinButtonInfo.isPaid ? ['#FF6B35', '#FF8E53'] : ['#3797EF', '#3797EF']}
-                style={styles.gradientButton}
-              >
-                {(requestLoading || paymentLoading) ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    {joinButtonInfo.isPaid && (
-                      <Ionicons name="card" size={18} color="#FFFFFF" />
-                    )}
-                    {!joinButtonInfo.isPaid && !joinButtonInfo.disabled && (
-                      <Ionicons name="add" size={18} color="#FFFFFF" />
-                    )}
-                    <Text style={styles.primaryActionText}>{joinButtonInfo.text}</Text>
-                  </>
-                )}
-              </LinearGradient>
-            )}
+            <LinearGradient
+              colors={['#3797EF', '#3797EF']}
+              style={styles.gradientButton}
+            >
+              <Ionicons name="create" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Edit Event</Text>
+            </LinearGradient>
           </TouchableOpacity>
 
-          {canShare && (
+          {!isPast && (
             <TouchableOpacity
-              style={[styles.actionButton, styles.secondaryAction]}
-              onPress={handleShare}
+              style={[styles.actionButton, styles.primaryAction]}
+              onPress={handleOpenScanner}
               activeOpacity={0.8}
             >
-              <Ionicons name="share" size={18} color="#3797EF" />
-              <Text style={styles.secondaryActionText}>Share</Text>
+              <LinearGradient
+                colors={['#667eea', '#764ba2']}
+                style={styles.gradientButton}
+              >
+                <Ionicons name="scan" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryActionText}>Check-ins</Text>
+              </LinearGradient>
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Secondary Actions Row */}
+        <View style={[styles.actionRow, { marginTop: 12 }]}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.photoUploadAction]}
+            onPress={handleUploadPhoto}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#34C759', '#32D74B']} // Green instead of orange
+              style={styles.gradientButton}
+            >
+              <Ionicons name="camera" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Add Photos</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.secondaryAction]}
+            onPress={() => handleShareInvite()} // Combined modal
+            activeOpacity={0.8}
+          >
+            <Ionicons name="share" size={18} color="#3797EF" />
+            <Text style={styles.secondaryActionText}>Share & Invite</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
-  };
+  }
+
+  // Rest stays the same for attendees/non-attendees...
+  // But EVERYONE should see photo upload if attending
+};
 
   const renderPhotoItem = ({ item, index }) => (
     <TouchableOpacity
@@ -860,6 +882,37 @@ export default function EventDetailsScreen() {
       />
     </TouchableOpacity>
   );
+
+  // Render user search result item
+  const renderUserItem = ({ item }) => {
+    const isSelected = selectedUsers.some(u => u._id === item._id);
+    
+    return (
+      <TouchableOpacity
+        style={[styles.userItem, isSelected && styles.userItemSelected]}
+        onPress={() => toggleUserSelection(item)}
+        activeOpacity={0.8}
+      >
+        <Image
+          source={{
+            uri: item.profilePicture
+              ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+              : 'https://placehold.co/40x40.png?text=👤'
+          }}
+          style={styles.userAvatar}
+        />
+        <View style={styles.userDetails}>
+          <Text style={styles.userName}>{item.username}</Text>
+          {item.displayName && (
+            <Text style={styles.userDisplayName}>{item.displayName}</Text>
+          )}
+        </View>
+        {isSelected && (
+          <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -906,7 +959,7 @@ export default function EventDetailsScreen() {
           {canShare && (
             <TouchableOpacity
               style={styles.shareButton}
-              onPress={handleShare}
+              onPress={() => handleShareInvite('share')}
               activeOpacity={0.8}
             >
               <Ionicons name="share" size={24} color="#FFFFFF" />
@@ -1138,59 +1191,213 @@ export default function EventDetailsScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Share Modal */}
+      {/* Enhanced Share & Invite Modal */}
       <Modal
-        visible={showShareModal}
+        visible={showShareInviteModal}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => setShowShareModal(false)}
+        onRequestClose={() => setShowShareInviteModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.shareModal}>
-            <View style={styles.shareModalHeader}>
-              <Text style={styles.shareModalTitle}>Share Event</Text>
+          <View style={styles.shareInviteModal}>
+            <View style={styles.shareInviteModalHeader}>
+              <Text style={styles.shareInviteModalTitle}>
+                {shareInviteMode === 'invite' ? 'Invite Friends' : 'Share Event'}
+              </Text>
               <TouchableOpacity
-                onPress={() => setShowShareModal(false)}
+                onPress={() => setShowShareInviteModal(false)}
                 style={styles.closeButton}
               >
                 <Ionicons name="close" size={24} color="#8E8E93" />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.shareOptions}>
+            {/* Mode Toggle */}
+            <View style={styles.modeToggle}>
               <TouchableOpacity
-                style={styles.shareOption}
-                onPress={shareViaMessages}
+                style={[
+                  styles.modeToggleButton,
+                  shareInviteMode === 'share' && styles.modeToggleButtonActive
+                ]}
+                onPress={() => setShareInviteMode('share')}
                 activeOpacity={0.8}
               >
-                <View style={styles.shareOptionIcon}>
-                  <Ionicons name="chatbubble" size={24} color="#34C759" />
-                </View>
-                <Text style={styles.shareOptionText}>Messages</Text>
+                <Ionicons 
+                  name="share" 
+                  size={16} 
+                  color={shareInviteMode === 'share' ? '#FFFFFF' : '#3797EF'} 
+                />
+                <Text style={[
+                  styles.modeToggleText,
+                  shareInviteMode === 'share' && styles.modeToggleTextActive
+                ]}>Share</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.shareOption}
-                onPress={shareViaGeneric}
+                style={[
+                  styles.modeToggleButton,
+                  shareInviteMode === 'invite' && styles.modeToggleButtonActive
+                ]}
+                onPress={() => setShareInviteMode('invite')}
                 activeOpacity={0.8}
               >
-                <View style={styles.shareOptionIcon}>
-                  <Ionicons name="share" size={24} color="#3797EF" />
-                </View>
-                <Text style={styles.shareOptionText}>Share</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.shareOption}
-                onPress={copyEventLink}
-                activeOpacity={0.8}
-              >
-                <View style={styles.shareOptionIcon}>
-                  <Ionicons name="link" size={24} color="#FF9500" />
-                </View>
-                <Text style={styles.shareOptionText}>Copy Link</Text>
+                <Ionicons 
+                  name="person-add" 
+                  size={16} 
+                  color={shareInviteMode === 'invite' ? '#FFFFFF' : '#3797EF'} 
+                />
+                <Text style={[
+                  styles.modeToggleText,
+                  shareInviteMode === 'invite' && styles.modeToggleTextActive
+                ]}>Invite</Text>
               </TouchableOpacity>
             </View>
+
+            {shareInviteMode === 'share' ? (
+              // Share Options
+              <View style={styles.shareOptions}>
+                <TouchableOpacity
+                  style={styles.shareOption}
+                  onPress={shareViaMessages}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.shareOptionIcon}>
+                    <Ionicons name="chatbubble" size={24} color="#34C759" />
+                  </View>
+                  <Text style={styles.shareOptionText}>Messages</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.shareOption}
+                  onPress={shareViaGeneric}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.shareOptionIcon}>
+                    <Ionicons name="share" size={24} color="#3797EF" />
+                  </View>
+                  <Text style={styles.shareOptionText}>Share</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.shareOption}
+                  onPress={copyEventLink}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.shareOptionIcon}>
+                    <Ionicons name="link" size={24} color="#FF9500" />
+                  </View>
+                  <Text style={styles.shareOptionText}>Copy Link</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              // Invite Options
+              <View style={styles.inviteSection}>
+                {/* Search Bar */}
+                <View style={styles.searchContainer}>
+                  <Ionicons name="search" size={20} color="#8E8E93" />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search friends..."
+                    value={searchQuery}
+                    onChangeText={(text) => {
+                      setSearchQuery(text);
+                      searchUsers(text);
+                    }}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                </View>
+
+                {/* Selected Users */}
+                {selectedUsers.length > 0 && (
+                  <View style={styles.selectedUsersContainer}>
+                    <Text style={styles.selectedUsersTitle}>
+                      Selected ({selectedUsers.length})
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <View style={styles.selectedUsersList}>
+                        {selectedUsers.map((user) => (
+                          <TouchableOpacity
+                            key={user._id}
+                            style={styles.selectedUserItem}
+                            onPress={() => toggleUserSelection(user)}
+                            activeOpacity={0.8}
+                          >
+                            <Image
+                              source={{
+                                uri: user.profilePicture
+                                  ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                                  : 'https://placehold.co/32x32.png?text=👤'
+                              }}
+                              style={styles.selectedUserAvatar}
+                            />
+                            <Text style={styles.selectedUserName}>{user.username}</Text>
+                            <TouchableOpacity
+                              style={styles.removeUserButton}
+                              onPress={() => toggleUserSelection(user)}
+                            >
+                              <Ionicons name="close" size={14} color="#FFFFFF" />
+                            </TouchableOpacity>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Search Results */}
+                <View style={styles.searchResults}>
+                  {searching ? (
+                    <View style={styles.searchLoading}>
+                      <ActivityIndicator size="small" color="#3797EF" />
+                      <Text style={styles.searchLoadingText}>Searching...</Text>
+                    </View>
+                  ) : searchResults.length > 0 ? (
+                    <FlatList
+                      data={searchResults}
+                      renderItem={renderUserItem}
+                      keyExtractor={(item) => item._id}
+                      style={styles.usersList}
+                      showsVerticalScrollIndicator={false}
+                    />
+                  ) : searchQuery.length >= 2 ? (
+                    <View style={styles.emptyResults}>
+                      <Text style={styles.emptyResultsText}>No users found</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.emptyResults}>
+                      <Text style={styles.emptyResultsText}>Search for friends to invite</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Send Invites Button */}
+                {selectedUsers.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.sendInvitesButton, inviting && styles.sendInvitesButtonDisabled]}
+                    onPress={handleSendInvites}
+                    disabled={inviting}
+                    activeOpacity={0.8}
+                  >
+                    <LinearGradient
+                      colors={['#3797EF', '#3797EF']}
+                      style={styles.gradientButton}
+                    >
+                      {inviting ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="send" size={18} color="#FFFFFF" />
+                          <Text style={styles.primaryActionText}>
+                            Send Invites ({selectedUsers.length})
+                          </Text>
+                        </>
+                      )}
+                    </LinearGradient>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -1472,9 +1679,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   primaryAction: {
-    flex: 2,
+    flex: 1,
   },
-  scannerAction: {
+  photoUploadAction: {
     flex: 2,
   },
   gradientButton: {
@@ -1495,11 +1702,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 4,
   },
   secondaryActionText: {
-    marginLeft: 4,
     fontSize: 14,
     fontWeight: '600',
     color: '#3797EF',
@@ -1509,9 +1716,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 20,
-    flex: 2,
+    flex: 1,
   },
   leaveActionText: {
     fontSize: 16,
@@ -1560,22 +1767,21 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
 
-  // Modals
+  // Enhanced Share & Invite Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
-
-  // Share Modal
-  shareModal: {
+  shareInviteModal: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 8,
     paddingBottom: 34,
+    maxHeight: '80%',
   },
-  shareModalHeader: {
+  shareInviteModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1584,7 +1790,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
-  shareModalTitle: {
+  shareInviteModalTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000000',
@@ -1592,6 +1798,38 @@ const styles = StyleSheet.create({
   closeButton: {
     padding: 4,
   },
+
+  // Mode Toggle
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    margin: 16,
+    padding: 4,
+  },
+  modeToggleButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    gap: 6,
+  },
+  modeToggleButtonActive: {
+    backgroundColor: '#3797EF',
+  },
+  modeToggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  modeToggleTextActive: {
+    color: '#FFFFFF',
+  },
+
+  // Share Options
   shareOptions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -1616,4 +1854,146 @@ const styles = StyleSheet.create({
     color: '#000000',
     textAlign: 'center',
   },
+
+  // Invite Section
+  inviteSection: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#000000',
+  },
+
+  // Selected Users
+  selectedUsersContainer: {
+    marginBottom: 16,
+  },
+  selectedUsersTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#8E8E93',
+    marginBottom: 8,
+  },
+  selectedUsersList: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 16,
+  },
+  selectedUserItem: {
+    alignItems: 'center',
+    backgroundColor: '#F0F8FF',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 80,
+    position: 'relative',
+  },
+  selectedUserAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginBottom: 4,
+  },
+  selectedUserName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#3797EF',
+    textAlign: 'center',
+  },
+  removeUserButton: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FF3B30',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Search Results
+  searchResults: {
+    flex: 1,
+    minHeight: 200,
+  },
+  searchLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    gap: 8,
+  },
+  searchLoadingText: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  usersList: {
+    flex: 1,
+  },
+  userItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F0F0F0',
+  },
+  userItemSelected: {
+    backgroundColor: '#F0F8FF',
+    borderRadius: 8,
+    borderBottomWidth: 0,
+    marginBottom: 1,
+  },
+  userAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  userDetails: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  userDisplayName: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  emptyResults: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyResultsText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+
+  // Send Invites Button
+  sendInvitesButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 16,
+  },
+  sendInvitesButtonDisabled: {
+    opacity: 0.6,
+  },
 });
+ 
