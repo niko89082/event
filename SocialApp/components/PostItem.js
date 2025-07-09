@@ -1,17 +1,18 @@
-// components/PostItem.js - FIXED: Proper aspect ratio for memory photos
+// components/PostItem.js - MEMORY STORYTELLING: Enhanced visual memory experience
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, Image, StyleSheet,
-  TouchableOpacity, Pressable, Modal, Button, Dimensions, Animated,
+  TouchableOpacity, Pressable, Modal, Dimensions, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { API_BASE_URL } from '@env';
 import api from '../services/api';
 
 /* ------------------------------------------------------------------ */
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HEART = '#ED4956';
-const MEMORY_PURPLE = '#8E44AD';
+const MEMORY_BLUE = '#3797EF';
 
 /** util – relative "x ago" or absolute date */
 const niceDate = (iso) => {
@@ -24,9 +25,35 @@ const niceDate = (iso) => {
   if (days < 7) return `${days}d`;
   return new Date(iso).toLocaleDateString();
 };
+
+/** Memory time formatter with nostalgic feel */
+const formatMemoryTime = (iso) => {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffTime = Math.abs(now - date);
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  if (diffDays <= 1) return 'captured today';
+  if (diffDays <= 7) return `captured ${diffDays} days ago`;
+  if (diffDays <= 30) return `captured ${Math.ceil(diffDays / 7)} weeks ago`;
+  if (diffDays <= 365) return `captured ${Math.ceil(diffDays / 30)} months ago`;
+  return `captured ${Math.ceil(diffDays / 365)} years ago`;
+};
+
+/** Get memory mood based on time */
+const getMemoryMood = (iso) => {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffDays = Math.ceil(Math.abs(now - date) / (1000 * 60 * 60 * 24));
+  
+  if (diffDays <= 7) return { emoji: '✨', mood: 'fresh' };
+  if (diffDays <= 30) return { emoji: '🌟', mood: 'recent' };
+  if (diffDays <= 365) return { emoji: '💫', mood: 'nostalgic' };
+  return { emoji: '🕰️', mood: 'vintage' };
+};
 /* ------------------------------------------------------------------ */
 
-export default function EnhancedPostItem({
+export default function MemoryStorytellingPostItem({
   post,
   currentUserId,
   hideUserInfo = false,
@@ -36,15 +63,29 @@ export default function EnhancedPostItem({
   showEventContext = false,
   eventContextSource = null,
 }) {
-  // 🧠 PHASE 2: Detect if this is a memory post
+  // Detect if this is a memory post
   const isMemoryPost = post.postType === 'memory';
   const memoryInfo = post.memoryInfo || {};
 
-  // 🆕 NEW: State for memory photo dimensions
+  // Memory storytelling data
+  const memoryMood = useMemo(() => 
+    isMemoryPost ? getMemoryMood(post.createdAt || post.uploadDate) : null, 
+    [isMemoryPost, post.createdAt, post.uploadDate]
+  );
+  
+  const memoryTimeText = useMemo(() => 
+    isMemoryPost ? formatMemoryTime(post.createdAt || post.uploadDate) : null,
+    [isMemoryPost, post.createdAt, post.uploadDate]
+  );
+
+  // State for memory photo dimensions
   const [memoryImageDimensions, setMemoryImageDimensions] = useState({
     width: SCREEN_WIDTH,
-    height: SCREEN_WIDTH, // Default to square
+    height: SCREEN_WIDTH,
   });
+
+  // Memory animation states
+  const [showMemoryDetails, setShowMemoryDetails] = useState(false);
 
   /* ---- state ---------------------------------------------------- */
   const [liked, setLiked] = useState(post.userLiked || false);
@@ -55,27 +96,27 @@ export default function EnhancedPostItem({
   // Animation refs
   const heartScale = useRef(new Animated.Value(0)).current;
   const scaleValue = useRef(new Animated.Value(1)).current;
+  const memorySparkle = useRef(new Animated.Value(0)).current;
+  const memoryGlow = useRef(new Animated.Value(0)).current;
   const lastTap = useRef(0);
   const DOUBLE_PRESS_DELAY = 300;
 
   /* ---- image url -------------------------------------------------- */
   let imgURL = null;
   if (isMemoryPost) {
-    // Memory photos use direct URL from backend
     imgURL = post.url ? `http://${API_BASE_URL}:3000${post.url}` : null;
   } else {
-    // Regular posts use paths array
     const first = post.paths?.[0] ? `/${post.paths[0].replace(/^\/?/, '')}` : '';
     imgURL = first ? `http://${API_BASE_URL}:3000${first}` : null;
   }
 
-  // 🆕 NEW: Calculate memory photo dimensions to maintain aspect ratio
+  // Calculate memory photo dimensions
   useEffect(() => {
     if (isMemoryPost && imgURL) {
       Image.getSize(imgURL, (width, height) => {
         const containerWidth = SCREEN_WIDTH;
         const aspectRatio = height / width;
-        const calculatedHeight = Math.min(containerWidth * aspectRatio, SCREEN_WIDTH * 1.5); // Max height 1.5x screen width
+        const calculatedHeight = Math.min(containerWidth * aspectRatio, SCREEN_WIDTH * 1.5);
 
         setMemoryImageDimensions({
           width: containerWidth,
@@ -83,7 +124,6 @@ export default function EnhancedPostItem({
         });
       }, (error) => {
         console.warn('Failed to get memory image dimensions:', error);
-        // Keep default square dimensions if image sizing fails
         setMemoryImageDimensions({
           width: SCREEN_WIDTH,
           height: SCREEN_WIDTH
@@ -91,6 +131,50 @@ export default function EnhancedPostItem({
       });
     }
   }, [isMemoryPost, imgURL]);
+
+  // Memory sparkle animation for nostalgic effect
+  useEffect(() => {
+    if (isMemoryPost && memoryMood?.mood === 'nostalgic') {
+      const sparkleAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(memorySparkle, {
+            toValue: 1,
+            duration: 3000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(memorySparkle, {
+            toValue: 0,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      sparkleAnimation.start();
+      return () => sparkleAnimation.stop();
+    }
+  }, [isMemoryPost, memoryMood]);
+
+  // Vintage glow for old memories
+  useEffect(() => {
+    if (isMemoryPost && memoryMood?.mood === 'vintage') {
+      const glowAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(memoryGlow, {
+            toValue: 0.3,
+            duration: 4000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(memoryGlow, {
+            toValue: 0,
+            duration: 3000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      glowAnimation.start();
+      return () => glowAnimation.stop();
+    }
+  }, [isMemoryPost, memoryMood]);
 
   /* ---- like toggle ----------------------------------------------- */
   const toggleLike = async () => {
@@ -120,7 +204,6 @@ export default function EnhancedPostItem({
     if (timeSince < DOUBLE_PRESS_DELAY) {
       // Double tap detected
       if (!liked) {
-        // Animate heart
         heartScale.setValue(0);
         Animated.sequence([
           Animated.spring(heartScale, {
@@ -137,7 +220,6 @@ export default function EnhancedPostItem({
           }),
         ]).start();
 
-        // Animate image scale
         Animated.sequence([
           Animated.timing(scaleValue, {
             toValue: 0.95,
@@ -154,12 +236,11 @@ export default function EnhancedPostItem({
         toggleLike();
       }
     } else {
-      // Single tap - open comments after delay to check for double tap
+      // Single tap
       setTimeout(() => {
         const timeSinceLastTap = Date.now() - lastTap.current;
         if (timeSinceLastTap >= DOUBLE_PRESS_DELAY) {
           if (isMemoryPost) {
-            // For memory posts, navigate to memory details instead of post details
             openMemory();
           } else {
             openComments();
@@ -177,6 +258,15 @@ export default function EnhancedPostItem({
     navigation.navigate('PostDetailsScreen', { postId: post._id });
   };
 
+  const openMemoryComments = () => {
+    console.log('🟡 PostItem: Opening memory photo comments:', post._id);
+    navigation.navigate('PostDetailsScreen', { 
+      postId: post._id, 
+      isMemoryPhoto: true,
+      memoryId: memoryInfo.memoryId 
+    });
+  };
+
   const openUser = () => {
     console.log('🟡 PostItem: Opening user profile:', post.user?._id);
     navigation.navigate('ProfileScreen', { userId: post.user?._id });
@@ -187,18 +277,9 @@ export default function EnhancedPostItem({
     navigation.navigate('EventDetailsScreen', { eventId: post.event._id });
   };
 
-  // 🧠 PHASE 2: New navigation helper for memory posts
   const openMemory = () => {
     console.log('🟡 PostItem: Opening memory:', memoryInfo.memoryId);
     navigation.navigate('MemoryDetailsScreen', { memoryId: memoryInfo.memoryId });
-  };
-
-  const quickShare = () => {
-    console.log('🟡 PostItem: Sharing post:', post._id);
-    navigation.navigate('SelectChatScreen', {
-      shareType: isMemoryPost ? 'memory_photo' : 'post',
-      shareId: post._id
-    });
   };
 
   /* ---- derived helpers ------------------------------------------- */
@@ -213,20 +294,33 @@ export default function EnhancedPostItem({
     : caption.slice(0, 100) + '...';
 
   /* ================================================================== */
-  /*                            RENDER                                  */
+  /*                      MEMORY STORYTELLING RENDER                   */
   /* ================================================================== */
 
   return (
     <View style={[
       styles.postContainer,
-      isMemoryPost && styles.memoryPostContainer // 🧠 PHASE 2: Memory post styling
+      isMemoryPost && styles.memoryPostContainer,
+      isMemoryPost && memoryMood?.mood === 'vintage' && styles.vintagePostContainer
     ]}>
 
-      {/* 🧠 PHASE 2: Memory Badge */}
+      {/* Memory Story Header */}
       {isMemoryPost && (
-        <View style={styles.memoryBadge}>
-          <Ionicons name="library" size={16} color={MEMORY_PURPLE} />
-          <Text style={styles.memoryBadgeText}>Memory</Text>
+        <View style={styles.memoryStoryHeader}>
+          <View style={styles.memoryIndicator}>
+            <Text style={styles.memoryEmoji}>{memoryMood?.emoji}</Text>
+            <Text style={styles.memoryStoryText}>
+              A memory {memoryTimeText}
+            </Text>
+          </View>
+          
+          {/* Memory mood indicator */}
+          <View style={[
+            styles.memoryMoodBadge,
+            { backgroundColor: getMoodColor(memoryMood?.mood) }
+          ]}>
+            <Text style={styles.memoryMoodText}>{memoryMood?.mood}</Text>
+          </View>
         </View>
       )}
 
@@ -234,23 +328,46 @@ export default function EnhancedPostItem({
       {!hideUserInfo && (
         <View style={styles.header}>
           <TouchableOpacity onPress={openUser} style={styles.userRow} activeOpacity={0.8}>
-            <Image
-              source={{ uri: `http://${API_BASE_URL}:3000${post.user?.profilePicture || ''}` }}
-              style={styles.avatar}
-              onError={(e) => console.log('Avatar error:', e.nativeEvent?.error)}
-            />
-            <View style={styles.userText}>
-              <Text style={styles.username}>{post.user?.username || 'Unknown'}</Text>
-
-              {/* 🧠 PHASE 2: Show memory context below username */}
-              {isMemoryPost && (
-                <TouchableOpacity onPress={openMemory} style={styles.memoryContext}>
-                  <Ionicons name="library-outline" size={12} color={MEMORY_PURPLE} />
-                  <Text style={styles.memoryContextText}>
-                    from {memoryInfo.memoryTitle || 'Memory'}
-                  </Text>
-                </TouchableOpacity>
+            <View style={[
+              styles.avatarContainer,
+              isMemoryPost && styles.memoryAvatarContainer
+            ]}>
+              {/* Vintage glow effect for old memories */}
+              {isMemoryPost && memoryMood?.mood === 'vintage' && (
+                <Animated.View 
+                  style={[
+                    styles.vintageAvatarGlow,
+                    { opacity: memoryGlow }
+                  ]} 
+                />
               )}
+              
+              <Image
+                source={{ uri: `http://${API_BASE_URL}:3000${post.user?.profilePicture || ''}` }}
+                style={[
+                  styles.avatar,
+                  isMemoryPost && memoryMood?.mood === 'vintage' && styles.vintageAvatar
+                ]}
+                onError={(e) => console.log('Avatar error:', e.nativeEvent?.error)}
+              />
+            </View>
+            
+            <View style={styles.userText}>
+              <View style={styles.usernameRow}>
+                <Text style={styles.username}>{post.user?.username || 'Unknown'}</Text>
+                
+                {/* Memory context inline with username */}
+                {isMemoryPost && (
+                  <>
+                    <Text style={styles.usernameMemoryContext}> in </Text>
+                    <TouchableOpacity onPress={openMemory}>
+                      <Text style={styles.memoryLink}>
+                        {memoryInfo.memoryTitle || 'Memory'}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
 
               {/* Regular event context for non-memory posts */}
               {!isMemoryPost && post.event && showEventContext && (
@@ -271,16 +388,39 @@ export default function EnhancedPostItem({
         </View>
       )}
 
-      {/* ---------- main image ---------- */}
+      {/* ---------- main image with memory effects ---------- */}
       <Pressable onPress={handleDoubleTap} style={[
         styles.imageContainer,
-        // 🆕 FIXED: Use dynamic dimensions for memory photos
         isMemoryPost && {
           width: memoryImageDimensions.width,
           height: memoryImageDimensions.height,
           aspectRatio: memoryImageDimensions.width / memoryImageDimensions.height
         }
       ]}>
+        
+        {/* Memory sparkle overlay for nostalgic photos */}
+        {isMemoryPost && memoryMood?.mood === 'nostalgic' && (
+          <Animated.View 
+            style={[
+              styles.memorySparkleOverlay,
+              { opacity: memorySparkle }
+            ]}
+            pointerEvents="none"
+          >
+            <LinearGradient
+              colors={['rgba(255,255,255,0.8)', 'transparent', 'rgba(255,255,255,0.6)']}
+              start={{x: 0, y: 0}}
+              end={{x: 1, y: 1}}
+              style={styles.sparkleGradient}
+            />
+            <View style={styles.sparkleParticles}>
+              <Text style={[styles.sparkle, { top: '20%', left: '15%' }]}>✨</Text>
+              <Text style={[styles.sparkle, { top: '60%', right: '20%' }]}>⭐</Text>
+              <Text style={[styles.sparkle, { top: '80%', left: '70%' }]}>💫</Text>
+            </View>
+          </Animated.View>
+        )}
+
         <Animated.View style={{ 
           transform: [{ scale: scaleValue }],
           width: '100%',
@@ -289,8 +429,11 @@ export default function EnhancedPostItem({
           {imgURL ? (
             <Image
               source={{ uri: imgURL }}
-              style={styles.postImage}
-              resizeMode={isMemoryPost ? "contain" : "cover"} // 🆕 FIXED: Use contain for memory photos
+              style={[
+                styles.postImage,
+                isMemoryPost && memoryMood?.mood === 'vintage' && styles.vintageImage
+              ]}
+              resizeMode={isMemoryPost ? "contain" : "cover"}
               onError={(e) => console.log('Image error:', e.nativeEvent?.error)}
             />
           ) : (
@@ -328,17 +471,32 @@ export default function EnhancedPostItem({
           </TouchableOpacity>
 
           <TouchableOpacity 
-            onPress={isMemoryPost ? openMemory : openComments} 
+            onPress={isMemoryPost ? openMemoryComments : openComments} 
             style={styles.actionBtn} 
             activeOpacity={0.8}
           >
-            <Ionicons name="chatbubble-outline" size={24} color="#000" />
+            <Ionicons 
+              name="chatbubble-outline" 
+              size={24} 
+              color="#000" 
+            />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={quickShare} style={styles.actionBtn} activeOpacity={0.8}>
-            <Ionicons name="paper-plane-outline" size={24} color="#000" />
-          </TouchableOpacity>
+          {/* Only show share for regular posts */}
+          {!isMemoryPost && (
+            <TouchableOpacity onPress={() => {}} style={styles.actionBtn} activeOpacity={0.8}>
+              <Ionicons name="paper-plane-outline" size={24} color="#000" />
+            </TouchableOpacity>
+          )}
         </View>
+
+        {/* Memory explore button */}
+        {isMemoryPost && (
+          <TouchableOpacity onPress={openMemory} style={styles.memoryExploreBtn}>
+            <Text style={styles.memoryExploreBtnText}>Explore Memory</Text>
+            <Ionicons name="arrow-forward" size={16} color={MEMORY_BLUE} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ---------- likes count ---------- */}
@@ -363,24 +521,7 @@ export default function EnhancedPostItem({
         </View>
       ) : null}
 
-      {/* 🧠 PHASE 2: Memory Footer */}
-      {isMemoryPost && (
-        <View style={styles.memoryFooter}>
-          <View style={styles.memoryFooterContent}>
-            <View style={styles.memoryStats}>
-              <Ionicons name="people-outline" size={14} color="#8E8E93" />
-              <Text style={styles.memoryStatsText}>
-                {memoryInfo.participantCount || 0} participants
-              </Text>
-            </View>
-            <TouchableOpacity onPress={openMemory}>
-              <Text style={styles.viewMemoryLink}>View Memory</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* ---------- comments preview ---------- */}
+      {/* ---------- comments preview (only for regular posts) ---------- */}
       {!isMemoryPost && post.commentCount > 0 && (
         <TouchableOpacity onPress={openComments} style={styles.commentsPreview} activeOpacity={0.8}>
           <Text style={styles.viewCommentsText}>
@@ -395,8 +536,13 @@ export default function EnhancedPostItem({
         </TouchableOpacity>
       )}
 
-      {/* ---------- timestamp ---------- */}
-      <Text style={styles.timestamp}>{stamp}</Text>
+      {/* ---------- timestamp with memory context ---------- */}
+      <Text style={[
+        styles.timestamp,
+        isMemoryPost && styles.memoryTimestamp
+      ]}>
+        {isMemoryPost && memoryTimeText ? memoryTimeText : stamp}
+      </Text>
 
       {/* ---------- event link (for event posts) ---------- */}
       {!disableEventLink && post.event && !showEventContext && (
@@ -417,7 +563,7 @@ export default function EnhancedPostItem({
                 onDeletePost?.(post._id);
               }}
             >
-              <Text style={styles.modalOptionText}>Delete Post</Text>
+              <Text style={styles.modalOptionText}>Delete {isMemoryPost ? 'Memory Photo' : 'Post'}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.modalOption} onPress={() => setModal(false)}>
               <Text style={styles.modalCancel}>Cancel</Text>
@@ -430,7 +576,21 @@ export default function EnhancedPostItem({
 }
 
 /* ================================================================== */
-/*                           STYLES                                   */
+/*                      MEMORY HELPER FUNCTIONS                      */
+/* ================================================================== */
+
+const getMoodColor = (mood) => {
+  switch (mood) {
+    case 'fresh': return 'rgba(52, 199, 89, 0.1)';
+    case 'recent': return 'rgba(55, 151, 239, 0.1)';
+    case 'nostalgic': return 'rgba(255, 149, 0, 0.1)';
+    case 'vintage': return 'rgba(142, 68, 173, 0.1)';
+    default: return 'rgba(142, 142, 147, 0.1)';
+  }
+};
+
+/* ================================================================== */
+/*                        MEMORY STORYTELLING STYLES                 */
 /* ================================================================== */
 
 const styles = StyleSheet.create({
@@ -442,25 +602,46 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E1E1E1',
   },
   
-  // 🧠 PHASE 2: Memory post styling
   memoryPostContainer: {
-    borderLeftWidth: 3,
-    borderLeftColor: MEMORY_PURPLE,
+    backgroundColor: 'rgba(248, 249, 250, 0.5)',
   },
-  memoryBadge: {
+  
+  vintagePostContainer: {
+    backgroundColor: 'rgba(251, 250, 248, 0.8)',
+  },
+
+  // Memory Story Header
+  memoryStoryHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 15,
-    paddingTop: 10,
-    paddingBottom: 5,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
   },
-  memoryBadgeText: {
-    fontSize: 12,
-    color: MEMORY_PURPLE,
+  memoryIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  memoryEmoji: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  memoryStoryText: {
+    fontSize: 13,
+    color: '#8E8E93',
+    fontStyle: 'italic',
+  },
+  memoryMoodBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  memoryMoodText: {
+    fontSize: 11,
     fontWeight: '600',
-    marginLeft: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: '#666',
+    textTransform: 'capitalize',
   },
 
   // Header
@@ -476,15 +657,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
+  
+  // Enhanced avatar with memory effects
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 10,
+  },
+  memoryAvatarContainer: {
+    // Additional styling for memory avatars
+  },
+  vintageAvatarGlow: {
+    position: 'absolute',
+    top: -3,
+    left: -3,
+    right: -3,
+    bottom: -3,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255, 215, 0, 0.3)',
+  },
   avatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 10,
     backgroundColor: '#F6F6F6',
   },
+  vintageAvatar: {
+    borderWidth: 2,
+    borderColor: 'rgba(255, 215, 0, 0.5)',
+  },
+  
   userText: {
     flex: 1,
+  },
+  usernameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
   },
   username: {
     fontWeight: '600',
@@ -492,20 +700,18 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   
-  // 🧠 PHASE 2: Memory context styling
-  memoryContext: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
+  // Memory context inline with username
+  usernameMemoryContext: {
+    fontSize: 14,
+    color: '#000',
   },
-  memoryContextText: {
-    fontSize: 12,
-    color: MEMORY_PURPLE,
-    marginLeft: 4,
+  memoryLink: {
+    fontSize: 14,
+    color: '#3797EF',
     fontWeight: '500',
   },
 
-  // Event context (existing)
+  // Event context
   eventContext: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -522,15 +728,44 @@ const styles = StyleSheet.create({
     padding: 5,
   },
 
-  // Image - FIXED for memory photos
+  // Image with memory effects
   imageContainer: {
     width: '100%',
-    aspectRatio: 1, // Default for regular posts, overridden for memory posts
+    aspectRatio: 1,
     position: 'relative',
   },
+  
+  // Memory sparkle overlay
+  memorySparkleOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 2,
+  },
+  sparkleGradient: {
+    flex: 1,
+  },
+  sparkleParticles: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  sparkle: {
+    position: 'absolute',
+    fontSize: 16,
+    opacity: 0.8,
+  },
+  
   postImage: {
     width: '100%',
     height: '100%',
+  },
+  vintageImage: {
+    opacity: 0.95,
   },
   imagePlaceholder: {
     width: '100%',
@@ -553,7 +788,7 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
 
-  // Actions
+  // Enhanced Actions with Memory Features
   actionRow: {
     flexDirection: 'row',
     paddingHorizontal: 15,
@@ -567,6 +802,24 @@ const styles = StyleSheet.create({
   actionBtn: {
     marginRight: 15,
     padding: 2,
+  },
+  
+  // Memory explore button
+  memoryExploreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(55, 151, 239, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(55, 151, 239, 0.2)',
+  },
+  memoryExploreBtnText: {
+    fontSize: 12,
+    color: MEMORY_BLUE,
+    fontWeight: '600',
+    marginRight: 4,
   },
 
   // Likes
@@ -597,34 +850,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // 🧠 PHASE 2: Memory footer
-  memoryFooter: {
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(142, 68, 173, 0.05)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(142, 68, 173, 0.1)',
-  },
-  memoryFooterContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  memoryStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  memoryStatsText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginLeft: 4,
-  },
-  viewMemoryLink: {
-    fontSize: 12,
-    color: MEMORY_PURPLE,
-    fontWeight: '600',
-  },
-
   // Comments
   commentsPreview: {
     paddingHorizontal: 15,
@@ -644,12 +869,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Timestamp
+  // Enhanced Timestamp with Memory Context
   timestamp: {
     fontSize: 12,
     color: '#8E8E93',
     paddingHorizontal: 15,
     paddingBottom: 10,
+  },
+  memoryTimestamp: {
+    fontStyle: 'italic',
+    color: '#666',
   },
 
   // Event link

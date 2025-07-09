@@ -286,29 +286,44 @@ export default function CreateEventScreen({ navigation, route }) {
 
   // Search for potential co-hosts
   const searchCoHosts = async (query) => {
-    if (!query.trim()) {
-      setCoHostSearchResults([]);
-      return;
-    }
+  if (!query.trim()) {
+    setCoHostSearchResults([]);
+    return;
+  }
 
-    try {
-      setSearchingCoHosts(true);
-      const response = await api.get(`/api/users/search`, {
-        params: { q: query, limit: 10 }
-      });
-      
-      const results = response.data.filter(user => 
-        user._id !== currentUser._id && 
-        !coHosts.some(coHost => coHost._id === user._id)
-      );
-      
-      setCoHostSearchResults(results);
-    } catch (error) {
-      console.error('Error searching co-hosts:', error);
-    } finally {
-      setSearchingCoHosts(false);
+  try {
+    setSearchingCoHosts(true);
+    const response = await api.get(`/api/users/search`, {
+      params: { q: query, limit: 10 }
+    });
+    
+    // ✅ FIX: Handle both response formats from backend
+    let users = [];
+    if (response.data && Array.isArray(response.data.users)) {
+      users = response.data.users;
+    } else if (Array.isArray(response.data)) {
+      users = response.data;
+    } else {
+      console.warn('❌ Unexpected search response format:', response.data);
+      users = [];
     }
-  };
+    
+    // Filter out current user and already selected co-hosts
+    const results = users.filter(user => 
+      user && user._id && 
+      user._id !== currentUser._id && 
+      !coHosts.some(coHost => coHost._id === user._id)
+    );
+    
+    console.log('✅ CreateEvent cohost search results:', results);
+    setCoHostSearchResults(results);
+  } catch (error) {
+    console.error('Error searching co-hosts:', error);
+    setCoHostSearchResults([]);
+  } finally {
+    setSearchingCoHosts(false);
+  }
+};
 
   const addCoHost = (user) => {
     setCoHosts(prev => [...prev, user]);
