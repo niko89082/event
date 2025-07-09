@@ -1,5 +1,5 @@
-// components/PostsFeed.js - PHASE 2: Updated to handle memory posts
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+// SocialApp/components/PostsFeed.js - CORRECTED: Proper forwardRef and spacing
+import React, { useState, useEffect, useCallback, useContext, forwardRef, useImperativeHandle } from 'react';
 import {
   FlatList,
   View,
@@ -14,12 +14,13 @@ import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import PostItem from './PostItem'; // Updated PostItem with memory support
 
-export default function PostsFeed({
+const PostsFeed = forwardRef(({
   navigation,
   refreshing: externalRefreshing = false,
+  onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
-}) {
+}, ref) => {
   const { currentUser } = useContext(AuthContext);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -32,6 +33,14 @@ export default function PostsFeed({
   useEffect(() => {
     fetchPage(1, true);
   }, []);
+
+  // Expose refresh method to parent
+  useImperativeHandle(ref, () => ({
+    refresh: async () => {
+      console.log('🔄 PostsFeed: Manual refresh triggered');
+      return await fetchPage(1, true);
+    }
+  }));
 
   const fetchPage = async (pageNum, reset = false) => {
     if (loading) return;
@@ -91,10 +100,14 @@ export default function PostsFeed({
     }
   };
 
-  const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchPage(1, true);
-  }, []);
+  const handleRefresh = useCallback(async () => {
+    if (externalOnRefresh) {
+      await externalOnRefresh();
+    } else {
+      setRefreshing(true);
+      await fetchPage(1, true);
+    }
+  }, [externalOnRefresh]);
 
   const handleLoadMore = useCallback(() => {
     if (hasMore && !loading) {
@@ -108,7 +121,7 @@ export default function PostsFeed({
 
   // Enhanced scroll handler that combines internal logic with parent callback
   const handleScroll = useCallback((event) => {
-    // Call parent's scroll handler for header animation
+    // Call parent's scroll handler for tab bar animation
     if (parentOnScroll) {
       parentOnScroll(event);
     }
@@ -251,34 +264,40 @@ export default function PostsFeed({
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={data.length === 0 ? styles.emptyList : styles.list}
+      // MODERN: Content flows naturally under transparent headers
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustContentInsets={false}
+      // MOVED UP: First post moved up 20px for better visibility
+      contentInset={{ top: 124 }} // Reduced from 144 to 124 (20px up)
+      scrollIndicatorInsets={{ top: 124 }}
       removeClippedSubviews={true}
       maxToRenderPerBatch={5}
       windowSize={10}
       initialNumToRender={3}
-      getItemLayout={(data, index) => ({
-        length: 500, // Approximate post height
-        offset: 500 * index,
-        index,
-      })}
     />
   );
-}
+});
 
 const styles = StyleSheet.create({
   list: {
     paddingBottom: 20,
+    backgroundColor: 'transparent', // TRANSPARENT!
   },
   emptyList: {
     flexGrow: 1,
+    backgroundColor: 'transparent',
   },
   postWrapper: {
     marginBottom: 0,
+    backgroundColor: 'transparent', // TRANSPARENT!
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 40,
+    backgroundColor: 'transparent',
+    paddingTop: 250, // Account for headers
   },
   loadingText: {
     marginTop: 12,
@@ -292,6 +311,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 32,
     paddingVertical: 40,
+    backgroundColor: 'transparent',
+    paddingTop: 250, // Account for headers
   },
   errorTitle: {
     fontSize: 20,
@@ -313,6 +334,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   retryButtonText: {
     color: '#FFFFFF',
@@ -325,6 +351,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 32,
     paddingVertical: 60,
+    backgroundColor: 'transparent',
+    paddingTop: 250, // Account for headers
   },
   emptyTitle: {
     fontSize: 24,
@@ -346,6 +374,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 25,
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   actionButtonText: {
     color: '#FFFFFF',
@@ -355,15 +388,16 @@ const styles = StyleSheet.create({
   footer: {
     paddingVertical: 20,
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
   
   // 🧠 PHASE 2: Debug styles
   debugFooter: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'rgba(248, 249, 250, 0.9)',
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    borderTopColor: 'rgba(225, 225, 225, 0.5)',
   },
   debugText: {
     fontSize: 11,
@@ -372,3 +406,5 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
   },
 });
+
+export default PostsFeed;

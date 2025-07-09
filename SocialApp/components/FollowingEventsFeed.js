@@ -1,4 +1,4 @@
-// SocialApp/components/FollowingEventsFeed.js - Enhanced with scroll event handling for animated header
+// SocialApp/components/FollowingEventsFeed.js - FIXED: Content flows naturally under transparent headers
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, ActivityIndicator,
@@ -14,7 +14,7 @@ export default function FollowingEventsFeed({
   refreshing: externalRefreshing, 
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
-  scrollEventThrottle = 16 
+  scrollEventThrottle = 16
 }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -81,7 +81,7 @@ export default function FollowingEventsFeed({
 
   // Enhanced scroll handler that combines internal logic with parent callback
   const handleScroll = useCallback((event) => {
-    // Call parent's scroll handler for header animation
+    // Call parent's scroll handler for tab bar animation
     if (parentOnScroll) {
       parentOnScroll(event);
     }
@@ -162,6 +162,12 @@ export default function FollowingEventsFeed({
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
+      // MODERN: Content flows naturally under transparent headers
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustContentInsets={false}
+      // PERFECT ALIGNMENT: Events align with bottom of sub-tabs
+      contentInset={{ top: 194 }} // Back to 194 for sub-tabs alignment
+      scrollIndicatorInsets={{ top: 194 }}
       // Enhanced props for better performance
       bounces={true}
       alwaysBounceVertical={true}
@@ -176,19 +182,23 @@ export default function FollowingEventsFeed({
 const styles = StyleSheet.create({
   container: {
     paddingBottom: 20,
+    backgroundColor: 'transparent', // TRANSPARENT!
   },
   emptyContainer: {
-    flex: 1,
+    flexGrow: 1,
+    backgroundColor: 'transparent',
   },
   eventWrapper: {
     marginBottom: 12,
     marginHorizontal: 16,
+    backgroundColor: 'transparent',
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    paddingTop: 250, // Account for headers
   },
   loadingText: {
     marginTop: 16,
@@ -200,16 +210,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 100,
+    paddingTop: 250, // Account for headers
+    backgroundColor: 'transparent',
   },
   emptyIconContainer: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'rgba(248, 249, 250, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   emptyTitle: {
     fontSize: 24,
@@ -244,5 +260,6 @@ const styles = StyleSheet.create({
   footer: {
     paddingVertical: 20,
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
 });

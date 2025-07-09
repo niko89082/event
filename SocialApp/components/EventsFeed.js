@@ -1,4 +1,4 @@
-// SocialApp/components/EventsFeed.js - Enhanced with scroll event handling for animated header
+// SocialApp/components/EventsFeed.js - FIXED: Content flows naturally under transparent headers
 import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle, useCallback } from 'react';
 import {
   View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text,
@@ -13,7 +13,7 @@ const EventsFeed = forwardRef(({
   onRefresh: externalOnRefresh, 
   feedType = "discover",
   onScroll: parentOnScroll,
-  scrollEventThrottle = 16 
+  scrollEventThrottle = 16
 }, ref) => {
   const { currentUser } = useContext(AuthContext);
   const uid = currentUser?._id;
@@ -98,7 +98,7 @@ const EventsFeed = forwardRef(({
 
   // Enhanced scroll handler that combines internal logic with parent callback
   const handleScroll = useCallback((event) => {
-    // Call parent's scroll handler for header animation
+    // Call parent's scroll handler for tab bar animation
     if (parentOnScroll) {
       parentOnScroll(event);
     }
@@ -169,6 +169,12 @@ const EventsFeed = forwardRef(({
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={data.length === 0 ? styles.emptyContainer : styles.container}
+      // MODERN: Content flows naturally under transparent headers
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustContentInsets={false}
+      // PERFECT ALIGNMENT: Events align with bottom of sub-tabs
+      contentInset={{ top: 194 }} // Back to 194 for sub-tabs alignment
+      scrollIndicatorInsets={{ top: 194 }}
       // Enhanced props for better performance
       bounces={true}
       alwaysBounceVertical={true}
@@ -185,19 +191,23 @@ export default EventsFeed;
 const styles = StyleSheet.create({
   container: {
     paddingBottom: 20,
+    backgroundColor: 'transparent', // TRANSPARENT!
   },
   emptyContainer: {
-    flex: 1,
+    flexGrow: 1,
+    backgroundColor: 'transparent',
   },
   eventWrapper: {
     marginBottom: 12,
     marginHorizontal: 16,
+    backgroundColor: 'transparent',
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    paddingTop: 250, // Account for headers
   },
   loadingText: {
     marginTop: 16,
@@ -209,7 +219,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 100,
+    paddingTop: 250, // Account for headers
+    backgroundColor: 'transparent',
   },
   emptyTitle: {
     fontSize: 24,
@@ -228,5 +239,6 @@ const styles = StyleSheet.create({
   footer: {
     paddingVertical: 20,
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
 });

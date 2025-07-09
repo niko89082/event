@@ -1,4 +1,4 @@
-// App.js - Complete file with deep link handling
+// App.js - Updated with enhanced navigation support
 import React, { useContext, useEffect } from 'react';
 import { View, Text, ActivityIndicator, Alert, Linking } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -37,10 +37,6 @@ import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
 import ErrorBoundary from './components/ErrorBoundary';
-import FormBuilderScreen from './screens/FormBuilderScreen';
-import FormLibraryScreen from './screens/FormLibraryScreen';
-import PostLikesScreen from './screens/PostsLikesScreen';
-import FormSubmissionScreen from './screens/FormSubmissionScreen';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
 import { StatusBar } from 'react-native';
@@ -69,15 +65,13 @@ function AppNavigator({ onLogout }) {
     userId: currentUser?._id
   });
 
-  // 🔧 ADD: Deep link handling for payment returns
+  // Enhanced deep link handling for payment returns
   useEffect(() => {
     const handleDeepLink = (url) => {
       console.log('🔗 Deep link received:', url);
       
       if (url.includes('/payment/success')) {
         console.log('✅ Payment success detected from deep link');
-        // Store payment success state for EventDetailsScreen to pick up
-        // You can use AsyncStorage or a global state manager for this
         Alert.alert(
           'Payment Successful!',
           'Your payment has been processed successfully. Returning to event...',
@@ -111,9 +105,16 @@ function AppNavigator({ onLogout }) {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color={palette.primary || '#3797EF'} />
-        <Text style={{ marginTop: 16, color: palette.textSecondary || '#8E8E93' }}>Loading...</Text>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FAFAFA' }}>
+        <ActivityIndicator size="large" color={palette.primary || '#000'} />
+        <Text style={{ 
+          marginTop: 16, 
+          color: palette.textSecondary || '#8E8E93',
+          fontSize: 16,
+          fontWeight: '500' 
+        }}>
+          Loading...
+        </Text>
       </View>
     );
   }
@@ -123,8 +124,9 @@ function AppNavigator({ onLogout }) {
       <RootStack.Navigator 
         screenOptions={{
           headerShown: false,
-          gestureEnabled: false,
+          gestureEnabled: true,
           animation: 'slide_from_right',
+          cardStyle: { backgroundColor: '#FAFAFA' },
         }}
       >
         {currentUser ? (
@@ -135,158 +137,429 @@ function AppNavigator({ onLogout }) {
               component={MainTabNavigator}
               options={{ headerShown: false }}
             />
-            <RootStack.Screen 
-              name="PostLikesScreen" 
-              component={PostLikesScreen}
-              options={{ headerShown: false }}
-            />
-            {/* Global Screens */}
+            
+            {/* Enhanced Global Screens with improved headers */}
             <RootStack.Screen 
               name="CreateMemoryScreen" 
               component={CreateMemoryScreen}
-              options={{ headerShown: true, title: 'Create Memory' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Create Memory',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="ProfileScreen" 
               component={ProfileScreen}
-              options={{ headerShown: true, title: 'Profile' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Profile',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="FollowListScreen" 
               component={FollowListScreen}
-              options={{ headerShown: true }}
+              options={{ 
+                headerShown: true,
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="UserSettingsScreen" 
               component={UserSettingsScreen}
-              options={{ headerShown: true, title: 'Settings' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Settings',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="EditProfileScreen" 
               component={EditProfileScreen}
-              options={{ headerShown: true, title: 'Edit Profile' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Edit Profile',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="SearchScreen" 
               component={SearchScreen}
-              options={{ headerShown: true, title: 'Search' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Search',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="EventDetailsScreen" 
               component={EventDetailsScreen}
-              options={{ headerShown: true, title: 'Event Details' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Event Details',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="PostDetailsScreen" 
               component={PostDetailsScreen}
-              options={{ headerShown: true, title: 'Post' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Post',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="CreateEventScreen" 
               component={CreateEventScreen}
-              options={{ headerShown: true, title: 'Create Event' }}
-            />
-             <RootStack.Screen 
-              name="FormSubmissionScreen" 
-              component={FormSubmissionScreen}
-              options={{ headerShown: true, title: 'Form' }}
+              options={{ 
+                headerShown: true, 
+                title: 'New Event',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="CreatePostScreen" 
               component={CreatePostScreen}
-              options={{ headerShown: true, title: 'New Post' }}
+              options={{ 
+                headerShown: true, 
+                title: 'New Post',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="CreatePickerScreen" 
               component={CreatePickerScreen}
-              options={{ headerShown: true, title: 'Create' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Create',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="PostPublishedScreen" 
               component={PostPublishedScreen}
-              options={{ headerShown: false }}
+              options={{ 
+                headerShown: false,
+                gestureEnabled: false,
+              }}
             />
             <RootStack.Screen 
               name="QrScreen" 
               component={QrScreen}
-              options={{ headerShown: false }}
+              options={{ 
+                headerShown: true, 
+                title: 'QR Code',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="QrScanScreen" 
               component={QrScanScreen}
-              options={{ headerShown: true, title: 'Scan QR Code' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Scan QR',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="AttendeeListScreen" 
               component={AttendeeListScreen}
-              options={{ headerShown: true, title: 'Attendees' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Attendees',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="EditEventScreen" 
               component={EditEventScreen}
-              options={{ headerShown: true, title: 'Edit Event' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Edit Event',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="CalendarScreen" 
               component={CalendarScreen}
-              options={{ headerShown: true, title: 'Calendar' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Calendar',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="MemoryDetailsScreen" 
               component={MemoryDetailsScreen}
-              options={{ headerShown: true, title: 'Memory' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Memory',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="EditMemoryScreen" 
               component={EditMemoryScreen}
-              options={{ headerShown: true, title: 'Edit Memory' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Edit Memory',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
-              name="FormBuilderScreen" 
-              component={FormBuilderScreen}
-              options={{ headerShown: true, title: 'Create Form' }}
-            />
-            <RootStack.Screen 
-              name="FormLibraryScreen" 
-              component={FormLibraryScreen}
-              options={{ headerShown: true, title: 'Select Form' }}
-            />
-            <RootStack.Screen 
-              name="PaymentSettings" 
+              name="PaymentSettingsScreen" 
               component={PaymentSettingsScreen}
               options={{
                 headerTitle: 'Payment Settings',
                 headerBackTitleVisible: false,
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
               }}
             />
             <RootStack.Screen 
               name="MemoryParticipantsScreen" 
               component={MemoryParticipantsScreen}
-              options={{ headerShown: true, title: 'Participants' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Participants',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="InviteUsersScreen" 
               component={InviteUsersScreen}
-              options={{ headerShown: true, title: 'Invite Users' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Invite Users',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
             <RootStack.Screen 
               name="NotificationScreen" 
               component={NotificationScreen}
-              options={{ headerShown: true, title: 'Notifications' }}
+              options={{ 
+                headerShown: true, 
+                title: 'Notifications',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
             />
           </>
         ) : (
           <>
-            {/* Auth Stack */}
+            {/* Auth Stack with enhanced styling */}
             <RootStack.Screen 
               name="LoginScreen" 
               component={LoginScreen}
-              options={{ headerShown: false }}
+              options={{ 
+                headerShown: false,
+                cardStyle: { backgroundColor: '#FFFFFF' }
+              }}
             />
             <RootStack.Screen 
               name="RegisterScreen" 
               component={RegisterScreen}
-              options={{ headerShown: false }}
+              options={{ 
+                headerShown: false,
+                cardStyle: { backgroundColor: '#FFFFFF' }
+              }}
             />
           </>
         )}
@@ -297,7 +570,7 @@ function AppNavigator({ onLogout }) {
 
 export default function App() {
   useEffect(() => {
-    console.log('🟢 App: Component mounted');
+    console.log('🟢 App: Component mounted with enhanced UI');
   }, []);
 
   const handleLogout = () => {
@@ -308,7 +581,11 @@ export default function App() {
     <ErrorBoundary>
       <StripeProvider publishableKey={PUBLISHABLE_KEY}>
         <SafeAreaProvider>
-          <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+          <StatusBar 
+            barStyle="dark-content" 
+            backgroundColor="transparent" 
+            translucent 
+          />
           <AuthProvider>
             <AppNavigator onLogout={handleLogout} />
           </AuthProvider>

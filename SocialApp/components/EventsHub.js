@@ -1,4 +1,4 @@
-// SocialApp/components/EventsHub.js - FIXED: Always visible sub-tabs with better layout
+// SocialApp/components/EventsHub.js - FIXED: Added Animated import and liquid glass blur
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
@@ -9,6 +9,7 @@ import {
   RefreshControl,
   Alert,
   Platform,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
@@ -27,7 +28,7 @@ const EventsHub = forwardRef(({
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
-  headerStyle // Receive header animation style from parent
+  getSubTabStyle, // Receive sub-tab animation style from parent
 }, ref) => {
   const { currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('following');
@@ -44,7 +45,7 @@ const EventsHub = forwardRef(({
 
   // Enhanced scroll handler that combines internal logic with parent callback
   const handleScroll = useCallback((event) => {
-    // Call parent's scroll handler for header animation
+    // Call parent's scroll handler for tab bar animation
     if (parentOnScroll) {
       parentOnScroll(event);
     }
@@ -92,7 +93,7 @@ const EventsHub = forwardRef(({
       <Ionicons 
         name={icon} 
         size={16} 
-        color={activeTab === tabKey ? '#FFFFFF' : '#8E8E93'} 
+        color={activeTab === tabKey ? '#FFFFFF' : '#3797EF'} 
       />
       <Text style={[
         styles.tabButtonText,
@@ -150,16 +151,16 @@ const EventsHub = forwardRef(({
 
   return (
     <View style={styles.container}>
-      {/* FIXED: Static tab bar that's always visible */}
-      <View style={styles.stickyTabBarContainer}>
-        <View style={styles.tabBar}>
+      {/* ENHANCED: Animated sub-tabs that move up to take main tab position */}
+      <Animated.View style={[styles.transparentSubTabsContainer, getSubTabStyle && getSubTabStyle()]}>
+        <View style={styles.subTabBar}>
           {EVENTS_TABS.map(tab => 
             renderTabButton(tab.key, tab.label, tab.icon)
           )}
         </View>
-      </View>
+      </Animated.View>
       
-      {/* Content area */}
+      {/* Content area - flows naturally */}
       <View style={styles.contentContainer}>
         {renderActiveTabContent()}
       </View>
@@ -170,30 +171,37 @@ const EventsHub = forwardRef(({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent', // TRANSPARENT!
   },
   
-  // FIXED: Always visible sticky tab bar - properly spaced from main header
-  stickyTabBarContainer: {
-    backgroundColor: '#FFFFFF',
+  // FIXED: Transparent sticky sub-tabs
+  transparentSubTabsContainer: {
+    position: 'absolute',
+    top: 144, // Position below main tabs (safe area + fixed header + main tabs)
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    backgroundColor: Platform.OS === 'ios' 
+      ? 'rgba(255, 255, 255, 0.75)' // More transparent for liquid glass effect
+      : 'rgba(255, 255, 255, 0.85)',
+    ...(Platform.OS === 'ios' && {
+      backdropFilter: 'blur(25px) saturate(180%) contrast(120%)', // Liquid glass effect
+    }),
     borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    borderBottomColor: 'rgba(225, 225, 225, 0.3)', // More subtle
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    zIndex: 10,
-    marginTop: 16, // Increased margin for better spacing from main header
-    marginBottom: 16, // Added bottom margin to match top spacing
-    paddingHorizontal: 16,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
   
-  tabBar: {
+  subTabBar: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
     alignItems: 'center',
     paddingVertical: 12,
+    paddingHorizontal: 16,
     gap: 12, // Space between oval tabs
   },
   
@@ -204,18 +212,23 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20, // Oval shape
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'rgba(248, 249, 250, 0.8)',
     borderWidth: 1,
-    borderColor: '#E1E1E1',
+    borderColor: 'rgba(55, 151, 239, 0.3)', // BLUE THEME
     minWidth: 80,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   
   activeTabButton: {
-    backgroundColor: '#3797EF',
+    backgroundColor: '#3797EF', // BLUE THEME
     borderColor: '#3797EF',
     shadowColor: '#3797EF',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 3,
   },
@@ -223,7 +236,7 @@ const styles = StyleSheet.create({
   tabButtonText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#8E8E93',
+    color: '#3797EF', // BLUE THEME
     marginLeft: 5,
   },
   
@@ -232,10 +245,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Content container
+  // Content container - starts from top, flows under all headers
   contentContainer: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
   },
 
   // Loading and error states
@@ -243,7 +256,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    paddingTop: 250,
   },
   
   loadingText: {
@@ -258,7 +272,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    paddingTop: 250,
   },
   
   errorTitle: {
@@ -283,6 +298,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   
   retryButtonText: {

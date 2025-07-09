@@ -1,4 +1,4 @@
-// SocialApp/screens/FeedScreen.js - FIXED: Combined headers with proper spacing
+// SocialApp/screens/FeedScreen.js - MODERN: BeReal-style transparent header
 import React, { useLayoutEffect, useState, useRef, useCallback, useEffect } from 'react';
 import { 
   View, 
@@ -16,7 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import PostsFeed from '../components/PostsFeed';
 import EventsHub from '../components/EventsHub';
-import { useAnimatedHeader } from '../hooks/useAnimatedHeader';
+import { useModernAnimatedHeader } from '../hooks/useModernAnimatedHeader';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TABS = ['Posts', 'Events'];
@@ -37,12 +37,12 @@ export default function FeedScreen({ navigation }) {
   // FIXED: Use ref to avoid closure issues in pan responder
   const currentTabIndex = useRef(0);
 
-  // Initialize animated values
+  // Initialize animated values for horizontal swiping
   const scrollX = useRef(new Animated.Value(0)).current;
   const tabIndicatorPosition = useRef(new Animated.Value(INDICATOR_OFFSET)).current;
 
-  // Animated header hook - pass the activeTabIndex for EventsHub to use
-  const { handleScroll, resetHeader, getHeaderStyle } = useAnimatedHeader();
+  // Modern animated header hook - only animates tab bar
+  const { handleScroll, resetTabBar, getTabBarStyle, getSubTabStyle } = useModernAnimatedHeader();
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -68,9 +68,9 @@ export default function FeedScreen({ navigation }) {
     
     // Update state first
     setActiveTabIndex(targetIndex);
-    resetHeader();
+    resetTabBar(); // Reset tab bar to visible when switching tabs
     
-    // Then animate
+    // Then animate horizontal movement
     Animated.parallel([
       Animated.timing(scrollX, {
         toValue: targetContentOffset,
@@ -87,7 +87,7 @@ export default function FeedScreen({ navigation }) {
         isAnimating.current = false;
       }
     });
-  }, [resetHeader]);
+  }, [resetTabBar]);
 
   // Handle tab button press
   const handleTabPress = useCallback((index) => {
@@ -185,7 +185,7 @@ export default function FeedScreen({ navigation }) {
 
   const handleGlobalRefresh = async () => {
     setRefreshing(true);
-    resetHeader();
+    resetTabBar(); // Reset tab bar when refreshing
     
     try {
       if (activeTabIndex === 0 && postsRef.current?.refresh) {
@@ -204,115 +204,86 @@ export default function FeedScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
       
-      {/* COMBINED HEADER - Social + Tab Names + Tab Bar */}
-      <Animated.View style={[styles.animatedHeaderContainer, getHeaderStyle()]}>
+      {/* PHASE 1: Fixed Transparent Header - Always Visible */}
+      <View style={styles.fixedHeaderContainer}>
         <SafeAreaView style={styles.safeAreaHeader}>
-          {/* Top Section: Social + Search/Notifications */}
-          <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <View style={styles.headerLeft}>
-                <Text style={styles.headerTitle}>Social</Text>
-                <Text style={styles.headerSubtitle}>{TABS[activeTabIndex]}</Text>
-              </View>
-              <View style={styles.headerButtons}>
-                <TouchableOpacity 
-                  style={styles.headerButton}
-                  onPress={handleSearchPress}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="search-outline" size={22} color="#000" />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={styles.headerButton}
-                  onPress={handleNotificationPress}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="notifications-outline" size={22} color="#000" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-          
-          {/* Bottom Section: Tab Bar */}
-          <View style={styles.tabBarSection}>
-            <View style={styles.customTabBar}>
-              {TABS.map((tab, index) => (
-                <TouchableOpacity
-                  key={tab}
-                  style={styles.tabButton}
-                  onPress={() => handleTabPress(index)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[
-                    styles.tabButtonText,
-                    activeTabIndex === index && styles.activeTabButtonText
-                  ]}>
-                    {tab}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          <View style={styles.fixedHeader}>
+            <TouchableOpacity 
+              style={styles.headerButton}
+              onPress={handleSearchPress}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="search-outline" size={24} color="#3797EF" />
+            </TouchableOpacity>
             
-            <Animated.View 
-              style={[
-                styles.tabIndicator,
-                {
-                  transform: [{ translateX: tabIndicatorPosition }],
-                }
-              ]} 
-            />
+            <Text style={styles.headerTitle}>Social</Text>
+            
+            <TouchableOpacity 
+              style={styles.headerButton}
+              onPress={handleNotificationPress}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="notifications-outline" size={24} color="#3797EF" />
+            </TouchableOpacity>
           </View>
         </SafeAreaView>
+      </View>
+
+      {/* PHASE 3: Animated Tab Bar - Transparent, Hides on Scroll */}
+      <Animated.View style={[styles.animatedTabBarContainer, getTabBarStyle()]}>
+        <View style={styles.transparentTabBar}>
+          {TABS.map((tab, index) => (
+            <TouchableOpacity
+              key={tab}
+              style={styles.tabButton}
+              onPress={() => handleTabPress(index)}
+              activeOpacity={0.8}
+            >
+              <Text style={[
+                styles.tabButtonText,
+                activeTabIndex === index && styles.activeTabButtonText
+              ]}>
+                {tab}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          
+          {/* REMOVED: Blue underline indicator */}
+        </View>
       </Animated.View>
 
-      {/* FIXED: Content with proper animated positioning */}
-      <View style={styles.contentWrapper}>
-        {/* Static spacer for initial header space */}
-        <View style={styles.headerSpacer} />
-        
-        {/* Animated content that moves with header */}
+      {/* PHASE 2: Full-Screen Content - Starts from top, flows under headers */}
+      <View 
+        style={styles.contentContainer}
+        {...panResponder.panHandlers}
+      >
         <Animated.View style={[
-          styles.animatedContent,
-          {
-            // Move content up when header moves up
-            transform: [{ 
-              translateY: getHeaderStyle().transform[0].translateY 
-            }]
-          }
+          styles.swipeableContent,
+          { transform: [{ translateX: scrollX }] }
         ]}>
-          <View 
-            style={styles.swipeContainer}
-            {...panResponder.panHandlers}
-          >
-            <Animated.View style={[
-              styles.swipeableContent,
-              { transform: [{ translateX: scrollX }] }
-            ]}>
-              {/* Posts Tab */}
-              <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
-                <PostsFeed 
-                  navigation={navigation}
-                  ref={postsRef}
-                  refreshing={refreshing}
-                  onRefresh={handleGlobalRefresh}
-                  onScroll={handleScroll}
-                  scrollEventThrottle={16}
-                />
-              </View>
-              
-              {/* Events Tab */}
-              <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
-                <EventsHub 
-                  navigation={navigation}
-                  ref={eventsRef}
-                  refreshing={refreshing}
-                  onRefresh={handleGlobalRefresh}
-                  onScroll={handleScroll}
-                  scrollEventThrottle={16}
-                  headerStyle={getHeaderStyle()} // Pass header animation to EventsHub
-                />
-              </View>
-            </Animated.View>
+          {/* Posts Tab */}
+          <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
+            <PostsFeed 
+              navigation={navigation}
+              ref={postsRef}
+              refreshing={refreshing}
+              onRefresh={handleGlobalRefresh}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+            />
+          </View>
+          
+          {/* Events Tab */}
+          <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
+            <EventsHub 
+              navigation={navigation}
+              ref={eventsRef}
+              refreshing={refreshing}
+              onRefresh={handleGlobalRefresh}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              getSubTabStyle={getSubTabStyle} // Pass sub-tab animation style
+            />
           </View>
         </Animated.View>
       </View>
@@ -326,25 +297,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   
-  // COMBINED HEADER: Contains both the title section and tab bar
-  animatedHeaderContainer: {
+  // PHASE 1: Fixed Transparent Header Styles with Liquid Glass
+  fixedHeaderContainer: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 1000,
     backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.85)' 
-      : 'rgba(255, 255, 255, 0.95)',
+      ? 'rgba(255, 255, 255, 0.75)' // More transparent for liquid glass
+      : 'rgba(255, 255, 255, 0.85)',
     ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(10px)',
+      backdropFilter: 'blur(25px) saturate(180%) contrast(120%)', // Liquid glass effect
     }),
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(225, 225, 225, 0.8)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
     elevation: 3,
   },
   
@@ -352,111 +321,92 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   
-  // Top part of combined header: Social + subtitle + buttons
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 4,
-  },
-  
-  headerContent: {
+  fixedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  
-  headerLeft: {
-    flex: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    height: 56, // Fixed height for consistent spacing
   },
   
   headerTitle: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: '700',
-    color: '#000000',
-    lineHeight: 26,
-  },
-  
-  headerSubtitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#3797EF',
-    marginTop: 1,
-  },
-  
-  headerButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    color: '#3797EF', // BLUE THEME
+    textAlign: 'center',
+    letterSpacing: -0.5,
   },
   
   headerButton: {
-    padding: 6,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0, 0, 0, 0.06)',
-    width: 34,
-    height: 34,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(55, 151, 239, 0.1)', // BLUE THEME
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
 
-  // Bottom part of combined header: Tab bar
-  tabBarSection: {
-    backgroundColor: 'transparent',
-    position: 'relative',
+  // PHASE 3: Animated Tab Bar Styles with Liquid Glass
+  animatedTabBarContainer: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 100 : 90, // Position below fixed header
+    left: 0,
+    right: 0,
+    zIndex: 999,
+    backgroundColor: Platform.OS === 'ios' 
+      ? 'rgba(255, 255, 255, 0.75)' // More transparent for liquid glass
+      : 'rgba(255, 255, 255, 0.85)',
+    ...(Platform.OS === 'ios' && {
+      backdropFilter: 'blur(25px) saturate(180%) contrast(120%)', // Liquid glass effect
+    }),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
 
-  customTabBar: {
+  transparentTabBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center', // CENTER the tabs
     paddingHorizontal: 0,
-    paddingVertical: 6,
+    paddingVertical: 12,
     position: 'relative',
-    backgroundColor: 'transparent',
+    height: 44, // Fixed height
+    gap: 40, // Add space between tabs when centered
   },
 
   tabButton: {
-    flex: 1,
     alignItems: 'center',
-    paddingVertical: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 20, // Add horizontal padding for better touch target
   },
 
   tabButtonText: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
     color: '#8E8E93',
   },
 
   activeTabButtonText: {
-    color: '#3797EF',
+    color: '#3797EF', // BLUE THEME
+    fontWeight: '800', // BOLD instead of underline
   },
 
-  tabIndicator: {
-    position: 'absolute',
-    bottom: 0,
-    width: 60,
-    height: 3,
-    backgroundColor: '#3797EF',
-    borderRadius: 1.5,
-  },
+  // REMOVED: tabIndicator - no more blue underline
 
-  // FIXED: Content Layout with proper animated positioning
-  contentWrapper: {
+  // PHASE 2: Content Layout - Starts from top, flows naturally
+  contentContainer: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-
-  headerSpacer: {
-    height: Platform.OS === 'ios' ? 120 : 110, // Static space for header
-    backgroundColor: 'transparent',
-  },
-
-  animatedContent: {
-    flex: 1,
-  },
-
-  swipeContainer: {
-    flex: 1,
-    overflow: 'hidden',
+    paddingTop: 0, // CRITICAL FIX: No padding, content starts from top
   },
 
   swipeableContent: {
@@ -466,6 +416,7 @@ const styles = StyleSheet.create({
   },
 
   tabContentWrapper: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent', // TRANSPARENT!
+    flex: 1,
   },
 });
