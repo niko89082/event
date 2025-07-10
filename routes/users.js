@@ -823,7 +823,7 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
 
     // Fetch photos for this event
     const photos = await Photo.find({ 
-      taggedEvent: eventId,
+      event: eventId,
       isDeleted: { $ne: true } // Handle both undefined and false
     })
     .populate('user', 'username profilePicture')

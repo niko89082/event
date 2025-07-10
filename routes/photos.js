@@ -188,9 +188,38 @@ router.post('/upload', protect, upload.single('photo'), async (req, res) => {
 // Get all photos
 router.get('/', protect, async (req, res) => {
   try {
-    const photos = await Photo.find().populate('user', 'username').populate('event', 'title');
+    const { eventId, limit = 50, offset = 0 } = req.query;
+    
+    let query = {};
+    
+    // If eventId is provided, filter by event
+    if (eventId) {
+      query = {
+        $or: [
+          { event: eventId },
+          { taggedEvent: eventId }
+        ],
+        $and: [
+          {
+            $or: [
+              { isDeleted: { $exists: false } },
+              { isDeleted: false }
+            ]
+          }
+        ]
+      };
+    }
+    
+    const photos = await Photo.find(query)
+      .populate('user', 'username profilePicture')
+      .populate('event', 'title time')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(offset));
+    
     res.status(200).json(photos);
   } catch (error) {
+    console.error('❌ Get photos error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -355,7 +384,40 @@ router.put('/visibility/:photoId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+// GET photos for a specific event
+router.get('/event/:eventId', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    
+    console.log(`🔍 Getting photos for event: ${eventId}`);
 
+    // Query photos using both possible field names for compatibility
+    const photos = await Photo.find({ 
+      $or: [
+        { event: eventId },
+        { taggedEvent: eventId }
+      ],
+      $and: [
+        {
+          $or: [
+            { isDeleted: { $exists: false } },
+            { isDeleted: false }
+          ]
+        }
+      ]
+    })
+    .populate('user', 'username profilePicture')
+    .populate('event', 'title time')
+    .sort({ createdAt: -1 });
+
+    console.log(`✅ Found ${photos.length} photos for event ${eventId}`);
+    res.json(photos);
+
+  } catch (error) {
+    console.error('❌ Get event photos error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 // Like Photo
 router.post('/like/:photoId', protect, async (req, res) => {
   try {
