@@ -7,6 +7,7 @@ const User = require('../models/User');
 const auth = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
+const protect = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 
 // Configure multer for photo uploads

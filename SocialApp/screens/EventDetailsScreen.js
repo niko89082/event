@@ -845,7 +845,7 @@ export default function EventDetailsScreen() {
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={['#34C759', '#32D74B']} // Green instead of orange
+              colors={['#34C759', '#32D74B']}
               style={styles.gradientButton}
             >
               <Ionicons name="camera" size={18} color="#FFFFFF" />
@@ -855,7 +855,7 @@ export default function EventDetailsScreen() {
 
           <TouchableOpacity
             style={[styles.actionButton, styles.secondaryAction]}
-            onPress={() => handleShareInvite()} // Combined modal
+            onPress={() => handleShareInvite()}
             activeOpacity={0.8}
           >
             <Ionicons name="share" size={18} color="#3797EF" />
@@ -866,8 +866,79 @@ export default function EventDetailsScreen() {
     );
   }
 
-  // Rest stays the same for attendees/non-attendees...
-  // But EVERYONE should see photo upload if attending
+  // For regular users (non-host/co-host)
+  const joinButtonInfo = getJoinButtonInfo();
+  
+  return (
+    <View style={styles.actionContainer}>
+      <View style={styles.actionRow}>
+        {/* Join/Leave Button */}
+        <TouchableOpacity
+          style={[
+            styles.actionButton,
+            styles.primaryAction,
+            joinButtonInfo.isLeave && styles.leaveAction,
+            joinButtonInfo.disabled && styles.disabledAction
+          ]}
+          onPress={joinButtonInfo.isLeave ? handleLeaveEvent : handleJoinRequest}
+          disabled={joinButtonInfo.disabled || requestLoading}
+          activeOpacity={0.8}
+        >
+          {joinButtonInfo.isLeave ? (
+            <View style={styles.leaveActionInner}>
+              <Ionicons name="exit" size={18} color="#FFFFFF" />
+              <Text style={styles.leaveActionText}>{joinButtonInfo.text}</Text>
+            </View>
+          ) : (
+            <LinearGradient
+              colors={joinButtonInfo.isPaid ? ['#FF6B35', '#FF8E53'] : ['#3797EF', '#3797EF']}
+              style={styles.gradientButton}
+            >
+              {requestLoading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  {joinButtonInfo.isPaid && <Ionicons name="card" size={18} color="#FFFFFF" />}
+                  <Text style={styles.primaryActionText}>{joinButtonInfo.text}</Text>
+                </>
+              )}
+            </LinearGradient>
+          )}
+        </TouchableOpacity>
+
+        {/* Share Button for non-hosts if allowed */}
+        {canShare && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.secondaryAction]}
+            onPress={() => handleShareInvite('share')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="share" size={18} color="#3797EF" />
+            <Text style={styles.secondaryActionText}>Share</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Photo Upload for Attendees */}
+      {isAttending && !isPast && (
+        <View style={[styles.actionRow, { marginTop: 12 }]}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.photoUploadAction]}
+            onPress={handleUploadPhoto}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#34C759', '#32D74B']}
+              style={styles.gradientButton}
+            >
+              <Ionicons name="camera" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Add Photos</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
 };
 
   const renderPhotoItem = ({ item, index }) => (
@@ -1090,7 +1161,7 @@ export default function EventDetailsScreen() {
                 mode: (isHost || isCoHost) ? 'manage' : 'view'
               })}
               activeOpacity={0.8}
-              disabled={!event.permissions?.showAttendeesToPublic && !isHost && !isCoHost}
+              disabled={false}
             >
               <View style={styles.detailCardHeader}>
                 <Ionicons name="people" size={24} color="#3797EF" />
@@ -1994,6 +2065,15 @@ const styles = StyleSheet.create({
   },
   sendInvitesButtonDisabled: {
     opacity: 0.6,
+  },
+  // Add to your styles object
+  leaveActionInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    gap: 8,
   },
 });
  

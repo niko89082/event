@@ -930,47 +930,54 @@ EventSchema.methods.canUserView = function(userId, userFollowing = []) {
  * @param {Array} userFollowing - Array of user IDs that the user follows
  * @returns {boolean} True if user can join the event
  */
-EventSchema.methods.canUserJoin = function(userId, userFollowing = []) {
+EventSchema.methods.canUserView = function(userId, userFollowing = []) {
   const userIdStr = String(userId);
   const hostIdStr = String(this.host);
   
-  // Host is already "attending" their own event
-  if (userIdStr === hostIdStr) return false;
+  // Host can always view their own event
+  if (userIdStr === hostIdStr) return true;
   
-  // Can't join if already attending
-  if (this.attendees && this.attendees.includes(userId)) return false;
+  // Co-hosts can view
+  if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
   
-  // Can't join if banned
-  if (this.bannedUsers && this.bannedUsers.includes(userId)) return false;
+  // Attendees can always view events they're attending
+  if (this.attendees && this.attendees.some(a => String(a) === userIdStr)) return true;
   
-  // Can't join if event has passed
-  const eventEndTime = new Date(this.time).getTime() + (3 * 60 * 60 * 1000);
-  if (Date.now() > eventEndTime) return false;
+  // Invited users can always view events they're invited to
+  if (this.invitedUsers && this.invitedUsers.some(i => String(i) === userIdStr)) return true;
   
-  // Check capacity
-  if (this.attendees && this.maxAttendees && this.attendees.length >= this.maxAttendees) {
-    return false;
-  }
-  
-  // Check permissions based on privacy level and settings
-  switch (this.permissions?.canJoin) {
-    case 'anyone':
-      return this.privacyLevel === 'public';
-    
-    case 'followers':
-      return userFollowing.includes(hostIdStr);
+  // Check based on privacy level first
+  switch (this.privacyLevel) {
+    case 'public':
+      // For public events, check the canView permission
+      switch (this.permissions?.canView) {
+        case 'anyone':
+        default:
+          return true;  // Anyone can view
+        case 'followers':
+          return userFollowing.includes(hostIdStr);
+        case 'invitees':
+          return this.invitedUsers?.includes(userId) || 
+                 this.attendees?.includes(userId);
+      }
+      break;
     
     case 'friends':
+      // Only followers of the host can view
       return userFollowing.includes(hostIdStr);
     
-    case 'approval-required':
-      return true; // Can request to join
+    case 'private':
+      // Only invited users and attendees can view
+      return this.invitedUsers?.includes(userId) || 
+             this.attendees?.includes(userId);
     
-    case 'invited-only':
-      return this.invitedUsers?.includes(userId);
+    case 'secret':
+      // Only invited users and attendees can view
+      return this.invitedUsers?.includes(userId) || 
+             this.attendees?.includes(userId);
     
     default:
-      return this.privacyLevel === 'public';
+      return false;
   }
 };
 

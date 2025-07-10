@@ -78,23 +78,33 @@ export default function PostDetailsScreen() {
   }, [postId]);
 
   const fetchPost = async () => {
-    try {
-      setLoading(true);
-      console.log('🟡 Fetching post:', postId);
-      const { data } = await api.get(`/api/photos/${postId}`);
-      console.log('🟢 Post data received:', data);
-      setPost(data);
-      setCaption(data.caption || '');
-      setSelectedEvent(data.event?._id || null);
-      setIsLiked(data.likes?.includes(currentUser?._id) || false);
-      setLikeCount(data.likes?.length || 0);
-    } catch (e) {
-      console.error('❌ Post fetch error:', e.response?.data || e);
-      Alert.alert('Error', 'Unable to load post.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    setLoading(true);
+    console.log('🟡 Fetching post:', postId);
+    const { data } = await api.get(`/api/photos/${postId}`);
+    console.log('🟢 Post data received:', data);
+    
+    setPost(data);
+    setCaption(data.caption || '');
+    setSelectedEvent(data.event?._id || null);
+    
+    // ✅ FIX: Properly set like status from API response
+    setIsLiked(data.userLiked || false); // Use userLiked from enhanced API
+    setLikeCount(data.likeCount || 0);   // Use likeCount from enhanced API
+    
+    console.log('❤️ Like status loaded:', {
+      userLiked: data.userLiked,
+      likeCount: data.likeCount,
+      likesArray: data.likes?.length
+    });
+    
+  } catch (e) {
+    console.error('❌ Post fetch error:', e.response?.data || e);
+    Alert.alert('Error', 'Unable to load post.');
+  } finally {
+    setLoading(false);
+  }
+};
 
   // FIXED: Use correct API endpoint for user events
   const fetchUserEvents = async () => {
@@ -118,31 +128,50 @@ export default function PostDetailsScreen() {
   };
 
   const handleLike = async () => {
-    try {
-      const response = await api.post(`/api/photos/like/${postId}`);
-      setIsLiked(!isLiked);
-      setLikeCount(response.data.likeCount);
-      
-      // Update the post state with new likes data for the likes viewer
-      setPost(prev => ({
-        ...prev,
-        likes: response.data.likes,
-        likeCount: response.data.likeCount
-      }));
-    } catch (e) {
-      console.error('Like error:', e.response?.data || e);
-    }
-  };
+  try {
+    console.log('🔄 Toggling like in PostDetailsScreen for:', postId);
+    
+    // Optimistic update
+    const newLiked = !isLiked;
+    const newCount = newLiked ? likeCount + 1 : likeCount - 1;
+    setIsLiked(newLiked);
+    setLikeCount(newCount);
+    
+    // ✅ FIX: Use correct API endpoint
+    const response = await api.post(`/api/photos/like/${postId}`);
+    
+    // Update with server response
+    setIsLiked(response.data.userLiked || response.data.likes.includes(currentUser._id));
+    setLikeCount(response.data.likeCount);
+    
+    // Update the post state with new likes data for the likes viewer
+    setPost(prev => ({
+      ...prev,
+      likes: response.data.likes,
+      likeCount: response.data.likeCount,
+      userLiked: response.data.userLiked || response.data.likes.includes(currentUser._id)
+    }));
+    
+    console.log('✅ Like toggled successfully in PostDetailsScreen');
+    
+  } catch (e) {
+    console.error('❌ Like error in PostDetailsScreen:', e.response?.data || e);
+    // Revert optimistic update
+    setIsLiked(!isLiked);
+    setLikeCount(isLiked ? likeCount + 1 : likeCount - 1);
+  }
+};
 
   // FIXED: Navigate to likes screen
   const viewLikes = () => {
-    if (likeCount > 0) {
-      navigation.navigate('PostLikesScreen', { 
-        postId: postId,
-        likeCount: likeCount 
-      });
-    }
-  };
+  if (likeCount > 0) {
+    navigation.navigate('PostLikesScreen', { 
+      postId: postId,
+      likeCount: likeCount,
+      isMemoryPost: false // Add this for regular posts
+    });
+  }
+};
 
   // FIXED: Updated sharePost function - no longer navigates to chat screens
   const sharePost = async () => {
@@ -434,18 +463,20 @@ export default function PostDetailsScreen() {
       {/* Post Actions */}
       <View style={styles.actionsContainer}>
         <View style={styles.leftActions}>
-          <TouchableOpacity onPress={handleLike} style={styles.actionButton}>
-            <Ionicons 
-              name={isLiked ? "heart" : "heart-outline"} 
-              size={24} 
-              color={isLiked ? "#FF3B30" : "#000000"} 
+          <TouchableOpacity onPress={handleLike} style={styles.actionBtn}>
+            <Ionicons
+              name={isLiked ? 'heart' : 'heart-outline'}
+              size={28}
+              color={isLiked ? '#ED4956' : '#000'}  // Red when liked, black when not
             />
           </TouchableOpacity>
           
           {/* FIXED: Like count much closer to heart and clickable */}
           {likeCount > 0 && (
-            <TouchableOpacity onPress={viewLikes}>
-              <Text style={styles.likeCount}>{likeCount}</Text>
+            <TouchableOpacity onPress={viewLikes} style={styles.likesContainer}>
+              <Text style={styles.likesText}>
+                {likeCount.toLocaleString()} {likeCount === 1 ? 'like' : 'likes'}
+              </Text>
             </TouchableOpacity>
           )}
           

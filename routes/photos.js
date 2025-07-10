@@ -133,24 +133,6 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// Get Photo by ID// GET /photos/:photoId
-router.get('/:photoId', protect, async (req, res) => {
-  try {
-    const photo = await Photo.findById(req.params.photoId)
-      .populate('user', 'username')
-      .populate('event', 'title')
-      .populate({
-        path: 'comments.user',
-        select: 'username',
-      });
-    if (!photo) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-    res.status(200).json(photo);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
 
 // ---------------------
 // POST a new comment on a photo (single route)
@@ -315,48 +297,102 @@ router.put('/visibility/:photoId', protect, async (req, res) => {
 // Like Photo
 router.post('/like/:photoId', protect, async (req, res) => {
   try {
-    const photo = await Photo.findById(req.params.photoId);
-
+    const { photoId } = req.params;
+    const userId = req.user._id;
+    
+    const photo = await Photo.findById(photoId);
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
-
-    if (photo.likes.includes(req.user._id)) {
-      // Unlike the photo
-      photo.likes.pull(req.user._id);
+    
+    // Check if user already liked the photo
+    const userLikedIndex = photo.likes.indexOf(userId);
+    
+    if (userLikedIndex > -1) {
+      // User already liked, so unlike
+      photo.likes.pull(userId);
     } else {
-      // Like the photo
-      photo.likes.push(req.user._id);
+      // User hasn't liked, so like
+      photo.likes.push(userId);
     }
-
+    
     await photo.save();
-    res.status(200).json({likes: photo.likes, likeCount: photo.likes.length});
+    
+    res.json({
+      likes: photo.likes,
+      likeCount: photo.likes.length,
+      userLiked: photo.likes.includes(userId)
+    });
+    
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error toggling photo like:', error);
+    res.status(500).json({ message: 'Failed to toggle like' });
   }
 });
 
-// Comment on Photo
-router.post('/comment/:photoId', protect, async (req, res) => {
-  const { text, tags } = req.body;
-
+// ✅ GET: Get photo comments (for loading comments separately)
+router.get('/comments/:photoId', protect, async (req, res) => {
   try {
-    const photo = await Photo.findById(req.params.photoId);
-
+    const { photoId } = req.params;
+    const { limit = 20, offset = 0 } = req.query;
+    
+    const photo = await Photo.findById(photoId)
+      .populate({
+        path: 'comments.user',
+        select: 'username fullName profilePicture'
+      });
+    
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
-
-    const comment = {
-      user: req.user._id,
-      text,
-      tags,
-    };
-
-    photo.comments.push(comment);
-    await photo.save();
-    res.status(200).json(photo.comments);
+    
+    // Get comments with pagination
+    const comments = photo.comments
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) // Latest first
+      .slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+    
+    res.json({
+      comments: comments,
+      commentCount: photo.comments.length,
+      hasMore: photo.comments.length > (parseInt(offset) + parseInt(limit))
+    });
+    
   } catch (error) {
+    console.error('Error fetching photo comments:', error);
+    res.status(500).json({ message: 'Failed to fetch comments' });
+  }
+});
+
+// ✅ Enhanced GET photo by ID with like status and proper population
+router.get('/:photoId', protect, async (req, res) => {
+  try {
+    const photo = await Photo.findById(req.params.photoId)
+      .populate('user', 'username fullName profilePicture')
+      .populate('event', 'title')
+      .populate('likes', 'username fullName profilePicture')
+      .populate({
+        path: 'comments.user',
+        select: 'username fullName profilePicture',
+      });
+      
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+    
+    // Add user-specific like status and counts
+    const photoData = photo.toJSON();
+    photoData.userLiked = photo.likes.some(like => like._id.equals(req.user._id));
+    photoData.likeCount = photo.likes.length;
+    photoData.commentCount = photo.comments.length;
+    
+    // Sort comments by newest first and limit to recent ones for feed
+    photoData.comments = photo.comments
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 2); // Only send 2 most recent comments for feed
+    
+    res.status(200).json(photoData);
+  } catch (error) {
+    console.error('Error fetching photo:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

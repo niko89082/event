@@ -1,8 +1,10 @@
-// components/PostItem.js - MEMORY STORYTELLING: Enhanced visual memory experience
+// components/PostItem.js - Updated with all requested changes
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, Image, StyleSheet,
   TouchableOpacity, Pressable, Modal, Dimensions, Animated,
+  TextInput, KeyboardAvoidingView, Platform, Alert, FlatList,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +15,7 @@ import api from '../services/api';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HEART = '#ED4956';
 const MEMORY_BLUE = '#3797EF';
+const EVENT_BLUE = '#3797EF'; // Changed to blue as requested
 
 /** util – relative "x ago" or absolute date */
 const niceDate = (iso) => {
@@ -51,9 +54,29 @@ const getMemoryMood = (iso) => {
   if (diffDays <= 365) return { emoji: '💫', mood: 'nostalgic' };
   return { emoji: '🕰️', mood: 'vintage' };
 };
+
+/** Get upload date display */
+const getUploadDate = (iso) => {
+  const date = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  
+  if (date.toDateString() === today.toDateString()) {
+    return 'Today';
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  } else {
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
+    });
+  }
+};
 /* ------------------------------------------------------------------ */
 
-export default function MemoryStorytellingPostItem({
+export default function CompletePostItem({
   post,
   currentUserId,
   hideUserInfo = false,
@@ -62,6 +85,7 @@ export default function MemoryStorytellingPostItem({
   disableEventLink = false,
   showEventContext = false,
   eventContextSource = null,
+  onPostUpdate, // Callback for post updates
 }) {
   // Detect if this is a memory post
   const isMemoryPost = post.postType === 'memory';
@@ -84,14 +108,27 @@ export default function MemoryStorytellingPostItem({
     height: SCREEN_WIDTH,
   });
 
-  // Memory animation states
-  const [showMemoryDetails, setShowMemoryDetails] = useState(false);
-
-  /* ---- state ---------------------------------------------------- */
+  /* ---- Enhanced state initialization from props ------- */
   const [liked, setLiked] = useState(post.userLiked || false);
   const [likeCount, setLikeCount] = useState(post.likeCount || 0);
   const [modal, setModal] = useState(false);
   const [showFullCaption, setShowFullCaption] = useState(false);
+
+  // NEW: Comment-related state with initial data from props
+  const [comments, setComments] = useState(post.comments || []);
+  const [commentCount, setCommentCount] = useState(post.commentCount || 0);
+  const [commentText, setCommentText] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [showAllComments, setShowAllComments] = useState(false);
+  const [loadingComments, setLoadingComments] = useState(false);
+
+  // NEW: Likes modal state
+  const [showLikesModal, setShowLikesModal] = useState(false);
+  const [likesList, setLikesList] = useState([]);
+  const [likesLoading, setLikesLoading] = useState(false);
+
+  // NEW: Loading state for initial data
+  const [initialLoading, setInitialLoading] = useState(false);
 
   // Animation refs
   const heartScale = useRef(new Animated.Value(0)).current;
@@ -100,6 +137,68 @@ export default function MemoryStorytellingPostItem({
   const memoryGlow = useRef(new Animated.Value(0)).current;
   const lastTap = useRef(0);
   const DOUBLE_PRESS_DELAY = 300;
+
+  /* ---- Load initial data (likes and comments) on mount -------- */
+  useEffect(() => {
+    if (post._id && !initialLoading) {
+      loadInitialData();
+    }
+  }, [post._id]);
+
+  const loadInitialData = async () => {
+    try {
+      setInitialLoading(true);
+      
+      // For regular posts, get full post data with likes and comments
+      if (!isMemoryPost) {
+        const response = await api.get(`/api/photos/${post._id}`);
+        const postData = response.data;
+        
+        console.log('📊 Loaded post data:', {
+          postId: post._id,
+          userLiked: postData.userLiked,
+          likeCount: postData.likeCount,
+          commentCount: postData.commentCount,
+          hasComments: postData.comments?.length > 0
+        });
+        
+        setLiked(postData.userLiked || false);
+        setLikeCount(postData.likeCount || 0);
+        setComments(postData.comments || []);
+        setCommentCount(postData.commentCount || 0);
+      } else {
+        // For memory posts, get the specific photo data
+        try {
+          const response = await api.get(`/api/memories/photos/${post._id}/likes`);
+          setLiked(response.data.userLiked);
+          setLikeCount(response.data.likeCount);
+          
+          // Load comments for memory posts if available
+          try {
+            const commentsResponse = await api.get(`/api/memories/photos/${post._id}/comments`);
+            if (commentsResponse.data.comments) {
+              setComments(commentsResponse.data.comments);
+              setCommentCount(commentsResponse.data.comments.length);
+            }
+          } catch (commentError) {
+            console.log('Comments not available for memory photos yet');
+          }
+        } catch (error) {
+          console.error('Error loading memory post data:', error);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error loading initial post data:', error);
+      // Use the data from props as fallback
+      setLiked(post.userLiked || false);
+      setLikeCount(post.likeCount || 0);
+      setComments(post.comments || []);
+      setCommentCount(post.commentCount || 0);
+    } finally {
+      setInitialLoading(false);
+    }
+  };
 
   /* ---- image url -------------------------------------------------- */
   let imgURL = null;
@@ -176,23 +275,108 @@ export default function MemoryStorytellingPostItem({
     }
   }, [isMemoryPost, memoryMood]);
 
-  /* ---- like toggle ----------------------------------------------- */
+  /* ---- FIXED like toggle with proper API endpoint handling ------- */
   const toggleLike = async () => {
     if (!post?._id) return;
+    
     try {
       const newLiked = !liked;
-      setLiked(newLiked);
-      setLikeCount(prev => newLiked ? prev + 1 : prev - 1);
-
-      const endpoint = isMemoryPost 
-        ? `/api/memories/photos/${post._id}/like`
-        : `/api/photos/${post._id}/like`;
+      const newCount = newLiked ? likeCount + 1 : likeCount - 1;
       
-      await api.post(endpoint);
+      // Optimistic update
+      setLiked(newLiked);
+      setLikeCount(newCount);
+
+      console.log(`🔄 Toggling like for ${isMemoryPost ? 'memory photo' : 'regular post'}:`, post._id);
+
+      let response;
+      if (isMemoryPost) {
+        // Memory photo like endpoint
+        response = await api.post(`/api/memories/photos/${post._id}/like`);
+        setLiked(response.data.liked);
+        setLikeCount(response.data.likeCount);
+      } else {
+        // Regular photo like endpoint  
+        response = await api.post(`/api/photos/like/${post._id}`);
+        setLiked(response.data.likes.includes(currentUserId));
+        setLikeCount(response.data.likeCount);
+      }
+
+      // Notify parent component of update
+      if (onPostUpdate) {
+        onPostUpdate(post._id, { 
+          liked: newLiked,
+          likeCount: newCount
+        });
+      }
+
+      console.log('✅ Like toggled successfully');
+      
     } catch (err) {
-      console.error('Toggle like error:', err);
+      console.error('❌ Toggle like error:', err);
+      // Revert optimistic update on error
       setLiked(!liked);
-      setLikeCount(prev => liked ? prev + 1 : prev - 1);
+      setLikeCount(liked ? likeCount + 1 : likeCount - 1);
+      Alert.alert('Error', 'Failed to update like');
+    }
+  };
+
+  /* ---- NEW: Fetch likes list for modal or navigate to screen ----- */
+  const openLikesScreen = () => {
+    if (likeCount > 0) {
+      // Navigate to the existing PostLikesScreen
+      navigation.navigate('PostLikesScreen', { 
+        postId: post._id,
+        likeCount: likeCount,
+        isMemoryPost: isMemoryPost
+      });
+    }
+  };
+
+  /* ---- NEW: Submit comment --------------------------------------- */
+  const submitComment = async () => {
+    if (!commentText.trim() || submittingComment) return;
+
+    try {
+      setSubmittingComment(true);
+      console.log(`💬 Submitting comment for ${isMemoryPost ? 'memory photo' : 'regular post'}:`, post._id);
+
+      let response;
+      if (isMemoryPost) {
+        response = await api.post(`/api/memories/photos/${post._id}/comments`, {
+          text: commentText.trim(),
+          tags: []
+        });
+        
+        // Add the new comment to local state
+        setComments(prev => [...prev, response.data.comment]);
+        setCommentCount(prev => prev + 1);
+      } else {
+        response = await api.post(`/api/photos/comment/${post._id}`, {
+          text: commentText.trim(),
+          tags: []
+        });
+        
+        // For regular posts, the response includes the full updated photo
+        setComments(response.data.comments || []);
+        setCommentCount(response.data.comments?.length || 0);
+      }
+
+      setCommentText('');
+      console.log('✅ Comment submitted successfully');
+
+      // Notify parent component
+      if (onPostUpdate) {
+        onPostUpdate(post._id, { 
+          commentCount: isMemoryPost ? commentCount + 1 : response.data.comments?.length || 0 
+        });
+      }
+
+    } catch (error) {
+      console.error('❌ Error submitting comment:', error);
+      Alert.alert('Error', 'Failed to post comment');
+    } finally {
+      setSubmittingComment(false);
     }
   };
 
@@ -267,9 +451,9 @@ export default function MemoryStorytellingPostItem({
     });
   };
 
-  const openUser = () => {
-    console.log('🟡 PostItem: Opening user profile:', post.user?._id);
-    navigation.navigate('ProfileScreen', { userId: post.user?._id });
+  const openUser = (userId) => {
+    console.log('🟡 PostItem: Opening user profile:', userId);
+    navigation.navigate('ProfileScreen', { userId });
   };
 
   const openEvent = () => {
@@ -284,6 +468,7 @@ export default function MemoryStorytellingPostItem({
 
   /* ---- derived helpers ------------------------------------------- */
   const stamp = useMemo(() => niceDate(post.createdAt || post.uploadDate), [post]);
+  const uploadDate = useMemo(() => getUploadDate(post.createdAt || post.uploadDate), [post]);
   const isOwner = String(post.user?._id) === String(currentUserId);
 
   // Caption handling
@@ -293,8 +478,12 @@ export default function MemoryStorytellingPostItem({
     ? caption
     : caption.slice(0, 100) + '...';
 
+  // Comment display logic - show 2 comments max
+  const displayComments = comments.slice(0, 2); // Show up to 2 comments
+  const hasMoreComments = comments.length > 2;
+
   /* ================================================================== */
-  /*                      MEMORY STORYTELLING RENDER                   */
+  /*                      MAIN RENDER                                  */
   /* ================================================================== */
 
   return (
@@ -324,10 +513,10 @@ export default function MemoryStorytellingPostItem({
         </View>
       )}
 
-      {/* ---------- user info header ---------- */}
+      {/* ---------- ENHANCED user info header (REMOVED "from") ---------- */}
       {!hideUserInfo && (
         <View style={styles.header}>
-          <TouchableOpacity onPress={openUser} style={styles.userRow} activeOpacity={0.8}>
+          <TouchableOpacity onPress={() => openUser(post.user?._id)} style={styles.userRow} activeOpacity={0.8}>
             <View style={[
               styles.avatarContainer,
               isMemoryPost && styles.memoryAvatarContainer
@@ -359,7 +548,7 @@ export default function MemoryStorytellingPostItem({
                 {/* Memory context inline with username */}
                 {isMemoryPost && (
                   <>
-                    <Text style={styles.usernameMemoryContext}> in </Text>
+                    <Text style={styles.contextText}> in </Text>
                     <TouchableOpacity onPress={openMemory}>
                       <Text style={styles.memoryLink}>
                         {memoryInfo.memoryTitle || 'Memory'}
@@ -367,15 +556,21 @@ export default function MemoryStorytellingPostItem({
                     </TouchableOpacity>
                   </>
                 )}
+
+                {/* EVENT context inline with username (BLUE COLOR) */}
+                {!isMemoryPost && post.event && (
+                  <>
+                    <Text style={styles.contextText}> at </Text>
+                    <TouchableOpacity onPress={openEvent}>
+                      <Text style={styles.eventLink}>
+                        {post.event.title}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
 
-              {/* Regular event context for non-memory posts */}
-              {!isMemoryPost && post.event && showEventContext && (
-                <TouchableOpacity onPress={openEvent} style={styles.eventContext}>
-                  <Ionicons name="calendar-outline" size={12} color="#3797EF" />
-                  <Text style={styles.eventContextText}>from {post.event.title}</Text>
-                </TouchableOpacity>
-              )}
+              {/* REMOVED: Secondary event context - no more "from X" */}
             </View>
           </TouchableOpacity>
 
@@ -459,6 +654,14 @@ export default function MemoryStorytellingPostItem({
         </Animated.View>
       </Pressable>
 
+      {/* ---------- NEW: Upload date above likes/comments ---------- */}
+      <Text style={[
+        styles.uploadDate,
+        isMemoryPost && styles.memoryUploadDate
+      ]}>
+        {isMemoryPost && memoryTimeText ? memoryTimeText : uploadDate}
+      </Text>
+
       {/* ---------- action row ---------- */}
       <View style={styles.actionRow}>
         <View style={styles.leftActions}>
@@ -499,11 +702,13 @@ export default function MemoryStorytellingPostItem({
         )}
       </View>
 
-      {/* ---------- likes count ---------- */}
+      {/* ---------- ENHANCED likes count with tap to view ---------- */}
       {likeCount > 0 && (
-        <Text style={styles.likesText}>
-          {likeCount.toLocaleString()} {likeCount === 1 ? 'like' : 'likes'}
-        </Text>
+        <TouchableOpacity onPress={openLikesScreen} style={styles.likesContainer}>
+          <Text style={styles.likesText}>
+            {likeCount.toLocaleString()} {likeCount === 1 ? 'like' : 'likes'}
+          </Text>
+        </TouchableOpacity>
       )}
 
       {/* ---------- caption ---------- */}
@@ -521,34 +726,96 @@ export default function MemoryStorytellingPostItem({
         </View>
       ) : null}
 
-      {/* ---------- comments preview (only for regular posts) ---------- */}
-      {!isMemoryPost && post.commentCount > 0 && (
-        <TouchableOpacity onPress={openComments} style={styles.commentsPreview} activeOpacity={0.8}>
-          <Text style={styles.viewCommentsText}>
-            View all {post.commentCount} comments
-          </Text>
-          {post.latestComment && (
-            <Text style={styles.latestComment}>
-              <Text style={styles.commentUsername}>{post.latestComment.user?.username}</Text>{' '}
-              {post.latestComment.text}
+      {/* ---------- ENHANCED comments section with proper order ---------- */}
+      {commentCount > 0 && (
+        <View style={styles.commentsSection}>
+          {/* Display comments FIRST (1-2 recent comments) */}
+          {displayComments.map((comment, index) => (
+            <View key={`comment-${comment._id || index}`} style={styles.commentItem}>
+              <TouchableOpacity onPress={() => openUser(comment.user?._id)}>
+                <Image
+                  source={{ uri: `http://${API_BASE_URL}:3000${comment.user?.profilePicture || ''}` }}
+                  style={styles.commentAvatar}
+                />
+              </TouchableOpacity>
+              <View style={styles.commentContent}>
+                <Text style={styles.commentText}>
+                  <Text style={styles.commentUsername}>{comment.user?.username || 'Unknown'}</Text>
+                  {' '}
+                  {comment.text}
+                </Text>
+                <Text style={styles.commentTime}>
+                  {niceDate(comment.createdAt)}
+                </Text>
+              </View>
+            </View>
+          ))}
+
+          {/* View all comments link BELOW the displayed comments */}
+          <TouchableOpacity 
+            onPress={isMemoryPost ? openMemoryComments : openComments} 
+            style={styles.viewAllCommentsBtn}
+          >
+            <Text style={styles.viewAllCommentsText}>
+              View all {commentCount} comment{commentCount === 1 ? '' : 's'}
             </Text>
-          )}
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
       )}
 
-      {/* ---------- timestamp with memory context ---------- */}
+      {/* ---------- timestamp (moved above comment input) ---------- */}
       <Text style={[
         styles.timestamp,
         isMemoryPost && styles.memoryTimestamp
       ]}>
-        {isMemoryPost && memoryTimeText ? memoryTimeText : stamp}
+        {stamp}
       </Text>
 
+      {/* ---------- NEW: Inline comment input ---------- */}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.commentInputContainer}
+      >
+        <TouchableOpacity onPress={() => openUser(currentUserId)}>
+          <Image
+            source={{ uri: `http://${API_BASE_URL}:3000${post.user?.profilePicture || ''}` }}
+            style={styles.commentInputAvatar}
+          />
+        </TouchableOpacity>
+        <TextInput
+          style={styles.commentInput}
+          placeholder="Add a comment..."
+          value={commentText}
+          onChangeText={setCommentText}
+          multiline
+          maxLength={500}
+          onSubmitEditing={submitComment}
+          returnKeyType="send"
+        />
+        <TouchableOpacity 
+          onPress={submitComment}
+          disabled={!commentText.trim() || submittingComment}
+          style={[
+            styles.commentSubmitBtn,
+            (!commentText.trim() || submittingComment) && styles.commentSubmitBtnDisabled
+          ]}
+        >
+          <Text style={[
+            styles.commentSubmitText,
+            (!commentText.trim() || submittingComment) && styles.commentSubmitTextDisabled
+          ]}>
+            {submittingComment ? 'Posting...' : 'Post'}
+          </Text>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
+
+      {/* ---------- REMOVED: timestamp moved above comment input ---------- */}
+
       {/* ---------- event link (for event posts) ---------- */}
-      {!disableEventLink && post.event && !showEventContext && (
-        <TouchableOpacity onPress={openEvent} style={styles.eventLink} activeOpacity={0.8}>
-          <Ionicons name="calendar-outline" size={16} color="#3797EF" />
-          <Text style={styles.eventLinkText}>View Event: {post.event.title}</Text>
+      {!disableEventLink && post.event && !showEventContext && !isMemoryPost && (
+        <TouchableOpacity onPress={openEvent} style={styles.eventLinkButton} activeOpacity={0.8}>
+          <Ionicons name="calendar-outline" size={16} color={EVENT_BLUE} />
+          <Text style={styles.eventLinkButtonText}>View Event: {post.event.title}</Text>
         </TouchableOpacity>
       )}
 
@@ -590,7 +857,7 @@ const getMoodColor = (mood) => {
 };
 
 /* ================================================================== */
-/*                        MEMORY STORYTELLING STYLES                 */
+/*                        COMPLETE STYLES                            */
 /* ================================================================== */
 
 const styles = StyleSheet.create({
@@ -678,12 +945,13 @@ const styles = StyleSheet.create({
   avatar: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 8, // Curved corners instead of circle
     backgroundColor: '#F6F6F6',
   },
   vintageAvatar: {
     borderWidth: 2,
     borderColor: 'rgba(255, 215, 0, 0.5)',
+    borderRadius: 8, // Keep consistent
   },
   
   userText: {
@@ -700,27 +968,19 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   
-  // Memory context inline with username
-  usernameMemoryContext: {
+  // Context text for both memory and event
+  contextText: {
     fontSize: 14,
     color: '#000',
   },
   memoryLink: {
     fontSize: 14,
-    color: '#3797EF',
+    color: MEMORY_BLUE,
     fontWeight: '500',
   },
-
-  // Event context
-  eventContext: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  eventContextText: {
-    fontSize: 12,
-    color: '#3797EF',
-    marginLeft: 4,
+  eventLink: {
+    fontSize: 14,
+    color: EVENT_BLUE, // Changed to blue
     fontWeight: '500',
   },
 
@@ -788,6 +1048,20 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
 
+  // NEW: Upload Date
+  uploadDate: {
+    fontSize: 12,
+    color: '#8E8E93',
+    paddingHorizontal: 15,
+    paddingTop: 8,
+    paddingBottom: 4,
+    fontWeight: '500',
+  },
+  memoryUploadDate: {
+    fontStyle: 'italic',
+    color: '#666',
+  },
+
   // Enhanced Actions with Memory Features
   actionRow: {
     flexDirection: 'row',
@@ -822,13 +1096,15 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
 
-  // Likes
+  // Enhanced Likes
+  likesContainer: {
+    paddingHorizontal: 15,
+    paddingVertical: 2,
+  },
   likesText: {
     fontWeight: '600',
     fontSize: 14,
     color: '#000',
-    paddingHorizontal: 15,
-    paddingVertical: 2,
   },
 
   // Caption
@@ -850,52 +1126,131 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // Comments
-  commentsPreview: {
+  // Enhanced Comments Section
+  commentsSection: {
     paddingHorizontal: 15,
     paddingVertical: 5,
   },
-  viewCommentsText: {
+  viewAllCommentsBtn: {
+    marginTop: 8, // Moved below comments, so margin top instead of bottom
+  },
+  viewAllCommentsText: {
     color: '#8E8E93',
     fontSize: 14,
-    marginBottom: 2,
+    fontWeight: '500',
   },
-  latestComment: {
+  toggleCommentsBtn: {
+    marginTop: 8,
+  },
+  toggleCommentsText: {
+    color: '#3797EF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  commentItem: {
+    flexDirection: 'row',
+    marginBottom: 8,
+    alignItems: 'flex-start',
+  },
+  commentAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 6, // Curved corners instead of circle
+    backgroundColor: '#F6F6F6',
+    marginRight: 10,
+  },
+  commentContent: {
+    flex: 1,
+  },
+  commentText: {
     fontSize: 14,
     lineHeight: 18,
     color: '#000',
   },
   commentUsername: {
-    fontWeight: '600',
+    fontWeight: '600', // Bold usernames as requested
+  },
+  commentTime: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
   },
 
-  // Enhanced Timestamp with Memory Context
+  // Inline Comment Input (with more padding below)
+  commentInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    paddingBottom: 15, // Added more padding below
+    borderTopWidth: 1,
+    borderTopColor: '#E1E1E1',
+  },
+  commentInputAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 8, // Curved corners instead of circle
+    backgroundColor: '#F6F6F6',
+    marginRight: 10,
+  },
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    borderRadius: 20,
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    fontSize: 14,
+    maxHeight: 80,
+    backgroundColor: '#F8F9FA',
+  },
+  commentSubmitBtn: {
+    marginLeft: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 15,
+    backgroundColor: '#3797EF',
+  },
+  commentSubmitBtnDisabled: {
+    backgroundColor: '#E1E1E1',
+  },
+  commentSubmitText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  commentSubmitTextDisabled: {
+    color: '#8E8E93',
+  },
+
+  // Timestamp (moved above comment input)
   timestamp: {
     fontSize: 12,
     color: '#8E8E93',
     paddingHorizontal: 15,
-    paddingBottom: 10,
+    paddingBottom: 5, // Reduced padding since it's above comment input now
+    paddingTop: 5,
   },
   memoryTimestamp: {
     fontStyle: 'italic',
     color: '#666',
   },
 
-  // Event link
-  eventLink: {
+  // Event link button
+  eventLinkButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
     paddingVertical: 5,
   },
-  eventLinkText: {
+  eventLinkButtonText: {
     fontSize: 14,
-    color: '#3797EF',
+    color: EVENT_BLUE, // Changed to blue
     marginLeft: 5,
     fontWeight: '500',
   },
 
-  // Modal
+  // Delete Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

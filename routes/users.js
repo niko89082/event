@@ -663,79 +663,61 @@ router.get('/event-stats/:period', protect, async (req, res) => {
 });
 
 // Get event photos for a specific event (for memory viewing)
+// In routes/users.js
 router.get('/event-photos/:eventId', protect, async (req, res) => {
   try {
-    const userId = req.user._id;
     const { eventId } = req.params;
-    const { limit = 50, offset = 0 } = req.query;
+    const userId = req.user._id;
 
     console.log(`📸 Fetching photos for event ${eventId}, user ${userId}`);
 
-    // Verify user has access to this event
-    const event = await Event.findById(eventId)
-      .populate('host', '_id username')
-      .populate('attendees', '_id username');
-      
+    // First get the event to check privacy
+    const event = await Event.findById(eventId);
     if (!event) {
-      console.log(`❌ Event not found: ${eventId}`);
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    const isHost = String(event.host._id) === String(userId);
-    const isAttendee = event.attendees && event.attendees.some(attendee => 
-      String(attendee._id) === String(userId)
-    );
+    // Check if user can view photos based on event privacy
+    const isHost = String(event.host) === String(userId);
+    const isCoHost = event.coHosts?.some(c => String(c) === String(userId));
+    const isAttending = event.attendees?.some(a => String(a) === String(userId));
     
-    console.log(`🔍 Access check - isHost: ${isHost}, isAttendee: ${isAttendee}`);
+    // For public events, anyone can see photos
+    let canViewPhotos = false;
     
-    if (!isHost && !isAttendee) {
-      console.log(`❌ Access denied for user ${userId} to event ${eventId}`);
-      return res.status(403).json({ 
-        message: 'Access denied - you must be attending this event to view photos' 
-      });
+    if (event.privacyLevel === 'public') {
+      canViewPhotos = true; // Public events = public photos
+      console.log('✅ Public event - photos accessible');
+    } else if (event.privacyLevel === 'friends') {
+      // Check if user follows the host
+      const user = await User.findById(userId);
+      const followsHost = user.following?.some(f => String(f) === String(event.host));
+      canViewPhotos = isHost || isCoHost || isAttending || followsHost;
+      console.log(`🔍 Friends event - Access: ${canViewPhotos}`);
+    } else {
+      // Private/secret events - must be attending
+      canViewPhotos = isHost || isCoHost || isAttending;
+      console.log(`🔒 Private event - Access: ${canViewPhotos}`);
     }
 
-    // FIXED: Get ALL photos from this event (not just user's own photos)
-    let photoQuery = {
-      event: eventId,
-      isDeleted: { $ne: true }
-    };
-
-    // If user is not the host, only show photos they can see
-    if (!isHost) {
-      photoQuery = {
-        ...photoQuery,
-        $or: [
-          { user: userId }, // User's own photos
-          { isPrivate: { $ne: true } } // Public photos
-        ]
-      };
+    if (!canViewPhotos) {
+      console.log(`❌ Access denied for user ${userId} to event ${eventId} photos`);
+      return res.status(403).json({ message: 'Access denied to event photos' });
     }
 
-    const photos = await Photo.find(photoQuery)
-      .populate('user', 'username profilePicture')
-      .populate('event', 'title time')
-      .sort({ uploadDate: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(offset));
+    // Fetch photos for this event
+    const photos = await Post.find({ 
+      taggedEvent: eventId,
+      isDeleted: { $ne: true } // Handle both undefined and false
+    })
+    .populate('user', 'username profilePicture')
+    .sort({ createdAt: -1 });
 
-    console.log(`✅ Found ${photos.length} photos for event ${eventId}`);
+    console.log(`📸 Found ${photos.length} photos for event ${eventId}`);
 
-    res.json({
-      photos,
-      event: {
-        _id: event._id,
-        title: event.title,
-        time: event.time,
-        location: event.location
-      },
-      total: photos.length,
-      hasMore: photos.length === parseInt(limit),
-      canUpload: isHost || isAttendee
-    });
-
+    res.json({ photos });
   } catch (error) {
-    console.error('❌ Get event photos error:', error);
+    console.error('Error fetching event photos:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
