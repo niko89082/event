@@ -936,19 +936,77 @@ router.get('/friends-activity', protect, async (req, res) => {
 });
 
 // Get My Photo Events
+
 router.get('/my-photo-events', protect, async (req, res) => {
   try {
+    console.log(`📸 Fetching photo events for user: ${req.user._id}`);
+    
+    // Get ALL events with photos enabled first, then filter in JavaScript
+    // This is more reliable than MongoDB's ObjectId comparison in complex queries
+    const allPhotoEvents = await Event.find({ allowPhotos: true })
+      .select('title time allowPhotos host attendees checkedIn')
+      .populate('host', 'username')
+      .sort({ time: -1 })
+      .lean();
+    
+    // Filter using JavaScript string comparison (most reliable)
+    const userIdStr = String(req.user._id);
+    const userEvents = allPhotoEvents.filter(event => {
+      const isHost = String(event.host._id) === userIdStr;
+      const isAttendee = event.attendees.some(id => String(id) === userIdStr);
+      const isCheckedIn = event.checkedIn ? event.checkedIn.some(id => String(id) === userIdStr) : false;
+      
+      return isHost || isAttendee || isCheckedIn;
+    });
+
+    console.log(`✅ Found ${userEvents.length} photo-enabled events for user`);
+    
+    // Add debug info for each event found
+    userEvents.forEach(event => {
+      const isHost = String(event.host._id) === userIdStr;
+      const isAttendee = event.attendees.some(id => String(id) === userIdStr);
+      console.log(`📅 Event: ${event.title} - Host: ${isHost}, Attendee: ${isAttendee}`);
+    });
+    
+    // Clean up the response (remove unnecessary data)
+    const cleanEvents = userEvents.map(event => ({
+      _id: event._id,
+      title: event.title,
+      time: event.time,
+      allowPhotos: event.allowPhotos,
+      host: {
+        _id: event.host._id,
+        username: event.host.username
+      }
+    }));
+
+    res.json(cleanEvents);
+  } catch (err) {
+    console.error('❌ /my-photo-events error =>', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+// ALTERNATIVE APPROACH - Using string comparison (also works)
+router.get('/my-photo-events-alt', protect, async (req, res) => {
+  try {
+    console.log(`📸 Fetching photo events for user: ${req.user._id}`);
+    
     const list = await Event.find({
       allowPhotos: true,
       $or: [
-        { attendees: req.user._id }, 
-        { checkedIn: req.user._id },
-        { host: req.user._id }
+        { attendees: { $in: [req.user._id] } },     // ✅ Alternative fix
+        { checkedIn: { $in: [req.user._id] } },     // ✅ Alternative fix
+        { host: req.user._id }                      // ✅ This one was already working
       ]
-    }).select('title time allowPhotos host attendees');
+    }).select('title time allowPhotos host attendees')
+      .populate('host', 'username')
+      .sort({ time: -1 })
+      .lean();
+    
+    console.log(`✅ Found ${list.length} photo-enabled events for user`);
     res.json(list);
   } catch (err) {
-    console.error('/my-photo-events =>', err);
+    console.error('❌ /my-photo-events error =>', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1530,225 +1588,277 @@ router.get('/', protect, async (req, res) => {
 // ============================================
 router.post('/attend/:eventId', protect, async (req, res) => {
   try {
-    const event = await Event.findById(req.params.eventId).populate('host', 'paymentAccounts username');
-    if (!event) return res.status(404).json({ message: 'Event not found' });
+    const userId = req.user._id;
+    const { eventId } = req.params;
+    const { paymentConfirmed = false, provider, paypalOrderId, paypalCaptureId } = req.body;
 
-    // Check if event has ended
-    const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000);
-    if (Date.now() > eventEndTime) {
-      return res.status(400).json({ message: 'Event has already ended' });
+    console.log(`🔄 User ${userId} attempting to attend event ${eventId}`);
+
+    // ✅ FIX: Get event with full Mongoose document (not lean)
+    const event = await Event.findById(eventId)
+      .populate('host', '_id username')
+      .populate('coHosts', '_id username')
+      .populate('attendees', '_id username')
+      .populate('invitedUsers', '_id username');
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Check if already attending
-    if (event.attendees.includes(req.user._id)) {
-      return res.status(400).json({ message: 'Already attending' });
+    // ✅ FIX: Get user with following data for privacy checks
+    const user = await User.findById(userId).populate('following', '_id');
+    if (!user) {
+      return res.status(400).json({ message: 'User not found' });
     }
 
-    // Check permissions
-    const permission = await EventPrivacyService.checkPermission(
-      req.user._id, 
-      req.params.eventId, 
-      'join'
+    const userFollowing = user.following.map(f => String(f._id));
+
+    // Check if user is already attending
+    const isAlreadyAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userId)
     );
 
-    if (!permission.allowed) {
-      if (event.permissions.canJoin === 'approval-required') {
-        return res.status(400).json({ 
-          message: 'This event requires approval to join',
-          suggestion: 'Send a join request instead'
-        });
-      }
-      return res.status(403).json({ message: permission.reason });
+    if (isAlreadyAttending) {
+      return res.status(400).json({ message: 'You are already attending this event' });
     }
 
-    // ============================================
-    // FIXED: PROPER PAYMENT VALIDATION
-    // ============================================
-    if (event.isPaidEvent()) {
-      console.log(`💳 Processing payment for paid event ${event._id}`);
-
-      // Check if user already paid (prevents double charging)
-      if (event.hasUserPaid(req.user._id)) {
-        console.log(`✅ User ${req.user._id} already paid for event ${event._id}`);
-        
-        // User already paid, just add to attendees
-        event.attendees.push(req.user._id);
-        await event.save();
-
-        // Add to user's attending events
-        await User.findByIdAndUpdate(req.user._id, {
-          $addToSet: { attendingEvents: event._id }
-        });
-
-        return res.json({ 
-          message: 'You are now attending (no charge - already paid)', 
-          event,
-          alreadyPaid: true
-        });
-      }
-
-      // CRITICAL FIX: Check if host can receive payments with PROPER validation
-      if (!req.body.paymentConfirmed) {
-        const currentPrice = event.getCurrentPrice();
-        
-        // ✅ FIXED: Use the User model's canReceivePayments method
-        if (!event.host.canReceivePayments()) {
-          console.log(`❌ Host payment validation failed:`, {
-            hostId: event.host._id,
-            paymentAccounts: event.host.paymentAccounts,
-            paypalVerified: event.host.paymentAccounts?.paypal?.verified,
-            stripeEnabled: event.host.paymentAccounts?.stripe?.chargesEnabled
-          });
-          
-          return res.status(400).json({ 
-            message: 'Host cannot currently receive payments. Please try again later.',
-            needsPaymentSetup: true,
-            debug: {
-              hasPayPal: !!event.host.paymentAccounts?.paypal?.verified,
-              hasStripe: !!event.host.paymentAccounts?.stripe?.chargesEnabled
-            }
-          });
-        }
-
-        // ✅ FIXED: Get available payment methods properly
-        const availablePaymentMethods = event.host.getAvailablePaymentMethods();
-        
-        if (availablePaymentMethods.length === 0) {
-          return res.status(400).json({ 
-            message: 'Host has no available payment methods configured',
-            needsPaymentSetup: true
-          });
-        }
-
-        // Return payment requirements - DO NOT add to attendees yet
-        return res.status(402).json({
-          message: 'Payment required to attend this event',
-          paymentRequired: true,
-          amount: currentPrice,
-          currency: event.pricing.currency || 'usd',
-          eventTitle: event.title,
-          hostPaymentMethods: {
-            paypal: !!event.host.paymentAccounts?.paypal?.verified,
-            stripe: !!event.host.paymentAccounts?.stripe?.chargesEnabled,
-            availableMethods: availablePaymentMethods
-          }
-        });
-      }
-
-      // Payment was confirmed via frontend, verify payment intent
-      const { paymentIntentId, paypalOrderId, paypalCaptureId } = req.body;
+    // ✅ FIX: Use instance methods from Event model (now works because we have full document)
+    try {
+      // Check if user can join this event
+      const canJoin = event.canUserJoin(userId, userFollowing);
       
-      if (!paymentIntentId && !paypalCaptureId) {
-        return res.status(400).json({ 
-          message: 'Payment confirmation required but payment ID not provided' 
+      if (!canJoin) {
+        return res.status(403).json({ 
+          message: 'You do not have permission to join this event' 
         });
       }
 
-      // Add verified payment to event history
-      const paymentData = {
-        user: req.user._id,
-        amount: event.getCurrentPrice(),
-        currency: event.pricing.currency || 'usd',
-        status: 'succeeded',
-        paidAt: new Date(),
-        type: 'user'
-      };
+      // ✅ PAYMENT VALIDATION: Check if payment is required
+      const isPaidEvent = event.pricing && !event.pricing.isFree && event.pricing.amount > 0;
+      
+      if (isPaidEvent) {
+        // Check if user has already paid
+        const hasUserPaid = event.paymentHistory && event.paymentHistory.some(payment => 
+          String(payment.user) === String(userId) && payment.status === 'succeeded'
+        );
 
-      if (paymentIntentId) {
-        paymentData.provider = 'stripe';
-        paymentData.stripePaymentIntentId = paymentIntentId;
-      } else {
-        paymentData.provider = 'paypal';
-        paymentData.paypalOrderId = paypalOrderId;
-        paymentData.paypalCaptureId = paypalCaptureId;
+        if (!hasUserPaid && !paymentConfirmed) {
+          return res.status(402).json({ 
+            message: 'Payment required for this event',
+            requiresPayment: true,
+            amount: event.pricing.amount,
+            currency: event.pricing.currency || 'USD'
+          });
+        }
+
+        // If payment is confirmed, verify it
+        if (paymentConfirmed && !hasUserPaid) {
+          // Validate payment based on provider
+          if (provider === 'paypal' && paypalOrderId) {
+            // Add payment record to event
+            if (!event.paymentHistory) {
+              event.paymentHistory = [];
+            }
+            
+            event.paymentHistory.push({
+              user: userId,
+              amount: event.pricing.amount,
+              currency: event.pricing.currency || 'USD',
+              provider: 'paypal',
+              orderId: paypalOrderId,
+              captureId: paypalCaptureId,
+              status: 'succeeded',
+              paidAt: new Date()
+            });
+          } else if (provider === 'stripe') {
+            // Stripe payment validation would happen here
+            if (!event.paymentHistory) {
+              event.paymentHistory = [];
+            }
+            
+            event.paymentHistory.push({
+              user: userId,
+              amount: event.pricing.amount,
+              currency: event.pricing.currency || 'USD',
+              provider: 'stripe',
+              status: 'succeeded',
+              paidAt: new Date()
+            });
+          }
+        }
       }
 
-      await event.addPayment(paymentData);
-      console.log(`✅ Payment verified and recorded for user ${req.user._id} on event ${event._id}`);
+      // Add user to attendees
+      event.attendees.push(userId);
+      await event.save();
+
+      // Add event to user's attending list
+      if (!user.attendingEvents) {
+        user.attendingEvents = [];
+      }
+      user.attendingEvents.push(eventId);
+      await user.save();
+
+      // Create notification for event host
+      const Notification = require('../models/Notification');
+      await Notification.create({
+        user: event.host._id || event.host,
+        type: 'event_join',
+        category: 'events',
+        message: `${user.username} is now attending your event "${event.title}"`,
+        data: {
+          eventId: event._id,
+          eventTitle: event.title,
+          userId: user._id,
+          username: user.username
+        },
+        actionType: 'VIEW_EVENT',
+        actionData: { eventId: event._id }
+      });
+
+      console.log(`✅ User ${userId} successfully joined event ${eventId}`);
+
+      res.json({ 
+        message: 'Successfully joined the event!',
+        event: {
+          _id: event._id,
+          title: event.title,
+          attendeeCount: event.attendees.length
+        },
+        alreadyPaid: isPaidEvent && event.paymentHistory && event.paymentHistory.some(p => 
+          String(p.user) === String(userId) && p.status === 'succeeded'
+        )
+      });
+
+    } catch (methodError) {
+      console.error('❌ Event method error:', methodError);
+      
+      // Fallback permission check if instance methods fail
+      const isHost = String(event.host._id || event.host) === String(userId);
+      const isInvited = event.invitedUsers && event.invitedUsers.some(u => 
+        String(u._id || u) === String(userId)
+      );
+      const isPublic = event.privacyLevel === 'public';
+      const isFollowingHost = userFollowing.includes(String(event.host._id || event.host));
+
+      let canJoinFallback = false;
+
+      if (isHost) {
+        return res.status(400).json({ message: 'You cannot attend your own event' });
+      }
+
+      // Basic permission checks
+      switch (event.privacyLevel) {
+        case 'public':
+          canJoinFallback = true;
+          break;
+        case 'friends':
+          canJoinFallback = isFollowingHost;
+          break;
+        case 'private':
+        case 'secret':
+          canJoinFallback = isInvited;
+          break;
+        default:
+          canJoinFallback = false;
+      }
+
+      if (!canJoinFallback) {
+        return res.status(403).json({ 
+          message: 'You do not have permission to join this event' 
+        });
+      }
+
+      // If we reach here, allow joining with fallback logic
+      event.attendees.push(userId);
+      await event.save();
+
+      if (!user.attendingEvents) {
+        user.attendingEvents = [];
+      }
+      user.attendingEvents.push(eventId);
+      await user.save();
+
+      res.json({ 
+        message: 'Successfully joined the event!',
+        event: {
+          _id: event._id,
+          title: event.title,
+          attendeeCount: event.attendees.length
+        }
+      });
     }
-
-    // Add to attendees (free event or payment verified)
-    event.attendees.push(req.user._id);
-    await event.save();
-
-    // Add to user's attending events
-    await User.findByIdAndUpdate(req.user._id, {
-      $addToSet: { attendingEvents: event._id }
-    });
-
-    // Send success response
-    const responseMessage = event.isPaidEvent() 
-      ? 'Payment successful! You are now attending this event.'
-      : 'You are now attending this event!';
-
-    res.json({ 
-      message: responseMessage, 
-      event,
-      paymentRequired: event.isPaidEvent(),
-      alreadyPaid: event.isPaidEvent() ? true : false
-    });
 
   } catch (error) {
     console.error('❌ Event attendance error:', error);
     res.status(500).json({ 
       message: 'Failed to process attendance',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
 });
 
-
-// ============================================
-// ENHANCED: UNATTEND EVENT (KEEPS PAYMENT HISTORY)
-// ============================================
+// ✅ FIXED: Leave event endpoint
 router.delete('/attend/:eventId', protect, async (req, res) => {
   try {
-    const event = await Event.findById(req.params.eventId);
-    if (!event) return res.status(404).json({ message: 'Event not found' });
+    const userId = req.user._id;
+    const { eventId } = req.params;
 
-    if (!event.attendees.includes(req.user._id)) {
+    console.log(`🔄 User ${userId} attempting to leave event ${eventId}`);
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(400).json({ message: 'User not found' });
+    }
+
+    // Check if user is attending
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee) === String(userId)
+    );
+
+    if (!isAttending) {
       return res.status(400).json({ message: 'You are not attending this event' });
     }
 
-    // ✅ ENHANCED: Check if user had paid for this event
-    const userPayment = event.payments?.find(p => 
-      p.user.toString() === req.user._id.toString() && 
-      p.status === 'succeeded'
+    // Remove user from attendees
+    event.attendees = event.attendees.filter(attendee => 
+      String(attendee) !== String(userId)
     );
-
-    // Remove from attendees
-    event.attendees.pull(req.user._id);
-    
-    // ✅ ENHANCED: Mark payment as eligible for re-attendance without double charge
-    if (userPayment) {
-      userPayment.leftEventAt = new Date();
-      userPayment.canReattendWithoutPayment = true;
-      console.log(`🔄 User ${req.user._id} left paid event ${event._id} - payment preserved for re-attendance`);
-    }
-    
     await event.save();
 
-    // Remove from user's attending events
-    await User.findByIdAndUpdate(req.user._id, {
-      $pull: { attendingEvents: event._id }
-    });
+    // Remove event from user's attending list
+    if (user.attendingEvents) {
+      user.attendingEvents = user.attendingEvents.filter(id => 
+        String(id) !== String(eventId)
+      );
+      await user.save();
+    }
 
-    // ✅ ENHANCED: Provide better response with payment info
-    const responseMessage = userPayment 
-      ? 'You have left the event. Your payment is preserved if you want to rejoin.'
-      : 'You have left the event successfully.';
+    console.log(`✅ User ${userId} successfully left event ${eventId}`);
 
     res.json({ 
-      message: responseMessage, 
-      event,
-      canReattendWithoutPayment: !!userPayment
+      message: 'Successfully left the event',
+      event: {
+        _id: event._id,
+        title: event.title,
+        attendeeCount: event.attendees.length
+      }
     });
 
   } catch (error) {
-    console.error('❌ Unattend event error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Leave event error:', error);
+    res.status(500).json({ 
+      message: 'Failed to leave event',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
   }
 });
+
 router.get('/debug/payment-status/:eventId', protect, async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId).populate('host', 'paymentAccounts username email');

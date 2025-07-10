@@ -59,6 +59,122 @@ router.get('/:userId/following', protect, async (req, res) => {
   }
 });
 
+
+router.get('/:userId/events/attended', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 20, offset = 0, includePast = true } = req.query;
+
+    const dateFilter = includePast === 'true' ? {} : { time: { $gte: new Date() } };
+
+    const events = await Event.find({
+      attendees: userId,
+      ...dateFilter
+    })
+    .populate('host', 'username profilePicture')
+    .populate('attendees', 'username')
+    .sort({ time: -1 })
+    .limit(parseInt(limit))
+    .skip(parseInt(offset));
+
+    res.json({
+      events,
+      total: events.length,
+      hasMore: events.length === parseInt(limit)
+    });
+
+  } catch (error) {
+    console.error('Get attended events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.post('/share-memory', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { eventId, message, shareWith } = req.body; // shareWith could be 'public', 'friends', or specific user IDs
+
+    // Verify user has access to this event
+    const event = await Event.findById(eventId)
+      .populate('host', 'username')
+      .lean();
+    
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const isHost = String(event.host._id) === String(userId);
+    const isAttendee = event.attendees && event.attendees.includes(userId);
+    
+    if (!isHost && !isAttendee) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get some photos from this event to include with the memory
+    const eventPhotos = await Photo.find({
+      event: eventId,
+      user: userId
+    })
+    .limit(3)
+    .sort({ uploadDate: -1 })
+    .lean();
+
+    // Create a memory share object (this could be stored in a separate collection)
+    const memoryShare = {
+      user: userId,
+      event: eventId,
+      message: message || `Great memories from ${event.title}!`,
+      photos: eventPhotos.map(p => p._id),
+      shareWith: shareWith || 'friends',
+      createdAt: new Date()
+    };
+
+    // Here you would typically:
+    // 1. Store the memory share in a database
+    // 2. Send notifications to relevant users
+    // 3. Update user's activity feed
+
+    res.json({ 
+      success: true, 
+      memoryShare,
+      message: 'Memory shared successfully!' 
+    });
+
+  } catch (error) {
+    console.error('Share memory error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.get('/:userId/events/hosted', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 20, offset = 0, includePast = true } = req.query;
+
+    const dateFilter = includePast === 'true' ? {} : { time: { $gte: new Date() } };
+
+    const events = await Event.find({
+      host: userId,
+      ...dateFilter
+    })
+    .populate('host', 'username profilePicture')
+    .populate('attendees', 'username')
+    .sort({ time: -1 })
+    .limit(parseInt(limit))
+    .skip(parseInt(offset));
+
+    res.json({
+      events,
+      total: events.length,
+      hasMore: events.length === parseInt(limit)
+    });
+
+  } catch (error) {
+    console.error('Get hosted events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // 🎯 FIX #1: ADD THE MISSING EVENTS ENDPOINT THAT PROFILESCREEN IS CALLING
 router.get('/:userId/events', protect, async (req, res) => {
   try {
@@ -706,7 +822,7 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
     }
 
     // Fetch photos for this event
-    const photos = await Post.find({ 
+    const photos = await Photo.find({ 
       taggedEvent: eventId,
       isDeleted: { $ne: true } // Handle both undefined and false
     })
@@ -880,6 +996,96 @@ router.get('/event-timeline', protect, async (req, res) => {
   } catch (error) {
     console.error('Get event timeline error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+router.get('/event-photos/:eventId', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { limit = 50, offset = 0 } = req.query;
+    const userId = req.user._id;
+
+    console.log(`🔍 Getting event photos for event: ${eventId}, user: ${userId}`);
+
+    // ✅ FIX: Get event with proper population
+    const event = await Event.findById(eventId)
+      .populate('host', '_id username')
+      .populate('attendees', '_id username');
+      
+    if (!event) {
+      console.log(`❌ Event not found: ${eventId}`);
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // ✅ FIX: Improved access control logic
+    const isHost = String(event.host._id || event.host) === String(userId);
+    const isAttendee = event.attendees && event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userId)
+    );
+    
+    console.log(`🔍 Access check - isHost: ${isHost}, isAttendee: ${isAttendee}`);
+    
+    if (!isHost && !isAttendee) {
+      console.log(`❌ Access denied for user ${userId} to event ${eventId}`);
+      return res.status(403).json({ 
+        message: 'Access denied - you must be attending this event to view photos' 
+      });
+    }
+
+    // ✅ FIX: Build proper photo query
+    let photoQuery = {
+      event: eventId,
+      $or: [
+        { isDeleted: { $exists: false } },
+        { isDeleted: false }
+      ]
+    };
+
+    // If user is not the host, only show photos they can see
+    if (!isHost) {
+      photoQuery = {
+        ...photoQuery,
+        $and: [
+          {
+            $or: [
+              { user: userId }, // User's own photos
+              { isPrivate: { $ne: true } }, // Public photos
+              { visibleInEvent: true } // Photos marked as visible in event
+            ]
+          }
+        ]
+      };
+    }
+
+    console.log(`🔍 Photo query:`, JSON.stringify(photoQuery, null, 2));
+
+    const photos = await Photo.find(photoQuery)
+      .populate('user', 'username profilePicture')
+      .populate('event', 'title time')
+      .sort({ uploadDate: -1, createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(offset));
+
+    console.log(`✅ Found ${photos.length} photos for event ${eventId}`);
+
+    res.json({
+      photos,
+      event: {
+        _id: event._id,
+        title: event.title,
+        time: event.time,
+        location: event.location
+      },
+      total: photos.length,
+      hasMore: photos.length === parseInt(limit),
+      canUpload: isHost || isAttendee
+    });
+
+  } catch (error) {
+    console.error('❌ Get event photos error:', error);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 });
 

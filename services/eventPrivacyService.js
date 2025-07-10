@@ -1,4 +1,4 @@
-// services/EventPrivacyService.js - Privacy & Discovery Logic
+// services/eventPrivacyService.js - FIXED VERSION
 const Event = require('../models/Event');
 const User = require('../models/User');
 
@@ -65,10 +65,10 @@ class EventPrivacyService {
       ]
     };
 
-    // Add location filter if provided
+    // Add location filter if specified
     if (location && location.coordinates) {
       query.$and.push({
-        geo: {
+        'location.coordinates': {
           $near: {
             $geometry: {
               type: 'Point',
@@ -80,14 +80,10 @@ class EventPrivacyService {
       });
     }
 
-    // Add interest filter
+    // Add interest filter if specified
     if (interests.length > 0) {
       query.$and.push({
-        $or: [
-          { category: { $in: interests } },
-          { tags: { $in: interests } },
-          { interests: { $in: interests } }
-        ]
+        category: { $in: interests }
       });
     }
 
@@ -104,62 +100,30 @@ class EventPrivacyService {
   /**
    * Get personalized event recommendations
    */
-  static async getRecommendations(userId, options = {}) {
-    const {
-      location,
-      weatherData,
-      limit = 10
-    } = options;
+  static async getRecommendations(userId, limit = 10) {
+    const user = await User.findById(userId).populate('following', '_id');
+    const followingIds = user.following.map(f => String(f._id));
 
-    const user = await User.findById(userId)
-      .populate('following', '_id interests')
-      .populate('attendingEvents', 'category tags interests');
+    const recommendations = {
+      following: await this.getFollowingEvents(userId, followingIds, Math.ceil(limit * 0.4)),
+      interests: await this.getInterestBasedEvents(userId, user.interests, Math.ceil(limit * 0.3)),
+      location: await this.getLocationBasedEvents(userId, user.location, Math.ceil(limit * 0.2)),
+      trending: await this.getTrendingEvents(userId, Math.ceil(limit * 0.1))
+    };
 
-    // Get user's interests from profile and past events
-    const userInterests = [
-      ...(user.interests || []),
-      ...user.attendingEvents.flatMap(e => [e.category, ...(e.tags || []), ...(e.interests || [])])
-    ];
-
-    // Get friends' activity
-    const friendsEvents = await this.getFriendsActivity(userId, { limit: 5 });
-
-    // Get location-based events
-    const locationEvents = location ? 
-      await this.getLocationBasedEvents(userId, location, { limit: 10 }) : [];
-
-    // Get interest-based events
-    const interestEvents = await this.getInterestBasedEvents(userId, userInterests, { limit: 10 });
-
-    // Get weather-appropriate events
-    const weatherEvents = weatherData ? 
-      await this.getWeatherBasedEvents(userId, weatherData, { limit: 5 }) : [];
-
-    // Combine and score recommendations
-    const recommendations = this.scoreAndCombineRecommendations({
-      friends: friendsEvents,
-      location: locationEvents,
-      interests: interestEvents,
-      weather: weatherEvents
-    }, user);
-
-    return recommendations.slice(0, limit);
+    return this.scoreAndCombineRecommendations(recommendations, user).slice(0, limit);
   }
 
   /**
-   * Get events that user's friends are attending
+   * Get events from users being followed
    */
-  static async getFriendsActivity(userId, options = {}) {
-    const { limit = 10 } = options;
-
-    const user = await User.findById(userId).populate('following', '_id');
-    const followingIds = user.following.map(f => f._id);
-
+  static async getFollowingEvents(userId, followingIds, limit) {
     const events = await Event.find({
-      attendees: { $in: followingIds },
+      host: { $in: followingIds },
       time: { $gte: new Date() },
       privacyLevel: { $in: ['public', 'friends'] },
-      'permissions.appearInFeed': true
+      'permissions.appearInFeed': true,
+      attendees: { $ne: userId } // Don't recommend events already attending
     })
     .populate('host', 'username profilePicture')
     .populate('attendees', 'username')
@@ -168,62 +132,24 @@ class EventPrivacyService {
 
     return events.map(event => ({
       ...event.toObject(),
-      recommendationType: 'friends',
+      recommendationType: 'following',
       score: 0.8
     }));
   }
 
   /**
-   * Get events near user's location
+   * Get events based on user interests
    */
-  static async getLocationBasedEvents(userId, location, options = {}) {
-    const { radius = 25, limit = 10 } = options;
-
-    if (!location.coordinates) return [];
+  static async getInterestBasedEvents(userId, interests, limit) {
+    if (!interests || interests.length === 0) return [];
 
     const events = await Event.find({
-      geo: {
-        $near: {
-          $geometry: {
-            type: 'Point',
-            coordinates: location.coordinates
-          },
-          $maxDistance: radius * 1000
-        }
-      },
+      category: { $in: interests },
       time: { $gte: new Date() },
       privacyLevel: 'public',
-      'permissions.appearInSearch': true
-    })
-    .populate('host', 'username profilePicture')
-    .populate('attendees', 'username')
-    .sort({ time: 1 })
-    .limit(limit);
-
-    return events.map(event => ({
-      ...event.toObject(),
-      recommendationType: 'location',
-      score: 0.6
-    }));
-  }
-
-  /**
-   * Get events matching user's interests
-   */
-  static async getInterestBasedEvents(userId, interests, options = {}) {
-    const { limit = 10 } = options;
-
-    if (!interests.length) return [];
-
-    const events = await Event.find({
-      $or: [
-        { category: { $in: interests } },
-        { tags: { $in: interests } },
-        { interests: { $in: interests } }
-      ],
-      time: { $gte: new Date() },
-      privacyLevel: 'public',
-      'permissions.appearInSearch': true
+      'permissions.appearInSearch': true,
+      attendees: { $ne: userId },
+      host: { $ne: userId }
     })
     .populate('host', 'username profilePicture')
     .populate('attendees', 'username')
@@ -233,42 +159,88 @@ class EventPrivacyService {
     return events.map(event => ({
       ...event.toObject(),
       recommendationType: 'interests',
-      score: 0.7
+      score: 0.6
+    }));
+  }
+
+  /**
+   * Get events based on user location
+   */
+  static async getLocationBasedEvents(userId, userLocation, limit) {
+    if (!userLocation || !userLocation.coordinates) return [];
+
+    const events = await Event.find({
+      'location.coordinates': {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: userLocation.coordinates
+          },
+          $maxDistance: 25000 // 25km radius
+        }
+      },
+      time: { $gte: new Date() },
+      privacyLevel: 'public',
+      'permissions.appearInSearch': true,
+      attendees: { $ne: userId },
+      host: { $ne: userId }
+    })
+    .populate('host', 'username profilePicture')
+    .populate('attendees', 'username')
+    .sort({ time: 1 })
+    .limit(limit);
+
+    return events.map(event => ({
+      ...event.toObject(),
+      recommendationType: 'location',
+      score: 0.5
+    }));
+  }
+
+  /**
+   * Get trending events (high attendance)
+   */
+  static async getTrendingEvents(userId, limit) {
+    const events = await Event.find({
+      time: { $gte: new Date() },
+      privacyLevel: 'public',
+      'permissions.appearInSearch': true,
+      attendees: { $ne: userId },
+      host: { $ne: userId }
+    })
+    .populate('host', 'username profilePicture')
+    .populate('attendees', 'username')
+    .sort({ 'attendees': -1, time: 1 })
+    .limit(limit);
+
+    return events.map(event => ({
+      ...event.toObject(),
+      recommendationType: 'trending',
+      score: Math.min(0.7, event.attendees.length / 100)
     }));
   }
 
   /**
    * Get weather-appropriate events
    */
-  static async getWeatherBasedEvents(userId, weatherData, options = {}) {
-    const { limit = 5 } = options;
-
-    // Simple weather-based filtering
-    const isRainy = weatherData.condition?.includes('rain');
-    const isHot = weatherData.temperature > 30;
-    const isCold = weatherData.temperature < 10;
+  static async getWeatherBasedEvents(userId, weather, limit) {
+    if (!weather) return [];
 
     let weatherQuery = {};
     
-    if (isRainy) {
+    // Match events to weather conditions
+    if (weather.main === 'Rain' || weather.main === 'Drizzle') {
       weatherQuery = {
         $or: [
-          { category: { $in: ['Indoor', 'Museum', 'Shopping', 'Movies'] } },
-          { tags: { $in: ['indoor', 'covered'] } }
+          { location: { $regex: /indoor|mall|center|building/i } },
+          { category: { $in: ['indoor', 'entertainment', 'shopping'] } }
         ]
       };
-    } else if (isHot) {
+    } else if (weather.main === 'Clear' && weather.main.temp > 20) {
       weatherQuery = {
         $or: [
-          { category: { $in: ['Beach', 'Pool', 'Water Sports', 'Indoor'] } },
-          { tags: { $in: ['swimming', 'air-conditioned'] } }
-        ]
-      };
-    } else if (isCold) {
-      weatherQuery = {
-        $or: [
-          { category: { $in: ['Indoor', 'Fitness', 'Arts', 'Food'] } },
-          { tags: { $in: ['warm', 'heated'] } }
+          { location: { $regex: /park|beach|outdoor|garden/i } },
+          { category: { $in: ['outdoor', 'sports', 'festival'] } }
         ]
       };
     }
@@ -319,44 +291,61 @@ class EventPrivacyService {
   }
 
   /**
-   * Check if user can perform specific action on event
+   * ✅ FIXED: Check if user can perform specific action on event
    */
   static async checkPermission(userId, eventId, action) {
-    const event = await Event.findById(eventId).populate('host coHosts attendees invitedUsers');
-    if (!event) return { allowed: false, reason: 'Event not found' };
+    try {
+      // ✅ FIX: Use findById instead of lean() to get full Mongoose document with methods
+      const event = await Event.findById(eventId)
+        .populate('host', '_id username')
+        .populate('coHosts', '_id username')
+        .populate('attendees', '_id username')
+        .populate('invitedUsers', '_id username');
+        
+      if (!event) {
+        return { allowed: false, reason: 'Event not found' };
+      }
 
-    const user = await User.findById(userId).populate('following', '_id');
-    const userFollowing = user.following.map(f => String(f._id));
+      const user = await User.findById(userId).populate('following', '_id');
+      if (!user) {
+        return { allowed: false, reason: 'User not found' };
+      }
 
-    switch (action) {
-      case 'view':
-        return {
-          allowed: event.canUserView(userId, userFollowing),
-          reason: event.canUserView(userId, userFollowing) ? null : 'Not authorized to view this event'
-        };
+      const userFollowing = user.following.map(f => String(f._id));
 
-      case 'join':
-        return {
-          allowed: event.canUserJoin(userId, userFollowing),
-          reason: event.canUserJoin(userId, userFollowing) ? null : 'Cannot join this event'
-        };
+      switch (action) {
+        case 'view':
+          return {
+            allowed: event.canUserView(userId, userFollowing),
+            reason: event.canUserView(userId, userFollowing) ? null : 'Not authorized to view this event'
+          };
 
-      case 'invite':
-        return {
-          allowed: event.canUserInvite(userId),
-          reason: event.canUserInvite(userId) ? null : 'Cannot invite others to this event'
-        };
+        case 'join':
+          return {
+            allowed: event.canUserJoin(userId, userFollowing),
+            reason: event.canUserJoin(userId, userFollowing) ? null : 'Cannot join this event'
+          };
 
-      case 'edit':
-        const canEdit = String(event.host) === String(userId) || 
-                       event.coHosts.some(c => String(c) === String(userId));
-        return {
-          allowed: canEdit,
-          reason: canEdit ? null : 'Only host and co-hosts can edit this event'
-        };
+        case 'invite':
+          return {
+            allowed: event.canUserInvite(userId),
+            reason: event.canUserInvite(userId) ? null : 'Cannot invite others to this event'
+          };
 
-      default:
-        return { allowed: false, reason: 'Unknown action' };
+        case 'edit':
+          const canEdit = String(event.host._id || event.host) === String(userId) || 
+                         (event.coHosts && event.coHosts.some(c => String(c._id || c) === String(userId)));
+          return {
+            allowed: canEdit,
+            reason: canEdit ? null : 'Only host and co-hosts can edit this event'
+          };
+
+        default:
+          return { allowed: false, reason: 'Unknown action' };
+      }
+    } catch (error) {
+      console.error('❌ EventPrivacyService.checkPermission error:', error);
+      return { allowed: false, reason: 'Permission check failed' };
     }
   }
 
