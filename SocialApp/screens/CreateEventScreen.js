@@ -1,4 +1,4 @@
-// screens/CreateEventScreen.js - Phase 2: Simplified Privacy + Form Toggle
+// screens/CreateEventScreen.js - Phase 2: Simplified Privacy + Form Toggle + Photos
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
@@ -108,6 +108,9 @@ export default function CreateEventScreen({ navigation, route }) {
   
   // PHASE 2: Simplified privacy (no redundant toggles)
   const [privacyLevel, setPrivacyLevel] = useState('public');
+
+  // ADDED: Photo sharing toggle
+  const [allowPhotos, setAllowPhotos] = useState(true);
 
   // PHASE 2: Form integration
   const [requiresCheckInForm, setRequiresCheckInForm] = useState(false);
@@ -379,6 +382,9 @@ export default function CreateEventScreen({ navigation, route }) {
       
       // PHASE 2: Simplified privacy (auto-calculated permissions)
       formData.append('privacyLevel', privacyLevel);
+      
+      // ADDED: Photo sharing setting
+      formData.append('allowPhotos', allowPhotos);
       
       // PHASE 2: Form integration
       if (requiresCheckInForm && selectedForm) {
@@ -735,7 +741,7 @@ export default function CreateEventScreen({ navigation, route }) {
     );
   }
 
-  // Step 2: Advanced Settings with Simplified Privacy and Form Toggle
+  // Step 2: Advanced Settings with Simplified Privacy, Form Toggle, and Photo Settings
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -774,6 +780,61 @@ export default function CreateEventScreen({ navigation, route }) {
                   <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
                 </View>
               </TouchableOpacity>
+            </View>
+
+            {/* ADDED: Photo Sharing Settings */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Photo Sharing</Text>
+              <Text style={styles.sectionDescription}>
+                Allow attendees to share photos and create memories from your event
+              </Text>
+
+              <View style={styles.photoToggleContainer}>
+                <View style={styles.photoToggleRow}>
+                  <View style={styles.photoToggleContent}>
+                    <View style={styles.photoToggleIcon}>
+                      <Ionicons 
+                        name={allowPhotos ? "camera" : "camera-outline"} 
+                        size={24} 
+                        color={allowPhotos ? "#3797EF" : "#8E8E93"} 
+                      />
+                    </View>
+                    <View style={styles.photoToggleText}>
+                      <Text style={styles.photoToggleLabel}>Enable Photo Sharing</Text>
+                      <Text style={styles.photoToggleDesc}>
+                        {allowPhotos 
+                          ? 'Attendees can post photos and create shared memories'
+                          : 'Photo sharing is disabled for this event'
+                        }
+                      </Text>
+                    </View>
+                  </View>
+                  <Switch
+                    value={allowPhotos}
+                    onValueChange={setAllowPhotos}
+                    trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {/* Photo sharing benefits */}
+                {allowPhotos && (
+                  <View style={styles.photoBenefitsContainer}>
+                    <View style={styles.photoBenefit}>
+                      <Ionicons name="people" size={16} color="#34C759" />
+                      <Text style={styles.photoBenefitText}>Build community through shared memories</Text>
+                    </View>
+                    <View style={styles.photoBenefit}>
+                      <Ionicons name="heart" size={16} color="#34C759" />
+                      <Text style={styles.photoBenefitText}>Increase engagement and event satisfaction</Text>
+                    </View>
+                    <View style={styles.photoBenefit}>
+                      <Ionicons name="time" size={16} color="#34C759" />
+                      <Text style={styles.photoBenefitText}>Create lasting memories after the event</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
             </View>
 
             {/* PHASE 2: Check-in Form Toggle */}
@@ -1354,7 +1415,7 @@ export default function CreateEventScreen({ navigation, route }) {
   );
 }
 
-// Enhanced Styles with Phase 2 additions
+// Enhanced Styles with Photo Toggle additions
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1511,6 +1572,62 @@ const styles = StyleSheet.create({
   selectButtonText: {
     fontSize: 16,
     color: '#000000',
+  },
+
+  // ADDED: Photo Toggle Styles
+  photoToggleContainer: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 16,
+  },
+  photoToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  photoToggleContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  photoToggleIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  photoToggleText: {
+    flex: 1,
+  },
+  photoToggleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  photoToggleDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  photoBenefitsContainer: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+  },
+  photoBenefit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  photoBenefitText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#34C759',
+    flex: 1,
   },
 
   // PHASE 2: Form Toggle Styles

@@ -229,17 +229,85 @@ export default function EventDetailsScreen() {
 
   // Fetch event photos
   const fetchEventPhotos = async () => {
+  try {
+    setPhotosLoading(true);
+    console.log(`📸 Fetching photos for event ${eventId}`);
+    
+    // ✅ TRY APPROACH 1: Use the users/event-photos endpoint
     try {
-      setPhotosLoading(true);
       const response = await api.get(`/api/users/event-photos/${eventId}`);
+      console.log(`✅ Photos fetched via users endpoint:`, response.data.photos?.length || 0);
       setEventPhotos(response.data.photos || []);
-    } catch (error) {
-      console.error('Error fetching event photos:', error);
-      // Don't show error for photos, just fail silently
-    } finally {
-      setPhotosLoading(false);
+      return;
+    } catch (userEndpointError) {
+      console.warn('❌ Users endpoint failed, trying alternative:', userEndpointError.response?.data?.message);
     }
-  };
+    
+    // ✅ TRY APPROACH 2: Use direct photos endpoint
+    try {
+      const response = await api.get(`/photos/event/${eventId}`);
+      console.log(`✅ Photos fetched via photos endpoint:`, response.data?.length || 0);
+      setEventPhotos(response.data || []);
+      return;
+    } catch (photosEndpointError) {
+      console.warn('❌ Photos endpoint failed, trying event details:', photosEndpointError.response?.data?.message);
+    }
+    
+    // ✅ TRY APPROACH 3: Get photos from event details
+    try {
+      const response = await api.get(`/api/events/${eventId}`);
+      const eventData = response.data;
+      
+      if (eventData.photos && eventData.photos.length > 0) {
+        // If event has populated photos
+        if (typeof eventData.photos[0] === 'object') {
+          console.log(`✅ Photos found in event details (populated):`, eventData.photos.length);
+          setEventPhotos(eventData.photos);
+        } else {
+          // If photos are just IDs, fetch them
+          console.log(`📸 Found photo IDs in event, fetching details:`, eventData.photos.length);
+          const photoPromises = eventData.photos.map(photoId => 
+            api.get(`/photos/${photoId}`).catch(err => {
+              console.warn(`❌ Failed to fetch photo ${photoId}:`, err.response?.data?.message);
+              return null;
+            })
+          );
+          
+          const photoResponses = await Promise.all(photoPromises);
+          const validPhotos = photoResponses
+            .filter(response => response !== null)
+            .map(response => response.data);
+          
+          console.log(`✅ Fetched individual photos:`, validPhotos.length);
+          setEventPhotos(validPhotos);
+        }
+        return;
+      }
+    } catch (eventDetailsError) {
+      console.warn('❌ Event details approach failed:', eventDetailsError.response?.data?.message);
+    }
+    
+    // ✅ TRY APPROACH 4: Search all photos for this event
+    try {
+      const response = await api.get(`/photos?eventId=${eventId}`);
+      console.log(`✅ Photos found via search:`, response.data?.length || 0);
+      setEventPhotos(response.data || []);
+      return;
+    } catch (searchError) {
+      console.warn('❌ Photo search failed:', searchError.response?.data?.message);
+    }
+    
+    // If all approaches fail, set empty array
+    console.log('❌ All photo fetch approaches failed, setting empty array');
+    setEventPhotos([]);
+    
+  } catch (error) {
+    console.error('❌ Error in fetchEventPhotos:', error);
+    setEventPhotos([]);
+  } finally {
+    setPhotosLoading(false);
+  }
+};
 
   // PHASE 4: Refresh on focus (instead of polling)
   useFocusEffect(

@@ -88,33 +88,92 @@ export default function CreatePostScreen({ navigation }) {
   };
 
   const handlePost = async () => {
-    if (!selectedImage) {
-      Alert.alert('No Photo', 'Please select a photo to share.');
-      return;
-    }
+  if (!selectedImage) {
+    Alert.alert('No Photo', 'Please select a photo to share.');
+    return;
+  }
 
+  if (!selectedEventId) {
+    Alert.alert('No Event', 'Please select an event for this photo.');
+    return;
+  }
+
+  try {
     setPublishing(true);
-    try {
-      const fd = new FormData();
-      fd.append('photos', { 
-        uri: selectedImage.uri, 
-        type: 'image/jpeg', 
-        name: 'photo.jpg' 
-      });
-      fd.append('caption', caption);
 
-      let url = '/photos/upload';
-      if (selectedEventId) url = `/photos/upload/${selectedEventId}`;
-
-      await api.post(url, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      navigation.replace('PostPublished', { imageUri: selectedImage.uri });
-    } catch (err) {
-      console.error(err.response?.data || err);
-      Alert.alert('Error', 'Failed to share your post. Please try again.');
-    } finally {
-      setPublishing(false);
+    const formData = new FormData();
+    formData.append('photo', {
+      uri: selectedImage.uri,
+      type: 'image/jpeg',
+      name: 'photo.jpg',
+    });
+    formData.append('eventId', selectedEventId);
+    if (caption.trim()) {
+      formData.append('caption', caption.trim());
     }
-  };
+
+    console.log('📤 Uploading photo to event:', selectedEventId);
+
+    const response = await api.post('/photos/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+
+    console.log('✅ Photo upload successful:', response.data);
+
+    // ✅ FIXED: Try multiple navigation approaches
+    try {
+      // First try navigating within the current stack
+      navigation.replace('PostPublished', {
+        photoId: response.data._id,
+        eventId: selectedEventId,
+        imageUri: selectedImage.uri,
+      });
+    } catch (navError) {
+      console.warn('❌ Stack navigation failed, trying root navigation:', navError);
+      
+      // If that fails, try navigating to the root stack
+      try {
+        navigation.navigate('PostPublishedScreen', {
+          photoId: response.data._id,
+          eventId: selectedEventId,
+          imageUri: selectedImage.uri,
+        });
+      } catch (rootNavError) {
+        console.warn('❌ Root navigation failed, going back with success:', rootNavError);
+        
+        // If all navigation fails, just go back and show success
+        Alert.alert(
+          'Success!',
+          'Your photo has been shared successfully!',
+          [
+            {
+              text: 'OK',
+              onPress: () => navigation.goBack()
+            }
+          ]
+        );
+      }
+    }
+
+  } catch (error) {
+    console.error('❌ Post creation error:', error);
+    
+    // Better error handling
+    let errorMessage = 'Failed to share photo. Please try again.';
+    
+    if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+    
+    Alert.alert('Error', errorMessage);
+  } finally {
+    setPublishing(false);
+  }
+};
 
   const selectEvent = (event) => {
     setSelectedEventId(selectedEventId === event._id ? '' : event._id);

@@ -48,7 +48,6 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
     }
 
     const isHost = String(event.host._id) === String(req.user._id);
-    // ✅ FIXED: Proper ObjectId comparison for attendees
     const isAttendee = event.attendees.some(id => String(id) === String(req.user._id));
     
     console.log(`🔍 Permission check - isHost: ${isHost}, isAttendee: ${isAttendee}`);
@@ -58,14 +57,8 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
       return res.status(403).json({ message: 'Only attendees may upload' });
     }
 
-    /* host might block uploads until the event starts */
-    if (!event.allowUploadsBeforeStart && !isHost) {
-      const eventHasStarted = new Date(event.time) <= new Date();
-      if (!eventHasStarted) {
-        console.log('❌ Uploads blocked - event has not started yet');
-        return res.status(403).json({ message: 'Uploads open once the event begins' });
-      }
-    }
+    // ✅ Allow uploads at any time (before, during, and after events)
+    console.log('✅ Upload timing: Always allowed - no time restrictions');
 
     if (req.files.length === 0) {
       return res.status(400).json({ message: 'No photos uploaded' });
@@ -78,14 +71,20 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
     for (const file of req.files) {
       const p = new Photo({
         user: req.user._id,
-        event: eventId,
+        event: eventId,           // ✅ MAIN: Save with 'event' field
+        taggedEvent: eventId,     // ✅ ALSO: Save with 'taggedEvent' field for compatibility
         paths: [`/uploads/photos/${file.filename}`],
         visibleInEvent: true,
       });
       await p.save();
 
       /* do NOT re‑add a photo the host previously removed */
-      if (!event.removedPhotos.includes(p._id)) {
+      // ✅ FIXED: Check if removedPhotos array exists before using includes()
+      if (!event.removedPhotos || !event.removedPhotos.includes(p._id)) {
+        // ✅ FIXED: Ensure photos array exists before pushing
+        if (!event.photos) {
+          event.photos = [];
+        }
         event.photos.push(p._id);
       }
       savedPhotos.push(p);
@@ -99,45 +98,89 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
     );
 
     console.log(`✅ Successfully uploaded ${savedPhotos.length} photos to event`);
-    res.status(201).json(savedPhotos);
+    
+    // ✅ ENHANCED: Return more detailed response
+    res.status(201).json({
+      success: true,
+      photos: savedPhotos,
+      message: `Successfully uploaded ${savedPhotos.length} photo(s)`,
+      eventId: eventId
+    });
   } catch (error) {
     console.error('❌ Photo upload error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-router.post('/upload', protect, upload.array('photos'), async (req, res) => {
-  console.log("uploading photo")
+router.post('/upload', protect, upload.single('photo'), async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ message: 'No user found in request' });
-    }
-    console.log('req.user is', req.user);
+    const { eventId, caption } = req.body;
     
-    if (req.files.length === 0) {
-      return res.status(400).json({ message: 'No photos uploaded' });
+    if (!eventId) {
+      return res.status(400).json({ message: 'Event ID is required' });
     }
-    const paths = req.files.map(file => `/uploads/photos/${file.filename}`);
 
+    if (!req.file) {
+      return res.status(400).json({ message: 'No photo uploaded' });
+    }
+
+    const event = await Event.findById(eventId).populate('host');
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+
+    console.log(`📸 Single photo upload - User: ${req.user._id}, Event: ${event.title}`);
+
+    // Permission checks
+    if (!event.allowPhotos) {
+      console.log('❌ Photo uploads disabled for this event');
+      return res.status(403).json({ message: 'Photo uploads are disabled' });
+    }
+
+    const isHost = String(event.host._id) === String(req.user._id);
+    const isAttendee = event.attendees.some(id => String(id) === String(req.user._id));
+    
+    if (!isHost && !isAttendee) {
+      console.log('❌ User not authorized - not host or attendee');
+      return res.status(403).json({ message: 'Only attendees may upload' });
+    }
+
+    // Create photo document
     const photo = new Photo({
       user: req.user._id,
-      paths: paths,
-      visibleInEvent: false, 
+      event: eventId,           // ✅ MAIN: Save with 'event' field
+      taggedEvent: eventId,     // ✅ ALSO: Save with 'taggedEvent' field for compatibility
+      paths: [`/uploads/photos/${req.file.filename}`],
+      visibleInEvent: true,
+      caption: caption || ''
     });
-
     await photo.save();
 
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found in DB' });
+    // Add to event's photos array
+    if (!event.removedPhotos || !event.removedPhotos.includes(photo._id)) {
+      if (!event.photos) {
+        event.photos = [];
+      }
+      event.photos.push(photo._id);
     }
+    await event.save();
 
-    user.photos.push(photo._id);
-    await user.save();
+    // Add to user's photos
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { $addToSet: { photos: photo._id } }
+    );
 
-    res.status(201).json(photo);
+    console.log(`✅ Successfully uploaded single photo to event ${eventId}`);
+    
+    res.status(201).json({
+      success: true,
+      photo: photo,
+      _id: photo._id,
+      message: 'Photo uploaded successfully',
+      eventId: eventId
+    });
+
   } catch (error) {
-    console.error('Server catch error:', error);
+    console.error('❌ Single photo upload error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

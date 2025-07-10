@@ -1,4 +1,4 @@
-// screens/EditEventScreen.js - Updated with Co-host management functionality
+// screens/EditEventScreen.js - Updated with Co-host management functionality + Photo Toggle
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
@@ -87,6 +87,13 @@ export default function EditEventScreen() {
     showAttendeesToPublic: true
   });
 
+  // ADDED: Photo sharing toggle
+  const [allowPhotos, setAllowPhotos] = useState(true);
+
+  // ADDED: Missing pricing fields that might be causing the issue
+  const [isPaidEvent, setIsPaidEvent] = useState(false);
+  const [refundPolicy, setRefundPolicy] = useState('no-refund');
+
   // Co-hosts management
   const [coHosts, setCoHosts] = useState([]);
   const [showCoHostModal, setShowCoHostModal] = useState(false);
@@ -143,6 +150,13 @@ export default function EditEventScreen() {
       const response = await api.get(`/api/events/${eventId}`);
       const event = response.data;
 
+      console.log('📥 Loading event data:', {
+        title: event.title,
+        pricing: event.pricing,
+        price: event.price,
+        isPaidEvent: event.isPaidEvent
+      });
+
       setTitle(event.title || '');
       setDescription(event.description || '');
       setDateTime(new Date(event.time));
@@ -150,16 +164,60 @@ export default function EditEventScreen() {
       setLocQuery(event.location || '');
       setCategory(event.category || 'General');
       setMaxAttendees(String(event.maxAttendees || 50));
-      setPrice(String(event.price || 0));
       setTags(event.tags?.join(', ') || '');
       setPrivacyLevel(event.privacyLevel || 'public');
       setPermissions(event.permissions || permissions);
       setCoHosts(event.coHosts || []);
       setOriginalCoverImage(event.coverImage);
       
+      // ADDED: Set photo sharing toggle from event data
+      setAllowPhotos(event.allowPhotos !== false); // Default to true if not set
+      
+      // FIXED: Properly handle pricing data from both old and new formats
+      if (event.pricing) {
+        // New pricing structure
+        setPrice(String((event.pricing.amount || 0) / 100)); // Convert cents to dollars
+        setIsPaidEvent(!event.pricing.isFree);
+        
+        // FIXED: Map legacy refund policy values to correct enum values
+        let mappedRefundPolicy = event.pricing.refundPolicy || 'no-refund';
+        
+        // Map legacy values to correct enum values
+        const policyMapping = {
+          'No refunds': 'no-refund',
+          'No Refunds': 'no-refund',
+          'Partial refunds': 'partial-refund',
+          'Partial Refunds': 'partial-refund',
+          'Full refunds': 'full-refund',
+          'Full Refunds': 'full-refund',
+          'Full refund': 'full-refund',
+          'Custom': 'custom',
+          'custom': 'custom',
+          // Enum values (should already be correct)
+          'no-refund': 'no-refund',
+          'partial-refund': 'partial-refund',
+          'full-refund': 'full-refund'
+        };
+        
+        mappedRefundPolicy = policyMapping[mappedRefundPolicy] || 'no-refund';
+        setRefundPolicy(mappedRefundPolicy);
+        
+        console.log('📝 Mapped refund policy:', {
+          original: event.pricing.refundPolicy,
+          mapped: mappedRefundPolicy
+        });
+      } else {
+        // Legacy pricing structure
+        setPrice(String(event.price || 0));
+        setIsPaidEvent((event.price || 0) > 0);
+        setRefundPolicy('no-refund'); // Default for legacy events
+      }
+      
       if (event.coordinates) {
         setCoords(event.coordinates);
       }
+
+      console.log('✅ Event data loaded successfully');
 
     } catch (error) {
       console.error('Error fetching event:', error);
@@ -173,7 +231,7 @@ export default function EditEventScreen() {
   // Search for potential co-hosts
   const searchCoHosts = async (query) => {
   if (query.length < 2) {
-    setCoHostResults([]);
+    setCoHostSearchResults([]);
     return;
   }
 
@@ -200,10 +258,10 @@ export default function EditEventScreen() {
     );
     
     console.log('✅ EditEvent cohost search results:', filtered);
-    setCoHostResults(filtered);
+    setCoHostSearchResults(filtered);
   } catch (error) {
     console.error('Co-host search error:', error);
-    setCoHostResults([]);
+    setCoHostSearchResults([]);
   } finally {
     setSearchingCoHosts(false);
   }
@@ -231,57 +289,130 @@ export default function EditEventScreen() {
   }, [coHostSearchQuery]);
 
   const handleSaveEvent = async () => {
-    if (!title.trim() || !location.trim()) {
-      Alert.alert('Error', 'Please fill in all required fields');
+    // Enhanced validation with debugging
+    console.log('🔍 Saving event with values:', {
+      title: `"${title}"`,
+      titleLength: title.length,
+      titleTrimmed: `"${title.trim()}"`,
+      location: `"${location}"`,
+      locationTrimmed: `"${location.trim()}"`
+    });
+
+    if (!title || !title.trim()) {
+      console.error('❌ Title validation failed:', { title, trimmed: title.trim() });
+      Alert.alert('Error', 'Event title is required');
+      return;
+    }
+
+    if (!location || !location.trim()) {
+      console.error('❌ Location validation failed:', { location, trimmed: location.trim() });
+      Alert.alert('Error', 'Event location is required');
       return;
     }
 
     try {
       setSaving(true);
+      console.log('🔄 Preparing event update data...');
 
-      const formData = new FormData();
-      
-      // Basic fields
-      formData.append('title', title.trim());
-      formData.append('description', description.trim());
-      formData.append('time', dateTime.toISOString());
-      formData.append('location', location.trim());
-      formData.append('category', category);
-      formData.append('maxAttendees', parseInt(maxAttendees) || 0);
-      formData.append('price', parseFloat(price) || 0);
-      formData.append('privacyLevel', privacyLevel);
-      
-      // Co-hosts
-      formData.append('coHosts', JSON.stringify(coHosts.map(coHost => coHost._id)));
-      
-      // Permissions
-      formData.append('permissions', JSON.stringify(permissions));
-      
-      // Tags
-      if (tags.trim()) {
+      // Prepare the update data
+      const priceInCents = Math.round(parseFloat(price || 0) * 100);
+      const updateData = {
+        title: title.trim(),
+        description: description.trim(),
+        time: dateTime.toISOString(),
+        location: location.trim(),
+        category: category,
+        maxAttendees: parseInt(maxAttendees) || 0,
+        privacyLevel: privacyLevel,
+        allowPhotos: allowPhotos,
+        coHosts: coHosts.map(coHost => coHost._id),
+        permissions: {
+          appearInFeed: permissions.appearInFeed,
+          appearInSearch: permissions.appearInSearch,
+          canJoin: permissions.canJoin || 'anyone',
+          canShare: permissions.canShare || 'attendees',
+          canInvite: permissions.canInvite || 'attendees',
+          showAttendeesToPublic: permissions.showAttendeesToPublic
+        },
+        // FIXED: Include proper pricing structure
+        pricing: {
+          isFree: priceInCents === 0,
+          amount: priceInCents,
+          currency: 'USD',
+          refundPolicy: refundPolicy
+        },
+        // Legacy price field for backward compatibility
+        price: parseFloat(price || 0),
+        // ADDED: Individual pricing fields that backend might expect
+        isPaidEvent: priceInCents > 0,
+        eventPrice: parseFloat(price || 0),
+        refundPolicy: refundPolicy // Also send as individual field
+      };
+
+      // Add tags if provided
+      if (tags && tags.trim()) {
         const tagArray = tags.split(',').map(tag => tag.trim()).filter(Boolean);
-        formData.append('tags', JSON.stringify(tagArray));
+        updateData.tags = tagArray;
       }
-      
-      // Coordinates if available
+
+      // Add coordinates if available
       if (coords) {
-        formData.append('coordinates', JSON.stringify(coords));
+        updateData.coordinates = coords;
       }
-      
-      // Cover image if changed
+
+      console.log('📝 Update data prepared:', {
+        ...updateData,
+        coHosts: updateData.coHosts.length + ' co-hosts',
+        pricingDebug: {
+          refundPolicy: updateData.refundPolicy,
+          pricingRefundPolicy: updateData.pricing.refundPolicy,
+          priceInCents: priceInCents,
+          isFree: priceInCents === 0
+        }
+      });
+
+      // Handle cover image separately if it was changed
       if (cover) {
+        console.log('🖼️ New cover image detected, using FormData approach');
+        
+        const formData = new FormData();
+        
+        // Add all the regular fields
+        Object.keys(updateData).forEach(key => {
+          if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates' || key === 'pricing') {
+            formData.append(key, JSON.stringify(updateData[key]));
+          } else {
+            formData.append(key, updateData[key].toString());
+          }
+        });
+        
+        // Add the cover image
         formData.append('coverImage', {
           uri: cover,
           type: 'image/jpeg',
           name: 'cover.jpg',
         });
-      }
 
-      await api.put(`/api/events/${eventId}`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+        console.log('🚀 Sending update with new cover image');
+        const response = await api.put(`/api/events/${eventId}`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+        
+        console.log('✅ Event update with image successful:', response.data);
+      } else {
+        console.log('📄 No new cover image, using JSON approach');
+        console.log('🚀 Sending JSON update request to /api/events/' + eventId);
+        
+        const response = await api.put(`/api/events/${eventId}`, updateData, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        console.log('✅ Event update successful:', response.data);
+      }
 
       Alert.alert(
         'Success!',
@@ -295,7 +426,16 @@ export default function EditEventScreen() {
       );
 
     } catch (error) {
-      console.error('Event update error:', error);
+      console.error('❌ Event update error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      console.error('❌ Error status:', error.response?.status);
+      console.error('❌ Error config:', error.config);
+      
+      // Log the actual data that was sent
+      if (error.config?.data) {
+        console.error('❌ Data sent to server:', error.config.data);
+      }
+      
       Alert.alert(
         'Error',
         error.response?.data?.message || 'Failed to update event. Please try again.'
@@ -534,6 +674,61 @@ export default function EditEventScreen() {
             </View>
           </View>
 
+          {/* ADDED: Photo Sharing Settings */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Photo Sharing</Text>
+            <Text style={styles.sectionDescription}>
+              Allow attendees to share photos and create memories from your event
+            </Text>
+
+            <View style={styles.photoToggleContainer}>
+              <View style={styles.photoToggleRow}>
+                <View style={styles.photoToggleContent}>
+                  <View style={styles.photoToggleIcon}>
+                    <Ionicons 
+                      name={allowPhotos ? "camera" : "camera-outline"} 
+                      size={24} 
+                      color={allowPhotos ? "#3797EF" : "#8E8E93"} 
+                    />
+                  </View>
+                  <View style={styles.photoToggleText}>
+                    <Text style={styles.photoToggleLabel}>Enable Photo Sharing</Text>
+                    <Text style={styles.photoToggleDesc}>
+                      {allowPhotos 
+                        ? 'Attendees can post photos and create shared memories'
+                        : 'Photo sharing is disabled for this event'
+                      }
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={allowPhotos}
+                  onValueChange={setAllowPhotos}
+                  trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              {/* Photo sharing benefits */}
+              {allowPhotos && (
+                <View style={styles.photoBenefitsContainer}>
+                  <View style={styles.photoBenefit}>
+                    <Ionicons name="people" size={16} color="#34C759" />
+                    <Text style={styles.photoBenefitText}>Build community through shared memories</Text>
+                  </View>
+                  <View style={styles.photoBenefit}>
+                    <Ionicons name="heart" size={16} color="#34C759" />
+                    <Text style={styles.photoBenefitText}>Increase engagement and event satisfaction</Text>
+                  </View>
+                  <View style={styles.photoBenefit}>
+                    <Ionicons name="time" size={16} color="#34C759" />
+                    <Text style={styles.photoBenefitText}>Create lasting memories after the event</Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+
           {/* Co-hosts Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Co-hosts</Text>
@@ -629,7 +824,10 @@ export default function EditEventScreen() {
 
           {/* Privacy Settings */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Privacy & Permissions</Text>
+            <Text style={styles.sectionTitle}>Privacy Level</Text>
+            <Text style={styles.sectionDescription}>
+              Controls who can see and join your event
+            </Text>
 
             <TouchableOpacity
               style={styles.privacyButton}
@@ -652,45 +850,6 @@ export default function EditEventScreen() {
                 <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
               </View>
             </TouchableOpacity>
-
-            {/* Permission Toggles */}
-            <View style={styles.permissionsList}>
-              <View style={styles.permissionItem}>
-                <Text style={styles.permissionLabel}>Show in Feed</Text>
-                <Switch
-                  value={permissions.appearInFeed}
-                  onValueChange={(value) => 
-                    setPermissions(prev => ({ ...prev, appearInFeed: value }))
-                  }
-                  trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-
-              <View style={styles.permissionItem}>
-                <Text style={styles.permissionLabel}>Show in Search</Text>
-                <Switch
-                  value={permissions.appearInSearch}
-                  onValueChange={(value) => 
-                    setPermissions(prev => ({ ...prev, appearInSearch: value }))
-                  }
-                  trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-
-              <View style={styles.permissionItem}>
-                <Text style={styles.permissionLabel}>Show Attendee List</Text>
-                <Switch
-                  value={permissions.showAttendeesToPublic}
-                  onValueChange={(value) => 
-                    setPermissions(prev => ({ ...prev, showAttendeesToPublic: value }))
-                  }
-                  trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1033,6 +1192,62 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
+  // ADDED: Photo Toggle Styles (same as CreateEventScreen)
+  photoToggleContainer: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 16,
+  },
+  photoToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  photoToggleContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  photoToggleIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  photoToggleText: {
+    flex: 1,
+  },
+  photoToggleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  photoToggleDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  photoBenefitsContainer: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+  },
+  photoBenefit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  photoBenefitText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#34C759',
+    flex: 1,
+  },
+
   // Co-hosts
   coHostsList: {
     marginBottom: 16,
@@ -1135,11 +1350,6 @@ const styles = StyleSheet.create({
   },
 
   // Permissions
-  permissionsList: {
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    padding: 4,
-  },
   permissionItem: {
     flexDirection: 'row',
     alignItems: 'center',
