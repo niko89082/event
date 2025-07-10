@@ -1,4 +1,4 @@
-// SocialApp/screens/FeedScreen.js - MODERN: BeReal-style transparent header
+// SocialApp/screens/FeedScreen.js - PROPER STYLING + VISIBLE TEXT + SCROLL ANIMATION
 import React, { useLayoutEffect, useState, useRef, useCallback, useEffect } from 'react';
 import { 
   View, 
@@ -16,7 +16,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import PostsFeed from '../components/PostsFeed';
 import EventsHub from '../components/EventsHub';
-import { useModernAnimatedHeader } from '../hooks/useModernAnimatedHeader';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TABS = ['Posts', 'Events'];
@@ -26,6 +25,11 @@ const ANIMATION_DURATION = 250;
 const TAB_WIDTH = SCREEN_WIDTH / 2;
 const INDICATOR_WIDTH = 60;
 const INDICATOR_OFFSET = (TAB_WIDTH - INDICATOR_WIDTH) / 2;
+
+// ANIMATION CONSTANTS
+const TAB_BAR_HEIGHT = 44;
+const SCROLL_THRESHOLD = 50;
+const SHOW_THRESHOLD = 30;
 
 export default function FeedScreen({ navigation }) {
   const [activeTabIndex, setActiveTabIndex] = useState(0);
@@ -41,8 +45,13 @@ export default function FeedScreen({ navigation }) {
   const scrollX = useRef(new Animated.Value(0)).current;
   const tabIndicatorPosition = useRef(new Animated.Value(INDICATOR_OFFSET)).current;
 
-  // Modern animated header hook - only animates tab bar
-  const { handleScroll, resetTabBar, getTabBarStyle, getSubTabStyle } = useModernAnimatedHeader();
+  // RESTORED: Animation values for scroll-based hiding/showing with OPACITY
+  const tabBarTranslateY = useRef(new Animated.Value(0)).current;
+  const tabBarOpacity = useRef(new Animated.Value(1)).current; // NEW: Opacity for complete invisibility
+  const subTabTranslateY = useRef(new Animated.Value(0)).current; // NEW: For sub-tabs
+  const lastScrollY = useRef(0);
+  const scrollDirection = useRef('up');
+  const isTabBarVisible = useRef(true);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -54,6 +63,64 @@ export default function FeedScreen({ navigation }) {
   useEffect(() => {
     currentTabIndex.current = activeTabIndex;
   }, [activeTabIndex]);
+
+  // RESTORED: Original scroll animation logic with opacity
+  const animateTabBars = useCallback((mainTabOpacity, subTabToValue) => {
+    Animated.parallel([
+      Animated.timing(tabBarOpacity, {
+        toValue: mainTabOpacity,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+      Animated.timing(subTabTranslateY, {
+        toValue: subTabToValue,
+        duration: 250,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, [tabBarOpacity, subTabTranslateY]);
+
+  const handleScroll = useCallback((event) => {
+    const currentScrollY = event.nativeEvent.contentOffset.y;
+    const scrollDelta = currentScrollY - lastScrollY.current;
+
+    // Determine scroll direction
+    if (scrollDelta > 5) {
+      scrollDirection.current = 'down';
+    } else if (scrollDelta < -5) {
+      scrollDirection.current = 'up';
+    }
+
+    // Handle tab bar visibility logic - ORIGINAL PERFECT ALIGNMENT
+    if (currentScrollY <= 0) {
+      // At the top - show main tabs, hide sub-tabs in original position
+      if (!isTabBarVisible.current) {
+        isTabBarVisible.current = true;
+        animateTabBars(1, 0); // Main tabs: visible, Sub tabs: original position
+      }
+    } else if (scrollDirection.current === 'down' && currentScrollY > SCROLL_THRESHOLD) {
+      // Scrolling down - COMPLETELY HIDE main tabs, move sub-tabs up to replace them
+      if (isTabBarVisible.current) {
+        isTabBarVisible.current = false;
+        animateTabBars(0, -44); // Main tabs: INVISIBLE, Sub tabs: move up 44px (ORIGINAL LOGIC)
+      }
+    } else if (scrollDirection.current === 'up' && Math.abs(scrollDelta) > SHOW_THRESHOLD) {
+      // Scrolling up - show main tabs, move sub-tabs back to original position
+      if (!isTabBarVisible.current) {
+        isTabBarVisible.current = true;
+        animateTabBars(1, 0); // Main tabs: visible, Sub tabs: original position
+      }
+    }
+
+    lastScrollY.current = currentScrollY;
+  }, [animateTabBars]);
+
+  const resetTabBar = useCallback(() => {
+    // Reset to visible state (for tab switches, refreshes, etc.)
+    isTabBarVisible.current = true;
+    lastScrollY.current = 0;
+    animateTabBars(1, 0); // Main tabs: visible, Sub tabs: original position
+  }, [animateTabBars]);
 
   // Tab switching with proper state management
   const switchToTab = useCallback((index) => {
@@ -200,6 +267,19 @@ export default function FeedScreen({ navigation }) {
     }
   };
 
+  const getSubTabStyle = useCallback(() => {
+    // For EventsHub sub-tabs - they move up MORE to take main tab position when main tabs hide
+    return {
+      transform: [{ 
+        translateY: tabBarTranslateY.interpolate({
+          inputRange: [-150, 0], // Match the new main tab hiding distance
+          outputRange: [-100, 0], // Move sub-tabs up to where main tabs used to be
+          extrapolate: 'clamp'
+        })
+      }]
+    };
+  }, [tabBarTranslateY]);
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
@@ -229,8 +309,13 @@ export default function FeedScreen({ navigation }) {
         </SafeAreaView>
       </View>
 
-      {/* PHASE 3: Animated Tab Bar - Transparent, Hides on Scroll */}
-      <Animated.View style={[styles.animatedTabBarContainer, getTabBarStyle()]}>
+      {/* PHASE 3: Main Tabs - OPACITY BASED HIDING (stay in place, just become invisible) */}
+      <Animated.View style={[
+        styles.animatedTabBarContainer, 
+        { 
+          opacity: tabBarOpacity, // INVISIBLE when scrolling down, visible when scrolling up
+        }
+      ]}>
         <View style={styles.transparentTabBar}>
           {TABS.map((tab, index) => (
             <TouchableOpacity
@@ -283,6 +368,7 @@ export default function FeedScreen({ navigation }) {
               onScroll={handleScroll}
               scrollEventThrottle={16}
               getSubTabStyle={getSubTabStyle} // Pass sub-tab animation style
+              subTabTranslateY={subTabTranslateY} // PASS the actual animated value
             />
           </View>
         </Animated.View>
@@ -297,7 +383,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   
-  // PHASE 1: Fixed Transparent Header Styles with Liquid Glass
+  // PHASE 1: Fixed Transparent Header Styles with UNIFIED BLUR
   fixedHeaderContainer: {
     position: 'absolute',
     top: 0,
@@ -305,16 +391,12 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 1000,
     backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.75)' // More transparent for liquid glass
-      : 'rgba(255, 255, 255, 0.85)',
+      ? 'rgba(255, 255, 255, 0.7)' // UNIFIED transparency
+      : 'rgba(255, 255, 255, 0.8)',
     ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(25px) saturate(180%) contrast(120%)', // Liquid glass effect
+      backdropFilter: 'blur(20px) saturate(150%) contrast(110%)', // UNIFIED blur effect
     }),
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
+    // REMOVED: Individual shadows - will blend seamlessly
   },
   
   safeAreaHeader: {
@@ -353,7 +435,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  // PHASE 3: Animated Tab Bar Styles with Liquid Glass
+  // PHASE 3: Animated Tab Bar Styles - UNIFIED BLUR with header
   animatedTabBarContainer: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 100 : 90, // Position below fixed header
@@ -361,16 +443,12 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 999,
     backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.75)' // More transparent for liquid glass
-      : 'rgba(255, 255, 255, 0.85)',
+      ? 'rgba(255, 255, 255, 0.7)' // EXACT SAME as header
+      : 'rgba(255, 255, 255, 0.8)',
     ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(25px) saturate(180%) contrast(120%)', // Liquid glass effect
+      backdropFilter: 'blur(20px) saturate(150%) contrast(110%)', // EXACT SAME as header
     }),
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
+    // REMOVED: Individual shadows and borders - seamless blend
   },
 
   transparentTabBar: {
@@ -381,27 +459,37 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     position: 'relative',
     height: 44, // Fixed height
-    gap: 40, // Add space between tabs when centered
+    gap: 20, // REDUCED from 40 - tabs closer together
   },
 
   tabButton: {
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 20, // Add horizontal padding for better touch target
+    paddingHorizontal: 20,
+    minHeight: 32, // Ensure proper text rendering space
+    minWidth: 60,
   },
 
   tabButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: '#6B9EF5', // LIGHT BLUE for inactive tabs
+    textAlign: 'center',
+    lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
 
   activeTabButtonText: {
-    color: '#3797EF', // BLUE THEME
-    fontWeight: '800', // BOLD instead of underline
+    color: '#3797EF', // BLUE THEME for active
+    fontWeight: '800', // BOLD for active state
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
-
-  // REMOVED: tabIndicator - no more blue underline
 
   // PHASE 2: Content Layout - Starts from top, flows naturally
   contentContainer: {
@@ -418,5 +506,5 @@ const styles = StyleSheet.create({
   tabContentWrapper: {
     backgroundColor: 'transparent', // TRANSPARENT!
     flex: 1,
-  },
+  }, 
 });

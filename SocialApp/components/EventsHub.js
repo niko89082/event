@@ -1,4 +1,4 @@
-// SocialApp/components/EventsHub.js - FIXED: Added Animated import and liquid glass blur
+// SocialApp/components/EventsHub.js - FIXED SYNTAX + ANIMATION + HORIZONTAL SCROLL
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
@@ -10,16 +10,20 @@ import {
   Alert,
   Platform,
   Animated,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
 import EventsFeed from './EventsFeed';
 
-// Following and For You tabs
+// Following and For You tabs (can add more in the future)
 const EVENTS_TABS = [
   { key: 'following', label: 'Following', icon: 'people-outline' },
   { key: 'for-you', label: 'For You', icon: 'star-outline' },
+  // ADD MORE TABS HERE IN THE FUTURE:
+  // { key: 'nearby', label: 'Nearby', icon: 'location-outline' },
+  // { key: 'trending', label: 'Trending', icon: 'trending-up-outline' },
 ];
 
 const EventsHub = forwardRef(({ 
@@ -29,6 +33,7 @@ const EventsHub = forwardRef(({
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
   getSubTabStyle, // Receive sub-tab animation style from parent
+  subTabTranslateY, // RECEIVE the actual animated value
 }, ref) => {
   const { currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('following');
@@ -151,13 +156,23 @@ const EventsHub = forwardRef(({
 
   return (
     <View style={styles.container}>
-      {/* ENHANCED: Animated sub-tabs that move up to take main tab position */}
-      <Animated.View style={[styles.transparentSubTabsContainer, getSubTabStyle && getSubTabStyle()]}>
-        <View style={styles.subTabBar}>
-          {EVENTS_TABS.map(tab => 
-            renderTabButton(tab.key, tab.label, tab.icon)
-          )}
-        </View>
+      {/* FIXED: Sub-tabs with DIRECT animation value */}
+      <Animated.View style={[
+        styles.unifiedSubTabsContainer, 
+        { transform: [{ translateY: subTabTranslateY || 0 }] } // USE the direct animated value
+      ]}>
+        <ScrollView 
+          horizontal={true}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.subTabScrollContent}
+          style={styles.subTabScrollView}
+        >
+          <View style={styles.subTabBar}>
+            {EVENTS_TABS.map(tab => 
+              renderTabButton(tab.key, tab.label, tab.icon)
+            )}
+          </View>
+        </ScrollView>
       </Animated.View>
       
       {/* Content area - flows naturally */}
@@ -174,34 +189,38 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent', // TRANSPARENT!
   },
   
-  // FIXED: Transparent sticky sub-tabs
-  transparentSubTabsContainer: {
+  // UNIFIED: Sub-tabs with EXACT SAME styling as header and main tabs
+  unifiedSubTabsContainer: {
     position: 'absolute',
     top: 144, // Position below main tabs (safe area + fixed header + main tabs)
     left: 0,
     right: 0,
     zIndex: 100,
     backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.75)' // More transparent for liquid glass effect
-      : 'rgba(255, 255, 255, 0.85)',
+      ? 'rgba(255, 255, 255, 0.7)' // EXACT SAME as header and main tabs
+      : 'rgba(255, 255, 255, 0.8)',
     ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(25px) saturate(180%) contrast(120%)', // Liquid glass effect
+      backdropFilter: 'blur(20px) saturate(150%) contrast(110%)', // EXACT SAME as header and main tabs
     }),
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(225, 225, 225, 0.3)', // More subtle
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
+    // REMOVED: All borders, shadows, and separations - seamless blend
+    height: 56, // Fixed height for consistent spacing
+  },
+  
+  // NEW: Horizontal scroll view for sub-tabs
+  subTabScrollView: {
+    flex: 1,
+  },
+  
+  subTabScrollContent: {
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    minWidth: '100%', // Ensure it takes full width when there are few tabs
   },
   
   subTabBar: {
     flexDirection: 'row',
-    justifyContent: 'flex-start',
     alignItems: 'center',
     paddingVertical: 12,
-    paddingHorizontal: 16,
     gap: 12, // Space between oval tabs
   },
   
@@ -216,21 +235,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(55, 151, 239, 0.3)', // BLUE THEME
     minWidth: 80,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    // REMOVED: Individual shadows - unified look
   },
   
   activeTabButton: {
     backgroundColor: '#3797EF', // BLUE THEME
     borderColor: '#3797EF',
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
+    // REMOVED: Individual shadows - unified look
   },
   
   tabButtonText: {
@@ -238,11 +249,19 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#3797EF', // BLUE THEME
     marginLeft: 5,
+    textAlign: 'center',
+    lineHeight: 16,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   
   activeTabButtonText: {
     color: '#FFFFFF',
     fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 16,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
 
   // Content container - starts from top, flows under all headers
