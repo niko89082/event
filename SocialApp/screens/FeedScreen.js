@@ -383,20 +383,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   
-  // PHASE 1: Fixed Transparent Header Styles with UNIFIED BLUR
+  // PHASE 1: Fixed Header - COMPLETELY TRANSPARENT
   fixedHeaderContainer: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 1000,
-    backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.7)' // UNIFIED transparency
-      : 'rgba(255, 255, 255, 0.8)',
-    ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(20px) saturate(150%) contrast(110%)', // UNIFIED blur effect
-    }),
-    // REMOVED: Individual shadows - will blend seamlessly
+    backgroundColor: 'transparent', // COMPLETELY TRANSPARENT
+    // REMOVED: All blur and glass effects from header
   },
   
   safeAreaHeader: {
@@ -423,32 +418,36 @@ const styles = StyleSheet.create({
   headerButton: {
     padding: 8,
     borderRadius: 20,
-    backgroundColor: 'rgba(55, 151, 239, 0.1)', // BLUE THEME
+    // LIQUID GLASS: Enhanced glassmorphism for buttons
+    backgroundColor: Platform.OS === 'ios' 
+      ? 'rgba(255, 255, 255, 0.25)' 
+      : 'rgba(255, 255, 255, 0.3)',
+    ...(Platform.OS === 'ios' && {
+      backdropFilter: 'blur(20px) saturate(180%)',
+    }),
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
     width: 40,
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    // LIQUID GLASS: Subtle inner shadow
+    shadowColor: 'rgba(31, 38, 135, 0.37)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 4,
   },
 
-  // PHASE 3: Animated Tab Bar Styles - UNIFIED BLUR with header
+  // PHASE 3: Posts/Events Tab - COMPLETELY TRANSPARENT
   animatedTabBarContainer: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 100 : 90, // Position below fixed header
     left: 0,
     right: 0,
     zIndex: 999,
-    backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.7)' // EXACT SAME as header
-      : 'rgba(255, 255, 255, 0.8)',
-    ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(20px) saturate(150%) contrast(110%)', // EXACT SAME as header
-    }),
-    // REMOVED: Individual shadows and borders - seamless blend
+    backgroundColor: 'transparent', // COMPLETELY TRANSPARENT
+    // REMOVED: All blur and glass effects from main tabs
   },
 
   transparentTabBar: {

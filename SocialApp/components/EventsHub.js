@@ -189,20 +189,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent', // TRANSPARENT!
   },
   
-  // UNIFIED: Sub-tabs with EXACT SAME styling as header and main tabs
+  // GLASSMORPHISM: Sub-tabs with frosted glass effect
   unifiedSubTabsContainer: {
     position: 'absolute',
     top: 144, // Position below main tabs (safe area + fixed header + main tabs)
     left: 0,
     right: 0,
     zIndex: 100,
+    // GLASSMORPHISM: Frosted glass effect
     backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.7)' // EXACT SAME as header and main tabs
-      : 'rgba(255, 255, 255, 0.8)',
+      ? 'rgba(255, 255, 255, 0.25)' // More transparent for glass effect
+      : 'rgba(255, 255, 255, 0.3)',
     ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(20px) saturate(150%) contrast(110%)', // EXACT SAME as header and main tabs
+      backdropFilter: 'blur(40px) saturate(200%) contrast(120%)', // Enhanced blur
     }),
-    // REMOVED: All borders, shadows, and separations - seamless blend
+    // GLASSMORPHISM: Subtle border and shadow
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(255, 255, 255, 0.18)',
+    shadowColor: 'rgba(31, 38, 135, 0.37)',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 1,
+    shadowRadius: 32,
+    elevation: 8,
     height: 56, // Fixed height for consistent spacing
   },
   
@@ -231,17 +239,38 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20, // Oval shape
-    backgroundColor: 'rgba(248, 249, 250, 0.8)',
+    // GLASSMORPHISM: Enhanced glass effect for buttons
+    backgroundColor: Platform.OS === 'ios' 
+      ? 'rgba(255, 255, 255, 0.2)' 
+      : 'rgba(255, 255, 255, 0.25)',
+    ...(Platform.OS === 'ios' && {
+      backdropFilter: 'blur(20px) saturate(180%)',
+    }),
     borderWidth: 1,
-    borderColor: 'rgba(55, 151, 239, 0.3)', // BLUE THEME
+    borderColor: 'rgba(55, 151, 239, 0.2)', // Subtle blue border
     minWidth: 80,
-    // REMOVED: Individual shadows - unified look
+    // GLASSMORPHISM: Subtle shadow
+    shadowColor: 'rgba(31, 38, 135, 0.2)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   
   activeTabButton: {
-    backgroundColor: '#3797EF', // BLUE THEME
-    borderColor: '#3797EF',
-    // REMOVED: Individual shadows - unified look
+    backgroundColor: Platform.OS === 'ios' 
+      ? 'rgba(55, 151, 239, 0.8)' // Glass effect even when active
+      : 'rgba(55, 151, 239, 0.9)',
+    ...(Platform.OS === 'ios' && {
+      backdropFilter: 'blur(20px) saturate(180%)',
+    }),
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    // GLASSMORPHISM: Enhanced shadow when active
+    shadowColor: 'rgba(55, 151, 239, 0.4)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   
   tabButtonText: {
