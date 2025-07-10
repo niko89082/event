@@ -1,10 +1,11 @@
-// screens/EventListScreen.js - Updated with improved UI
+// screens/EventListScreen.js - FIXED: Refresh events when returning from EventDetailsScreen
 import React, { useEffect, useState, useContext } from 'react';
 import { 
   View, FlatList, ActivityIndicator, StyleSheet, Button, 
   SafeAreaView, StatusBar, TouchableOpacity, Text, RefreshControl 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import api from '../services/api';
 import EventCard from '../components/EventCard';
 import { AuthContext } from '../services/AuthContext';
@@ -55,9 +56,12 @@ export default function EventListScreen({ navigation }) {
     });
   }, [navigation]);
 
-  useEffect(() => {
-    fetchEvents();
-  }, []);
+  // FIXED: Use useFocusEffect to refresh events when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchEvents();
+    }, [])
+  );
 
   const fetchEvents = async () => {
     try {
@@ -78,31 +82,52 @@ export default function EventListScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  // Called when user taps the card
-  const handlePressEvent = (event) => {
-    navigation.navigate('EventDetailsScreen', { eventId: event._id });
-  };
-
-  // Called when user taps "Attend"
-  const handleAttend = async (event) => {
+  const handleAttendEvent = async (event) => {
     try {
-      const res = await api.post(`/api/events/attend/${event._id}`);
-      console.log('Attending =>', res.data);
-      // Optionally re-fetch events or update local state
-      fetchEvents();
-    } catch (err) {
-      console.error('Error attending event:', err.response?.data || err);
+      const response = await api.post(`/api/events/attend/${event._id}`);
+      
+      // Update local state to reflect attendance change
+      setEvents(prevEvents => 
+        prevEvents.map(e => 
+          e._id === event._id 
+            ? { ...e, attendees: [...(e.attendees || []), currentUserId] }
+            : e
+        )
+      );
+      
+      return response.data;
+    } catch (error) {
+      console.error('Attend event error:', error);
+      throw error;
     }
   };
 
-  const renderEvent = ({ item }) => (
+  const renderEventCard = ({ item }) => (
     <EventCard
       event={item}
       currentUserId={currentUserId}
-      onPressEvent={handlePressEvent}
-      onAttend={handleAttend}
       navigation={navigation}
+      onAttend={handleAttendEvent}
     />
+  );
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyState}>
+      <View style={styles.emptyIconContainer}>
+        <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
+      </View>
+      <Text style={styles.emptyTitle}>No Events Found</Text>
+      <Text style={styles.emptySubtitle}>
+        Check back later for new events or create your own!
+      </Text>
+      <TouchableOpacity 
+        style={styles.createEventButton}
+        onPress={() => navigation.navigate('CreateEventScreen')}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.createEventButtonText}>Create Event</Text>
+      </TouchableOpacity>
+    </View>
   );
 
   if (loading) {
@@ -120,48 +145,22 @@ export default function EventListScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {events.length === 0 ? (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIconContainer}>
-            <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
-          </View>
-          <Text style={styles.emptyTitle}>No Events Yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Discover upcoming events or create your own to get started.
-          </Text>
-          <TouchableOpacity 
-            style={styles.createEventButton}
-            onPress={() => navigation.navigate('CreateEventScreen')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.createEventText}>Create Event</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.content}>
-          <View style={styles.statsHeader}>
-            <Text style={styles.statsText}>
-              {events.length} events available
-            </Text>
-          </View>
-          
-          <FlatList
-            data={events}
-            keyExtractor={(item) => item._id}
-            renderItem={renderEvent}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContainer}
-            refreshControl={
-              <RefreshControl 
-                refreshing={refreshing} 
-                onRefresh={handleRefresh}
-                tintColor="#3797EF"
-                colors={["#3797EF"]}
-              />
-            }
+      <FlatList
+        data={events}
+        renderItem={renderEventCard}
+        keyExtractor={(item) => item._id}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
           />
-        </View>
-      )}
+        }
+        ListEmptyComponent={renderEmptyState}
+        contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.listContent}
+      />
     </SafeAreaView>
   );
 }
@@ -169,18 +168,10 @@ export default function EventListScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
-  headerRightContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerButton: {
-    padding: 8,
-    marginHorizontal: 4,
+    backgroundColor: '#FFFFFF',
   },
   centered: {
-    flex: 1, 
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -189,44 +180,46 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#8E8E93',
   },
-  content: {
+  
+  // Header
+  headerRightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  headerButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+
+  // List
+  listContent: {
+    paddingTop: 16,
+  },
+  emptyContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  statsHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.33,
-    borderBottomColor: '#E1E1E1',
-  },
-  statsText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
-    textAlign: 'center',
-  },
-  listContainer: {
-    paddingTop: 8,
-    paddingBottom: 20,
-  },
+  
+  // Empty State
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 32,
   },
   emptyIconContainer: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#F6F6F6',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
   },
   emptyTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     color: '#000000',
     marginBottom: 8,
@@ -241,16 +234,13 @@ const styles = StyleSheet.create({
   },
   createEventButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 32,
-    paddingVertical: 16,
     borderRadius: 12,
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    minWidth: 160,
+    alignItems: 'center',
   },
-  createEventText: {
+  createEventButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',

@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - Phase 4: Enhanced UI with Photo Upload & Combined Share/Invite
+// screens/EventDetailsScreen.js - Complete file with glassmorphic bottom bar
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -18,6 +18,7 @@ import {
   FlatList,
   Dimensions,
   TextInput,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -25,6 +26,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useStripe } from '@stripe/stripe-react-native';
 import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BlurView } from 'expo-blur';
 
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
@@ -38,6 +40,13 @@ export default function EventDetailsScreen() {
   const { currentUser } = useContext(AuthContext);
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const { eventId } = route.params;
+
+  // Set transparent header with back button only
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    });
+  }, [navigation]);
 
   // State
   const [event, setEvent] = useState(null);
@@ -782,7 +791,7 @@ export default function EventDetailsScreen() {
     }
 
     if (isAttending) {
-      return { text: 'Leave Event', isLeave: true, disabled: false };
+      return { text: 'Going', disabled: false, showWent: true };
     }
 
     if (event.permissions?.canJoin === 'approval-required') {
@@ -791,7 +800,7 @@ export default function EventDetailsScreen() {
 
     if (isPaidEvent() && !hasUserPaid()) {
       return { 
-        text: `${getFormattedPrice()} to Join`, 
+        text: `${getFormattedPrice()}`, 
         disabled: false, 
         isPaid: true 
       };
@@ -800,146 +809,140 @@ export default function EventDetailsScreen() {
     return { text: 'Join Event', disabled: false };
   };
 
-  const renderActionButtons = () => {
-  if (isHost || isCoHost) {
-    return (
-      <View style={styles.actionContainer}>
-        {/* Primary Actions Row */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.primaryAction]}
-            onPress={() => navigation.navigate('EditEventScreen', { eventId })}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#3797EF', '#3797EF']}
-              style={styles.gradientButton}
-            >
-              <Ionicons name="create" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>Edit Event</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+  // ✅ NEW: Glassmorphic Bottom Action Bar
+  const renderBottomActionBar = () => {
+    const joinButtonInfo = getJoinButtonInfo();
 
-          {!isPast && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.primaryAction]}
-              onPress={handleOpenScanner}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['#667eea', '#764ba2']}
-                style={styles.gradientButton}
+    if (isHost || isCoHost) {
+      // Host/Co-host glassmorphic bottom bar
+      return (
+        <View style={styles.bottomBarContainer}>
+          <BlurView 
+            style={styles.bottomBar} 
+            intensity={40} // Reduced from 80 to 40 for less blur
+            tint="light"
+          >
+            <View style={styles.bottomBarContent}>
+              {/* Scan */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={handleOpenScanner}
+                activeOpacity={0.7}
               >
-                <Ionicons name="scan" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryActionText}>Check-ins</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          )}
-        </View>
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="scan" size={24} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Scan</Text>
+                </View>
+              </TouchableOpacity>
 
-        {/* Secondary Actions Row */}
-        <View style={[styles.actionRow, { marginTop: 12 }]}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.photoUploadAction]}
-            onPress={handleUploadPhoto}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#34C759', '#32D74B']}
-              style={styles.gradientButton}
-            >
-              <Ionicons name="camera" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>Add Photos</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+              {/* Invite */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={() => handleShareInvite('invite')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="person-add" size={24} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Invite</Text>
+                </View>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.actionButton, styles.secondaryAction]}
-            onPress={() => handleShareInvite()}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="share" size={18} color="#3797EF" />
-            <Text style={styles.secondaryActionText}>Share & Invite</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+              {/* Add Photos */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={handleUploadPhoto}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="camera" size={24} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Add photos</Text>
+                </View>
+              </TouchableOpacity>
 
-  // For regular users (non-host/co-host)
-  const joinButtonInfo = getJoinButtonInfo();
-  
-  return (
-    <View style={styles.actionContainer}>
-      <View style={styles.actionRow}>
-        {/* Join/Leave Button */}
-        <TouchableOpacity
-          style={[
-            styles.actionButton,
-            styles.primaryAction,
-            joinButtonInfo.isLeave && styles.leaveAction,
-            joinButtonInfo.disabled && styles.disabledAction
-          ]}
-          onPress={joinButtonInfo.isLeave ? handleLeaveEvent : handleJoinRequest}
-          disabled={joinButtonInfo.disabled || requestLoading}
-          activeOpacity={0.8}
-        >
-          {joinButtonInfo.isLeave ? (
-            <View style={styles.leaveActionInner}>
-              <Ionicons name="exit" size={18} color="#FFFFFF" />
-              <Text style={styles.leaveActionText}>{joinButtonInfo.text}</Text>
+              {/* Edit */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={() => navigation.navigate('EditEventScreen', { eventId })}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="create" size={24} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Edit</Text>
+                </View>
+              </TouchableOpacity>
             </View>
-          ) : (
-            <LinearGradient
-              colors={joinButtonInfo.isPaid ? ['#FF6B35', '#FF8E53'] : ['#3797EF', '#3797EF']}
-              style={styles.gradientButton}
-            >
-              {requestLoading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  {joinButtonInfo.isPaid && <Ionicons name="card" size={18} color="#FFFFFF" />}
-                  <Text style={styles.primaryActionText}>{joinButtonInfo.text}</Text>
-                </>
-              )}
-            </LinearGradient>
-          )}
-        </TouchableOpacity>
-
-        {/* Share Button for non-hosts if allowed */}
-        {canShare && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.secondaryAction]}
-            onPress={() => handleShareInvite('share')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="share" size={18} color="#3797EF" />
-            <Text style={styles.secondaryActionText}>Share</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Photo Upload for Attendees */}
-      {isAttending && !isPast && (
-        <View style={[styles.actionRow, { marginTop: 12 }]}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.photoUploadAction]}
-            onPress={handleUploadPhoto}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#34C759', '#32D74B']}
-              style={styles.gradientButton}
-            >
-              <Ionicons name="camera" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>Add Photos</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+          </BlurView>
         </View>
-      )}
-    </View>
-  );
-};
+      );
+    } else {
+      // Regular user glassmorphic bottom bar
+      return (
+        <View style={styles.bottomBarContainer}>
+          <BlurView 
+            style={styles.bottomBar} 
+            intensity={40} // Reduced from 80 to 40 for less blur
+            tint="light"
+          >
+            <View style={styles.bottomBarContent}>
+              {/* Add Photos (if attending) */}
+              {isAttending && !isPast && (
+                <TouchableOpacity
+                  style={styles.bottomBarButton}
+                  onPress={handleUploadPhoto}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.bottomBarButtonInner}>
+                    <Ionicons name="camera" size={24} color="#000000" />
+                    <Text style={styles.bottomBarButtonText}>Add photos</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {/* Main Action Button (Join/Going) */}
+              <TouchableOpacity
+                style={[
+                  styles.bottomBarMainButton,
+                  joinButtonInfo.disabled && styles.bottomBarMainButtonDisabled,
+                  joinButtonInfo.showWent && styles.bottomBarWentButton
+                ]}
+                onPress={joinButtonInfo.showWent ? handleLeaveEvent : handleJoinRequest}
+                disabled={joinButtonInfo.disabled || requestLoading}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarMainButtonInner}>
+                  {requestLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      {joinButtonInfo.isPaid && <Ionicons name="card" size={20} color="#FFFFFF" />}
+                      {joinButtonInfo.showWent && <Ionicons name="checkmark" size={20} color="#FFFFFF" />}
+                      <Text style={styles.bottomBarMainButtonText}>
+                        {joinButtonInfo.text}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              {/* Share (if allowed) */}
+              {canShare && (
+                <TouchableOpacity
+                  style={styles.bottomBarButton}
+                  onPress={() => handleShareInvite('share')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.bottomBarButtonInner}>
+                    <Ionicons name="share" size={24} color="#000000" />
+                    <Text style={styles.bottomBarButtonText}>Share</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+          </BlurView>
+        </View>
+      );
+    }
+  };
 
   const renderPhotoItem = ({ item, index }) => (
     <TouchableOpacity
@@ -1001,6 +1004,7 @@ export default function EventDetailsScreen() {
             tintColor="#3797EF"
           />
         }
+        contentContainerStyle={styles.scrollContent}
       >
         {/* Cover Image Header */}
         <View style={styles.coverContainer}>
@@ -1026,27 +1030,7 @@ export default function EventDetailsScreen() {
             <Ionicons name="chevron-back" size={28} color="#FFFFFF" />
           </TouchableOpacity>
 
-          {/* Share Button */}
-          {canShare && (
-            <TouchableOpacity
-              style={styles.shareButton}
-              onPress={() => handleShareInvite('share')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="share" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
 
-          {/* Edit Button for Host (Top Right) */}
-          {(isHost || isCoHost) && !isPast && (
-            <TouchableOpacity
-              style={styles.editButton}
-              onPress={() => navigation.navigate('EditEventScreen', { eventId })}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="create-outline" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
 
           {/* Privacy Badge */}
           {renderPrivacyBadge()}
@@ -1221,11 +1205,11 @@ export default function EventDetailsScreen() {
               />
             </View>
           )}
-
-          {/* Action Buttons */}
-          {renderActionButtons()}
         </View>
       </ScrollView>
+
+      {/* ✅ NEW: Glassmorphic Bottom Action Bar */}
+      {renderBottomActionBar()}
 
       {/* PayPal WebView Modal */}
       <Modal
@@ -1481,6 +1465,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  scrollContent: {
+    paddingBottom: 100, // Reduced from 120 since bottom bar is now smaller and positioned higher
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -1529,17 +1516,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   shareButton: {
-    position: 'absolute',
-    top: 44,
-    right: 60,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  editButton: {
     position: 'absolute',
     top: 44,
     right: 16,
@@ -1635,7 +1611,7 @@ const styles = StyleSheet.create({
   hostAvatar: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 12, // Changed from 24 to 12 for curved corners instead of circle
     marginRight: 12,
   },
   hostDetails: {
@@ -1734,70 +1710,73 @@ const styles = StyleSheet.create({
     backgroundColor: '#F6F6F6',
   },
 
-  // Action Buttons
-  actionContainer: {
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+  // Glassmorphic Bottom Bar Styles
+  bottomBarContainer: {
+    position: 'absolute',
+    bottom: 20, // Add padding from bottom
+    left: 20, // Add padding from sides
+    right: 20, // Add padding from sides
+    paddingBottom: 0, // Remove safe area padding since we moved it up
   },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  actionButton: {
-    borderRadius: 12,
+  bottomBar: {
+    borderRadius: 25, // Make it oval/pill shaped
     overflow: 'hidden',
-    flex: 1,
+    borderWidth: 1, // Add border
+    borderColor: 'rgba(255, 255, 255, 0.3)', // Subtle white border
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
-  primaryAction: {
-    flex: 1,
-  },
-  photoUploadAction: {
-    flex: 2,
-  },
-  gradientButton: {
+  bottomBarContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     gap: 8,
   },
-  primaryActionText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  secondaryAction: {
-    backgroundColor: '#F8F8F8',
-    flexDirection: 'row',
+  bottomBarButton: {
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  bottomBarButtonInner: {
+    alignItems: 'center',
     gap: 4,
   },
-  secondaryActionText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#3797EF',
+  bottomBarButtonText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#000000',
   },
-  leaveAction: {
-    backgroundColor: '#FF3B30',
+  bottomBarMainButton: {
+    flex: 2,
+    backgroundColor: '#3797EF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginHorizontal: 4,
+  },
+  bottomBarMainButtonDisabled: {
+    opacity: 0.6,
+  },
+  bottomBarWentButton: {
+    backgroundColor: '#34C759',
+  },
+  bottomBarMainButtonInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    flex: 1,
+    gap: 6,
   },
-  leaveActionText: {
-    fontSize: 16,
+  bottomBarMainButtonText: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
-  },
-  disabledAction: {
-    opacity: 0.6,
   },
 
   // WebView Modal
@@ -2066,8 +2045,7 @@ const styles = StyleSheet.create({
   sendInvitesButtonDisabled: {
     opacity: 0.6,
   },
-  // Add to your styles object
-  leaveActionInner: {
+  gradientButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2075,5 +2053,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 8,
   },
+  primaryActionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
 });
- 

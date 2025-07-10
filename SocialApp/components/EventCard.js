@@ -1,5 +1,5 @@
-// SocialApp/components/EventCard.js - FIXED: Make entire card tappable
-import React, { useState } from 'react';
+// SocialApp/components/EventCard.js - FIXED: Proper state management for attending status
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet,
   Dimensions, Alert
@@ -20,6 +20,14 @@ export default function EventCard({
 }) {
   const [localAttending, setLocalAttending] = useState(false);
   const [joinRequestSent, setJoinRequestSent] = useState(false);
+
+  // FIXED: Update local state when event prop changes (e.g., after joining from EventDetailsScreen)
+  useEffect(() => {
+    const isCurrentlyAttending = event.attendees?.some(a => 
+      (typeof a === 'string' ? a : a._id) === currentUserId
+    );
+    setLocalAttending(isCurrentlyAttending);
+  }, [event.attendees, currentUserId]);
 
   // Event details
   const cover = event.coverImage ? `http://${API_BASE_URL}:3000${event.coverImage}` : null;
@@ -301,19 +309,19 @@ export default function EventCard({
 
 const styles = StyleSheet.create({
   card: {
-  backgroundColor: '#FFFFFF',
-  borderRadius: 16,
-  marginHorizontal: 16,
-  marginBottom: 20,
-  borderWidth: 0.5,
-  borderColor: 'rgba(0, 0, 0, 0.06)', // Very faint border
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.1,
-  shadowRadius: 8,
-  elevation: 4,
-  overflow: 'hidden',
-},
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginBottom: 20,
+    borderWidth: 0.5,
+    borderColor: 'rgba(0, 0, 0, 0.06)', // Very faint border
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
   compactCard: {
     marginHorizontal: 8,
     marginBottom: 12,
