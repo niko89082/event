@@ -654,15 +654,7 @@ export default function CompletePostItem({
         </Animated.View>
       </Pressable>
 
-      {/* ---------- NEW: Upload date above likes/comments ---------- */}
-      <Text style={[
-        styles.uploadDate,
-        isMemoryPost && styles.memoryUploadDate
-      ]}>
-        {isMemoryPost && memoryTimeText ? memoryTimeText : uploadDate}
-      </Text>
-
-      {/* ---------- action row ---------- */}
+      {/* ---------- action row (NO TIMESTAMP HERE) ---------- */}
       <View style={styles.actionRow}>
         <View style={styles.leftActions}>
           <TouchableOpacity onPress={toggleLike} style={styles.actionBtn} activeOpacity={0.8}>
@@ -763,7 +755,7 @@ export default function CompletePostItem({
         </View>
       )}
 
-      {/* ---------- timestamp (moved above comment input) ---------- */}
+      {/* ---------- timestamp (KEEP THIS ONE - moved above comment input) ---------- */}
       <Text style={[
         styles.timestamp,
         isMemoryPost && styles.memoryTimestamp
@@ -771,20 +763,15 @@ export default function CompletePostItem({
         {stamp}
       </Text>
 
-      {/* ---------- NEW: Inline comment input ---------- */}
+      {/* ---------- IMPROVED: Inline comment input (NO PROFILE PHOTO) ---------- */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.commentInputContainer}
       >
-        <TouchableOpacity onPress={() => openUser(currentUserId)}>
-          <Image
-            source={{ uri: `http://${API_BASE_URL}:3000${post.user?.profilePicture || ''}` }}
-            style={styles.commentInputAvatar}
-          />
-        </TouchableOpacity>
         <TextInput
           style={styles.commentInput}
           placeholder="Add a comment..."
+          placeholderTextColor="#8E8E93"
           value={commentText}
           onChangeText={setCommentText}
           multiline
@@ -809,15 +796,7 @@ export default function CompletePostItem({
         </TouchableOpacity>
       </KeyboardAvoidingView>
 
-      {/* ---------- REMOVED: timestamp moved above comment input ---------- */}
-
-      {/* ---------- event link (for event posts) ---------- */}
-      {!disableEventLink && post.event && !showEventContext && !isMemoryPost && (
-        <TouchableOpacity onPress={openEvent} style={styles.eventLinkButton} activeOpacity={0.8}>
-          <Ionicons name="calendar-outline" size={16} color={EVENT_BLUE} />
-          <Text style={styles.eventLinkButtonText}>View Event: {post.event.title}</Text>
-        </TouchableOpacity>
-      )}
+      {/* ---------- REMOVED: View Event Link - No longer needed ---------- */}
 
       {/* ---------- delete modal ---------- */}
       <Modal visible={modal} transparent animationType="fade">
@@ -1048,20 +1027,6 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
 
-  // NEW: Upload Date
-  uploadDate: {
-    fontSize: 12,
-    color: '#8E8E93',
-    paddingHorizontal: 15,
-    paddingTop: 8,
-    paddingBottom: 4,
-    fontWeight: '500',
-  },
-  memoryUploadDate: {
-    fontStyle: 'italic',
-    color: '#666',
-  },
-
   // Enhanced Actions with Memory Features
   actionRow: {
     flexDirection: 'row',
@@ -1176,59 +1141,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // Inline Comment Input (with more padding below)
-  commentInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    paddingBottom: 15, // Added more padding below
-    borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
-  },
-  commentInputAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 8, // Curved corners instead of circle
-    backgroundColor: '#F6F6F6',
-    marginRight: 10,
-  },
-  commentInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 20,
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    fontSize: 14,
-    maxHeight: 80,
-    backgroundColor: '#F8F9FA',
-  },
-  commentSubmitBtn: {
-    marginLeft: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 15,
-    backgroundColor: '#3797EF',
-  },
-  commentSubmitBtnDisabled: {
-    backgroundColor: '#E1E1E1',
-  },
-  commentSubmitText: {
-    color: '#FFF',
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  commentSubmitTextDisabled: {
-    color: '#8E8E93',
-  },
-
-  // Timestamp (moved above comment input)
+  // Timestamp (KEEP THIS ONE)
   timestamp: {
     fontSize: 12,
     color: '#8E8E93',
     paddingHorizontal: 15,
-    paddingBottom: 5, // Reduced padding since it's above comment input now
+    paddingBottom: 5,
     paddingTop: 5,
   },
   memoryTimestamp: {
@@ -1236,18 +1154,59 @@ const styles = StyleSheet.create({
     color: '#666',
   },
 
-  // Event link button
-  eventLinkButton: {
+  // IMPROVED: Comment Input Container (NO PROFILE PHOTO, BETTER BLENDING)
+  commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 5,
+    paddingHorizontal: 15, // Match other elements
+    paddingVertical: 12,
+    paddingBottom: 16, // DEBUG: Increased bottom padding to prevent touching next post
+    backgroundColor: '#FFFFFF', // DEBUG: Same as post background, no contrast
+    borderTopWidth: 0, // DEBUG: Removed border to blend seamlessly
+    marginBottom: 4, // DEBUG: Small margin to ensure separation from next post
   },
-  eventLinkButtonText: {
+  
+  // DEBUG: Removed commentInputAvatar styles completely
+  
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#F0F0F0', // DEBUG: Very light border to blend better
+    borderRadius: 20, // DEBUG: Less rounded to match post aesthetic
+    paddingHorizontal: 14, // DEBUG: Reduced horizontal padding
+    paddingVertical: 8, // DEBUG: Reduced vertical padding
     fontSize: 14,
-    color: EVENT_BLUE, // Changed to blue
-    marginLeft: 5,
-    fontWeight: '500',
+    maxHeight: 80,
+    backgroundColor: '#F8F9FA', // DEBUG: Very light background
+    color: '#000000',
+    // DEBUG: Removed shadow for cleaner look
+  },
+  
+  commentSubmitBtn: {
+    marginLeft: 10, // DEBUG: Reduced margin
+    paddingHorizontal: 14, // DEBUG: Adjusted padding
+    paddingVertical: 8,
+    borderRadius: 18, // DEBUG: Slightly less rounded
+    backgroundColor: '#E3F2FD', // DEBUG: Light blue background
+    borderWidth: 1,
+    borderColor: '#BBDEFB', // DEBUG: Light blue border
+    minWidth: 50, // DEBUG: Smaller minimum width
+    alignItems: 'center',
+  },
+  
+  commentSubmitBtnDisabled: {
+    backgroundColor: '#F5F5F5', // DEBUG: Light gray when disabled
+    borderColor: '#E0E0E0',
+  },
+  
+  commentSubmitText: {
+    color: '#1976D2', // DEBUG: Blue text instead of white
+    fontWeight: '600',
+    fontSize: 13, // DEBUG: Slightly smaller text
+  },
+  
+  commentSubmitTextDisabled: {
+    color: '#9E9E9E', // DEBUG: Gray text when disabled
   },
 
   // Delete Modal

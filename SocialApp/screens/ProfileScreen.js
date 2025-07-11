@@ -1,9 +1,9 @@
-// screens/ProfileScreen.js - COMPLETE FIXED VERSION
-import React, { useEffect, useState, useContext } from 'react';
+// screens/ProfileScreen.js - UPDATED WITH SWIPE TABS + CENTERED HEADER + 2-COLUMN GRID
+import React, { useEffect, useState, useContext, useRef, useCallback } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, SafeAreaView, StatusBar, Dimensions,
-  FlatList, RefreshControl, Modal, ScrollView
+  FlatList, RefreshControl, Modal, ScrollView, Animated, PanResponder
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,15 +23,18 @@ const EVENT_FILTERS = [
   { key: 'shared', label: 'Shared', icon: 'eye-outline' }
 ];
 
+// Animation constants for swipe functionality
+const ANIMATION_DURATION = 250;
+
 export default function ProfileScreen() {
   const { params } = useRoute();
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
 
   const userId = params?.userId || currentUser?._id;
-  // FIXED: Better logic for determining if this is self profile
   const isSelf = !params?.userId || userId === currentUser?._id;
 
+  // State
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
   const [events, setEvents] = useState([]);
@@ -44,244 +47,166 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [hasRequested, setHasRequested] = useState(false);
-  const [activeTab, setActiveTab] = useState('Posts');
   const [eventFilter, setEventFilter] = useState('all');
-  const [showEventFilters, setShowEventFilters] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
-  const [showMemoriesTab, setShowMemoriesTab] = useState(true); // Control memories tab visibility
+  const [showMemoriesTab, setShowMemoriesTab] = useState(true);
 
-  // ✅ FIXED: Move renderMemoryCard inside component with proper navigation access
-const renderMemoryCard = React.useCallback(({ item: memory }) => {
-  if (!navigation) {
-    console.error('❌ Navigation is not available in renderMemoryCard');
-    return null;
-  }
+  // NEW: Swipe tab system
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const isAnimating = useRef(false);
+  const currentTabIndex = useRef(0);
 
-  if (!memory || !memory._id) {
-    console.warn('❌ Invalid memory data:', memory);
-    return null;
-  }
-
-  // ✅ FIXED: Get cover photo from the first photo in the memory's photos array
-  const getCoverPhotoUrl = () => {
-    if (memory.photos && memory.photos.length > 0) {
-      const firstPhoto = memory.photos[0];
-      if (firstPhoto.url) {
-        return firstPhoto.url.startsWith('http') 
-          ? firstPhoto.url 
-          : `http://${API_BASE_URL}:3000${firstPhoto.url}`;
-      }
+  // Dynamic tab array based on conditions
+  const getTabs = () => {
+    const tabs = ['Posts', 'Events'];
+    if (isSelf || showMemoriesTab) {
+      tabs.push('Memories');
     }
-    return 'https://placehold.co/400x200/E1E1E1/8E8E93?text=Memory';
+    return tabs;
   };
 
-  const coverPhotoUrl = getCoverPhotoUrl();
-  const photoCount = memory.photos?.length || 0;
-  const participantCount = (memory.participants?.length || 0) + 1; // +1 for creator
-  const participants = memory.participants || [];
+  const tabs = getTabs();
 
-  // ✅ SAFE: Navigation handler with error handling
-  const handleMemoryPress = () => {
-    try {
-      console.log('🔗 Navigating to memory:', memory._id);
-      
-      if (navigation && typeof navigation.navigate === 'function') {
-        navigation.navigate('MemoryDetailsScreen', { 
-          memoryId: memory._id,
-          memory: memory // Pass memory data as backup
-        });
-      } else {
-        console.error('❌ Navigation.navigate is not available');
-        Alert.alert('Error', 'Unable to navigate to memory details');
+  // Update ref when active tab changes
+  useEffect(() => {
+    currentTabIndex.current = activeTabIndex;
+  }, [activeTabIndex]);
+
+  // FIXED: Clean PanResponder without debug logging
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        const { dx, dy } = gestureState;
+        return Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2 && !isAnimating.current;
+      },
+      onStartShouldSetPanResponder: () => {
+        return false; // Don't capture on start, wait for movement
+      },
+      onPanResponderGrant: () => {
+        scrollX.stopAnimation();
+        isAnimating.current = false;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (isAnimating.current) return;
+        
+        const { dx } = gestureState;
+        const currentTab = currentTabIndex.current;
+        const baseOffset = -currentTab * SCREEN_WIDTH;
+        let newOffset = baseOffset + dx;
+        
+        // Add resistance at boundaries
+        const minOffset = -(tabs.length - 1) * SCREEN_WIDTH;
+        const maxOffset = 0;
+        const RESISTANCE_FACTOR = 0.25;
+        
+        if (newOffset > maxOffset) {
+          newOffset = maxOffset + (newOffset - maxOffset) * RESISTANCE_FACTOR;
+        } else if (newOffset < minOffset) {
+          newOffset = minOffset + (newOffset - minOffset) * RESISTANCE_FACTOR;
+        }
+        
+        if (Number.isFinite(newOffset)) {
+          scrollX.setValue(newOffset);
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (isAnimating.current) return;
+        
+        const { dx, vx } = gestureState;
+        const currentTab = currentTabIndex.current;
+        let targetIndex = currentTab;
+        
+        const DISTANCE_THRESHOLD = 60;
+        const VELOCITY_THRESHOLD = 0.3;
+        
+        const shouldSwipe = Math.abs(dx) > DISTANCE_THRESHOLD || Math.abs(vx) > VELOCITY_THRESHOLD;
+        
+        if (shouldSwipe) {
+          if (dx > 0 && currentTab > 0) {
+            // Swiping RIGHT -> previous tab
+            targetIndex = currentTab - 1;
+          } else if (dx < 0 && currentTab < tabs.length - 1) {
+            // Swiping LEFT -> next tab
+            targetIndex = currentTab + 1;
+          }
+        }
+        
+        switchToTab(targetIndex);
+      },
+      onPanResponderTerminationRequest: (evt, gestureState) => {
+        // Be more protective of LTR swipes since they're getting terminated more
+        const { dx } = gestureState;
+        const isLTRSwipe = dx < 0;
+        
+        return isLTRSwipe 
+          ? Math.abs(dx) < 10  // Very protective of LTR
+          : Math.abs(dx) < 25; // Less protective of RTL
+      },
+      onPanResponderTerminate: (evt, gestureState) => {
+        const { dx } = gestureState;
+        const isLTRSwipe = dx < 0;
+        
+        // Enhanced recovery logic: More aggressive for LTR swipes
+        const recoveryThreshold = isLTRSwipe ? 40 : 60;
+        
+        if (Math.abs(dx) > recoveryThreshold) {
+          const currentTab = currentTabIndex.current;
+          let targetIndex = currentTab;
+          
+          if (dx > 0 && currentTab > 0) {
+            targetIndex = currentTab - 1;
+          } else if (dx < 0 && currentTab < tabs.length - 1) {
+            targetIndex = currentTab + 1;
+          }
+          
+          if (targetIndex !== currentTab) {
+            setTimeout(() => switchToTab(targetIndex), 50);
+          }
+        }
+        
+        isAnimating.current = false;
+      },
+    })
+  ).current;
+
+  // Switch to tab function
+  const switchToTab = useCallback((index) => {
+    const targetIndex = Math.max(0, Math.min(tabs.length - 1, index));
+    
+    if (isAnimating.current) return;
+    
+    isAnimating.current = true;
+    
+    const targetContentOffset = -targetIndex * SCREEN_WIDTH;
+    
+    // Update state first
+    setActiveTabIndex(targetIndex);
+    
+    // Then animate horizontal movement
+    Animated.timing(scrollX, {
+      toValue: targetContentOffset,
+      duration: ANIMATION_DURATION,
+      useNativeDriver: true,
+    }).start((finished) => {
+      if (finished) {
+        isAnimating.current = false;
+        // Load data for the new tab if needed
+        if (targetIndex === 1 && events.length === 0) {
+          fetchUserEvents();
+        } else if (targetIndex === 2 && memories.length === 0) {
+          fetchUserMemories();
+        }
       }
-    } catch (error) {
-      console.error('❌ Error navigating to memory:', error);
-      Alert.alert('Error', 'Failed to open memory');
-    }
-  };
-
-  return (
-    <TouchableOpacity
-      onPress={handleMemoryPress}
-      activeOpacity={0.95}
-    >
-      <View style={styles.memoryCard}>
-        {/* Memory Cover */}
-        <View style={styles.memoryCoverContainer}>
-          <Image
-            source={{ uri: coverPhotoUrl }}
-            style={styles.memoryCover}
-            onError={(error) => {
-              console.warn('❌ Memory cover image failed to load:', error.nativeEvent?.error);
-            }}
-          />
-          
-          {/* Memory Badge */}
-          <View style={styles.memoryBadge}>
-            <Ionicons name="library" size={16} color="#FFFFFF" />
-          </View>
-
-          {/* Photo Count */}
-          {photoCount > 0 && (
-            <View style={styles.photoCount}>
-              <Ionicons name="camera" size={12} color="#FFFFFF" />
-              <Text style={styles.photoCountText}>{photoCount}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Memory Info */}
-        <View style={styles.memoryInfo}>
-          <Text style={styles.memoryTitle}>{memory.title || 'Untitled Memory'}</Text>
-          
-          {memory.description && (
-            <Text style={styles.memoryDescription} numberOfLines={2}>
-              {memory.description}
-            </Text>
-          )}
-
-          {/* Participants */}
-          <View style={styles.memoryMetadata}>
-            <View style={styles.participantAvatars}>
-              {/* Show creator first if available */}
-              {memory.creator && (
-                <View style={styles.participantAvatar}>
-                  <Image
-                    source={{
-                      uri: memory.creator.profilePicture
-                        ? `http://${API_BASE_URL}:3000${memory.creator.profilePicture}`
-                        : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
-                          (memory.creator.username?.charAt(0).toUpperCase() || '?')
-                    }}
-                    style={styles.participantAvatarImage}
-                  />
-                </View>
-              )}
-
-              {/* Show first few participants */}
-              {participants.slice(0, 3).map((participant, index) => (
-                <View key={participant._id} style={[styles.participantAvatar, { marginLeft: -4 }]}>
-                  <Image
-                    source={{
-                      uri: participant.profilePicture
-                        ? `http://${API_BASE_URL}:3000${participant.profilePicture}`
-                        : 'https://placehold.co/24x24/C7C7CC/FFFFFF?text=' + 
-                          (participant.username?.charAt(0).toUpperCase() || '?')
-                    }}
-                    style={styles.participantAvatarImage}
-                  />
-                </View>
-              ))}
-
-              {/* Show remaining count if more than 4 participants total */}
-              {participantCount > 4 && (
-                <View style={[styles.participantAvatar, styles.remainingCount, { marginLeft: -4 }]}>
-                  <Text style={styles.remainingCountText}>+{participantCount - 4}</Text>
-                </View>
-              )}
-            </View>
-
-            <Text style={styles.participantCount}>
-              {participantCount} {participantCount === 1 ? 'person' : 'people'}
-            </Text>
-
-            <Text style={styles.memoryDate}>
-              {new Date(memory.createdAt).toLocaleDateString()}
-            </Text>
-          </View>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-}, [navigation, API_BASE_URL]);
-
-  // FIXED: Set up navigation header with proper dependencies
-  useEffect(() => {
-    console.log('🔧 Setting up navigation header:', { 
-      isSelf, 
-      userId, 
-      currentUserId: currentUser?._id,
-      hasParams: !!params?.userId,
-      username: user?.username 
     });
+  }, [tabs.length, events.length, memories.length]);
 
-    navigation.setOptions({
-      title: isSelf ? 'Profile' : user?.username || 'Profile',
-      headerShown: true, // FIXED: Always show header
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#E1E1E1',
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 18,
-        color: '#000000',
-      },
-      headerRight: () => {
-        // FIXED: Always render header buttons for self, regardless of navigation path
-        if (isSelf) {
-          console.log('🎯 Rendering header buttons for self profile');
-          return (
-            <View style={styles.headerRightContainer}>
-              <TouchableOpacity
-                onPress={() => {
-                  console.log('🔗 QR button pressed, navigating to QrScreen');
-                  navigation.navigate('QrScreen');
-                }}
-                style={styles.headerButton}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="qr-code-outline" size={24} color="#000000" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  console.log('⚙️ Settings button pressed, navigating to UserSettingsScreen');
-                  navigation.navigate('UserSettingsScreen');
-                }}
-                style={styles.headerButton}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="settings-outline" size={24} color="#000000" />
-              </TouchableOpacity>
-            </View>
-          );
-        }
-        console.log('❌ Not showing header buttons - not self profile');
-        return null;
-      },
-      headerLeft: () => {
-        // Only show back button if we have userId param (came from another profile)
-        if (params?.userId) {
-          return (
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.headerButton}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="chevron-back" size={26} color="#000000" />
-            </TouchableOpacity>
-          );
-        }
-        return null;
-      },
-    });
-  }, [navigation, isSelf, user?.username, params?.userId, currentUser?._id]);
+  // Handle tab press
+  const handleTabPress = useCallback((index) => {
+    switchToTab(index);
+  }, [switchToTab]);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      console.log('🔄 Screen focused, fetching profile for userId:', userId);
-      fetchUserProfile();
-    }, [userId])
-  );
-
-  // Apply event filter whenever events or filter changes
-  useEffect(() => {
-    applyEventFilter();
-  }, [events, eventFilter, sharedEventIds]);
-
+  // Fetch user profile data
   const fetchUserProfile = async (isRefresh = false) => {
     try {
       if (isRefresh) {
@@ -296,21 +221,28 @@ const renderMemoryCard = React.useCallback(({ item: memory }) => {
         username: data.username, 
         isPublic: data.isPublic,
         followersCount: data.followersCount,
-        followingCount: data.followingCount 
+        followingCount: data.followingCount,
+        postsCount: data.photos?.length || 0
       });
       
       setUser(data);
-      setPosts(data.photos || []);
+      
+      // FIXED: Sort posts by creation date (newest first)
+      const sortedPosts = (data.photos || []).sort((a, b) => 
+        new Date(b.createdAt) - new Date(a.createdAt)
+      );
+      setPosts(sortedPosts);
+      
       setIsFollowing(data.isFollowing || false);
       setHasRequested(data.hasRequested || false);
 
-      // Fetch events when switching to Events tab or if it's already active
-      if (activeTab === 'Events') {
+      // Fetch events if on Events tab
+      if (activeTabIndex === 1) {
         await fetchUserEvents();
       }
 
-      // Fetch memories when switching to Memories tab or if it's already active
-      if (activeTab === 'Memories') {
+      // Fetch memories if on Memories tab
+      if (activeTabIndex === 2) {
         await fetchUserMemories();
       }
 
@@ -326,8 +258,6 @@ const renderMemoryCard = React.useCallback(({ item: memory }) => {
         navigation.goBack();
       } else if (error.response?.status === 403) {
         Alert.alert('Private Account', 'This account is private.');
-      } else if (error.response?.status === 401) {
-        Alert.alert('Authentication Error', 'Please log in again.');
       } else {
         Alert.alert('Error', 'Failed to load profile');
       }
@@ -337,136 +267,104 @@ const renderMemoryCard = React.useCallback(({ item: memory }) => {
     }
   };
 
+  // Fetch user events
   const fetchUserEvents = async () => {
-  try {
-    setEventsLoading(true);
-    console.log('📅 Fetching events for userId:', userId);
-    
-    // FIXED: Use the proper endpoint with sorting
-    const { data } = await api.get(`/api/users/${userId}/events`, {
-      params: {
-        includePast: 'true', // Include both past and future events
-        limit: 200,
-        type: 'all' // Get all events (hosted + attending)
+    try {
+      setEventsLoading(true);
+      const { data } = await api.get(`/api/events/user/${userId}`);
+      
+      // Sort events by date (newest first)
+      const sortedEvents = (data.events || []).sort((a, b) => 
+        new Date(b.time) - new Date(a.time)
+      );
+      
+      setEvents(sortedEvents);
+      
+      if (isSelf && data.sharedEventIds) {
+        setSharedEventIds(new Set(data.sharedEventIds));
       }
-    });
-    
-    console.log('📅 Events received:', data.events?.length || 0);
-    
-    // Events are already sorted by the backend (most recent first)
-    setEvents(data.events || []);
-    
-    // Fetch shared event IDs if viewing self
-    if (isSelf) {
-      try {
-        const sharedResponse = await api.get('/api/users/shared-events');
-        setSharedEventIds(new Set(sharedResponse.data.eventIds || []));
-        console.log('👁️ Shared events:', sharedResponse.data.eventIds?.length || 0);
-      } catch (sharedError) {
-        console.error('Error fetching shared events:', sharedError);
-      }
-    }
-    
-  } catch (error) {
-    console.error('❌ Error fetching events:', error);
-    if (error.response?.status !== 404) {
-      Alert.alert('Error', 'Failed to load events');
-    }
-  } finally {
-    setEventsLoading(false);
-  }
-};
-
-const fetchUserMemories = async () => {
-  try {
-    setMemoriesLoading(true);
-    console.log('📚 Fetching memories for userId:', userId);
-    
-    const { data } = await api.get(`/api/memories/user/${userId}`, {
-      params: { page: 1, limit: 50 }
-    });
-    
-    console.log('📚 Memories received:', data.memories?.length || 0);
-    setMemories(data.memories || []);
-    
-  } catch (error) {
-    console.error('❌ Error fetching memories:', error);
-    if (error.response?.status !== 404) {
-      Alert.alert('Error', 'Failed to load memories');
-    }
-  } finally {
-    setMemoriesLoading(false);
-  }
-};
-
-// Check if current user has shared memories with the profile user
-const checkSharedMemories = async () => {
-  try {
-    console.log('🔍 Checking shared memories with userId:', userId);
-    // FIXED: Use the correct API endpoint that checks for shared memories
-    // This endpoint already handles the logic for showing shared memories between users
-    const { data } = await api.get(`/api/memories/user/${userId}`, {
-      params: { page: 1, limit: 1 } // Just check if any exist
-    });
-    
-    const hasSharedMemories = data.memories && data.memories.length > 0;
-    setShowMemoriesTab(hasSharedMemories);
-    console.log('🔍 Has shared memories:', hasSharedMemories);
-  } catch (error) {
-    console.error('Error checking shared memories:', error);
-    // If there's an error, hide the memories tab for other users
-    setShowMemoriesTab(false);
-  }
-};
-
-// ENHANCED: Apply event filter with better logic
-const applyEventFilter = () => {
-  if (!Array.isArray(events)) {
-    setFilteredEvents([]);
-    return;
-  }
-
-  let filtered = [...events];
-  const now = new Date();
-
-  switch (eventFilter) {
-    case 'upcoming':
-      filtered = events.filter(e => new Date(e.time) > now);
-      // Sort upcoming events by soonest first
-      filtered.sort((a, b) => new Date(a.time) - new Date(b.time));
-      break;
-    case 'past':
-      filtered = events.filter(e => new Date(e.time) <= now);
-      // Sort past events by most recent first
-      filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
-      break;
-    case 'hosted':
-      filtered = events.filter(e => e.isHost);
-      break;
-    case 'attending':
-      filtered = events.filter(e => e.isAttending && !e.isHost);
-      break;
-    case 'shared':
-      filtered = events.filter(e => sharedEventIds.has(e._id));
-      break;
-    default: // 'all'
-      // Keep the backend sorting (most recent first)
-      break;
-  }
-
-  setFilteredEvents(filtered);
-};
-
-  const handleTabSwitch = async (tab) => {
-    setActiveTab(tab);
-    if (tab === 'Events' && events.length === 0) {
-      await fetchUserEvents();
-    }
-    if (tab === 'Memories' && memories.length === 0) {
-      await fetchUserMemories();
+    } catch (error) {
+      console.error('Error fetching events:', error);
+    } finally {
+      setEventsLoading(false);
     }
   };
 
+  // Fetch user memories
+  const fetchUserMemories = async () => {
+    try {
+      setMemoriesLoading(true);
+      const { data } = await api.get(`/api/memories/user/${userId}`);
+      
+      // Sort memories by creation date (newest first)
+      const sortedMemories = (data.memories || []).sort((a, b) => 
+        new Date(b.createdAt) - new Date(a.createdAt)
+      );
+      
+      setMemories(sortedMemories);
+    } catch (error) {
+      console.error('Error fetching memories:', error);
+    } finally {
+      setMemoriesLoading(false);
+    }
+  };
+
+  // Check if memories tab should be shown for other users
+  const checkSharedMemories = async () => {
+    try {
+      const { data } = await api.get(`/api/memories/user/${userId}`, {
+        params: { page: 1, limit: 1 }
+      });
+      
+      const hasSharedMemories = data.memories && data.memories.length > 0;
+      setShowMemoriesTab(hasSharedMemories);
+    } catch (error) {
+      console.error('Error checking shared memories:', error);
+      setShowMemoriesTab(false);
+    }
+  };
+
+  // Apply event filters
+  useEffect(() => {
+    if (!Array.isArray(events)) {
+      setFilteredEvents([]);
+      return;
+    }
+
+    let filtered = [...events];
+    const now = new Date();
+
+    switch (eventFilter) {
+      case 'upcoming':
+        filtered = events.filter(e => new Date(e.time) > now);
+        filtered.sort((a, b) => new Date(a.time) - new Date(b.time));
+        break;
+      case 'past':
+        filtered = events.filter(e => new Date(e.time) <= now);
+        filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
+        break;
+      case 'hosted':
+        filtered = events.filter(e => e.isHost);
+        break;
+      case 'attending':
+        filtered = events.filter(e => e.isAttending && !e.isHost);
+        break;
+      case 'shared':
+        filtered = events.filter(e => sharedEventIds.has(e._id));
+        break;
+      default:
+        break;
+    }
+
+    setFilteredEvents(filtered);
+  }, [events, eventFilter, sharedEventIds]);
+
+  // Load profile on mount and when userId changes
+  useEffect(() => {
+    fetchUserProfile();
+  }, [userId]);
+
+  // Handle follow/unfollow
   const handleFollow = async () => {
     try {
       if (isFollowing) {
@@ -489,6 +387,7 @@ const applyEventFilter = () => {
     }
   };
 
+  // Toggle event sharing
   const toggleEventShare = async (eventId) => {
     try {
       const isCurrentlyShared = sharedEventIds.has(eventId);
@@ -511,25 +410,30 @@ const applyEventFilter = () => {
     }
   };
 
-const renderProfileHeader = () => (
+  // UPDATED: Centered profile header
+  const renderProfileHeader = () => (
     <View style={styles.profileHeader}>
-      <View style={styles.profileImageSection}>
+      {/* Centered Avatar */}
+      <View style={styles.centeredAvatarSection}>
         <Image
           source={{
             uri: user?.profilePicture
               ? `http://${API_BASE_URL}:3000${user.profilePicture}`
-              : 'https://placehold.co/88x88.png?text=👤'
+              : 'https://via.placeholder.com/88x88/F6F6F6/999999?text=User'
           }}
           style={styles.profileImage}
         />
-        
-        <View style={styles.profileInfo}>
-          <Text style={styles.username}>{user?.username}</Text>
-          {user?.bio && <Text style={styles.bio}>{user.bio}</Text>}
-        </View>
       </View>
 
-      {/* Stats - FIXED: Pass correct 'mode' parameter */}
+      {/* Centered Username and Bio */}
+      <View style={styles.centeredProfileInfo}>
+        <Text style={styles.username}>{user?.username}</Text>
+        {user?.bio && (
+          <Text style={styles.bio}>{user.bio}</Text>
+        )}
+      </View>
+
+      {/* Stats Container - FIXED: Added clickable followers/following */}
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
           <Text style={styles.statNumber}>{posts.length}</Text>
@@ -539,20 +443,22 @@ const renderProfileHeader = () => (
           style={styles.statItem}
           onPress={() => navigation.navigate('FollowListScreen', { 
             userId, 
-            mode: 'followers' // FIXED: was 'type'
+            mode: 'followers'
           })}
+          activeOpacity={0.7}
         >
-          <Text style={styles.statNumber}>{user?.followersCount || user?.followers?.length || 0}</Text>
+          <Text style={styles.statNumber}>{user?.followersCount || 0}</Text>
           <Text style={styles.statLabel}>Followers</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.statItem}
           onPress={() => navigation.navigate('FollowListScreen', { 
             userId, 
-            mode: 'following' // FIXED: was 'type'
+            mode: 'following'
           })}
+          activeOpacity={0.7}
         >
-          <Text style={styles.statNumber}>{user?.followingCount || user?.following?.length || 0}</Text>
+          <Text style={styles.statNumber}>{user?.followingCount || 0}</Text>
           <Text style={styles.statLabel}>Following</Text>
         </TouchableOpacity>
       </View>
@@ -570,11 +476,19 @@ const renderProfileHeader = () => (
             </TouchableOpacity>
             
             <TouchableOpacity
-              style={styles.shareEventsButton}
-              onPress={() => setShowManageModal(true)}
+              style={styles.qrCodeButton}
+              onPress={() => navigation.navigate('QrScreen')}
               activeOpacity={0.8}
             >
-              <Ionicons name="calendar-outline" size={18} color="#3797EF" />
+              <Ionicons name="qr-code-outline" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.shareEventsButton}
+              onPress={() => navigation.navigate('UserSettingsScreen')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="settings-outline" size={20} color="#000000" />
             </TouchableOpacity>
           </View>
         ) : (
@@ -598,39 +512,39 @@ const renderProfileHeader = () => (
     </View>
   );
 
-  // UPDATED: Added Memories tab to tab bar (conditionally)
-  const renderTabBar = () => {
-    const tabs = ['Posts', 'Events'];
-    if (isSelf || showMemoriesTab) {
-      tabs.push('Memories');
-    }
+  // UPDATED: Swipeable tab bar
+  const renderTabBar = () => (
+    <View style={styles.tabBar}>
+      {tabs.map((tab, index) => (
+        <TouchableOpacity
+          key={tab}
+          style={[styles.tab, activeTabIndex === index && styles.activeTab]}
+          onPress={() => handleTabPress(index)}
+          activeOpacity={0.8}
+        >
+          <Ionicons 
+            name={
+              tab === 'Posts' ? 'grid-outline' : 
+              tab === 'Events' ? 'calendar-outline' : 
+              'library-outline'
+            } 
+            size={24} 
+            color={activeTabIndex === index ? '#3797EF' : '#8E8E93'} 
+          />
+          <Text style={[
+            styles.tabText,
+            activeTabIndex === index && styles.activeTabText
+          ]}>
+            {tab}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
 
-    return (
-      <View style={styles.tabBar}>
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.activeTab]}
-            onPress={() => handleTabSwitch(tab)}
-            activeOpacity={0.8}
-          >
-            <Ionicons 
-              name={
-                tab === 'Posts' ? 'grid-outline' : 
-                tab === 'Events' ? 'calendar-outline' : 
-                'library-outline'
-              } 
-              size={24} 
-              color={activeTab === tab ? '#000000' : '#8E8E93'} 
-            />
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-  };
-
+  // Event filter bar (only for Events tab)
   const renderEventFilterBar = () => {
-    if (activeTab !== 'Events' || !isSelf) return null;
+    if (activeTabIndex !== 1 || !isSelf) return null;
 
     return (
       <View style={styles.eventFilterBar}>
@@ -667,6 +581,7 @@ const renderProfileHeader = () => (
     );
   };
 
+  // UPDATED: 2-column post grid with curved corners
   const renderPostGrid = ({ item }) => (
     <TouchableOpacity
       style={styles.postGridItem}
@@ -680,168 +595,154 @@ const renderProfileHeader = () => (
     </TouchableOpacity>
   );
 
-const renderEventCard = ({ item: event }) => {
-  const isShared = sharedEventIds.has(event._id);
-  const isPast = new Date(event.time) <= new Date();
+  // Event card renderer
+  const renderEventCard = ({ item: event }) => {
+    const isShared = sharedEventIds.has(event._id);
+    const isPast = new Date(event.time) <= new Date();
 
-  return (
-    <TouchableOpacity
-      onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
-      activeOpacity={0.95}
-    >
-      <View style={styles.eventCard}>
-        {/* Event Cover */}
-        <View style={styles.eventCoverContainer}>
-          <Image
-            source={{
-              uri: event.coverImage
-                ? `http://${API_BASE_URL}:3000${event.coverImage}`
-                : 'https://placehold.co/400x200.png?text=Event'
-            }}
-            style={styles.eventCover}
-          />
-          
-          {/* Event Status Badge */}
-          <View style={styles.eventStatusBadge}>
-            <Text style={styles.eventStatusText}>
-              {isPast ? 'Past' : 'Upcoming'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Event Info */}
-        <View style={styles.eventInfo}>
-          <Text style={styles.eventTitle}>{event.title}</Text>
-          <Text style={styles.eventDate}>
-            {new Date(event.time).toLocaleDateString()} at{' '}
-            {new Date(event.time).toLocaleTimeString([], { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            })}
-          </Text>
-          <Text style={styles.eventLocation}>{event.location}</Text>
-          
-          {event.description && (
-            <Text style={styles.eventDescription} numberOfLines={2}>
-              {event.description}
-            </Text>
-          )}
-        </View>
-
-        {/* Event Actions (only for self) */}
-        {isSelf && (
-          <View style={styles.eventActions}>
-            {/* Share Toggle */}
-            <TouchableOpacity
-              style={[
-                styles.shareToggleButton,
-                isShared && styles.shareToggleButtonActive
-              ]}
-              onPress={(e) => {
-                e.stopPropagation();
-                toggleEventShare(event._id);
+    return (
+      <TouchableOpacity
+        onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
+        activeOpacity={0.95}
+      >
+        <View style={styles.eventCard}>
+          <View style={styles.eventCoverContainer}>
+            <Image
+              source={{
+                uri: event.coverImage
+                  ? `http://${API_BASE_URL}:3000${event.coverImage}`
+                  : 'https://placehold.co/400x200.png?text=Event'
               }}
-              activeOpacity={0.8}
-            >
-              <Ionicons 
-                name={isShared ? "eye" : "eye-off"} 
-                size={16} 
-                color={isShared ? "#FFFFFF" : "#8E8E93"} 
-              />
-              <Text style={[
-                styles.shareToggleText,
-                isShared && styles.shareToggleTextActive
-              ]}>
-                {isShared ? 'Shared' : 'Share'}
+              style={styles.eventCover}
+            />
+            
+            <View style={styles.eventStatusBadge}>
+              <Text style={styles.eventStatusText}>
+                {isPast ? 'Past' : 'Upcoming'}
               </Text>
-            </TouchableOpacity>
+            </View>
+          </View>
 
-            {/* Edit button for hosted events */}
-            {event.isHost && !isPast && (
+          <View style={styles.eventInfo}>
+            <Text style={styles.eventTitle}>{event.title}</Text>
+            <Text style={styles.eventDate}>
+              {new Date(event.time).toLocaleDateString()} at{' '}
+              {new Date(event.time).toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+              })}
+            </Text>
+            <Text style={styles.eventLocation}>{event.location}</Text>
+            
+            {event.description && (
+              <Text style={styles.eventDescription} numberOfLines={2}>
+                {event.description}
+              </Text>
+            )}
+          </View>
+
+          {isSelf && (
+            <View style={styles.eventActions}>
               <TouchableOpacity
-                style={styles.editEventButton}
+                style={[
+                  styles.shareToggleButton,
+                  isShared && styles.shareToggleButtonActive
+                ]}
                 onPress={(e) => {
                   e.stopPropagation();
-                  navigation.navigate('EditEventScreen', { eventId: event._id });
+                  toggleEventShare(event._id);
                 }}
                 activeOpacity={0.8}
               >
-                <Ionicons name="create-outline" size={16} color="#3797EF" />
-                <Text style={styles.editEventButtonText}>Edit</Text>
+                <Ionicons 
+                  name={isShared ? "eye" : "eye-off"} 
+                  size={16} 
+                  color={isShared ? '#FFFFFF' : '#8E8E93'} 
+                />
+                <Text style={[
+                  styles.shareToggleText,
+                  isShared && styles.shareToggleTextActive
+                ]}>
+                  {isShared ? 'Shared' : 'Share'}
+                </Text>
               </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Memory card renderer
+  const renderMemoryCard = ({ item: memory }) => {
+    const getCoverPhotoUrl = () => {
+      if (memory.photos && memory.photos.length > 0) {
+        const firstPhoto = memory.photos[0];
+        if (firstPhoto.url) {
+          return firstPhoto.url.startsWith('http') 
+            ? firstPhoto.url
+            : `http://${API_BASE_URL}:3000${firstPhoto.url}`;
+        }
+      }
+      return 'https://placehold.co/400x160.png?text=Memory';
+    };
+
+    return (
+      <TouchableOpacity
+        onPress={() => navigation.navigate('MemoryDetailsScreen', { memoryId: memory._id })}
+        activeOpacity={0.95}
+      >
+        <View style={styles.memoryCard}>
+          <View style={styles.memoryCoverContainer}>
+            <Image
+              source={{ uri: getCoverPhotoUrl() }}
+              style={styles.memoryCover}
+            />
+            
+            <View style={styles.memoryBadge}>
+              <Ionicons name="library" size={16} color="#FFFFFF" />
+            </View>
+            
+            {memory.photos && memory.photos.length > 1 && (
+              <View style={styles.photoCount}>
+                <Ionicons name="images" size={12} color="#FFFFFF" />
+                <Text style={styles.photoCountText}>{memory.photos.length}</Text>
+              </View>
             )}
-
-            {/* Visual arrow - no longer a separate button */}
-            <View style={styles.viewEventButton}>
-              <Ionicons name="arrow-forward-outline" size={16} color="#8E8E93" />
-            </View>
           </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-};
 
-  const renderManageModal = () => (
-    <Modal
-      visible={showManageModal}
-      animationType="slide"
-      presentationStyle="pageSheet"
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <TouchableOpacity onPress={() => setShowManageModal(false)}>
-            <Text style={styles.modalCancelText}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.modalTitle}>Manage Events</Text>
-          <View style={styles.modalPlaceholder} />
-        </View>
-        
-        <View style={styles.modalContent}>
-          <View style={styles.modalOption}>
-            <Ionicons name="eye-outline" size={24} color="#3797EF" />
-            <View style={styles.modalOptionContent}>
-              <Text style={styles.modalOptionTitle}>Event Sharing</Text>
-              <Text style={styles.modalOptionDescription}>
-                Use the share toggle on each event card to control which events appear on your profile
+          <View style={styles.memoryInfo}>
+            <Text style={styles.memoryTitle}>{memory.title}</Text>
+            {memory.description && (
+              <Text style={styles.memoryDescription} numberOfLines={2}>
+                {memory.description}
+              </Text>
+            )}
+            
+            <View style={styles.memoryMetadata}>
+              <Text style={styles.memoryDate}>
+                {new Date(memory.createdAt).toLocaleDateString()}
               </Text>
             </View>
           </View>
-          
-          <View style={styles.modalOption}>
-            <Ionicons name="calendar-outline" size={24} color="#3797EF" />
-            <View style={styles.modalOptionContent}>
-              <Text style={styles.modalOptionTitle}>Event Filters</Text>
-              <Text style={styles.modalOptionDescription}>
-                Switch between All, Upcoming, Past, Hosted, Attending, and Shared events
-              </Text>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={styles.modalCloseButton}
-            onPress={() => setShowManageModal(false)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.modalCloseButtonText}>Got it!</Text>
-          </TouchableOpacity>
         </View>
-      </SafeAreaView>
-    </Modal>
-  );
+      </TouchableOpacity>
+    );
+  };
 
+  // Get content data for current tab
   const getContentData = () => {
-    if (activeTab === 'Posts') {
+    if (activeTabIndex === 0) { // Posts
       if (!user?.isPublic && !isSelf && !isFollowing) {
         return 'private';
       }
       return posts;
-    } else if (activeTab === 'Events') {
+    } else if (activeTabIndex === 1) { // Events
       if (eventsLoading) {
         return 'loading';
       }
       return isSelf ? filteredEvents : events;
-    } else if (activeTab === 'Memories') {
+    } else if (activeTabIndex === 2) { // Memories
       if (memoriesLoading) {
         return 'loading';
       }
@@ -850,15 +751,38 @@ const renderEventCard = ({ item: event }) => {
     return [];
   };
 
-  const renderContent = () => {
-    const contentData = getContentData();
+  // Render content for each tab - FIXED: Always render all tabs for smooth swiping
+  const renderTabContent = (tabIndex) => {
+    // Always get content data regardless of active tab for smooth swiping
+    let contentData;
+    if (tabIndex === 0) { // Posts
+      if (!user?.isPublic && !isSelf && !isFollowing) {
+        contentData = 'private';
+      } else {
+        contentData = posts;
+      }
+    } else if (tabIndex === 1) { // Events
+      if (eventsLoading) {
+        contentData = 'loading';
+      } else {
+        contentData = isSelf ? filteredEvents : events;
+      }
+    } else if (tabIndex === 2) { // Memories
+      if (memoriesLoading) {
+        contentData = 'loading';
+      } else {
+        contentData = memories;
+      }
+    } else {
+      contentData = [];
+    }
 
     if (contentData === 'private') {
       return (
-        <View style={styles.privateAccountContainer}>
+        <View style={styles.emptyContainer}>
           <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
-          <Text style={styles.privateAccountTitle}>This account is private</Text>
-          <Text style={styles.privateAccountSubtitle}>
+          <Text style={styles.emptyTitle}>This account is private</Text>
+          <Text style={styles.emptySubtitle}>
             Follow this account to see their content
           </Text>
         </View>
@@ -867,18 +791,19 @@ const renderEventCard = ({ item: event }) => {
 
     if (contentData === 'loading') {
       return (
-        <View style={styles.loadingEventsContainer}>
+        <View style={styles.emptyContainer}>
           <ActivityIndicator size="large" color="#3797EF" />
           <Text style={styles.loadingText}>
-            {activeTab === 'Events' ? 'Loading events...' : 'Loading memories...'}
+            {tabIndex === 1 ? 'Loading events...' : 'Loading memories...'}
           </Text>
         </View>
       );
     }
 
     if (Array.isArray(contentData) && contentData.length === 0) {
-      const isEventsTab = activeTab === 'Events';
-      const isMemoriesTab = activeTab === 'Memories';
+      const tabName = tabs[tabIndex];
+      const isEventsTab = tabName === 'Events';
+      const isMemoriesTab = tabName === 'Memories';
       const hasFilter = isEventsTab && eventFilter !== 'all';
       
       return (
@@ -908,13 +833,13 @@ const renderEventCard = ({ item: event }) => {
               ? (hasFilter
                   ? `You don't have any ${eventFilter} events yet.`
                   : (isSelf 
-                      ? 'Join or host events to see them here. You can share events on your profile for others to see.'
+                      ? 'Join or host events to see them here.'
                       : 'This user hasn\'t shared any events publicly yet.'
                     )
                 )
               : isMemoriesTab
                 ? (isSelf 
-                    ? 'Create your first memory to preserve special moments with friends'
+                    ? 'Create your first memory to preserve special moments'
                     : 'You don\'t have any shared memories with this person yet'
                   )
                 : (isSelf 
@@ -944,7 +869,46 @@ const renderEventCard = ({ item: event }) => {
       );
     }
 
-    return contentData;
+    if (!Array.isArray(contentData)) {
+      return null;
+    }
+
+    // Render the appropriate list based on tab
+    if (tabIndex === 0) { // Posts - 2 column grid
+      return (
+        <FlatList
+          data={contentData}
+          renderItem={renderPostGrid}
+          keyExtractor={(item) => item._id}
+          numColumns={2}
+          scrollEnabled={false}
+          columnWrapperStyle={styles.postGridRow}
+          contentContainerStyle={styles.postsGrid}
+        />
+      );
+    } else if (tabIndex === 1) { // Events - card list
+      return (
+        <FlatList
+          data={contentData}
+          renderItem={renderEventCard}
+          keyExtractor={(item) => item._id}
+          scrollEnabled={false}
+          contentContainerStyle={styles.eventsGrid}
+        />
+      );
+    } else if (tabIndex === 2) { // Memories - card list
+      return (
+        <FlatList
+          data={contentData}
+          renderItem={renderMemoryCard}
+          keyExtractor={(item) => item._id}
+          scrollEnabled={false}
+          contentContainerStyle={styles.memoriesGrid}
+        />
+      );
+    }
+
+    return null;
   };
 
   if (loading && !user) {
@@ -968,31 +932,12 @@ const renderEventCard = ({ item: event }) => {
     );
   }
 
-  const contentData = renderContent();
-  const isPostsGrid = activeTab === 'Posts' && Array.isArray(contentData);
-  const isEventsGrid = activeTab === 'Events' && Array.isArray(contentData);
-  const isMemoriesGrid = activeTab === 'Memories' && Array.isArray(contentData);
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      <FlatList
-        data={isPostsGrid ? contentData : (isEventsGrid ? contentData : (isMemoriesGrid ? contentData : []))}
-        renderItem={isPostsGrid ? renderPostGrid : (isEventsGrid ? renderEventCard : renderMemoryCard)}
-        keyExtractor={(item) => item._id}
-        numColumns={isPostsGrid ? 3 : 1}
-        key={`${activeTab}-${isPostsGrid ? 3 : 1}`} // Force re-render when switching tabs
-        ListHeaderComponent={() => (
-          <View>
-            {renderProfileHeader()}
-            {renderTabBar()}
-            {renderEventFilterBar()}
-          </View>
-        )}
-        ListEmptyComponent={() => (
-          !Array.isArray(contentData) ? contentData : null
-        )}
+      <ScrollView
+        style={styles.scrollContainer}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1002,14 +947,37 @@ const renderEventCard = ({ item: event }) => {
           />
         }
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={
-          isPostsGrid && contentData.length > 0 ? styles.postsGrid : 
-          (isEventsGrid || isMemoriesGrid) ? styles.eventsGrid : {}
-        }
         scrollEventThrottle={16}
-      />
-
-      {renderManageModal()}
+      >
+        {/* Profile Header */}
+        {renderProfileHeader()}
+        
+        {/* Tab Bar */}
+        {renderTabBar()}
+        
+        {/* Event Filter Bar */}
+        {renderEventFilterBar()}
+        
+        {/* Swipeable Content - FIXED: Proper implementation */}
+        <View 
+          style={styles.swipeableContainer}
+          {...panResponder.panHandlers}
+        >
+          <Animated.View style={[
+            styles.swipeableContent,
+            { 
+              transform: [{ translateX: scrollX }],
+              width: SCREEN_WIDTH * tabs.length
+            }
+          ]}>
+            {tabs.map((tab, index) => (
+              <View key={tab} style={styles.tabContentWrapper}>
+                {renderTabContent(index)}
+              </View>
+            ))}
+          </Animated.View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -1018,6 +986,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  scrollContainer: {
+    flex: 1,
   },
   loadingContainer: {
     flex: 1,
@@ -1055,90 +1026,102 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  headerRightContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerButton: {
-    padding: 8,
-    marginHorizontal: 4,
-  },
 
-  // Profile Header
+  // UPDATED: Centered Profile Header
   profileHeader: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,
-    paddingVertical: 20,
+    paddingVertical: 24,
+    alignItems: 'center', // Center everything
   },
-  profileImageSection: {
-    flexDirection: 'row',
+  centeredAvatarSection: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  profileImage: {
+    width: 100, // INCREASED: Made larger (was 88)
+    height: 100,
+    borderRadius: 25, // ADJUSTED: Proportional to new size
+    backgroundColor: '#F6F6F6',
+    borderWidth: 1, // ADDED: Subtle border
+    borderColor: '#E1E1E1',
+  },
+  centeredProfileInfo: {
     alignItems: 'center',
     marginBottom: 20,
   },
-  profileImage: {
-    width: 88,
-    height: 88,
-    borderRadius: 22,
-    backgroundColor: '#F6F6F6',
-    marginRight: 20,
-  },
-  profileInfo: {
-    flex: 1,
-  },
   username: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 6,
+    textAlign: 'center',
   },
   bio: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#8E8E93',
-    lineHeight: 18,
+    lineHeight: 20,
+    textAlign: 'center',
+    maxWidth: 280,
   },
 
-  // Stats
+  // UPDATED: Redesigned Stats Container - Extra spacing between numbers
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginBottom: 20,
+    marginBottom: 24,
     paddingVertical: 12,
+    paddingHorizontal: 30,
     backgroundColor: '#F8F9FA',
-    borderRadius: 12,
+    borderRadius: 20,
+    width: '90%',
+    alignSelf: 'center',
+    // ADDED: Subtle shadow for depth
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 3.84,
+    elevation: 3,
   },
   statItem: {
     alignItems: 'center',
+    flex: 1,
+    paddingHorizontal: 8, // ADDED: More spacing between stats
   },
   statNumber: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     color: '#000000',
-    marginBottom: 2,
+    marginBottom: 8, // INCREASED: More space between number and label (was 6)
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#8E8E93',
     fontWeight: '500',
+    textAlign: 'center', // ADDED: Center alignment
   },
 
   // Action Buttons
   actionButtons: {
-    flexDirection: 'row',
+    width: '100%',
     alignItems: 'center',
   },
   selfActionButtons: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    width: '100%',
+    gap: 8, // ADDED: Consistent spacing
   },
   editProfileButton: {
     flex: 1,
     backgroundColor: '#F0F0F0',
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
-    marginRight: 12,
   },
   editProfileButtonText: {
     fontSize: 16,
@@ -1146,18 +1129,27 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   shareEventsButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  followButton: {
-    flex: 1,
+  // ADDED: QR Code button
+  qrCodeButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: '#3797EF',
-    paddingVertical: 12,
-    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  followButton: {
+    width: '100%',
+    backgroundColor: '#3797EF',
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
   },
   followingButton: {
@@ -1174,28 +1166,42 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
-  // Tab Bar - UPDATED: Support for 3 tabs
+  // ENHANCED: Tab Bar with better spacing
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
+    paddingVertical: 8,
+    paddingTop: 16, // ADDED: Padding between tabs and content above
   },
   tab: {
     flex: 1,
-    paddingVertical: 16,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'column',
+    gap: 4,
   },
   activeTab: {
     borderBottomWidth: 2,
-    borderBottomColor: '#000000',
+    borderBottomColor: '#3797EF',
+  },
+  tabText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  activeTabText: {
+    color: '#3797EF',
+    fontWeight: '600',
   },
 
-  // Event Filter Bar
+  // Event Filter Bar with padding
   eventFilterBar: {
     backgroundColor: '#FFFFFF',
     paddingVertical: 12,
+    paddingBottom: 16, // ADDED: Extra padding before first event
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
@@ -1224,32 +1230,76 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // Posts Grid
-  postsGrid: {
-    paddingBottom: 40,
+  // Swipeable Content Container
+  swipeableContainer: {
+    minHeight: 400,
+    overflow: 'hidden', // FIXED: Prevent content overflow during swipe
   },
-  postGridItem: {
-    width: SCREEN_WIDTH / 3,
-    height: SCREEN_WIDTH / 3,
-    padding: 1,
+  swipeableContent: {
+    flexDirection: 'row',
+    // Width is now set dynamically in render
   },
-  postGridImage: {
-    flex: 1,
-    backgroundColor: '#F6F6F6',
+  tabContentWrapper: {
+    width: SCREEN_WIDTH,
+    minHeight: 400,
   },
 
-  // Events Grid
+  // UPDATED: 2-Column Posts Grid with padding
+  postsGrid: {
+    paddingHorizontal: 10,
+    paddingTop: 12, // ADDED: Padding between tabs and first row
+    paddingBottom: 20,
+  },
+  postGridRow: {
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+  },
+  postGridItem: {
+    width: (SCREEN_WIDTH - 40) / 2 - 5,
+    height: (SCREEN_WIDTH - 40) / 2 - 5,
+    marginBottom: 10,
+    borderRadius: 16, // Curved corners
+    overflow: 'hidden',
+    backgroundColor: '#F6F6F6',
+    // Add subtle shadow
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  postGridImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+    borderWidth: 0.5, // ADDED: Very subtle border
+    borderColor: '#E1E1E1',
+  },
+
+  // Events Grid with padding
   eventsGrid: {
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: 12, // ADDED: Padding between filter bar and first event
+    paddingBottom: 20,
   },
   eventCard: {
-    marginHorizontal: 20,
-    marginVertical: 8,
+    marginBottom: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   eventCoverContainer: {
     position: 'relative',
@@ -1266,7 +1316,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 12,
   },
   eventStatusText: {
     color: '#FFFFFF',
@@ -1280,13 +1330,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 8,
   },
   eventDate: {
     fontSize: 14,
     color: '#3797EF',
-    fontWeight: '500',
-    marginBottom: 2,
+    fontWeight: '600',
+    marginBottom: 4,
   },
   eventLocation: {
     fontSize: 14,
@@ -1299,193 +1349,51 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   eventActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingBottom: 16,
-    gap: 8,
   },
   shareToggleButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
     backgroundColor: '#F0F0F0',
-    gap: 4,
+    alignSelf: 'flex-start',
+    gap: 6,
   },
   shareToggleButtonActive: {
     backgroundColor: '#3797EF',
   },
   shareToggleText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '500',
     color: '#8E8E93',
   },
   shareToggleTextActive: {
     color: '#FFFFFF',
   },
-  editEventButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#F0F0F0',
-    gap: 4,
-  },
-  editEventButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#3797EF',
-  },
-  viewEventButton: {
-    marginLeft: 'auto',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
 
-  // Empty States
-  privateAccountContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 80,
-    paddingHorizontal: 40,
-  },
-  privateAccountTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-    marginTop: 20,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  privateAccountSubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  loadingEventsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 80,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 80,
-    paddingHorizontal: 40,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#000000',
-    marginTop: 20,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  createButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  createButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Modal
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  // Memories Grid
+  memoriesGrid: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    paddingBottom: 20,
   },
-  modalCancelText: {
-    fontSize: 16,
-    color: '#3797EF',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  modalPlaceholder: {
-    width: 50,
-  },
-  modalContent: {
-    flex: 1,
-    paddingTop: 20,
-  },
-  modalOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  modalOptionContent: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  modalOptionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  modalOptionDescription: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  modalCloseButton: {
-    backgroundColor: '#3797EF',
-    marginHorizontal: 20,
-    marginTop: 20,
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  modalCloseButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Memory Cards
   memoryCard: {
-    marginHorizontal: 20,
-    marginVertical: 8,
+    marginBottom: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   memoryCoverContainer: {
     position: 'relative',
@@ -1541,43 +1449,46 @@ const styles = StyleSheet.create({
   memoryMetadata: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  participantAvatars: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  participantAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    overflow: 'hidden',
-  },
-  participantAvatarImage: {
-    width: '100%',
-    height: '100%',
-  },
-  remainingCount: {
-    backgroundColor: '#8E8E93',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  remainingCountText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  participantCount: {
-    fontSize: 14,
-    color: '#8E8E93',
-    fontWeight: '500',
+    justifyContent: 'space-between',
   },
   memoryDate: {
     fontSize: 14,
     color: '#8E8E93',
     fontWeight: '500',
-    marginLeft: 'auto',
+  },
+
+  // Empty States
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  createButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  createButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
