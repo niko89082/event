@@ -631,44 +631,71 @@ router.delete('/:id/photos/:photoId', auth, async (req, res) => {
 });
 
 // ✅ POST: Toggle like on memory photo
-router.post('/photos/:photoId/like', auth, async (req, res) => {
+router.post('/photos/:photoId/like', protect, async (req, res) => {
   try {
-    const { photoId } = req.params;
-    const userId = req.user.id;
-    
-    // Find the photo
-    const photo = await MemoryPhoto.findById(photoId);
-    if (!photo || photo.isDeleted) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-    
-    // Find the memory to check access
-    const memory = await Memory.findById(photo.memory);
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
-    }
-    
-    // Check if user has access to this memory
-    const hasAccess = memory.creator.equals(userId) || 
-                     memory.participants.some(p => p.equals(userId));
-    
-    if (!hasAccess) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-    
-    // Toggle like
-    const result = photo.toggleLike(userId);
-    await photo.save();
-    
-    res.json({
-      message: result.liked ? 'Photo liked' : 'Photo unliked',
-      liked: result.liked,
-      likeCount: result.likeCount
+    const photoId = req.params.photoId;
+    const userId = req.user._id;
+
+    console.log('📷 Memory photo like request:', {
+      photoId,
+      userId: userId.toString()
     });
-    
+
+    // Find the memory photo
+    const memoryPhoto = await MemoryPhoto.findById(photoId);
+    if (!memoryPhoto) {
+      return res.status(404).json({ message: 'Memory photo not found' });
+    }
+
+    // Initialize likes array if it doesn't exist
+    if (!memoryPhoto.likes) {
+      memoryPhoto.likes = [];
+    }
+
+    // Check if user already liked this photo
+    const userLikedIndex = memoryPhoto.likes.findIndex(like => 
+      like.toString() === userId.toString()
+    );
+    const wasLiked = userLikedIndex !== -1;
+
+    let newLikedStatus;
+    let newLikesArray;
+
+    if (wasLiked) {
+      // Unlike
+      newLikesArray = memoryPhoto.likes.filter(like => 
+        like.toString() !== userId.toString()
+      );
+      newLikedStatus = false;
+    } else {
+      // Like
+      newLikesArray = [...memoryPhoto.likes, userId];
+      newLikedStatus = true;
+    }
+
+    // Update the memory photo
+    memoryPhoto.likes = newLikesArray;
+    await memoryPhoto.save();
+
+    const finalResponse = {
+      success: true,
+      liked: newLikedStatus,        // ✅ CRITICAL: Consistent format
+      userLiked: newLikedStatus,    // ✅ ALTERNATIVE: Also include this
+      likeCount: newLikesArray.length,
+      likes: newLikesArray,
+      message: newLikedStatus ? 'Memory photo liked' : 'Memory photo unliked'
+    };
+
+    console.log('📷 Sending memory like response:', finalResponse);
+
+    res.status(200).json(finalResponse);
+
   } catch (error) {
-    console.error('Error toggling photo like:', error);
-    res.status(500).json({ message: 'Failed to toggle like' });
+    console.error('❌ Memory like endpoint error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: error.message 
+    });
   }
 });
 

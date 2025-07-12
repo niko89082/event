@@ -421,36 +421,79 @@ router.get('/event/:eventId', protect, async (req, res) => {
 // Like Photo
 router.post('/like/:photoId', protect, async (req, res) => {
   try {
-    const { photoId } = req.params;
-    const userId = req.user._id;
+    const photoId = req.params.photoId;
+    const userId = req.user._id; // From auth middleware
     
+    console.log('📸 Like request received:', {
+      photoId,
+      userId: userId.toString(),
+      method: req.method
+    });
+
+    // Find the photo
     const photo = await Photo.findById(photoId);
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
-    
-    // Check if user already liked the photo
-    const userLikedIndex = photo.likes.indexOf(userId);
-    
-    if (userLikedIndex > -1) {
-      // User already liked, so unlike
-      photo.likes.pull(userId);
-    } else {
-      // User hasn't liked, so like
-      photo.likes.push(userId);
+
+    // Initialize likes array if it doesn't exist
+    if (!photo.likes) {
+      photo.likes = [];
     }
-    
-    await photo.save();
-    
-    res.json({
-      likes: photo.likes,
-      likeCount: photo.likes.length,
-      userLiked: photo.likes.includes(userId)
+
+    // Check if user already liked this photo
+    const userLikedIndex = photo.likes.findIndex(like => 
+      like.toString() === userId.toString()
+    );
+    const wasLiked = userLikedIndex !== -1;
+
+    console.log('📸 Current like status:', {
+      wasLiked,
+      userLikedIndex,
+      currentLikes: photo.likes.map(id => id.toString()),
+      likesCount: photo.likes.length
     });
-    
+
+    let newLikedStatus;
+    let newLikesArray;
+
+    if (wasLiked) {
+      // Unlike: Remove user from likes array
+      newLikesArray = photo.likes.filter(like => 
+        like.toString() !== userId.toString()
+      );
+      newLikedStatus = false;
+      console.log('📸 Unliking photo');
+    } else {
+      // Like: Add user to likes array
+      newLikesArray = [...photo.likes, userId];
+      newLikedStatus = true;
+      console.log('📸 Liking photo');
+    }
+
+    // Update the photo
+    photo.likes = newLikesArray;
+    await photo.save();
+
+    const finalResponse = {
+      success: true,
+      liked: newLikedStatus,        // ✅ CRITICAL: Include this field
+      userLiked: newLikedStatus,    // ✅ ALTERNATIVE: Also include this
+      likeCount: newLikesArray.length,
+      likes: newLikesArray,         // ✅ Keep this for compatibility
+      message: newLikedStatus ? 'Photo liked' : 'Photo unliked'
+    };
+
+    console.log('📸 Sending like response:', finalResponse);
+
+    res.status(200).json(finalResponse);
+
   } catch (error) {
-    console.error('Error toggling photo like:', error);
-    res.status(500).json({ message: 'Failed to toggle like' });
+    console.error('❌ Like endpoint error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: error.message 
+    });
   }
 });
 
@@ -490,34 +533,44 @@ router.get('/comments/:photoId', protect, async (req, res) => {
 // ✅ Enhanced GET photo by ID with like status and proper population
 router.get('/:photoId', protect, async (req, res) => {
   try {
-    const photo = await Photo.findById(req.params.photoId)
-      .populate('user', 'username fullName profilePicture')
-      .populate('event', 'title')
-      .populate('likes', 'username fullName profilePicture')
-      .populate({
-        path: 'comments.user',
-        select: 'username fullName profilePicture',
-      });
-      
+    const photoId = req.params.photoId;
+    const userId = req.user._id;
+
+    const photo = await Photo.findById(photoId)
+      .populate('user', 'username profilePicture')
+      .populate('event', 'title time location')
+      .populate('comments.user', 'username profilePicture');
+
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
-    
-    // Add user-specific like status and counts
-    const photoData = photo.toJSON();
-    photoData.userLiked = photo.likes.some(like => like._id.equals(req.user._id));
-    photoData.likeCount = photo.likes.length;
-    photoData.commentCount = photo.comments.length;
-    
-    // Sort comments by newest first and limit to recent ones for feed
-    photoData.comments = photo.comments
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, 2); // Only send 2 most recent comments for feed
-    
-    res.status(200).json(photoData);
+
+    // Calculate user liked status
+    const userLiked = photo.likes && photo.likes.includes(userId);
+    const likeCount = photo.likes ? photo.likes.length : 0;
+
+    const response = {
+      ...photo.toObject(),
+      userLiked,           // ✅ CRITICAL: Include this
+      likeCount,           // ✅ CRITICAL: Include this
+      commentCount: photo.comments ? photo.comments.length : 0
+    };
+
+    console.log('📸 Get photo response includes:', {
+      photoId,
+      userLiked,
+      likeCount,
+      userId: userId.toString()
+    });
+
+    res.status(200).json(response);
+
   } catch (error) {
-    console.error('Error fetching photo:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Get photo error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: error.message 
+    });
   }
 });
 
