@@ -1,80 +1,39 @@
-// models/MemoryPhoto.js - Enhanced with likes and comments
+// models/MemoryPhoto.js - FIXED: Consistent likes array schema
+
 const mongoose = require('mongoose');
 
 const memoryPhotoSchema = new mongoose.Schema({
   memory: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Memory',
-    required: [true, 'Memory reference is required']
-  },
-  
-  url: {
-    type: String,
-    required: [true, 'Photo URL is required']
-  },
-  
-  filename: {
-    type: String,
-    required: [true, 'Filename is required']
-  },
-  
-  originalName: {
-    type: String,
     required: true
   },
-  
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: [true, 'Uploader reference is required']
-  },
-  
-  caption: {
-    type: String,
-    maxLength: [200, 'Caption cannot exceed 200 characters'],
-    trim: true
-  },
-  
-  uploadedAt: {
-    type: Date,
-    default: Date.now
-  },
-  
-  fileSize: {
-    type: Number,
     required: true
   },
-  
-  mimeType: {
+  url: {
     type: String,
-    required: true,
-    validate: {
-      validator: function(mimeType) {
-        return ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'].includes(mimeType);
-      },
-      message: 'Only JPEG, PNG, and GIF images are allowed'
-    }
+    required: true
   },
-  
-  dimensions: {
-    width: Number,
-    height: Number
+  filename: {
+    type: String,
+    required: true
   },
-  
-  // ✅ NEW: Like functionality
-  likes: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  
-  // ✅ NEW: Comment functionality
+  caption: {
+    type: String,
+    default: '',
+    maxlength: 500
+  },
+  // ✅ CRITICAL FIX: Simplified likes array - just store ObjectIds
+  likes: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'User',
+    default: [],
+    required: true
+  },
+  // ✅ ENHANCED: Comments with proper structure
   comments: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,
@@ -84,8 +43,7 @@ const memoryPhotoSchema = new mongoose.Schema({
     text: {
       type: String,
       required: true,
-      maxLength: [500, 'Comment cannot exceed 500 characters'],
-      trim: true
+      maxlength: 500
     },
     tags: [{
       type: mongoose.Schema.Types.ObjectId,
@@ -96,13 +54,18 @@ const memoryPhotoSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
-  
+  uploadedAt: {
+    type: Date,
+    default: Date.now
+  },
   isDeleted: {
     type: Boolean,
     default: false
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
 // ✅ VIRTUAL: Like count
@@ -120,23 +83,42 @@ memoryPhotoSchema.virtual('fullUrl').get(function() {
   return process.env.BASE_URL ? `${process.env.BASE_URL}${this.url}` : this.url;
 });
 
-// ✅ INSTANCE METHOD: Toggle like
+// ✅ INSTANCE METHOD: Check if user liked this photo
+memoryPhotoSchema.methods.isLikedBy = function(userId) {
+  if (!this.likes || !Array.isArray(this.likes)) {
+    return false;
+  }
+  return this.likes.some(likeId => likeId.toString() === userId.toString());
+};
+
+// ✅ INSTANCE METHOD: Toggle like (Instagram-style)
 memoryPhotoSchema.methods.toggleLike = function(userId) {
-  const existingLike = this.likes.find(like => like.user.equals(userId));
+  // Ensure likes array exists
+  if (!this.likes || !Array.isArray(this.likes)) {
+    this.likes = [];
+  }
+
+  const userLikedIndex = this.likes.findIndex(likeId => 
+    likeId.toString() === userId.toString()
+  );
   
-  if (existingLike) {
-    // Remove like
-    this.likes = this.likes.filter(like => !like.user.equals(userId));
+  if (userLikedIndex !== -1) {
+    // Unlike: Remove user from likes array
+    this.likes.splice(userLikedIndex, 1);
     return { liked: false, likeCount: this.likes.length };
   } else {
-    // Add like
-    this.likes.push({ user: userId });
+    // Like: Add user to likes array
+    this.likes.push(userId);
     return { liked: true, likeCount: this.likes.length };
   }
 };
 
 // ✅ INSTANCE METHOD: Add comment
 memoryPhotoSchema.methods.addComment = function(userId, text, tags = []) {
+  if (!this.comments) {
+    this.comments = [];
+  }
+  
   const comment = {
     user: userId,
     text: text.trim(),
@@ -170,20 +152,99 @@ memoryPhotoSchema.methods.softDelete = function() {
   return this.save();
 };
 
-// ✅ INDEX: For better query performance
+// ✅ PRE-SAVE MIDDLEWARE: Ensure likes array is always initialized properly
+memoryPhotoSchema.pre('save', function(next) {
+  // ✅ CRITICAL: Always ensure likes is an array of ObjectIds
+  if (!this.likes || !Array.isArray(this.likes)) {
+    this.likes = [];
+  } else {
+    // Clean up likes array - ensure all entries are ObjectIds
+    this.likes = this.likes
+      .map(like => {
+        if (typeof like === 'object' && like.user) {
+          // Convert old object format to ObjectId
+          return like.user;
+        } else if (mongoose.Types.ObjectId.isValid(like)) {
+          // Keep valid ObjectIds
+          return like;
+        } else {
+          // Remove invalid entries
+          return null;
+        }
+      })
+      .filter(like => like !== null);
+  }
+  
+  // ✅ CRITICAL: Always ensure comments is an array
+  if (!this.comments || !Array.isArray(this.comments)) {
+    this.comments = [];
+  }
+  
+  next();
+});
+
+// ✅ INDEXES: For better query performance
 memoryPhotoSchema.index({ memory: 1, uploadedAt: -1 });
 memoryPhotoSchema.index({ uploadedBy: 1 });
 memoryPhotoSchema.index({ isDeleted: 1 });
-memoryPhotoSchema.index({ 'likes.user': 1 });
+memoryPhotoSchema.index({ 'likes': 1 }); // ✅ Index for like queries
 memoryPhotoSchema.index({ 'comments.user': 1 });
 
-// ✅ JSON transform to include virtuals
-memoryPhotoSchema.set('toJSON', { 
-  virtuals: true,
-  transform: function(doc, ret) {
-    delete ret.__v;
-    return ret;
-  }
-});
+// ✅ STATIC METHOD: Find photos with like status for user
+memoryPhotoSchema.statics.findWithLikeStatus = function(query, userId) {
+  return this.aggregate([
+    { $match: query },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'uploadedBy',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    {
+      $lookup: {
+        from: 'memories',
+        localField: 'memory',
+        foreignField: '_id',
+        as: 'memory'
+      }
+    },
+    {
+      $unwind: { path: '$user', preserveNullAndEmptyArrays: false }
+    },
+    {
+      $unwind: { path: '$memory', preserveNullAndEmptyArrays: false }
+    },
+    {
+      $addFields: {
+        userLiked: {
+          $cond: {
+            if: { $isArray: '$likes' },
+            then: { $in: [userId, '$likes'] },
+            else: false
+          }
+        },
+        likeCount: {
+          $cond: {
+            if: { $isArray: '$likes' },
+            then: { $size: '$likes' },
+            else: 0
+          }
+        },
+        commentCount: {
+          $cond: {
+            if: { $isArray: '$comments' },
+            then: { $size: '$comments' },
+            else: 0
+          }
+        }
+      }
+    },
+    {
+      $sort: { uploadedAt: -1 }
+    }
+  ]);
+};
 
 module.exports = mongoose.model('MemoryPhoto', memoryPhotoSchema);

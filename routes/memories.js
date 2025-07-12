@@ -647,42 +647,90 @@ router.post('/photos/:photoId/like', protect, async (req, res) => {
       return res.status(404).json({ message: 'Memory photo not found' });
     }
 
-    // Initialize likes array if it doesn't exist
+    console.log('📷 Current memory photo likes before toggle:', {
+      likes: memoryPhoto.likes,
+      likesCount: memoryPhoto.likes ? memoryPhoto.likes.length : 0
+    });
+
+    // ✅ CRITICAL FIX: Initialize likes array properly
     if (!memoryPhoto.likes) {
       memoryPhoto.likes = [];
     }
 
-    // Check if user already liked this photo
-    const userLikedIndex = memoryPhoto.likes.findIndex(like => 
-      like.toString() === userId.toString()
-    );
-    const wasLiked = userLikedIndex !== -1;
+    // ✅ CRITICAL FIX: Handle both ObjectId array and object array formats
+    let userLikedIndex = -1;
+    let wasLiked = false;
+
+    // Check if likes contains objects with user field or just ObjectIds
+    if (memoryPhoto.likes.length > 0) {
+      const firstLike = memoryPhoto.likes[0];
+      
+      if (firstLike && typeof firstLike === 'object' && firstLike.user) {
+        // Likes array contains objects with user field
+        userLikedIndex = memoryPhoto.likes.findIndex(like => 
+          like.user && like.user.toString() === userId.toString()
+        );
+        wasLiked = userLikedIndex !== -1;
+        console.log('📷 Using object format likes with user field');
+      } else {
+        // Likes array contains just ObjectIds
+        userLikedIndex = memoryPhoto.likes.findIndex(likeId => 
+          likeId.toString() === userId.toString()
+        );
+        wasLiked = userLikedIndex !== -1;
+        console.log('📷 Using ObjectId format likes');
+      }
+    }
+
+    console.log('📷 Current like status:', {
+      wasLiked,
+      userLikedIndex,
+      likesArray: memoryPhoto.likes.map(like => 
+        typeof like === 'object' && like.user ? like.user.toString() : like.toString()
+      )
+    });
 
     let newLikedStatus;
     let newLikesArray;
 
     if (wasLiked) {
-      // Unlike
-      newLikesArray = memoryPhoto.likes.filter(like => 
-        like.toString() !== userId.toString()
-      );
+      // Unlike: Remove user from likes array
+      if (userLikedIndex !== -1) {
+        newLikesArray = [...memoryPhoto.likes];
+        newLikesArray.splice(userLikedIndex, 1);
+      } else {
+        newLikesArray = memoryPhoto.likes;
+      }
       newLikedStatus = false;
+      console.log('📷 Unliking memory photo');
     } else {
-      // Like
+      // Like: Add user to likes array
+      // ✅ CRITICAL FIX: Add just the ObjectId, not an object
       newLikesArray = [...memoryPhoto.likes, userId];
       newLikedStatus = true;
+      console.log('📷 Liking memory photo');
     }
 
-    // Update the memory photo
+    console.log('📷 New likes array:', {
+      newLikesArray: newLikesArray.map(like => 
+        typeof like === 'object' && like.user ? like.user.toString() : like.toString()
+      ),
+      newLikedStatus,
+      newCount: newLikesArray.length
+    });
+
+    // ✅ CRITICAL FIX: Update the memory photo with new likes array
     memoryPhoto.likes = newLikesArray;
+    
+    // Save the memory photo
     await memoryPhoto.save();
 
     const finalResponse = {
       success: true,
-      liked: newLikedStatus,        // ✅ CRITICAL: Consistent format
-      userLiked: newLikedStatus,    // ✅ ALTERNATIVE: Also include this
+      liked: newLikedStatus,        
+      userLiked: newLikedStatus,    
       likeCount: newLikesArray.length,
-      likes: newLikesArray,
+      likes: newLikesArray,         
       message: newLikedStatus ? 'Memory photo liked' : 'Memory photo unliked'
     };
 
@@ -692,6 +740,59 @@ router.post('/photos/:photoId/like', protect, async (req, res) => {
 
   } catch (error) {
     console.error('❌ Memory like endpoint error:', error);
+    
+    // ✅ ENHANCED: Better error handling for validation errors
+    if (error.name === 'ValidationError') {
+      console.error('❌ Validation error details:', error.errors);
+      
+      // If it's a likes validation error, try to fix the data
+      if (error.message.includes('likes') && error.message.includes('user')) {
+        console.log('🔧 Attempting to fix corrupted likes data...');
+        
+        try {
+          const memoryPhoto = await MemoryPhoto.findById(req.params.photoId);
+          if (memoryPhoto) {
+            // Clean up likes array - ensure all entries are just ObjectIds
+            const cleanedLikes = memoryPhoto.likes
+              .map(like => {
+                if (typeof like === 'object' && like.user) {
+                  return like.user;
+                } else if (typeof like === 'string' || like._id) {
+                  return like;
+                } else {
+                  return null;
+                }
+              })
+              .filter(like => like !== null);
+            
+            console.log('🔧 Cleaned likes array:', cleanedLikes);
+            
+            // Update with cleaned array
+            await MemoryPhoto.findByIdAndUpdate(
+              req.params.photoId,
+              { likes: cleanedLikes },
+              { runValidators: false } // Skip validation for cleanup
+            );
+            
+            return res.status(200).json({
+              success: false,
+              message: 'Data cleaned up. Please try again.',
+              likes: cleanedLikes,
+              likeCount: cleanedLikes.length,
+              userLiked: cleanedLikes.some(likeId => likeId.toString() === req.user._id.toString())
+            });
+          }
+        } catch (cleanupError) {
+          console.error('❌ Cleanup failed:', cleanupError);
+        }
+      }
+      
+      return res.status(400).json({ 
+        message: 'Data validation error. Please refresh and try again.',
+        error: 'VALIDATION_ERROR'
+      });
+    }
+    
     res.status(500).json({ 
       message: 'Server error',
       error: error.message 
@@ -705,8 +806,9 @@ router.get('/photos/:photoId/likes', auth, async (req, res) => {
     const { photoId } = req.params;
     const userId = req.user.id;
     
-    const photo = await MemoryPhoto.findById(photoId)
-      .populate('likes.user', 'username fullName profilePicture');
+    console.log('📷 Getting memory photo likes:', { photoId, userId });
+    
+    const photo = await MemoryPhoto.findById(photoId);
     
     if (!photo || photo.isDeleted) {
       return res.status(404).json({ message: 'Photo not found' });
@@ -725,14 +827,45 @@ router.get('/photos/:photoId/likes', auth, async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
     
+    // ✅ CRITICAL FIX: Handle both like formats
+    let userLiked = false;
+    let likeCount = 0;
+    
+    if (photo.likes && Array.isArray(photo.likes)) {
+      likeCount = photo.likes.length;
+      
+      // Check if likes contains objects with user field or just ObjectIds
+      if (photo.likes.length > 0) {
+        const firstLike = photo.likes[0];
+        
+        if (firstLike && typeof firstLike === 'object' && firstLike.user) {
+          // Likes array contains objects with user field
+          userLiked = photo.likes.some(like => 
+            like.user && like.user.toString() === userId.toString()
+          );
+        } else {
+          // Likes array contains just ObjectIds
+          userLiked = photo.likes.some(likeId => 
+            likeId.toString() === userId.toString()
+          );
+        }
+      }
+    }
+    
+    console.log('📷 Memory photo like status:', {
+      userLiked,
+      likeCount,
+      userId
+    });
+    
     res.json({
-      likes: photo.likes,
-      likeCount: photo.likeCount,
-      userLiked: photo.likes.some(like => like.user._id.equals(userId))
+      likes: photo.likes || [],
+      likeCount: likeCount,
+      userLiked: userLiked
     });
     
   } catch (error) {
-    console.error('Error fetching photo likes:', error);
+    console.error('Error fetching memory photo likes:', error);
     res.status(500).json({ message: 'Failed to fetch likes' });
   }
 });

@@ -36,6 +36,7 @@ import MemoryParticipantsScreen from './screens/MemoryParticipantsScreen';
 import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
+import PostLikesScreen from './screens/PostsLikesScreen'; 
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
@@ -176,6 +177,15 @@ function AppNavigator({ onLogout }) {
               }}
             />
             <RootStack.Screen 
+              name="PostLikesScreen" 
+              component={PostLikesScreen}
+              options={{ 
+                headerShown: true, 
+                title: 'Likes',
+                headerBackTitleVisible: false,
+              }}
+            />
+            <RootStack.Screen 
               name="FollowListScreen" 
               component={FollowListScreen}
               options={{ 
@@ -228,6 +238,7 @@ function AppNavigator({ onLogout }) {
                 headerBackTitleVisible: false,
               }}
             />
+            
             <RootStack.Screen 
               name="SearchScreen" 
               component={SearchScreen}

@@ -1,4 +1,4 @@
-// SocialApp/components/MemoryPhotoItem.js - Enhanced with proper profile pictures and like functionality
+// SocialApp/components/MemoryPhotoItem.js - FIXED: Like toggle and null safety issues
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, 
@@ -16,23 +16,24 @@ export default function MemoryPhotoItem({
   onCommentUpdate, 
   onOpenComments,
   onOpenFullscreen,
-  onOpenLikes // NEW: Handler for opening likes modal
+  onOpenLikes
 }) {
+  // ✅ FIXED: Initialize likes state with proper null safety
   const [likes, setLikes] = useState({
-    count: photo.likeCount || 0,
-    userLiked: false,
+    count: photo?.likeCount || 0,
+    userLiked: photo?.userLiked || false,
     loading: false,
     initialized: false
   });
   
   const [comments, setComments] = useState({
-    count: photo.commentCount || 0
+    count: photo?.commentCount || 0
   });
 
   // State for image dimensions to maintain aspect ratio
   const [imageDimensions, setImageDimensions] = useState({
-    width: screenWidth - 40, // Default width (container padding)
-    height: 300 // Default height
+    width: screenWidth - 40,
+    height: 300
   });
 
   // Animation refs
@@ -42,37 +43,52 @@ export default function MemoryPhotoItem({
 
   const DOUBLE_PRESS_DELAY = 300;
 
+  // ✅ FIXED: Add null safety for photo ID
   useEffect(() => {
-    if (!likes.initialized) {
+    if (photo?._id && !likes.initialized) {
       fetchLikes();
     }
-  }, [photo._id]);
+  }, [photo?._id]);
 
+  // ✅ FIXED: Update local state when props change with proper null safety
   useEffect(() => {
-    if (photo.likeCount !== undefined) {
+    if (photo?.likeCount !== undefined && photo.likeCount !== likes.count) {
+      console.log('📷 Updating like count from props:', {
+        photoId: photo._id,
+        newCount: photo.likeCount,
+        oldCount: likes.count,
+        userLiked: photo.userLiked
+      });
+      
       setLikes(prev => ({
         ...prev,
-        count: photo.likeCount
+        count: photo.likeCount || 0,
+        userLiked: photo.userLiked !== undefined ? photo.userLiked : prev.userLiked
       }));
     }
-    if (photo.commentCount !== undefined) {
+  }, [photo?.likeCount, photo?.userLiked]);
+
+  useEffect(() => {
+    if (photo?.commentCount !== undefined) {
       setComments(prev => ({
         ...prev,
-        count: photo.commentCount
+        count: photo.commentCount || 0
       }));
     }
-  }, [photo.likeCount, photo.commentCount]);
+  }, [photo?.commentCount]);
 
   // Get image dimensions to maintain aspect ratio
   useEffect(() => {
-    const photoUrl = photo.url?.startsWith('http') 
+    if (!photo?.url) return;
+
+    const photoUrl = photo.url.startsWith('http') 
       ? photo.url 
       : `http://${API_BASE_URL}:3000${photo.url}`;
 
     Image.getSize(photoUrl, (width, height) => {
-      const containerWidth = screenWidth - 40; // Account for container padding
+      const containerWidth = screenWidth - 40;
       const aspectRatio = height / width;
-      const calculatedHeight = Math.min(containerWidth * aspectRatio, 500); // Max height 500
+      const calculatedHeight = Math.min(containerWidth * aspectRatio, 500);
 
       setImageDimensions({
         width: containerWidth,
@@ -80,9 +96,8 @@ export default function MemoryPhotoItem({
       });
     }, (error) => {
       console.warn('Failed to get image dimensions:', error);
-      // Keep default dimensions if image sizing fails
     });
-  }, [photo.url]);
+  }, [photo?.url]);
 
   // Helper function to get proper profile picture URL
   const getProfilePictureUrl = (profilePicture, fallbackText = '👤') => {
@@ -97,29 +112,57 @@ export default function MemoryPhotoItem({
   };
 
   const fetchLikes = async () => {
+    if (!photo?._id) return;
+
     try {
+      console.log('📷 Fetching likes for photo:', photo._id);
       const response = await api.get(`/api/memories/photos/${photo._id}/likes`);
-      setLikes(prev => ({
-        ...prev,
-        count: response.data.likeCount,
-        userLiked: response.data.userLiked,
-        initialized: true
-      }));
+      
+      const newLikesState = {
+        count: response.data.likeCount || 0,
+        userLiked: response.data.userLiked || false,
+        initialized: true,
+        loading: false
+      };
+      
+      console.log('📷 Likes fetched:', newLikesState);
+      setLikes(newLikesState);
     } catch (error) {
       console.error('Error fetching likes:', error);
-      setLikes(prev => ({ ...prev, initialized: true }));
+      setLikes(prev => ({ 
+        ...prev, 
+        initialized: true,
+        loading: false 
+      }));
     }
   };
 
+  // ✅ FIXED: Enhanced like handler with better error handling and state management
   const handleLike = async () => {
-    if (likes.loading) return;
+    if (!photo?._id) {
+      console.error('❌ No photo ID available for like toggle');
+      return;
+    }
+
+    if (likes.loading) {
+      console.log('⚠️ Like request already in progress');
+      return;
+    }
 
     try {
       setLikes(prev => ({ ...prev, loading: true }));
 
-      // Optimistic update
+      // ✅ FIXED: Proper optimistic update
       const newLiked = !likes.userLiked;
       const newCount = newLiked ? likes.count + 1 : likes.count - 1;
+
+      console.log('📷 Optimistic like update:', {
+        photoId: photo._id,
+        newLiked,
+        newCount,
+        previousLiked: likes.userLiked,
+        previousCount: likes.count
+      });
 
       setLikes(prev => ({
         ...prev,
@@ -159,32 +202,49 @@ export default function MemoryPhotoItem({
         ]).start();
       }
 
-      console.log('❤️ Toggling like for photo:', photo._id);
+      console.log('📷 Making like API request for photo:', photo._id);
       const response = await api.post(`/api/memories/photos/${photo._id}/like`);
+
+      console.log('📷 Like API response:', response.data);
+
+      // ✅ FIXED: Use server response to update state
+      const serverLiked = response.data.liked !== undefined ? response.data.liked : response.data.userLiked || false;
+      const serverCount = response.data.likeCount || 0;
 
       setLikes(prev => ({
         ...prev,
-        userLiked: response.data.liked,
-        count: response.data.likeCount,
+        userLiked: serverLiked,
+        count: serverCount,
         loading: false
       }));
 
+      // ✅ FIXED: Notify parent component with proper data structure
       if (onLikeUpdate) {
         onLikeUpdate(photo._id, {
-          count: response.data.likeCount,
-          userLiked: response.data.liked
+          count: serverCount,
+          likeCount: serverCount, // Also include this for compatibility
+          userLiked: serverLiked
         });
       }
 
+      console.log('✅ Like toggle completed successfully');
+
     } catch (error) {
-      console.error('Error toggling like:', error);
-      // Revert optimistic update
+      console.error('❌ Error toggling like:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      
+      // ✅ FIXED: Revert optimistic update on error
       setLikes(prev => ({
         ...prev,
         userLiked: !prev.userLiked,
         count: prev.userLiked ? prev.count + 1 : prev.count - 1,
         loading: false
       }));
+      
       Alert.alert('Error', 'Failed to update like');
     }
   };
@@ -199,7 +259,7 @@ export default function MemoryPhotoItem({
         handleLike();
       }
     } else {
-      // Single tap - open fullscreen after delay to check for double tap
+      // Single tap - open fullscreen after delay
       setTimeout(() => {
         const timeSinceThisTap = Date.now() - lastTap.current;
         if (timeSinceThisTap >= DOUBLE_PRESS_DELAY && onOpenFullscreen) {
@@ -212,19 +272,24 @@ export default function MemoryPhotoItem({
   };
 
   const handleCommentsPress = () => {
-    if (onOpenComments) {
+    if (onOpenComments && photo?._id) {
       onOpenComments(photo._id);
     }
   };
 
-  // NEW: Handle likes press to show who liked
   const handleLikesPress = () => {
-    if (likes.count > 0 && onOpenLikes) {
+    if (likes.count > 0 && onOpenLikes && photo?._id) {
       onOpenLikes(photo._id);
     }
   };
 
-  const photoUrl = photo.url?.startsWith('http') 
+  // ✅ FIXED: Add null safety for photo URL
+  if (!photo?.url) {
+    console.warn('⚠️ MemoryPhotoItem: No photo URL provided');
+    return null;
+  }
+
+  const photoUrl = photo.url.startsWith('http') 
     ? photo.url 
     : `http://${API_BASE_URL}:3000${photo.url}`;
 
@@ -272,7 +337,7 @@ export default function MemoryPhotoItem({
 
       {/* Photo info section */}
       <View style={styles.photoInfo}>
-        {/* Uploader info with FIXED profile picture */}
+        {/* ✅ FIXED: Add null safety for uploader info */}
         <View style={styles.uploaderInfo}>
           <Image
             source={{
@@ -291,7 +356,7 @@ export default function MemoryPhotoItem({
               {photo.uploadedBy?.username || photo.uploadedBy?.fullName || 'Unknown'}
             </Text>
             <Text style={styles.uploadTime}>
-              {new Date(photo.uploadedAt).toLocaleDateString()}
+              {photo.uploadedAt ? new Date(photo.uploadedAt).toLocaleDateString() : 'Unknown date'}
             </Text>
           </View>
         </View>
@@ -301,7 +366,7 @@ export default function MemoryPhotoItem({
           <Text style={styles.caption}>{photo.caption}</Text>
         )}
 
-        {/* Action buttons - CLEANED UP, removed duplicate comments */}
+        {/* ✅ FIXED: Action buttons with proper like state display */}
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={[
@@ -316,7 +381,7 @@ export default function MemoryPhotoItem({
               size={18} 
               color={likes.userLiked ? "#FF3B30" : "#8E8E93"} 
             />
-            <TouchableOpacity onPress={handleLikesPress}>
+            <TouchableOpacity onPress={handleLikesPress} disabled={likes.count === 0}>
               <Text style={[
                 styles.actionButtonText,
                 likes.userLiked && styles.actionButtonTextActive,
@@ -385,7 +450,7 @@ const styles = StyleSheet.create({
   uploaderAvatar: {
     width: 40,
     height: 40,
-    borderRadius: 12, // FIXED: Square with rounded corners instead of circle
+    borderRadius: 12,
     backgroundColor: '#F6F6F6',
   },
   uploaderDetails: {

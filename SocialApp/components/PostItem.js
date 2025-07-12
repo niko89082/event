@@ -1179,112 +1179,126 @@ export default function CompletePostItem({
   }, [post._id]);
 
   const loadInitialData = async () => {
-    console.log('🔄 Loading initial data for post:', {
-      postId: post._id,
-      isMemoryPost,
-      hasInitialData: {
-        userLiked: post.userLiked,
-        likeCount: post.likeCount,
-        commentCount: post.commentCount,
-        hasComments: post.comments?.length > 0
-      }
-    });
+  console.log('🔄 Loading initial data for post:', {
+    postId: post._id,
+    isMemoryPost,
+    hasInitialData: {
+      userLiked: post.userLiked,
+      likeCount: post.likeCount,
+      commentCount: post.commentCount,
+      hasComments: post.comments?.length > 0
+    }
+  });
 
-    try {
-      setInitialLoading(true);
+  try {
+    setInitialLoading(true);
+    
+    // For regular posts, get full post data with likes and comments
+    if (!isMemoryPost) {
+      console.log('📸 Fetching regular post data from:', `/api/photos/${post._id}`);
       
-      // For regular posts, get full post data with likes and comments
-      if (!isMemoryPost) {
-        console.log('📸 Fetching regular post data from:', `/api/photos/${post._id}`);
+      const response = await api.get(`/api/photos/${post._id}`);
+      const postData = response.data;
+      
+      console.log('📸 Regular post data received:', {
+        userLiked: postData.userLiked,
+        likeCount: postData.likeCount,
+        commentCount: postData.commentCount,
+        hasComments: postData.comments?.length > 0,
+        likesArray: postData.likes?.length
+      });
+      
+      // ✅ FIXED: Set state with proper fallbacks and validation
+      const userLiked = Boolean(postData.userLiked);
+      const likeCountValue = Number(postData.likeCount) || 0;
+      const commentsArray = Array.isArray(postData.comments) ? postData.comments : [];
+      const commentCountValue = Number(postData.commentCount) || commentsArray.length || 0;
+      
+      console.log('📸 Setting regular post state:', {
+        userLiked,
+        likeCountValue,
+        commentCountValue,
+        commentsLength: commentsArray.length
+      });
+      
+      setLiked(userLiked);
+      setLikeCount(likeCountValue);
+      setComments(commentsArray);
+      setCommentCount(commentCountValue);
+      
+    } else {
+      // For memory posts, get the specific photo data
+      console.log('📷 Memory post detected, using memory endpoints');
+      
+      try {
+        // ✅ FIXED: Use consistent memory like endpoint
+        const likesResponse = await api.get(`/api/memories/photos/${post._id}/likes`);
+        console.log('📷 Memory likes data received:', likesResponse.data);
         
-        const response = await api.get(`/api/photos/${post._id}`);
-        const postData = response.data;
-        
-        console.log('📸 Regular post data received:', {
-          userLiked: postData.userLiked,
-          likeCount: postData.likeCount,
-          commentCount: postData.commentCount,
-          hasComments: postData.comments?.length > 0,
-          likesArray: postData.likes
-        });
-        
-        // Set state with proper fallbacks
-        const userLiked = postData.userLiked || false;
-        const likeCountValue = postData.likeCount || 0;
-        const commentsArray = postData.comments || [];
-        const commentCountValue = postData.commentCount || commentsArray.length || 0;
-        
-        console.log('📸 Setting regular post state:', {
-          userLiked,
-          likeCountValue,
-          commentCountValue,
-          commentsLength: commentsArray.length
-        });
+        const userLiked = Boolean(likesResponse.data.userLiked);
+        const likeCountValue = Number(likesResponse.data.likeCount) || 0;
         
         setLiked(userLiked);
         setLikeCount(likeCountValue);
-        setComments(commentsArray);
-        setCommentCount(commentCountValue);
         
-      } else {
-        // For memory posts, get the specific photo data
-        console.log('📷 Fetching memory post data from:', `/api/memories/photos/${post._id}/likes`);
-        
+        // Load comments for memory posts
         try {
-          const response = await api.get(`/api/memories/photos/${post._id}/likes`);
-          console.log('📷 Memory likes data received:', response.data);
+          console.log('📷 Fetching memory comments from:', `/api/memories/photos/${post._id}/comments`);
+          const commentsResponse = await api.get(`/api/memories/photos/${post._id}/comments`);
+          console.log('📷 Memory comments data received:', commentsResponse.data);
           
-          setLiked(response.data.userLiked || false);
-          setLikeCount(response.data.likeCount || 0);
-          
-          // Load comments for memory posts if available
-          try {
-            console.log('📷 Fetching memory comments from:', `/api/memories/photos/${post._id}/comments`);
-            const commentsResponse = await api.get(`/api/memories/photos/${post._id}/comments`);
-            console.log('📷 Memory comments data received:', commentsResponse.data);
-            
-            if (commentsResponse.data.comments) {
-              setComments(commentsResponse.data.comments);
-              setCommentCount(commentsResponse.data.comments.length);
-            }
-          } catch (commentError) {
-            console.log('⚠️ Comments not available for memory photos yet:', commentError.message);
+          if (Array.isArray(commentsResponse.data.comments)) {
+            setComments(commentsResponse.data.comments);
+            setCommentCount(commentsResponse.data.comments.length);
           }
-        } catch (error) {
-          console.error('❌ Error loading memory post data:', error);
-          console.error('❌ Memory post error details:', {
-            message: error.message,
-            response: error.response?.data,
-            status: error.response?.status
-          });
+        } catch (commentError) {
+          console.log('⚠️ Comments not available for memory photos yet:', commentError.message);
+          // Use fallback from post data
+          setComments(post.comments || []);
+          setCommentCount(post.commentCount || 0);
         }
+        
+      } catch (memoryError) {
+        console.error('❌ Error loading memory post data:', memoryError);
+        console.error('❌ Memory post error details:', {
+          message: memoryError.message,
+          response: memoryError.response?.data,
+          status: memoryError.response?.status
+        });
+        
+        // Use fallback from post props
+        setLiked(Boolean(post.userLiked));
+        setLikeCount(Number(post.likeCount) || 0);
+        setComments(post.comments || []);
+        setCommentCount(post.commentCount || 0);
       }
-      
-    } catch (error) {
-      console.error('❌ Error loading initial post data:', error);
-      console.error('❌ Initial data error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      
-      // Use the data from props as fallback
-      console.log('📊 Using fallback data from props:', {
-        userLiked: post.userLiked || false,
-        likeCount: post.likeCount || 0,
-        commentCount: post.commentCount || 0,
-        hasComments: post.comments?.length > 0
-      });
-      
-      setLiked(post.userLiked || false);
-      setLikeCount(post.likeCount || 0);
-      setComments(post.comments || []);
-      setCommentCount(post.commentCount || 0);
-    } finally {
-      setInitialLoading(false);
-      console.log('✅ Initial data loading completed');
     }
-  };
+    
+  } catch (error) {
+    console.error('❌ Error loading initial post data:', error);
+    console.error('❌ Initial data error details:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+    
+    // ✅ ENHANCED: Use the data from props as fallback with validation
+    console.log('📊 Using fallback data from props:', {
+      userLiked: post.userLiked || false,
+      likeCount: post.likeCount || 0,
+      commentCount: post.commentCount || 0,
+      hasComments: post.comments?.length > 0
+    });
+    
+    setLiked(Boolean(post.userLiked));
+    setLikeCount(Number(post.likeCount) || 0);
+    setComments(Array.isArray(post.comments) ? post.comments : []);
+    setCommentCount(Number(post.commentCount) || 0);
+  } finally {
+    setInitialLoading(false);
+    console.log('✅ Initial data loading completed');
+  }
+};
 
   /* ---- image url -------------------------------------------------- */
   let imgURL = null;
@@ -1363,120 +1377,133 @@ export default function CompletePostItem({
 
   /* ---- FIXED like toggle with proper API endpoint handling and debugging ------- */
   const toggleLike = async () => {
-    if (!post?._id) {
-      console.error('❌ No post ID available for like toggle');
-      return;
-    }
+  if (!post?._id) {
+    console.error('❌ No post ID available for like toggle');
+    return;
+  }
 
-    if (!currentUserId) {
-      console.error('❌ No currentUserId available for like toggle');
-      Alert.alert('Error', 'User not authenticated');
-      return;
-    }
+  if (!currentUserId) {
+    console.error('❌ No currentUserId available for like toggle');
+    Alert.alert('Error', 'User not authenticated');
+    return;
+  }
+  
+  console.log('🔄 Starting like toggle:', {
+    postId: post._id,
+    isMemoryPost,
+    currentLiked: liked,
+    currentLikeCount: likeCount,
+    currentUserId: currentUserId
+  });
+  
+  try {
+    const newLiked = !liked;
+    const newCount = newLiked ? likeCount + 1 : likeCount - 1;
     
-    console.log('🔄 Starting like toggle:', {
-      postId: post._id,
-      isMemoryPost,
-      currentLiked: liked,
-      currentLikeCount: likeCount,
-      currentUserId: currentUserId
+    console.log('📊 Optimistic update:', {
+      newLiked,
+      newCount,
+      previousLiked: liked,
+      previousCount: likeCount
     });
     
-    try {
-      const newLiked = !liked;
-      const newCount = newLiked ? likeCount + 1 : likeCount - 1;
-      
-      console.log('📊 Optimistic update:', {
-        newLiked,
-        newCount,
-        previousLiked: liked,
-        previousCount: likeCount
-      });
-      
-      // Optimistic update
-      setLiked(newLiked);
-      setLikeCount(newCount);
+    // Optimistic update
+    setLiked(newLiked);
+    setLikeCount(newCount);
 
-      let response;
-      if (isMemoryPost) {
-        console.log('📷 Making memory photo like request to:', `/api/memories/photos/${post._id}/like`);
-        response = await api.post(`/api/memories/photos/${post._id}/like`);
-        console.log('📷 Memory like response:', response.data);
-        
-        // For memory posts, use the response directly
-        if (response.data.liked !== undefined) {
-          console.log('📷 Setting memory liked state to:', response.data.liked);
-          setLiked(response.data.liked);
-        }
-        if (response.data.likeCount !== undefined) {
-          console.log('📷 Setting memory like count to:', response.data.likeCount);
-          setLikeCount(response.data.likeCount);
-        }
-      } else {
-        console.log('📸 Making regular post like request to:', `/api/photos/like/${post._id}`);
-        response = await api.post(`/api/photos/like/${post._id}`);
-        console.log('📸 Regular post like response:', response.data);
-        
-        // FIXED: Handle different response formats
-        let userLiked = false;
-        let responseCount = 0;
-        
-        // Check if response has userLiked field (preferred)
-        if (response.data.userLiked !== undefined) {
-          userLiked = response.data.userLiked;
-          console.log('📸 Using userLiked field from response:', userLiked);
-        } 
-        // Fallback: check if user is in likes array
-        else if (Array.isArray(response.data.likes)) {
-          userLiked = response.data.likes.includes(currentUserId);
-          console.log('📸 Checking likes array for currentUserId:', {
-            currentUserId,
-            likesArray: response.data.likes,
-            userLiked
-          });
-        }
-        
-        // Get like count
-        if (response.data.likeCount !== undefined) {
-          responseCount = response.data.likeCount;
-        } else if (response.data.likes) {
-          responseCount = response.data.likes.length;
-        }
-        
-        console.log('📸 Final regular post like analysis:', {
-          userLiked,
-          responseCount,
-          currentUserId
-        });
-        
-        setLiked(userLiked);
-        setLikeCount(responseCount);
+    let response;
+    if (isMemoryPost) {
+      console.log('📷 Making memory photo like request to:', `/api/memories/photos/${post._id}/like`);
+      response = await api.post(`/api/memories/photos/${post._id}/like`);
+      console.log('📷 Memory like response:', response.data);
+      
+      // ✅ FIXED: Memory posts use consistent response format
+      if (response.data.liked !== undefined) {
+        console.log('📷 Setting memory liked state to:', response.data.liked);
+        setLiked(response.data.liked);
+      } else if (response.data.userLiked !== undefined) {
+        console.log('📷 Setting memory liked state from userLiked:', response.data.userLiked);
+        setLiked(response.data.userLiked);
       }
-
-      // Notify parent component of update
-      if (onPostUpdate) {
-        onPostUpdate(post._id, { 
-          liked: newLiked,
-          likeCount: newCount
+      
+      if (response.data.likeCount !== undefined) {
+        console.log('📷 Setting memory like count to:', response.data.likeCount);
+        setLikeCount(response.data.likeCount);
+      }
+      
+    } else {
+      console.log('📸 Making regular post like request to:', `/api/photos/like/${post._id}`);
+      response = await api.post(`/api/photos/like/${post._id}`);
+      console.log('📸 Regular post like response:', response.data);
+      
+      // ✅ FIXED: Handle consistent response format for regular posts
+      let userLiked = false;
+      let responseCount = 0;
+      
+      // ✅ PRIMARY: Check for liked/userLiked field (new consistent format)
+      if (response.data.liked !== undefined) {
+        userLiked = response.data.liked;
+        console.log('📸 Using liked field from response:', userLiked);
+      } else if (response.data.userLiked !== undefined) {
+        userLiked = response.data.userLiked;
+        console.log('📸 Using userLiked field from response:', userLiked);
+      } 
+      // ✅ FALLBACK: Check if user is in likes array (old format)
+      else if (Array.isArray(response.data.likes)) {
+        userLiked = response.data.likes.some(likeId => 
+          likeId.toString() === currentUserId.toString()
+        );
+        console.log('📸 Checking likes array for currentUserId:', {
+          currentUserId: currentUserId.toString(),
+          likesArray: response.data.likes.map(id => id.toString()),
+          userLiked
         });
       }
-
-      console.log('✅ Like toggle completed successfully');
       
-    } catch (err) {
-      console.error('❌ Toggle like error:', err);
-      console.error('❌ Error details:', {
-        message: err.message,
-        response: err.response?.data,
-        status: err.response?.status
+      // ✅ Get like count from response
+      if (response.data.likeCount !== undefined) {
+        responseCount = response.data.likeCount;
+      } else if (Array.isArray(response.data.likes)) {
+        responseCount = response.data.likes.length;
+      }
+      
+      console.log('📸 Final regular post like analysis:', {
+        userLiked,
+        responseCount,
+        currentUserId: currentUserId.toString()
       });
       
-      // Revert optimistic update on error
-      setLiked(liked);
-      setLikeCount(likeCount);
-      Alert.alert('Error', 'Failed to update like');
+      setLiked(userLiked);
+      setLikeCount(responseCount);
     }
-  };
+
+    // Notify parent component of update
+    if (onPostUpdate) {
+      onPostUpdate(post._id, { 
+        liked: liked, // Use the final state
+        likeCount: likeCount // Use the final state
+      });
+    }
+
+    console.log('✅ Like toggle completed successfully:', {
+      finalLiked: liked,
+      finalCount: likeCount
+    });
+    
+  } catch (err) {
+    console.error('❌ Toggle like error:', err);
+    console.error('❌ Error details:', {
+      message: err.message,
+      response: err.response?.data,
+      status: err.response?.status
+    });
+    
+    // ✅ FIXED: Revert optimistic update on error
+    setLiked(!newLiked); // Revert to original state
+    setLikeCount(newLiked ? likeCount - 1 : likeCount + 1); // Revert count
+    Alert.alert('Error', 'Failed to update like');
+  }
+};
 
   /* ---- NEW: Open comments modal instead of navigation ----- */
   const openComments = () => {

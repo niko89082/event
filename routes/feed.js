@@ -1,4 +1,4 @@
-// routes/feed.js - PHASE 1: Enhanced Posts Feed with Memory Photos and Privacy Controls
+// routes/feed.js - UPDATED: Enhanced Posts Feed with Memory Photos and PROPER LIKE STATUS
 const express = require('express');
 const Photo = require('../models/Photo');
 const MemoryPhoto = require('../models/MemoryPhoto');
@@ -7,7 +7,7 @@ const Event = require('../models/Event');
 const User = require('../models/User');
 const protect = require('../middleware/auth');
 
-console.log('🔧 Feed route loaded with Memory Photo support');
+console.log('🔧 Feed route loaded with Memory Photo support and Instagram-style likes');
 
 const router = express.Router();
 
@@ -17,17 +17,18 @@ const recencyScore = (d) => {
   return Math.exp(-hours / 24);
 };
 
-/* ─── PHASE 1: Enhanced Posts Feed with Memory Photos ─── */
+/* ─── UPDATED: Enhanced Posts Feed with Memory Photos and PROPER LIKE STATUS ─── */
 router.get('/feed/posts', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;
   const skip = (page - 1) * limit;
+  const userId = req.user._id;
   
-  console.log(`🟡 [API] /feed/posts -> user ${req.user._id} page ${page}`);
+  console.log(`🟡 [API] /feed/posts -> user ${userId} page ${page}`);
 
   try {
     /* 1) Get viewer info ---------------------------------------------------- */
-    const viewer = await User.findById(req.user._id)
+    const viewer = await User.findById(userId)
       .select('following attendingEvents')
       .populate('following', '_id')
       .populate('attendingEvents', '_id');
@@ -36,34 +37,126 @@ router.get('/feed/posts', protect, async (req, res) => {
     const attendingEventIds = viewer.attendingEvents.map(e => e._id);
     
     console.log(`🔍 DEBUG INFO:`);
-    console.log(`  - User ID: ${req.user._id}`);
+    console.log(`  - User ID: ${userId}`);
     console.log(`  - Following count: ${followingIds.length}`);
     console.log(`  - Attending events: ${attendingEventIds.length}`);
 
-    /* 2) Fetch regular posts from followed users --------------------------- */
+    /* 2) ✅ FIXED: Fetch regular posts with PROPER LIKE STATUS using aggregation */
     const friendPostsQuery = {
       user: { $in: followingIds },
       visibleInEvent: { $ne: false }, // Include both true and undefined
+      $and: [
+        {
+          $or: [
+            { isDeleted: { $exists: false } },
+            { isDeleted: false }
+          ]
+        }
+      ]
     };
     
-    // Get regular posts from followed users
-    const friendPosts = await Photo.find(friendPostsQuery)
-      .populate('user', 'username profilePicture')
-      .populate('event', 'title time location')
-      .sort({ uploadDate: -1 })
-      .lean();
+    console.log(`📸 Fetching regular posts with like status...`);
+    
+    // ✅ CRITICAL: Use aggregation to calculate like status properly
+    const friendPosts = await Photo.aggregate([
+      {
+        $match: friendPostsQuery
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $lookup: {
+          from: 'events',
+          localField: 'event',
+          foreignField: '_id',
+          as: 'event'
+        }
+      },
+      {
+        $unwind: { path: '$user', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $unwind: { path: '$event', preserveNullAndEmptyArrays: true }
+      },
+      {
+        $addFields: {
+          // ✅ CRITICAL: Calculate like status properly
+          userLiked: {
+            $cond: {
+              if: { $isArray: '$likes' },
+              then: { $in: [userId, '$likes'] },
+              else: false
+            }
+          },
+          likeCount: {
+            $cond: {
+              if: { $isArray: '$likes' },
+              then: { $size: '$likes' },
+              else: 0
+            }
+          },
+          commentCount: {
+            $cond: {
+              if: { $isArray: '$comments' },
+              then: { $size: '$comments' },
+              else: 0
+            }
+          },
+          postType: 'regular', // Mark as regular post
+          source: 'friend'
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          paths: 1,
+          caption: 1,
+          uploadDate: 1,
+          createdAt: 1,
+          user: {
+            _id: 1,
+            username: 1,
+            profilePicture: 1,
+            fullName: 1
+          },
+          event: {
+            _id: 1,
+            title: 1,
+            time: 1,
+            location: 1
+          },
+          likes: 1, // Keep for compatibility
+          comments: 1, // Keep for compatibility  
+          userLiked: 1, // ✅ CRITICAL
+          likeCount: 1, // ✅ CRITICAL
+          commentCount: 1,
+          postType: 1,
+          source: 1,
+          visibleInEvent: 1
+        }
+      },
+      {
+        $sort: { uploadDate: -1 }
+      }
+    ]);
 
-    console.log(`📸 Found ${friendPosts.length} regular posts from followed users`);
+    console.log(`📸 Found ${friendPosts.length} regular posts from followed users with like status`);
 
     /* 3) 🔒 PRIVACY-CONTROLLED Memory Photos Query ------------------------- */
     
     // Find all memories where current user is a participant (creator OR participant)
     const userMemories = await Memory.find({
       $or: [
-        { creator: req.user._id },
-        { participants: req.user._id }
+        { creator: userId },
+        { participants: userId }
       ]
-    }).select('_id creator participants');
+    }).select('_id creator participants title');
 
     const userMemoryIds = userMemories.map(memory => memory._id);
     console.log(`🧠 User is participant in ${userMemoryIds.length} memories`);
@@ -71,62 +164,123 @@ router.get('/feed/posts', protect, async (req, res) => {
     let memoryPosts = [];
     
     if (userMemoryIds.length > 0) {
-      // Get memory photos ONLY from memories where user is a participant
-      // AND from users they follow (to keep feed relevant)
-      const memoryPhotosQuery = {
-        memory: { $in: userMemoryIds }, // 🔒 PRIVACY: Only from user's memories
-        uploadedBy: { $in: followingIds }, // Only from followed users
-        isDeleted: false
-      };
+      console.log(`📷 Fetching memory posts with like status...`);
+      
+      // ✅ CRITICAL: Use aggregation for memory photos with proper like status
+      memoryPosts = await MemoryPhoto.aggregate([
+        {
+          $match: {
+            memory: { $in: userMemoryIds }, // 🔒 PRIVACY: Only from user's memories
+            uploadedBy: { $in: followingIds }, // Only from followed users
+            isDeleted: false
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'uploadedBy',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        {
+          $lookup: {
+            from: 'memories',
+            localField: 'memory',
+            foreignField: '_id',
+            as: 'memoryData'
+          }
+        },
+        {
+          $unwind: { path: '$user', preserveNullAndEmptyArrays: false }
+        },
+        {
+          $unwind: { path: '$memoryData', preserveNullAndEmptyArrays: false }
+        },
+        {
+          $addFields: {
+            // ✅ CRITICAL: Calculate like status for memory photos
+            userLiked: {
+              $cond: {
+                if: { $isArray: '$likes' },
+                then: { $in: [userId, '$likes'] },
+                else: false
+              }
+            },
+            likeCount: {
+              $cond: {
+                if: { $isArray: '$likes' },
+                then: { $size: '$likes' },
+                else: 0
+              }
+            },
+            commentCount: {
+              $cond: {
+                if: { $isArray: '$comments' },
+                then: { $size: '$comments' },
+                else: 0
+              }
+            },
+            postType: 'memory', // Mark as memory post
+            source: 'memory',
+            uploadDate: '$uploadedAt', // Map for consistency
+            memoryInfo: {
+              memoryId: '$memoryData._id',
+              memoryTitle: '$memoryData.title',
+              participantCount: { $add: [{ $size: '$memoryData.participants' }, 1] }, // +1 for creator
+              isCreator: { $eq: ['$memoryData.creator', userId] }
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 1,
+            url: 1,
+            caption: 1,
+            uploadDate: 1,
+            uploadedAt: 1,
+            user: {
+              _id: 1,
+              username: 1,
+              profilePicture: 1,
+              fullName: 1
+            },
+            likes: 1, // Keep for compatibility
+            comments: 1, // Keep for compatibility
+            userLiked: 1, // ✅ CRITICAL
+            likeCount: 1, // ✅ CRITICAL
+            commentCount: 1,
+            postType: 1,
+            source: 1,
+            memoryInfo: 1
+          }
+        },
+        {
+          $sort: { uploadedAt: -1 }
+        }
+      ]);
 
-      memoryPosts = await MemoryPhoto.find(memoryPhotosQuery)
-        .populate('uploadedBy', 'username profilePicture')
-        .populate({
-          path: 'memory',
-          select: 'title participants creator',
-          populate: [
-            { path: 'creator', select: 'username' },
-            { path: 'participants', select: 'username' }
-          ]
-        })
-        .sort({ uploadedAt: -1 })
-        .lean();
-
-      console.log(`🔐 Found ${memoryPosts.length} memory photos (privacy-filtered)`);
+      console.log(`🔐 Found ${memoryPosts.length} memory photos (privacy-filtered) with like status`);
     }
 
-    /* 4) Transform memory posts to match regular post format --------------- */
-    const transformedMemoryPosts = memoryPosts.map(photo => ({
-      _id: photo._id,
-      url: photo.url,
-      caption: photo.caption || '',
-      uploadDate: photo.uploadedAt, // Map uploadedAt to uploadDate for consistency
-      user: photo.uploadedBy, // Map uploadedBy to user for consistency
-      postType: 'memory', // 🏷️ Mark as memory post
-      memoryInfo: {
-        memoryId: photo.memory._id,
-        memoryTitle: photo.memory.title,
-        participantCount: photo.memory.participants.length + 1, // +1 for creator
-        isCreator: photo.memory.creator._id.toString() === req.user._id.toString()
-      },
-      likeCount: photo.likeCount || 0,
-      commentCount: photo.commentCount || 0,
-      source: 'memory' // Distinguish source
-    }));
-
-    /* 5) Transform regular posts for consistency ---------------------------- */
-    const transformedFriendPosts = friendPosts.map(post => ({
+    /* 4) ✅ ENHANCED: Combine and validate all posts with like status ------- */
+    const allPosts = [...friendPosts, ...memoryPosts];
+    
+    // ✅ VALIDATION: Ensure all posts have required like fields
+    const validatedPosts = allPosts.map(post => ({
       ...post,
-      postType: 'regular', // 🏷️ Mark as regular post
-      source: 'friend'
+      userLiked: Boolean(post.userLiked), // Ensure boolean
+      likeCount: Number(post.likeCount) || 0, // Ensure number
+      commentCount: Number(post.commentCount) || 0 // Ensure number
     }));
 
-    /* 6) Combine, sort, and paginate all posts ----------------------------- */
-    const allPosts = [...transformedFriendPosts, ...transformedMemoryPosts]
-      .sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
-      .slice(skip, skip + limit); // Apply pagination
+    // Sort by upload date (newest first)
+    validatedPosts.sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+    
+    // Apply pagination
+    const paginatedPosts = validatedPosts.slice(skip, skip + limit);
 
-    /* 7) Calculate totals for pagination ------------------------------------ */
+    /* 5) Calculate totals for pagination ------------------------------------ */
     const totalRegularPosts = await Photo.countDocuments(friendPostsQuery);
     
     let totalMemoryPosts = 0;
@@ -139,23 +293,40 @@ router.get('/feed/posts', protect, async (req, res) => {
     }
 
     const totalPosts = totalRegularPosts + totalMemoryPosts;
+    const hasMore = validatedPosts.length > skip + limit;
     
-    /* 8) Build response with debugging info -------------------------------- */
+    /* 6) ✅ ENHANCED: Build response with like status debugging ------------- */
     const response = {
-      posts: allPosts,
-      page,
-      totalPages: Math.ceil(totalPosts / limit),
-      hasMore: skip + limit < totalPosts,
+      posts: paginatedPosts,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalPosts / limit),
+        totalPosts: totalPosts,
+        hasMore: hasMore,
+        limit: limit
+      },
       debug: {
-        regularPosts: transformedFriendPosts.length,
-        memoryPosts: transformedMemoryPosts.length,
-        totalPosts: allPosts.length,
+        regularPosts: friendPosts.length,
+        memoryPosts: memoryPosts.length,
+        totalPosts: validatedPosts.length,
+        paginatedCount: paginatedPosts.length,
         userMemoryCount: userMemoryIds.length,
-        followingCount: followingIds.length
+        followingCount: followingIds.length,
+        postsWithUserLikes: paginatedPosts.filter(p => p.userLiked).length,
+        likeStatusValidation: {
+          allHaveUserLiked: paginatedPosts.every(p => typeof p.userLiked === 'boolean'),
+          allHaveLikeCount: paginatedPosts.every(p => typeof p.likeCount === 'number')
+        }
       }
     };
 
-    console.log(`🟢 Sending feed response:`, response.debug);
+    console.log(`🟢 Sending feed response:`, {
+      totalPosts: response.debug.totalPosts,
+      paginatedPosts: response.debug.paginatedCount,
+      postsWithLikes: response.debug.postsWithUserLikes,
+      likeValidation: response.debug.likeStatusValidation
+    });
+    
     res.json(response);
 
   } catch (err) {

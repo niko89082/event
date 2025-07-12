@@ -189,6 +189,7 @@ router.post('/upload', protect, upload.single('photo'), async (req, res) => {
 router.get('/', protect, async (req, res) => {
   try {
     const { eventId, limit = 50, offset = 0 } = req.query;
+    const userId = req.user._id;
     
     let query = {};
     
@@ -217,7 +218,30 @@ router.get('/', protect, async (req, res) => {
       .limit(parseInt(limit))
       .skip(parseInt(offset));
     
-    res.status(200).json(photos);
+    // ✅ CRITICAL FIX: Add like status to each photo
+    const photosWithLikeStatus = photos.map(photo => {
+      const photoObj = photo.toObject();
+      
+      // Initialize likes array if it doesn't exist
+      if (!photoObj.likes) {
+        photoObj.likes = [];
+      }
+      
+      // Calculate user liked status
+      const userLiked = photoObj.likes.some(likeId => 
+        likeId.toString() === userId.toString()
+      );
+      const likeCount = photoObj.likes.length;
+      
+      return {
+        ...photoObj,
+        userLiked,
+        likeCount,
+        commentCount: photoObj.comments ? photoObj.comments.length : 0
+      };
+    });
+    
+    res.status(200).json(photosWithLikeStatus);
   } catch (error) {
     console.error('❌ Get photos error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -388,6 +412,7 @@ router.put('/visibility/:photoId', protect, async (req, res) => {
 router.get('/event/:eventId', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
+    const userId = req.user._id;
     
     console.log(`🔍 Getting photos for event: ${eventId}`);
 
@@ -410,19 +435,43 @@ router.get('/event/:eventId', protect, async (req, res) => {
     .populate('event', 'title time')
     .sort({ createdAt: -1 });
 
-    console.log(`✅ Found ${photos.length} photos for event ${eventId}`);
-    res.json(photos);
+    // ✅ CRITICAL FIX: Add like status to each photo
+    const photosWithLikeStatus = photos.map(photo => {
+      const photoObj = photo.toObject();
+      
+      // Initialize likes array if it doesn't exist
+      if (!photoObj.likes) {
+        photoObj.likes = [];
+      }
+      
+      // Calculate user liked status
+      const userLiked = photoObj.likes.some(likeId => 
+        likeId.toString() === userId.toString()
+      );
+      const likeCount = photoObj.likes.length;
+      
+      return {
+        ...photoObj,
+        userLiked,
+        likeCount,
+        commentCount: photoObj.comments ? photoObj.comments.length : 0
+      };
+    });
+
+    console.log(`✅ Found ${photosWithLikeStatus.length} photos for event ${eventId}`);
+    res.json(photosWithLikeStatus);
 
   } catch (error) {
     console.error('❌ Get event photos error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 // Like Photo
 router.post('/like/:photoId', protect, async (req, res) => {
   try {
     const photoId = req.params.photoId;
-    const userId = req.user._id; // From auth middleware
+    const userId = req.user._id;
     
     console.log('📸 Like request received:', {
       photoId,
@@ -436,14 +485,15 @@ router.post('/like/:photoId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Photo not found' });
     }
 
-    // Initialize likes array if it doesn't exist
+    // ✅ CRITICAL FIX: Initialize likes array if it doesn't exist
     if (!photo.likes) {
       photo.likes = [];
+      await photo.save(); // Save the initialization
     }
 
     // Check if user already liked this photo
-    const userLikedIndex = photo.likes.findIndex(like => 
-      like.toString() === userId.toString()
+    const userLikedIndex = photo.likes.findIndex(likeId => 
+      likeId.toString() === userId.toString()
     );
     const wasLiked = userLikedIndex !== -1;
 
@@ -451,7 +501,8 @@ router.post('/like/:photoId', protect, async (req, res) => {
       wasLiked,
       userLikedIndex,
       currentLikes: photo.likes.map(id => id.toString()),
-      likesCount: photo.likes.length
+      likesCount: photo.likes.length,
+      userId: userId.toString()
     });
 
     let newLikedStatus;
@@ -459,8 +510,8 @@ router.post('/like/:photoId', protect, async (req, res) => {
 
     if (wasLiked) {
       // Unlike: Remove user from likes array
-      newLikesArray = photo.likes.filter(like => 
-        like.toString() !== userId.toString()
+      newLikesArray = photo.likes.filter(likeId => 
+        likeId.toString() !== userId.toString()
       );
       newLikedStatus = false;
       console.log('📸 Unliking photo');
@@ -471,10 +522,11 @@ router.post('/like/:photoId', protect, async (req, res) => {
       console.log('📸 Liking photo');
     }
 
-    // Update the photo
+    // Update the photo with new likes array
     photo.likes = newLikesArray;
     await photo.save();
 
+    // ✅ CONSISTENT RESPONSE FORMAT (same as memory photos)
     const finalResponse = {
       success: true,
       liked: newLikedStatus,        // ✅ CRITICAL: Include this field
@@ -494,6 +546,39 @@ router.post('/like/:photoId', protect, async (req, res) => {
       message: 'Server error',
       error: error.message 
     });
+  }
+});
+router.get('/likes/:photoId', protect, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+    const userId = req.user._id;
+    
+    const photo = await Photo.findById(photoId)
+      .populate('likes', 'username fullName profilePicture');
+    
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+    
+    // Initialize likes array if it doesn't exist
+    if (!photo.likes) {
+      photo.likes = [];
+    }
+
+    // Calculate user liked status
+    const userLiked = photo.likes.some(likeId => 
+      likeId.toString() === userId.toString()
+    );
+    
+    res.json({
+      likes: photo.likes,
+      likeCount: photo.likes.length,
+      userLiked: userLiked
+    });
+    
+  } catch (error) {
+    console.error('Error fetching photo likes:', error);
+    res.status(500).json({ message: 'Failed to fetch likes' });
   }
 });
 
@@ -536,6 +621,11 @@ router.get('/:photoId', protect, async (req, res) => {
     const photoId = req.params.photoId;
     const userId = req.user._id;
 
+    console.log('📸 GET photo request:', {
+      photoId,
+      userId: userId.toString()
+    });
+
     const photo = await Photo.findById(photoId)
       .populate('user', 'username profilePicture')
       .populate('event', 'title time location')
@@ -545,9 +635,25 @@ router.get('/:photoId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Photo not found' });
     }
 
-    // Calculate user liked status
-    const userLiked = photo.likes && photo.likes.includes(userId);
-    const likeCount = photo.likes ? photo.likes.length : 0;
+    // ✅ CRITICAL FIX: Proper like status calculation
+    // Initialize likes array if it doesn't exist
+    if (!photo.likes) {
+      photo.likes = [];
+    }
+
+    // Calculate user liked status - check if userId is in likes array
+    const userLiked = photo.likes.some(likeId => 
+      likeId.toString() === userId.toString()
+    );
+    const likeCount = photo.likes.length;
+
+    console.log('📸 Photo like status calculated:', {
+      photoId,
+      userId: userId.toString(),
+      likesArray: photo.likes.map(id => id.toString()),
+      userLiked,
+      likeCount
+    });
 
     const response = {
       ...photo.toObject(),
@@ -555,13 +661,6 @@ router.get('/:photoId', protect, async (req, res) => {
       likeCount,           // ✅ CRITICAL: Include this
       commentCount: photo.comments ? photo.comments.length : 0
     };
-
-    console.log('📸 Get photo response includes:', {
-      photoId,
-      userLiked,
-      likeCount,
-      userId: userId.toString()
-    });
 
     res.status(200).json(response);
 

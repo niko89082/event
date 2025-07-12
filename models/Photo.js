@@ -38,12 +38,12 @@ const PhotoSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-  likes: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    },
-  ],
+  likes: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'User',
+    default: [], // ✅ Always start with empty array
+    required: true, // ✅ Make it required
+  },
   comments: [CommentSchema],
   tags: [
     {

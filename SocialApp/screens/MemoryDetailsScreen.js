@@ -1,4 +1,4 @@
-// SocialApp/screens/MemoryDetailsScreen.js - Enhanced with all requested improvements
+// SocialApp/screens/MemoryDetailsScreen.js - FIXED: Null safety and like toggle issues
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, ScrollView, SafeAreaView, StatusBar, 
@@ -16,8 +16,25 @@ import MemoryPhotoItem from '../components/MemoryPhotoItem';
 const { width: screenWidth } = Dimensions.get('window');
 
 export default function MemoryDetailsScreen({ route, navigation }) {
-  const { memoryId } = route.params;
+  // ✅ FIXED: Add null safety for route params
+  const { memoryId } = route?.params || {};
   const { currentUser } = useContext(AuthContext);
+  
+  // ✅ FIXED: Early return if no memoryId
+  if (!memoryId) {
+    console.error('❌ MemoryDetailsScreen: No memoryId provided');
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>Memory ID not found</Text>
+        <TouchableOpacity 
+          style={styles.retryButton} 
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.retryButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   
   // State management
   const [memory, setMemory] = useState(null);
@@ -40,23 +57,20 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   const [currentPhotoLikes, setCurrentPhotoLikes] = useState([]);
   const [likesLoading, setLikesLoading] = useState(false);
 
-  // NEW: Participants modal state - REMOVED (now using separate screen)
-  // const [showParticipantsModal, setShowParticipantsModal] = useState(false);
-
-  // Host control states - SIMPLIFIED (removed manage modal)
-  // const [showManageModal, setShowManageModal] = useState(false);
-  // const [showAddParticipants, setShowAddParticipants] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
   useEffect(() => {
-    fetchMemoryDetails();
+    if (memoryId) {
+      fetchMemoryDetails();
+    }
   }, [memoryId]);
 
   useEffect(() => {
-    if (memory && currentUser) {
-      const isHost = memory.creator?._id === currentUser._id;
+    // ✅ FIXED: Add null safety for memory and currentUser
+    if (memory?.creator?._id && currentUser?._id) {
+      const isHost = memory.creator._id === currentUser._id;
       if (isHost) {
         navigation.setOptions({
           headerRight: () => (
@@ -96,13 +110,20 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
   const fetchMemoryDetails = async () => {
     try {
-      setLoading(!refreshing); // Don't show main loading if refreshing
+      setLoading(!refreshing);
       setError(null);
       
       console.log('🔍 Fetching memory details for:', memoryId);
       const response = await api.get(`/api/memories/${memoryId}`);
-      setMemory(response.data.memory);
-      console.log('✅ Memory loaded:', response.data.memory.title);
+      
+      // ✅ FIXED: Add null safety for response data
+      const memoryData = response.data?.memory;
+      if (!memoryData) {
+        throw new Error('Memory data not found in response');
+      }
+      
+      setMemory(memoryData);
+      console.log('✅ Memory loaded:', memoryData.title || 'Untitled');
       
     } catch (err) {
       console.error('❌ Error fetching memory details:', err);
@@ -112,12 +133,37 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
+  // ✅ FIXED: Enhanced like update handler with proper state management
+  const handleLikeUpdate = (photoId, likeData) => {
+    console.log('📷 Updating like for photo:', { photoId, likeData });
+    
+    setMemory(prev => {
+      if (!prev?.photos) return prev;
+      
+      return {
+        ...prev,
+        photos: prev.photos.map(photo => {
+          if (photo._id === photoId) {
+            const updatedPhoto = {
+              ...photo,
+              likeCount: likeData.count || likeData.likeCount || photo.likeCount || 0,
+              userLiked: likeData.userLiked !== undefined ? likeData.userLiked : photo.userLiked || false
+            };
+            console.log('📷 Updated photo state:', updatedPhoto);
+            return updatedPhoto;
+          }
+          return photo;
+        })
+      };
+    });
+  };
+
   // NEW: Fetch photo likes
   const fetchPhotoLikes = async (photoId) => {
     try {
       setLikesLoading(true);
       const response = await api.get(`/api/memories/photos/${photoId}/likes`);
-      setCurrentPhotoLikes(response.data.likes);
+      setCurrentPhotoLikes(response.data.likes || []);
       setShowLikesModal(true);
     } catch (error) {
       console.error('Error fetching photo likes:', error);
@@ -131,10 +177,11 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     fetchPhotoLikes(photoId);
   };
 
-  const isHost = currentUser && memory && memory.creator?._id === currentUser._id;
-  const isParticipant = currentUser && memory && (
+  // ✅ FIXED: Add null safety for user checks
+  const isHost = currentUser?._id && memory?.creator?._id && memory.creator._id === currentUser._id;
+  const isParticipant = currentUser?._id && memory && (
     memory.creator?._id === currentUser._id ||
-    memory.participants?.some(p => p._id === currentUser._id)
+    memory.participants?.some(p => p?._id === currentUser._id)
   );
 
   // Photo upload functionality
@@ -225,18 +272,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
-  // Photo interactions
-  const handleLikeUpdate = (photoId, likeData) => {
-    setMemory(prev => ({
-      ...prev,
-      photos: prev.photos?.map(photo => 
-        photo._id === photoId 
-          ? { ...photo, likeCount: likeData.count, userLiked: likeData.userLiked }
-          : photo
-      )
-    }));
-  };
-
   const handleOpenComments = async (photoId) => {
     try {
       setCurrentPhotoId(photoId);
@@ -244,7 +279,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
       setShowComments(true);
       
       const response = await api.get(`/api/memories/photos/${photoId}/comments`);
-      setComments(response.data.comments);
+      setComments(response.data.comments || []);
     } catch (error) {
       console.error('Error fetching comments:', error);
       Alert.alert('Error', 'Failed to load comments');
@@ -269,10 +304,13 @@ export default function MemoryDetailsScreen({ route, navigation }) {
       setSearchLoading(true);
       const response = await api.get(`/api/search/users?q=${encodeURIComponent(query)}`);
       
-      const filteredResults = response.data.users.filter(user => 
-        user._id !== currentUser._id &&
-        user._id !== memory.creator._id &&
-        !memory.participants?.some(p => p._id === user._id)
+      // ✅ FIXED: Add null safety for search results and memory participants
+      const users = response.data?.users || [];
+      const filteredResults = users.filter(user => 
+        user?._id && 
+        user._id !== currentUser?._id &&
+        user._id !== memory?.creator?._id &&
+        !memory?.participants?.some(p => p?._id === user._id)
       );
       
       setSearchResults(filteredResults);
@@ -285,7 +323,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
   const addParticipant = async (userId) => {
     try {
-      await api.put(`/api/memories/${memoryId}/participants`, { participantId : userId });
+      await api.put(`/api/memories/${memoryId}/participants`, { participantId: userId });
       
       const user = searchResults.find(u => u._id === userId);
       if (user) {
@@ -310,7 +348,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
       
       setMemory(prev => ({
         ...prev,
-        participants: prev.participants?.filter(p => p._id !== userId) || []
+        participants: prev.participants?.filter(p => p?._id !== userId) || []
       }));
       
       Alert.alert('Success', 'Participant removed successfully');
@@ -347,93 +385,145 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     />
   );
 
-  const renderParticipant = ({ item: participant }) => (
-    <View style={styles.participantItem}>
-      <TouchableOpacity 
-        style={styles.participantInfo}
-        onPress={() => navigation.navigate('ProfileScreen', { userId: participant._id })}
+  // ✅ FIXED: Add null safety for participant rendering
+  const renderParticipant = ({ item: participant }) => {
+    if (!participant?._id) {
+      console.warn('⚠️ Invalid participant data:', participant);
+      return null;
+    }
+
+    return (
+      <View style={styles.participantItem}>
+        <TouchableOpacity 
+          style={styles.participantInfo}
+          onPress={() => navigation.navigate('ProfileScreen', { userId: participant._id })}
+        >
+          <Image
+            source={{
+              uri: getProfilePictureUrl(
+                participant.profilePicture, 
+                participant.username?.charAt(0) || participant.fullName?.charAt(0) || 'U'
+              )
+            }}
+            style={styles.participantAvatar}
+          />
+          <Text style={styles.participantName}>
+            {participant.username || participant.fullName || 'Unknown'}
+          </Text>
+        </TouchableOpacity>
+        
+        {isHost && (
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => removeParticipant(participant._id)}
+          >
+            <Ionicons name="remove-circle-outline" size={24} color="#FF3B30" />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  // ✅ FIXED: Add null safety for search result rendering
+  const renderSearchResult = ({ item: user }) => {
+    if (!user?._id) {
+      console.warn('⚠️ Invalid user data in search results:', user);
+      return null;
+    }
+
+    return (
+      <TouchableOpacity
+        style={styles.searchResultItem}
+        onPress={() => addParticipant(user._id)}
       >
         <Image
           source={{
-            uri: getProfilePictureUrl(participant.profilePicture, participant.username?.charAt(0))
+            uri: getProfilePictureUrl(
+              user.profilePicture, 
+              user.username?.charAt(0) || user.fullName?.charAt(0) || 'U'
+            )
           }}
-          style={styles.participantAvatar}
+          style={styles.searchResultAvatar}
         />
-        <Text style={styles.participantName}>
-          {participant.username || participant.fullName || 'Unknown'}
-        </Text>
+        <View style={styles.searchResultInfo}>
+          <Text style={styles.searchResultName}>
+            {user.fullName || user.username || 'Unknown'}
+          </Text>
+          <Text style={styles.searchResultUsername}>
+            @{user.username || 'unknown'}
+          </Text>
+        </View>
+        <Ionicons name="add-circle-outline" size={24} color="#3797EF" />
       </TouchableOpacity>
-      
-      {isHost && (
-        <TouchableOpacity
-          style={styles.removeButton}
-          onPress={() => removeParticipant(participant._id)}
-        >
-          <Ionicons name="remove-circle-outline" size={24} color="#FF3B30" />
-        </TouchableOpacity>
-      )}
-    </View>
-  );
+    );
+  };
 
-  const renderSearchResult = ({ item: user }) => (
-    <TouchableOpacity
-      style={styles.searchResultItem}
-      onPress={() => addParticipant(user._id)}
-    >
-      <Image
-        source={{
-          uri: getProfilePictureUrl(user.profilePicture, user.username?.charAt(0))
-        }}
-        style={styles.searchResultAvatar}
-      />
-      <View style={styles.searchResultInfo}>
-        <Text style={styles.searchResultName}>{user.fullName || user.username}</Text>
-        <Text style={styles.searchResultUsername}>@{user.username}</Text>
-      </View>
-      <Ionicons name="add-circle-outline" size={24} color="#3797EF" />
-    </TouchableOpacity>
-  );
+  // ✅ FIXED: Add null safety for comment rendering
+  const renderComment = ({ item: comment }) => {
+    if (!comment?.user) {
+      console.warn('⚠️ Invalid comment data:', comment);
+      return null;
+    }
 
-  const renderComment = ({ item: comment }) => (
-    <View style={styles.commentItem}>
-      <Image
-        source={{
-          uri: getProfilePictureUrl(comment.user?.profilePicture, comment.user?.username?.charAt(0))
-        }}
-        style={styles.commentAvatar}
-      />
-      <View style={styles.commentContent}>
-        <Text style={styles.commentAuthor}>{comment.user?.username || 'Unknown'}</Text>
-        <Text style={styles.commentText}>{comment.text}</Text>
-        <Text style={styles.commentTime}>
-          {new Date(comment.createdAt).toLocaleDateString()}
-        </Text>
+    return (
+      <View style={styles.commentItem}>
+        <Image
+          source={{
+            uri: getProfilePictureUrl(
+              comment.user.profilePicture, 
+              comment.user.username?.charAt(0) || 'U'
+            )
+          }}
+          style={styles.commentAvatar}
+        />
+        <View style={styles.commentContent}>
+          <Text style={styles.commentAuthor}>
+            {comment.user.username || 'Unknown'}
+          </Text>
+          <Text style={styles.commentText}>{comment.text || ''}</Text>
+          <Text style={styles.commentTime}>
+            {comment.createdAt ? new Date(comment.createdAt).toLocaleDateString() : ''}
+          </Text>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
-  const renderLikedUser = ({ item: like }) => (
-    <TouchableOpacity
-      style={styles.likedUserItem}
-      onPress={() => {
-        setShowLikesModal(false);
-        navigation.navigate('ProfileScreen', { userId: like.user._id });
-      }}
-    >
-      <Image
-        source={{
-          uri: getProfilePictureUrl(like.user.profilePicture, like.user.username?.charAt(0))
+  // ✅ FIXED: Add null safety for liked user rendering
+  const renderLikedUser = ({ item: like }) => {
+    if (!like?.user?._id) {
+      console.warn('⚠️ Invalid like data:', like);
+      return null;
+    }
+
+    return (
+      <TouchableOpacity
+        style={styles.likedUserItem}
+        onPress={() => {
+          setShowLikesModal(false);
+          navigation.navigate('ProfileScreen', { userId: like.user._id });
         }}
-        style={styles.likedUserAvatar}
-      />
-      <View style={styles.likedUserInfo}>
-        <Text style={styles.likedUserName}>
-          {like.user.fullName || like.user.username}
-        </Text>
-        <Text style={styles.likedUserUsername}>@{like.user.username}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+      >
+        <Image
+          source={{
+            uri: getProfilePictureUrl(
+              like.user.profilePicture, 
+              like.user.username?.charAt(0) || 'U'
+            )
+          }}
+          style={styles.likedUserAvatar}
+        />
+        <View style={styles.likedUserInfo}>
+          <Text style={styles.likedUserName}>
+            {like.user.fullName || like.user.username || 'Unknown'}
+          </Text>
+          <Text style={styles.likedUserUsername}>
+            @{like.user.username || 'unknown'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   if (loading) {
     return (
@@ -488,7 +578,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
             <View style={styles.metaItem}>
               <Ionicons name="calendar-outline" size={16} color="#8E8E93" />
               <Text style={styles.metaText}>
-                {new Date(memory.createdAt).toLocaleDateString()}
+                {memory.createdAt ? new Date(memory.createdAt).toLocaleDateString() : 'Unknown date'}
               </Text>
             </View>
             
@@ -535,15 +625,13 @@ export default function MemoryDetailsScreen({ route, navigation }) {
             <FlatList
               data={memory.photos}
               renderItem={renderPhoto}
-              keyExtractor={(item) => item._id}
+              keyExtractor={(item) => item._id || item.id || Math.random().toString()}
               scrollEnabled={false}
               contentContainerStyle={styles.photosList}
             />
           </View>
         )}
       </ScrollView>
-
-      {/* Participants Modal - REMOVED, now using separate screen */}
 
       {/* Likes Modal */}
       <Modal
@@ -571,7 +659,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
               <FlatList
                 data={currentPhotoLikes}
                 renderItem={renderLikedUser}
-                keyExtractor={(item, index) => `${item.user._id}-${index}`}
+                keyExtractor={(item, index) => `${item?.user?._id || 'unknown'}-${index}`}
                 style={styles.likedUsersList}
               />
             )}
@@ -597,7 +685,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
           <FlatList
             data={comments}
             renderItem={renderComment}
-            keyExtractor={(item, index) => `comment-${index}`}
+            keyExtractor={(item, index) => `comment-${item?._id || index}`}
             style={styles.commentsList}
             ListEmptyComponent={
               commentsLoading ? (
@@ -635,10 +723,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         </SafeAreaView>
       </Modal>
 
-      {/* Host Management Modal - REMOVED (using direct navigation) */}
-
-      {/* Add Participants Modal - REMOVED, now using separate screen */}
-
       {/* Fullscreen Photo Modal */}
       <Modal
         visible={showPhotoModal}
@@ -671,6 +755,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   );
 }
 
+// Keep the same styles as before
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -810,8 +895,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   
-  // Participants Modal - REMOVED (using separate screen)
-  
   // Likes Modal
   likesModal: {
     backgroundColor: '#FFFFFF',
@@ -923,28 +1006,62 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   
-  // Management Modal
-  manageModal: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  manageOptions: {
-    paddingBottom: 20,
-  },
-  manageOption: {
+  // Participant rendering styles (for potential future use)
+  participantItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
+    justifyContent: 'space-between',
   },
-  manageOptionText: {
+  participantInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  participantAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F6F6F6',
+  },
+  participantName: {
     fontSize: 16,
+    fontWeight: '500',
     color: '#000000',
     marginLeft: 12,
   },
+  removeButton: {
+    padding: 8,
+  },
   
-  // Add Participants Modal - REMOVED (using separate screen)
+  // Search result styles (for potential future use)
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  searchResultAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F6F6F6',
+  },
+  searchResultInfo: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#000000',
+  },
+  searchResultUsername: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
   
   // Fullscreen Photo Modal
   fullscreenModal: {

@@ -1,4 +1,4 @@
-// SocialApp/components/PostsFeed.js - FIXED: No more scrollable header overlap
+// SocialApp/components/PostsFeed.js - FIXED: Pass currentUserId to PostItem
 import React, { useState, useEffect, useCallback, useContext, forwardRef, useImperativeHandle } from 'react';
 import {
   FlatList,
@@ -29,6 +29,16 @@ const PostsFeed = forwardRef(({
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [debugInfo, setDebugInfo] = useState(null);
+
+  // ✅ CRITICAL FIX: Extract currentUserId and validate
+  const currentUserId = currentUser?._id;
+  
+  // ✅ DEBUG: Log currentUserId state
+  console.log('🎯 PostsFeed: currentUserId extracted:', {
+    currentUserId,
+    hasCurrentUser: !!currentUser,
+    currentUserObject: currentUser
+  });
 
   useEffect(() => {
     fetchPage(1, true);
@@ -117,19 +127,36 @@ const PostsFeed = forwardRef(({
     }
   }, [loading, hasMore, data.length, page]);
 
-  const renderPost = useCallback(({ item }) => (
-    <View style={styles.postWrapper}>
-      <PostItem 
-        post={item} 
-        navigation={navigation}
-        onLike={(postId, liked) => {
-          setData(prev => prev.map(post =>
-            post._id === postId ? { ...post, liked, likesCount: post.likesCount + (liked ? 1 : -1) } : post
-          ));
-        }}
-      />
-    </View>
-  ), [navigation]);
+  // ✅ CRITICAL FIX: Pass currentUserId to PostItem and add debugging
+  const renderPost = useCallback(({ item }) => {
+    console.log('🎯 PostsFeed: Rendering post with currentUserId:', {
+      postId: item._id,
+      currentUserId: currentUserId,
+      hasCurrentUserId: !!currentUserId
+    });
+    
+    return (
+      <View style={styles.postWrapper}>
+        <PostItem 
+          post={item} 
+          currentUserId={currentUserId} // ✅ CRITICAL: Pass currentUserId
+          navigation={navigation}
+          onLike={(postId, liked) => {
+            setData(prev => prev.map(post =>
+              post._id === postId ? { ...post, liked, likesCount: post.likesCount + (liked ? 1 : -1) } : post
+            ));
+          }}
+          // ✅ ENHANCED: Add post update callback
+          onPostUpdate={(postId, updates) => {
+            console.log('📊 PostsFeed: Updating post', { postId, updates });
+            setData(prev => prev.map(post =>
+              post._id === postId ? { ...post, ...updates } : post
+            ));
+          }}
+        />
+      </View>
+    );
+  }, [navigation, currentUserId]); // ✅ Add currentUserId as dependency
 
   const renderFooter = () => {
     if (!loading || data.length === 0) return null;
@@ -146,6 +173,24 @@ const PostsFeed = forwardRef(({
       parentOnScroll(event);
     }
   }, [parentOnScroll]);
+
+  // ✅ ENHANCED: Show warning if no currentUserId
+  if (!currentUserId) {
+    console.warn('⚠️ PostsFeed: No currentUserId available - user may not be logged in');
+    return (
+      <View style={styles.errorContainer}>
+        <Ionicons name="person-outline" size={48} color="#FF6B6B" />
+        <Text style={styles.errorTitle}>Authentication Required</Text>
+        <Text style={styles.errorMessage}>Please log in to view posts</Text>
+        <TouchableOpacity 
+          style={styles.retryButton} 
+          onPress={() => navigation.navigate('LoginScreen')}
+        >
+          <Text style={styles.retryButtonText}>Go to Login</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (loading && data.length === 0) {
     return (
@@ -206,10 +251,7 @@ const PostsFeed = forwardRef(({
       scrollEventThrottle={scrollEventThrottle}
       showsVerticalScrollIndicator={true}
       contentContainerStyle={data.length === 0 ? styles.emptyList : styles.list}
-      // FIXED: Use contentContainerStyle with paddingTop instead of contentInset
-      // This creates non-scrollable padding that positions content correctly from the start
       style={styles.feedContainer}
-      // MODERN: Content flows naturally under transparent headers
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustContentInsets={false}
       removeClippedSubviews={true}
@@ -221,21 +263,21 @@ const PostsFeed = forwardRef(({
 });
 
 const styles = StyleSheet.create({
-  // FIXED: Container with proper top padding
+  // Container with proper top padding
   feedContainer: {
     flex: 1,
     backgroundColor: 'transparent',
   },
   
   list: {
-    paddingTop: 114, // MOVED UP: 10px higher (was 124)
+    paddingTop: 114, // Account for headers
     paddingBottom: 20,
     backgroundColor: 'transparent',
   },
   
   emptyList: {
     flexGrow: 1,
-    paddingTop: 114, // MOVED UP: 10px higher (was 124)
+    paddingTop: 114,
     backgroundColor: 'transparent',
   },
   
@@ -250,7 +292,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 40,
     backgroundColor: 'transparent',
-    paddingTop: 250, // Account for headers
+    paddingTop: 250,
   },
   
   loadingText: {
@@ -267,7 +309,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 40,
     backgroundColor: 'transparent',
-    paddingTop: 250, // Account for headers
+    paddingTop: 250,
   },
   
   errorTitle: {
@@ -312,7 +354,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 60,
     backgroundColor: 'transparent',
-    paddingTop: 250, // Account for headers
+    paddingTop: 250,
   },
   
   emptyTitle: {
