@@ -1,10 +1,10 @@
-// SocialApp/screens/MemoryDetailsScreen.js - FIXED: Null safety and like toggle issues
+// SocialApp/screens/MemoryDetailsScreen.js - COMPLETE FIXED VERSION
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, ScrollView, SafeAreaView, StatusBar, 
   Alert, FlatList, TouchableOpacity, Modal, Image,
   TextInput, KeyboardAvoidingView, Platform, ActionSheetIOS,
-  Dimensions, StyleSheet, RefreshControl
+  Dimensions, StyleSheet, RefreshControl, Linking
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -98,23 +98,36 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     return `https://placehold.co/40x40/E1E1E1/8E8E93?text=${fallbackText}`;
   };
 
-  // NEW: Pull-to-refresh functionality
+  // ✅ ENHANCED: Better refresh functionality - UPDATE existing onRefresh
   const onRefresh = async () => {
+    console.log('🔄 Pull-to-refresh triggered');
     setRefreshing(true);
     try {
       await fetchMemoryDetails();
+      console.log('✅ Refresh completed successfully');
+    } catch (error) {
+      console.error('❌ Refresh failed:', error);
     } finally {
       setRefreshing(false);
     }
   };
 
+  // ✅ ENHANCED: Improved memory fetching with better like status - UPDATE existing fetchMemoryDetails
   const fetchMemoryDetails = async () => {
     try {
       setLoading(!refreshing);
       setError(null);
       
-      console.log('🔍 Fetching memory details for:', memoryId);
+      console.log('🔍 === FETCHING MEMORY DETAILS START ===');
+      console.log('📋 Memory ID:', memoryId);
+      
       const response = await api.get(`/api/memories/${memoryId}`);
+      
+      console.log('📥 Memory API response received:', {
+        success: response.data?.success,
+        hasMemory: !!response.data?.memory,
+        photoCount: response.data?.memory?.photos?.length || 0
+      });
       
       // ✅ FIXED: Add null safety for response data
       const memoryData = response.data?.memory;
@@ -122,58 +135,183 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         throw new Error('Memory data not found in response');
       }
       
+      // ✅ ENHANCED: Log photo like status for debugging
+      if (memoryData.photos && memoryData.photos.length > 0) {
+        console.log('📷 Photos like status summary:');
+        memoryData.photos.forEach((photo, index) => {
+          console.log(`  Photo ${index + 1} (${photo._id}):`, {
+            userLiked: photo.userLiked,
+            likeCount: photo.likeCount,
+            uploadedBy: photo.uploadedBy?.username
+          });
+        });
+      }
+      
       setMemory(memoryData);
-      console.log('✅ Memory loaded:', memoryData.title || 'Untitled');
+      console.log('✅ Memory loaded successfully:', {
+        title: memoryData.title || 'Untitled',
+        photoCount: memoryData.photos?.length || 0,
+        participantCount: memoryData.participantCount || 0
+      });
       
     } catch (err) {
-      console.error('❌ Error fetching memory details:', err);
-      setError(err.response?.data?.message || 'Failed to load memory');
+      console.error('🚨 === FETCH MEMORY DETAILS ERROR ===');
+      console.error('❌ Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+        memoryId
+      });
+      
+      const errorMessage = err.response?.data?.message || 'Failed to load memory';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ FIXED: Enhanced like update handler with proper state management
+  // ✅ FIXED: Enhanced like update handler - REPLACE existing handleLikeUpdate
   const handleLikeUpdate = (photoId, likeData) => {
-    console.log('📷 Updating like for photo:', { photoId, likeData });
+    console.log('🔄 === HANDLING LIKE UPDATE IN MEMORY DETAILS ===');
+    console.log('📷 Update details:', { 
+      photoId, 
+      likeData,
+      timestamp: new Date().toISOString()
+    });
     
     setMemory(prev => {
-      if (!prev?.photos) return prev;
+      if (!prev?.photos) {
+        console.warn('⚠️ No photos in memory, cannot update like');
+        return prev;
+      }
       
-      return {
+      const updatedMemory = {
         ...prev,
         photos: prev.photos.map(photo => {
           if (photo._id === photoId) {
             const updatedPhoto = {
               ...photo,
-              likeCount: likeData.count || likeData.likeCount || photo.likeCount || 0,
-              userLiked: likeData.userLiked !== undefined ? likeData.userLiked : photo.userLiked || false
+              likeCount: Number(likeData.likeCount) || Number(likeData.count) || photo.likeCount || 0,
+              userLiked: Boolean(likeData.userLiked)
             };
-            console.log('📷 Updated photo state:', updatedPhoto);
+            
+            console.log('📷 Updated photo in memory state:', {
+              photoId: updatedPhoto._id,
+              oldLikeCount: photo.likeCount,
+              newLikeCount: updatedPhoto.likeCount,
+              oldUserLiked: photo.userLiked,
+              newUserLiked: updatedPhoto.userLiked
+            });
+            
             return updatedPhoto;
           }
           return photo;
         })
       };
+      
+      console.log('✅ Memory state updated successfully');
+      return updatedMemory;
     });
   };
 
-  // NEW: Fetch photo likes
+  // ✅ FIXED: Fetch photo likes with proper user data - REPLACE existing fetchPhotoLikes
   const fetchPhotoLikes = async (photoId) => {
+    console.log('🚀 === FETCHING PHOTO LIKES START ===');
+    console.log('📷 Photo ID:', photoId);
+    
     try {
       setLikesLoading(true);
+      setCurrentPhotoLikes([]); // Clear previous data
+      
+      console.log('📡 Making API request to get photo likes...');
       const response = await api.get(`/api/memories/photos/${photoId}/likes`);
-      setCurrentPhotoLikes(response.data.likes || []);
-      setShowLikesModal(true);
+      
+      console.log('📥 Likes API response received:', {
+        success: response.data?.success,
+        likesCount: response.data?.likes?.length || 0,
+        likeCount: response.data?.likeCount,
+        userLiked: response.data?.userLiked,
+        firstUser: response.data?.likes?.[0]?.username || 'none'
+      });
+
+      if (response.data && response.data.success !== false) {
+        const likesData = response.data.likes || [];
+        
+        console.log('👥 Processing likes data:', {
+          totalLikes: likesData.length,
+          usernames: likesData.map(like => like.username || 'unknown')
+        });
+        
+        // ✅ CRITICAL: Transform likes data to ensure we have user objects
+        const transformedLikes = likesData.map(like => {
+          if (like && like._id) {
+            // Already a user object
+            return {
+              user: {
+                _id: like._id,
+                username: like.username || 'Unknown',
+                fullName: like.fullName || like.username || 'Unknown User',
+                profilePicture: like.profilePicture
+              }
+            };
+          } else if (typeof like === 'string') {
+            // Just an ObjectId string
+            return {
+              user: {
+                _id: like,
+                username: 'Loading...',
+                fullName: 'Loading...',
+                profilePicture: null
+              }
+            };
+          } else {
+            console.warn('⚠️ Invalid like data:', like);
+            return null;
+          }
+        }).filter(Boolean); // Remove null entries
+        
+        console.log('✅ Transformed likes data:', {
+          originalCount: likesData.length,
+          transformedCount: transformedLikes.length,
+          sampleUser: transformedLikes[0]?.user?.username
+        });
+        
+        setCurrentPhotoLikes(transformedLikes);
+        setShowLikesModal(true);
+        
+      } else {
+        console.error('❌ Invalid response format from likes API');
+        Alert.alert('Error', 'Failed to load likes data');
+      }
+      
     } catch (error) {
-      console.error('Error fetching photo likes:', error);
-      Alert.alert('Error', 'Failed to load likes');
+      console.error('🚨 === FETCH PHOTO LIKES ERROR ===');
+      console.error('❌ Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        photoId
+      });
+      
+      let errorMessage = 'Failed to load likes';
+      
+      if (error.response?.status === 404) {
+        errorMessage = 'Photo not found';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'Access denied';
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+      
+      Alert.alert('Error', errorMessage);
     } finally {
       setLikesLoading(false);
     }
   };
 
+  // ✅ FIXED: Handle opening likes with proper debugging - REPLACE existing handleOpenLikes
   const handleOpenLikes = (photoId) => {
+    console.log('👥 Opening likes for photo:', photoId);
     fetchPhotoLikes(photoId);
   };
 
@@ -186,6 +324,20 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
   // Photo upload functionality
   const handleAddPhotos = () => {
+    console.log('📷 === ADD PHOTOS REQUESTED ===');
+    console.log('🔐 Access check:', { isParticipant, uploading });
+    
+    if (uploading) {
+      console.log('⚠️ Upload already in progress, ignoring request');
+      return;
+    }
+    
+    if (!isParticipant) {
+      console.error('❌ User is not a participant, cannot add photos');
+      Alert.alert('Access Denied', 'You must be a participant to add photos to this memory.');
+      return;
+    }
+
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -201,15 +353,35 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         }
       );
     } else {
-      pickImage('library');
+      // For Android, show a simple alert for now
+      Alert.alert(
+        'Add Photo',
+        'How would you like to add a photo?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Take Photo', onPress: () => pickImage('camera') },
+          { text: 'Choose from Library', onPress: () => pickImage('library') }
+        ]
+      );
     }
   };
 
-  const pickImage = async (source) => {
+   const pickImage = async (source) => {
+    console.log('📷 === STARTING IMAGE PICKER ===');
+    console.log('🖼️ Source:', source);
+    
     try {
+      // Request permissions
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera roll permissions to upload photos.');
+        Alert.alert(
+          'Permission Required', 
+          'Please grant camera roll permissions to upload photos.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Settings', onPress: () => Linking.openSettings() }
+          ]
+        );
         return;
       }
 
@@ -218,13 +390,21 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
+        allowsMultipleSelection: false, // Ensure single selection
       };
 
       let result;
       if (source === 'camera') {
         const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
         if (cameraStatus.status !== 'granted') {
-          Alert.alert('Permission needed', 'Please grant camera permissions to take photos.');
+          Alert.alert(
+            'Camera Permission Required', 
+            'Please grant camera permissions to take photos.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Settings', onPress: () => Linking.openSettings() }
+            ]
+          );
           return;
         }
         result = await ImagePicker.launchCameraAsync(options);
@@ -232,41 +412,192 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         result = await ImagePicker.launchImageLibraryAsync(options);
       }
 
-      if (!result.cancelled && result.assets && result.assets[0]) {
-        await uploadPhoto(result.assets[0]);
+      console.log('📷 Image picker result:', {
+        cancelled: result.cancelled || result.canceled,
+        hasAssets: !!(result.assets && result.assets.length > 0),
+        assetCount: result.assets?.length
+      });
+
+      // ✅ ENHANCED: Handle both cancelled and canceled (different versions)
+      if (result.cancelled || result.canceled) {
+        console.log('ℹ️ User cancelled image selection');
+        return;
       }
+
+      if (!result.assets || result.assets.length === 0) {
+        console.warn('⚠️ No assets returned from image picker');
+        Alert.alert('Error', 'No image selected. Please try again.');
+        return;
+      }
+
+      const selectedAsset = result.assets[0];
+      
+      // ✅ ENHANCED: Validate selected asset
+      if (!selectedAsset.uri) {
+        console.error('❌ Invalid asset - no URI');
+        Alert.alert('Error', 'Invalid image selected. Please try again.');
+        return;
+      }
+
+      console.log('✅ Valid image selected:', {
+        uri: selectedAsset.uri,
+        width: selectedAsset.width,
+        height: selectedAsset.height,
+        fileSize: selectedAsset.fileSize,
+        type: selectedAsset.type
+      });
+
+      // Check file size (optional - backend should also validate)
+      if (selectedAsset.fileSize && selectedAsset.fileSize > 10 * 1024 * 1024) { // 10MB
+        Alert.alert(
+          'File Too Large', 
+          'Please select an image smaller than 10MB.',
+          [{ text: 'OK', style: 'default' }]
+        );
+        return;
+      }
+
+      await uploadPhoto(selectedAsset);
+      
     } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
+      console.error('❌ Error in image picker:', error);
+      Alert.alert('Error', 'Failed to select image. Please try again.');
     }
   };
 
   const uploadPhoto = async (asset) => {
+    console.log('🚀 === STARTING PHOTO UPLOAD ===');
+    console.log('📤 Asset details:', {
+      uri: asset.uri,
+      type: asset.type,
+      fileName: asset.fileName || asset.filename,
+      width: asset.width,
+      height: asset.height
+    });
+    
     try {
       setUploading(true);
       
+      // ✅ ENHANCED: Prepare FormData with proper validation
       const formData = new FormData();
+      
+      // Determine file type and name
+      const fileType = asset.type || asset.mimeType || 'image/jpeg';
+      const fileName = asset.fileName || asset.filename || `memory-photo-${Date.now()}.jpg`;
+      
+      console.log('📄 Prepared file info:', {
+        fileType,
+        fileName,
+        memoryId
+      });
+      
       formData.append('photo', {
         uri: asset.uri,
-        type: asset.type || 'image/jpeg',
-        name: asset.fileName || 'memory-photo.jpg',
+        type: fileType,
+        name: fileName,
       });
 
+      // Add caption if provided (you can add caption input in UI)
+      if (asset.caption) {
+        formData.append('caption', asset.caption);
+      }
+
+      console.log('📡 Making upload request to:', `/api/memories/${memoryId}/photos`);
+      
       const response = await api.post(`/api/memories/${memoryId}/photos`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 30000, // 30 second timeout for uploads
       });
 
-      setMemory(prev => ({
-        ...prev,
-        photos: [...(prev.photos || []), response.data.photo]
-      }));
+      console.log('📥 Upload response received:', {
+        status: response.status,
+        hasData: !!response.data,
+        hasPhoto: !!response.data?.photo,
+        photoId: response.data?.photo?._id
+      });
 
-      Alert.alert('Success', 'Photo uploaded successfully!');
+      // ✅ CRITICAL: Validate response structure
+      if (!response.data || !response.data.photo) {
+        throw new Error('Invalid response from server - missing photo data');
+      }
+
+      const uploadedPhoto = response.data.photo;
+      
+      // ✅ CRITICAL: Validate photo object has required fields
+      if (!uploadedPhoto._id) {
+        throw new Error('Invalid photo data - missing ID');
+      }
+
+      console.log('✅ Photo uploaded successfully:', {
+        id: uploadedPhoto._id,
+        url: uploadedPhoto.url,
+        uploadedBy: uploadedPhoto.uploadedBy?.username,
+        likeCount: uploadedPhoto.likeCount,
+        userLiked: uploadedPhoto.userLiked
+      });
+
+      // ✅ ENHANCED: Update memory state with comprehensive validation
+      setMemory(prev => {
+        if (!prev) {
+          console.warn('⚠️ No previous memory state, cannot add photo');
+          return prev;
+        }
+
+        const updatedMemory = {
+          ...prev,
+          photos: [...(prev.photos || []), uploadedPhoto]
+        };
+
+        console.log('📊 Updated memory state:', {
+          memoryId: updatedMemory._id,
+          photoCount: updatedMemory.photos.length,
+          newPhotoId: uploadedPhoto._id
+        });
+
+        return updatedMemory;
+      });
+
+      // ✅ ENHANCED: Success feedback with photo info
+      Alert.alert(
+        'Success', 
+        `Photo uploaded successfully! ${response.data.memory?.photoCount || ''} photos in memory.`,
+        [{ text: 'OK', style: 'default' }]
+      );
+
+      console.log('✅ === PHOTO UPLOAD COMPLETED ===');
+
     } catch (error) {
-      console.error('Error uploading photo:', error);
-      Alert.alert('Error', 'Failed to upload photo');
+      console.error('🚨 === PHOTO UPLOAD ERROR ===');
+      console.error('❌ Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        code: error.code,
+        memoryId
+      });
+      
+      // ✅ ENHANCED: User-friendly error messages
+      let errorMessage = 'Failed to upload photo';
+      
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message === 'Network Error') {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Upload timed out. Please try again with a smaller photo.';
+      } else if (error.response?.status === 413) {
+        errorMessage = 'Photo is too large. Please choose a smaller photo.';
+      } else if (error.response?.status === 400) {
+        errorMessage = error.response.data?.message || 'Invalid photo format. Please choose a JPEG or PNG image.';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'You do not have permission to upload photos to this memory.';
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Memory not found. Please refresh and try again.';
+      }
+      
+      Alert.alert('Upload Failed', errorMessage);
     } finally {
       setUploading(false);
     }
@@ -375,15 +706,25 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   };
 
   // Render functions
-  const renderPhoto = ({ item: photo }) => (
-    <MemoryPhotoItem
-      photo={photo}
-      onLikeUpdate={handleLikeUpdate}
-      onOpenComments={handleOpenComments}
-      onOpenFullscreen={handleOpenFullscreen}
-      onOpenLikes={handleOpenLikes}
-    />
-  );
+  // ✅ ENHANCED: Improved photo rendering with better like status - UPDATE existing renderPhoto
+  const renderPhoto = ({ item: photo }) => {
+    console.log('🖼️ Rendering photo:', {
+      photoId: photo._id,
+      userLiked: photo.userLiked,
+      likeCount: photo.likeCount,
+      uploadedBy: photo.uploadedBy?.username
+    });
+    
+    return (
+      <MemoryPhotoItem
+        photo={photo}
+        onLikeUpdate={handleLikeUpdate}
+        onOpenComments={handleOpenComments}
+        onOpenFullscreen={handleOpenFullscreen}
+        onOpenLikes={handleOpenLikes}
+      />
+    );
+  };
 
   // ✅ FIXED: Add null safety for participant rendering
   const renderParticipant = ({ item: participant }) => {
@@ -489,36 +830,54 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     );
   };
 
-  // ✅ FIXED: Add null safety for liked user rendering
-  const renderLikedUser = ({ item: like }) => {
+  // ✅ IMPROVED: Improved renderLikedUser with better error handling - REPLACE existing renderLikedUser
+  const renderLikedUser = ({ item: like, index }) => {
+    console.log(`👤 Rendering liked user ${index}:`, {
+      hasUser: !!like?.user,
+      userId: like?.user?._id,
+      username: like?.user?.username,
+      fullItem: like
+    });
+    
     if (!like?.user?._id) {
-      console.warn('⚠️ Invalid like data:', like);
-      return null;
+      console.warn('⚠️ Invalid like data in renderLikedUser:', like);
+      return (
+        <View style={styles.likedUserItem}>
+          <View style={styles.likedUserAvatar} />
+          <View style={styles.likedUserInfo}>
+            <Text style={styles.likedUserName}>Unknown User</Text>
+            <Text style={styles.likedUserUsername}>@unknown</Text>
+          </View>
+        </View>
+      );
     }
 
+    const user = like.user;
+    
     return (
       <TouchableOpacity
         style={styles.likedUserItem}
         onPress={() => {
+          console.log('📱 Navigating to profile for user:', user._id);
           setShowLikesModal(false);
-          navigation.navigate('ProfileScreen', { userId: like.user._id });
+          navigation.navigate('ProfileScreen', { userId: user._id });
         }}
       >
         <Image
           source={{
             uri: getProfilePictureUrl(
-              like.user.profilePicture, 
-              like.user.username?.charAt(0) || 'U'
+              user.profilePicture, 
+              user.username?.charAt(0) || 'U'
             )
           }}
           style={styles.likedUserAvatar}
         />
         <View style={styles.likedUserInfo}>
           <Text style={styles.likedUserName}>
-            {like.user.fullName || like.user.username || 'Unknown'}
+            {user.fullName || user.username || 'Unknown'}
           </Text>
           <Text style={styles.likedUserUsername}>
-            @{like.user.username || 'unknown'}
+            @{user.username || 'unknown'}
           </Text>
         </View>
       </TouchableOpacity>
@@ -633,7 +992,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         )}
       </ScrollView>
 
-      {/* Likes Modal */}
+      {/* ✅ ENHANCED: Updated Likes Modal */}
       <Modal
         visible={showLikesModal}
         transparent={true}
@@ -655,12 +1014,23 @@ export default function MemoryDetailsScreen({ route, navigation }) {
               <View style={styles.modalLoading}>
                 <Text>Loading likes...</Text>
               </View>
+            ) : currentPhotoLikes.length === 0 ? (
+              <View style={styles.modalLoading}>
+                <Text style={styles.emptyLikesText}>No likes yet</Text>
+              </View>
             ) : (
               <FlatList
                 data={currentPhotoLikes}
                 renderItem={renderLikedUser}
-                keyExtractor={(item, index) => `${item?.user?._id || 'unknown'}-${index}`}
+                keyExtractor={(item, index) => {
+                  // ✅ IMPROVED: Better key extraction with fallback
+                  const key = item?.user?._id || `like-${index}`;
+                  console.log(`🔑 Like item key: ${key} for user: ${item?.user?.username || 'unknown'}`);
+                  return key;
+                }}
                 style={styles.likedUsersList}
+                showsVerticalScrollIndicator={false}
+                ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
               />
             )}
           </View>
@@ -755,7 +1125,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   );
 }
 
-// Keep the same styles as before
+// ✅ ENHANCED: Updated styles with new additions
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -895,7 +1265,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   
-  // Likes Modal
+  // ✅ NEW: Enhanced Likes Modal Styles
   likesModal: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
@@ -930,6 +1300,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     marginTop: 2,
+  },
+  listSeparator: {
+    height: 1,
+    backgroundColor: '#F0F0F0',
+    marginLeft: 52, // Align with text, not avatar
+  },
+  emptyLikesText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
   },
   
   // Comments Modal

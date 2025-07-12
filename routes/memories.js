@@ -151,39 +151,24 @@ router.post('/', auth, async (req, res) => {
 });
 
 // ✅ GET: User's memories
-router.get('/', auth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    
-    const memories = await Memory.find({
-      $or: [
-        { creator: userId },
-        { participants: userId }
-      ]
-    })
-    .populate('creator', 'username fullName profilePicture')
-    .populate('participants', 'username fullName profilePicture')
-    .populate({
-      path: 'photos',
-      match: { isDeleted: false },
-      populate: {
-        path: 'uploadedBy',
-        select: 'username'
-      }
-    })
-    .sort({ createdAt: -1 });
-    
-    res.json({ memories });
-  } catch (error) {
-    console.error('Error fetching memories:', error);
-    res.status(500).json({ message: 'Failed to fetch memories' });
-  }
-});
-
-// ✅ GET: Single memory by ID
 router.get('/:id', auth, async (req, res) => {
   try {
-    const memory = await Memory.findById(req.params.id)
+    const memoryId = req.params.id;
+    const userId = req.user.id;
+
+    console.log('🔍 === FETCHING MEMORY DETAILS ===');
+    console.log('📋 Request details:', { memoryId, userId });
+
+    // Validate memory ID format
+    if (!memoryId || !memoryId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error('❌ Invalid memory ID format:', memoryId);
+      return res.status(400).json({ 
+        message: 'Invalid memory ID format',
+        error: 'INVALID_MEMORY_ID'
+      });
+    }
+
+    const memory = await Memory.findById(memoryId)
       .populate('creator', 'username fullName profilePicture')
       .populate('participants', 'username fullName profilePicture')
       .populate({
@@ -191,27 +176,184 @@ router.get('/:id', auth, async (req, res) => {
         match: { isDeleted: false },
         populate: {
           path: 'uploadedBy',
-          select: 'username profilePicture'
+          select: 'username fullName profilePicture'
         },
         options: { sort: { uploadedAt: -1 } }
       });
     
     if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
+      console.error('❌ Memory not found:', memoryId);
+      return res.status(404).json({ 
+        message: 'Memory not found',
+        error: 'MEMORY_NOT_FOUND'
+      });
     }
-    
-    const userId = req.user.id;
+
+    // Check access permissions
     const hasAccess = memory.creator._id.equals(userId) || 
                      memory.participants.some(p => p._id.equals(userId));
     
     if (!hasAccess) {
-      return res.status(403).json({ message: 'Access denied' });
+      console.error('❌ User lacks access to memory');
+      return res.status(403).json({ 
+        message: 'Access denied to this memory',
+        error: 'ACCESS_DENIED'
+      });
     }
+
+    // ✅ CRITICAL: Add proper like status for each photo
+    const photosWithLikeStatus = memory.photos.map(photo => {
+      const photoObj = photo.toObject();
+      
+      // Calculate user like status properly
+      let userLiked = false;
+      let likeCount = 0;
+      
+      if (photo.likes && Array.isArray(photo.likes)) {
+        likeCount = photo.likes.length;
+        userLiked = photo.likes.some(likeId => 
+          likeId.toString() === userId.toString()
+        );
+      }
+      
+      photoObj.userLiked = userLiked;
+      photoObj.likeCount = likeCount;
+      photoObj.commentCount = photo.comments ? photo.comments.length : 0;
+      
+      console.log(`📊 Photo ${photo._id} status:`, {
+        userLiked,
+        likeCount,
+        commentCount: photoObj.commentCount
+      });
+      
+      return photoObj;
+    });
+
+    // Create response object
+    const memoryResponse = {
+      ...memory.toObject(),
+      photos: photosWithLikeStatus,
+      photoCount: photosWithLikeStatus.length,
+      participantCount: memory.participants.length + 1 // +1 for creator
+    };
+
+    console.log('✅ Memory details fetched successfully:', {
+      id: memory._id.toString(),
+      title: memory.title,
+      photoCount: photosWithLikeStatus.length,
+      participantCount: memoryResponse.participantCount
+    });
+
+    res.json({
+      success: true,
+      memory: memoryResponse
+    });
     
-    res.json({ memory });
   } catch (error) {
-    console.error('Error fetching memory:', error);
-    res.status(500).json({ message: 'Failed to fetch memory' });
+    console.error('❌ Error fetching memory details:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch memory details',
+      error: 'SERVER_ERROR'
+    });
+  }
+});
+// ✅ GET: Single memory by ID
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const memoryId = req.params.id;
+    const userId = req.user.id;
+
+    console.log('🔍 === FETCHING MEMORY DETAILS ===');
+    console.log('📋 Request details:', { memoryId, userId });
+
+    // Validate memory ID format
+    if (!memoryId || !memoryId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error('❌ Invalid memory ID format:', memoryId);
+      return res.status(400).json({ 
+        message: 'Invalid memory ID format',
+        error: 'INVALID_MEMORY_ID'
+      });
+    }
+
+    const memory = await Memory.findById(memoryId)
+      .populate('creator', 'username fullName profilePicture')
+      .populate('participants', 'username fullName profilePicture')
+      .populate({
+        path: 'photos',
+        match: { isDeleted: false },
+        populate: {
+          path: 'uploadedBy',
+          select: 'username fullName profilePicture'
+        },
+        options: { sort: { uploadedAt: -1 } }
+      });
+    
+    if (!memory) {
+      console.error('❌ Memory not found:', memoryId);
+      return res.status(404).json({ 
+        message: 'Memory not found',
+        error: 'MEMORY_NOT_FOUND'
+      });
+    }
+
+    // Check access permissions
+    const hasAccess = memory.creator._id.equals(userId) || 
+                     memory.participants.some(p => p._id.equals(userId));
+    
+    if (!hasAccess) {
+      console.error('❌ User lacks access to memory:', {
+        userId,
+        creatorId: memory.creator._id.toString(),
+        participantIds: memory.participants.map(p => p._id.toString())
+      });
+      return res.status(403).json({ 
+        message: 'Access denied to this memory',
+        error: 'ACCESS_DENIED'
+      });
+    }
+
+    // ✅ CRITICAL: Add like status for each photo
+    const photosWithLikeStatus = memory.photos.map(photo => {
+      const photoObj = photo.toObject();
+      photoObj.userLiked = photo.isLikedBy(userId);
+      photoObj.likeCount = photo.likeCount;
+      photoObj.commentCount = photo.commentCount;
+      
+      console.log(`📊 Photo ${photo._id} like status:`, {
+        userLiked: photoObj.userLiked,
+        likeCount: photoObj.likeCount,
+        commentCount: photoObj.commentCount
+      });
+      
+      return photoObj;
+    });
+
+    // Create response object
+    const memoryResponse = {
+      ...memory.toObject(),
+      photos: photosWithLikeStatus,
+      photoCount: photosWithLikeStatus.length,
+      participantCount: memory.participants.length + 1 // +1 for creator
+    };
+
+    console.log('✅ Memory details fetched successfully:', {
+      id: memory._id.toString(),
+      title: memory.title,
+      photoCount: photosWithLikeStatus.length,
+      participantCount: memoryResponse.participantCount
+    });
+
+    res.json({
+      success: true,
+      memory: memoryResponse
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching memory details:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch memory details',
+      error: 'SERVER_ERROR'
+    });
   }
 });
 
@@ -532,61 +674,250 @@ router.delete('/:id/participants/:participantId', auth, async (req, res) => {
 router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => {
   try {
     const memoryId = req.params.id;
-    
-    // Verify memory exists and user has permission
-    const memory = await Memory.findById(memoryId).select('participants creator title');
-    if (!memory) {
-      return res.status(404).json({ message: 'Memory not found' });
+    const userId = req.user._id;
+
+    console.log('🚀 === MEMORY PHOTO UPLOAD START ===');
+    console.log('📷 Upload request details:', {
+      memoryId,
+      userId: userId.toString(),
+      hasFile: !!req.file,
+      fileName: req.file?.filename,
+      fileSize: req.file?.size
+    });
+
+    // ✅ STEP 1: Validate memory ID format
+    if (!memoryId || !memoryId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error('❌ Invalid memory ID format:', memoryId);
+      return res.status(400).json({ 
+        message: 'Invalid memory ID format',
+        error: 'INVALID_MEMORY_ID'
+      });
     }
+
+    // ✅ STEP 2: Check if file was uploaded
+    if (!req.file) {
+      console.error('❌ No file uploaded');
+      return res.status(400).json({ 
+        message: 'No photo file provided',
+        error: 'NO_FILE'
+      });
+    }
+
+    console.log('📁 File details:', {
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      path: req.file.path
+    });
+
+    // ✅ STEP 3: Find and validate memory
+    console.log('🔍 Finding memory...');
+    const memory = await Memory.findById(memoryId)
+      .populate('creator', 'username fullName')
+      .populate('participants', 'username fullName');
     
-    // Check if user is creator or participant
-    const isCreator = memory.creator.toString() === req.user._id.toString();
-    const isParticipant = memory.participants.includes(req.user._id);
+    if (!memory) {
+      console.error('❌ Memory not found:', memoryId);
+      return res.status(404).json({ 
+        message: 'Memory not found',
+        error: 'MEMORY_NOT_FOUND'
+      });
+    }
+
+    console.log('✅ Memory found:', {
+      id: memory._id.toString(),
+      title: memory.title,
+      creator: memory.creator.username,
+      participantCount: memory.participants.length
+    });
+
+    // ✅ STEP 4: Check user permissions
+    const isCreator = memory.creator._id.toString() === userId.toString();
+    const isParticipant = memory.participants.some(p => p._id.toString() === userId.toString());
     
     if (!isCreator && !isParticipant) {
-      return res.status(403).json({ message: 'Not authorized to upload to this memory' });
+      console.error('❌ User lacks permission to upload:', {
+        userId: userId.toString(),
+        creatorId: memory.creator._id.toString(),
+        participantIds: memory.participants.map(p => p._id.toString())
+      });
+      return res.status(403).json({ 
+        message: 'Not authorized to upload photos to this memory',
+        error: 'ACCESS_DENIED'
+      });
     }
+
+    console.log('✅ User permission verified:', {
+      isCreator,
+      isParticipant
+    });
+
+    // ✅ STEP 5: Create MemoryPhoto record
+    console.log('💾 Creating MemoryPhoto record...');
     
-    if (!req.file) {
-      return res.status(400).json({ message: 'No photo provided' });
-    }
-    
-    // Your existing photo upload logic here...
-    // (save photo to database, process image, etc.)
     const photoData = {
+      memory: memoryId,
+      uploadedBy: userId,
       url: `/uploads/memory-photos/${req.file.filename}`,
       filename: req.file.filename,
-      uploader: req.user._id,
-      memory: memoryId,
-      createdAt: new Date()
+      caption: req.body.caption || '',
+      likes: [], // Initialize empty likes array
+      comments: [], // Initialize empty comments array
+      uploadedAt: new Date()
     };
-    
-    // Save photo (adjust based on your photo model)
-    // const savedPhoto = await Photo.create(photoData);
-    
-    // 🆕 SEND NOTIFICATION TO OTHER PARTICIPANTS
-    const allParticipants = [memory.creator, ...memory.participants];
-    
-    if (allParticipants.length > 1) {
-      await notificationService.sendMemoryPhotoAdded(
-        req.user._id,
-        memoryId,
-        allParticipants
-      );
-      
-      console.log(`🔔 Sent memory photo notification to ${allParticipants.length - 1} participants`);
-    }
-    
-    res.json({ 
-      success: true, 
-      message: 'Photo uploaded successfully',
-      photo: photoData
+
+    console.log('📄 Photo data to save:', photoData);
+
+    // Create the MemoryPhoto document
+    const memoryPhoto = new MemoryPhoto(photoData);
+    await memoryPhoto.save();
+
+    console.log('✅ MemoryPhoto saved:', {
+      id: memoryPhoto._id.toString(),
+      url: memoryPhoto.url,
+      uploadedBy: memoryPhoto.uploadedBy.toString()
     });
+
+    // ✅ STEP 6: Add photo reference to memory
+    console.log('🔗 Adding photo reference to memory...');
+    memory.photos.push(memoryPhoto._id);
+    await memory.save();
+
+    console.log('✅ Memory updated with new photo reference');
+
+    // ✅ STEP 7: Populate the photo with uploader info for response
+    await memoryPhoto.populate('uploadedBy', 'username fullName profilePicture');
+
+    // ✅ STEP 8: Create response object with all required fields
+    const responsePhoto = {
+      _id: memoryPhoto._id,
+      memory: memoryPhoto.memory,
+      uploadedBy: {
+        _id: memoryPhoto.uploadedBy._id,
+        username: memoryPhoto.uploadedBy.username,
+        fullName: memoryPhoto.uploadedBy.fullName,
+        profilePicture: memoryPhoto.uploadedBy.profilePicture
+      },
+      url: memoryPhoto.url,
+      filename: memoryPhoto.filename,
+      caption: memoryPhoto.caption,
+      likes: memoryPhoto.likes,
+      comments: memoryPhoto.comments,
+      likeCount: 0, // New photo starts with 0 likes
+      commentCount: 0, // New photo starts with 0 comments
+      userLiked: false, // New photo is not liked by uploader initially
+      uploadedAt: memoryPhoto.uploadedAt,
+      isDeleted: false
+    };
+
+    console.log('📤 Response photo object:', responsePhoto);
+
+    // ✅ STEP 9: Send notifications to other participants
+    console.log('🔔 Sending notifications...');
+    try {
+      const allParticipants = [memory.creator._id, ...memory.participants.map(p => p._id)];
+      const otherParticipants = allParticipants.filter(participantId => 
+        participantId.toString() !== userId.toString()
+      );
+
+      if (otherParticipants.length > 0) {
+        await notificationService.sendMemoryPhotoAdded(
+          userId,
+          memoryId,
+          otherParticipants
+        );
+        
+        console.log(`🔔 Sent memory photo notification to ${otherParticipants.length} participants`);
+      } else {
+        console.log('ℹ️ No other participants to notify');
+      }
+    } catch (notificationError) {
+      console.error('⚠️ Failed to send notifications:', notificationError);
+      // Don't fail the upload if notifications fail
+    }
+
+    // ✅ STEP 10: Send success response
+    const response = {
+      success: true,
+      message: 'Photo uploaded successfully',
+      photo: responsePhoto,
+      memory: {
+        id: memory._id,
+        title: memory.title,
+        photoCount: memory.photos.length
+      }
+    };
+
+    console.log('✅ === MEMORY PHOTO UPLOAD SUCCESS ===');
+    console.log('📤 Sending response:', {
+      photoId: responsePhoto._id,
+      photoUrl: responsePhoto.url,
+      memoryPhotoCount: memory.photos.length
+    });
+
+    res.status(201).json(response);
+
   } catch (error) {
-    console.error('Error uploading photo:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('🚨 === MEMORY PHOTO UPLOAD ERROR ===');
+    console.error('❌ Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      memoryId: req.params.id,
+      userId: req.user?._id?.toString(),
+      hasFile: !!req.file
+    });
+
+    // Clean up uploaded file if database save failed
+    if (req.file && req.file.path) {
+      try {
+        const fs = require('fs');
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+          console.log('🗑️ Cleaned up uploaded file after error');
+        }
+      } catch (cleanupError) {
+        console.error('❌ Failed to clean up file:', cleanupError);
+      }
+    }
+
+    // Handle specific error types
+    if (error.name === 'ValidationError') {
+      console.error('❌ Validation error details:', error.errors);
+      return res.status(400).json({
+        message: 'Photo data validation failed',
+        error: 'VALIDATION_ERROR',
+        details: Object.values(error.errors).map(err => err.message)
+      });
+    }
+
+    if (error.name === 'CastError') {
+      console.error('❌ Database casting error');
+      return res.status(400).json({
+        message: 'Invalid data format',
+        error: 'CAST_ERROR'
+      });
+    }
+
+    if (error.code === 11000) {
+      console.error('❌ Duplicate key error');
+      return res.status(409).json({
+        message: 'Duplicate photo entry',
+        error: 'DUPLICATE_ERROR'
+      });
+    }
+
+    // Generic server error
+    res.status(500).json({
+      message: 'Failed to upload photo',
+      error: 'SERVER_ERROR',
+      timestamp: new Date().toISOString()
+    });
   }
 });
+
+
 
 // ✅ DELETE: Remove photo from memory
 router.delete('/:id/photos/:photoId', auth, async (req, res) => {
@@ -636,166 +967,109 @@ router.post('/photos/:photoId/like', protect, async (req, res) => {
     const photoId = req.params.photoId;
     const userId = req.user._id;
 
-    console.log('📷 Memory photo like request:', {
+    console.log('🚀 === MEMORY PHOTO LIKE REQUEST START ===');
+    console.log('📷 Request details:', {
       photoId,
-      userId: userId.toString()
+      userId: userId.toString(),
+      timestamp: new Date().toISOString()
     });
 
     // Find the memory photo
     const memoryPhoto = await MemoryPhoto.findById(photoId);
     if (!memoryPhoto) {
+      console.error('❌ Memory photo not found:', photoId);
       return res.status(404).json({ message: 'Memory photo not found' });
     }
 
-    console.log('📷 Current memory photo likes before toggle:', {
-      likes: memoryPhoto.likes,
-      likesCount: memoryPhoto.likes ? memoryPhoto.likes.length : 0
+    console.log('📷 Current photo state BEFORE toggle:', {
+      photoId: memoryPhoto._id.toString(),
+      currentLikes: memoryPhoto.likes || [],
+      likesCount: memoryPhoto.likes ? memoryPhoto.likes.length : 0,
+      likesType: Array.isArray(memoryPhoto.likes) ? 'array' : typeof memoryPhoto.likes
     });
 
-    // ✅ CRITICAL FIX: Initialize likes array properly
-    if (!memoryPhoto.likes) {
+    // ✅ CRITICAL: Initialize likes array if it doesn't exist
+    if (!memoryPhoto.likes || !Array.isArray(memoryPhoto.likes)) {
+      console.log('🔧 Initializing empty likes array');
       memoryPhoto.likes = [];
     }
 
-    // ✅ CRITICAL FIX: Handle both ObjectId array and object array formats
-    let userLikedIndex = -1;
-    let wasLiked = false;
+    // ✅ IMPROVED: Check if user already liked (handle ObjectId properly)
+    const userLikedIndex = memoryPhoto.likes.findIndex(likeId => {
+      const likeIdStr = likeId.toString();
+      const userIdStr = userId.toString();
+      return likeIdStr === userIdStr;
+    });
+    
+    const wasLiked = userLikedIndex !== -1;
 
-    // Check if likes contains objects with user field or just ObjectIds
-    if (memoryPhoto.likes.length > 0) {
-      const firstLike = memoryPhoto.likes[0];
-      
-      if (firstLike && typeof firstLike === 'object' && firstLike.user) {
-        // Likes array contains objects with user field
-        userLikedIndex = memoryPhoto.likes.findIndex(like => 
-          like.user && like.user.toString() === userId.toString()
-        );
-        wasLiked = userLikedIndex !== -1;
-        console.log('📷 Using object format likes with user field');
-      } else {
-        // Likes array contains just ObjectIds
-        userLikedIndex = memoryPhoto.likes.findIndex(likeId => 
-          likeId.toString() === userId.toString()
-        );
-        wasLiked = userLikedIndex !== -1;
-        console.log('📷 Using ObjectId format likes');
-      }
-    }
-
-    console.log('📷 Current like status:', {
+    console.log('📷 Like status analysis:', {
       wasLiked,
       userLikedIndex,
-      likesArray: memoryPhoto.likes.map(like => 
-        typeof like === 'object' && like.user ? like.user.toString() : like.toString()
-      )
+      userIdToCheck: userId.toString(),
+      currentLikesAsStrings: memoryPhoto.likes.map(id => id.toString())
     });
 
     let newLikedStatus;
     let newLikesArray;
 
     if (wasLiked) {
-      // Unlike: Remove user from likes array
-      if (userLikedIndex !== -1) {
-        newLikesArray = [...memoryPhoto.likes];
-        newLikesArray.splice(userLikedIndex, 1);
-      } else {
-        newLikesArray = memoryPhoto.likes;
-      }
+      console.log('👎 UNLIKE: Removing user from likes');
+      // Unlike: Remove user from likes array using filter (more reliable than splice)
+      newLikesArray = memoryPhoto.likes.filter(likeId => 
+        likeId.toString() !== userId.toString()
+      );
       newLikedStatus = false;
-      console.log('📷 Unliking memory photo');
     } else {
+      console.log('👍 LIKE: Adding user to likes');
       // Like: Add user to likes array
-      // ✅ CRITICAL FIX: Add just the ObjectId, not an object
       newLikesArray = [...memoryPhoto.likes, userId];
       newLikedStatus = true;
-      console.log('📷 Liking memory photo');
     }
 
-    console.log('📷 New likes array:', {
-      newLikesArray: newLikesArray.map(like => 
-        typeof like === 'object' && like.user ? like.user.toString() : like.toString()
-      ),
+    console.log('📷 New state calculated:', {
       newLikedStatus,
-      newCount: newLikesArray.length
+      newCount: newLikesArray.length,
+      newLikesAsStrings: newLikesArray.map(id => id.toString()),
+      previousCount: memoryPhoto.likes.length
     });
 
-    // ✅ CRITICAL FIX: Update the memory photo with new likes array
+    // ✅ CRITICAL: Update and save the photo
     memoryPhoto.likes = newLikesArray;
-    
-    // Save the memory photo
     await memoryPhoto.save();
 
-    const finalResponse = {
+    console.log('💾 Photo saved successfully');
+
+    // ✅ NEW: Create consistent response format
+    const response = {
       success: true,
-      liked: newLikedStatus,        
-      userLiked: newLikedStatus,    
+      liked: newLikedStatus,
+      userLiked: newLikedStatus,
       likeCount: newLikesArray.length,
-      likes: newLikesArray,         
-      message: newLikedStatus ? 'Memory photo liked' : 'Memory photo unliked'
+      likesCount: newLikesArray.length, // Alternative field name
+      photoId: photoId,
+      message: newLikedStatus ? 'Memory photo liked' : 'Memory photo unliked',
+      timestamp: new Date().toISOString()
     };
 
-    console.log('📷 Sending memory like response:', finalResponse);
+    console.log('📤 Sending response:', response);
+    console.log('✅ === MEMORY PHOTO LIKE REQUEST COMPLETE ===');
 
-    res.status(200).json(finalResponse);
+    res.status(200).json(response);
 
   } catch (error) {
-    console.error('❌ Memory like endpoint error:', error);
-    
-    // ✅ ENHANCED: Better error handling for validation errors
-    if (error.name === 'ValidationError') {
-      console.error('❌ Validation error details:', error.errors);
-      
-      // If it's a likes validation error, try to fix the data
-      if (error.message.includes('likes') && error.message.includes('user')) {
-        console.log('🔧 Attempting to fix corrupted likes data...');
-        
-        try {
-          const memoryPhoto = await MemoryPhoto.findById(req.params.photoId);
-          if (memoryPhoto) {
-            // Clean up likes array - ensure all entries are just ObjectIds
-            const cleanedLikes = memoryPhoto.likes
-              .map(like => {
-                if (typeof like === 'object' && like.user) {
-                  return like.user;
-                } else if (typeof like === 'string' || like._id) {
-                  return like;
-                } else {
-                  return null;
-                }
-              })
-              .filter(like => like !== null);
-            
-            console.log('🔧 Cleaned likes array:', cleanedLikes);
-            
-            // Update with cleaned array
-            await MemoryPhoto.findByIdAndUpdate(
-              req.params.photoId,
-              { likes: cleanedLikes },
-              { runValidators: false } // Skip validation for cleanup
-            );
-            
-            return res.status(200).json({
-              success: false,
-              message: 'Data cleaned up. Please try again.',
-              likes: cleanedLikes,
-              likeCount: cleanedLikes.length,
-              userLiked: cleanedLikes.some(likeId => likeId.toString() === req.user._id.toString())
-            });
-          }
-        } catch (cleanupError) {
-          console.error('❌ Cleanup failed:', cleanupError);
-        }
-      }
-      
-      return res.status(400).json({ 
-        message: 'Data validation error. Please refresh and try again.',
-        error: 'VALIDATION_ERROR'
-      });
-    }
-    
+    console.error('🚨 === MEMORY PHOTO LIKE ERROR ===');
+    console.error('❌ Error details:', {
+      message: error.message,
+      stack: error.stack,
+      photoId: req.params.photoId,
+      userId: req.user?._id?.toString()
+    });
+
     res.status(500).json({ 
-      message: 'Server error',
-      error: error.message 
+      message: 'Server error during like operation',
+      error: 'LIKE_ERROR',
+      success: false
     });
   }
 });
@@ -806,17 +1080,33 @@ router.get('/photos/:photoId/likes', auth, async (req, res) => {
     const { photoId } = req.params;
     const userId = req.user.id;
     
-    console.log('📷 Getting memory photo likes:', { photoId, userId });
+    console.log('🚀 === GET MEMORY PHOTO LIKES START ===');
+    console.log('📷 Request details:', { photoId, userId });
     
-    const photo = await MemoryPhoto.findById(photoId);
+    const photo = await MemoryPhoto.findById(photoId)
+      .populate({
+        path: 'likes',
+        select: 'username fullName profilePicture',
+        options: { 
+          sort: { createdAt: -1 } // Most recent likes first
+        }
+      });
     
     if (!photo || photo.isDeleted) {
+      console.error('❌ Photo not found or deleted:', photoId);
       return res.status(404).json({ message: 'Photo not found' });
     }
+
+    console.log('📷 Raw photo likes data:', {
+      likesCount: photo.likes ? photo.likes.length : 0,
+      likesType: Array.isArray(photo.likes) ? 'array' : typeof photo.likes,
+      firstLike: photo.likes && photo.likes[0] ? photo.likes[0] : null
+    });
     
-    // Check memory access
+    // Check memory access permissions
     const memory = await Memory.findById(photo.memory);
     if (!memory) {
+      console.error('❌ Memory not found for photo:', photo.memory);
       return res.status(404).json({ message: 'Memory not found' });
     }
     
@@ -824,51 +1114,87 @@ router.get('/photos/:photoId/likes', auth, async (req, res) => {
                      memory.participants.some(p => p.equals(userId));
     
     if (!hasAccess) {
+      console.error('❌ Access denied for user:', userId);
       return res.status(403).json({ message: 'Access denied' });
     }
     
-    // ✅ CRITICAL FIX: Handle both like formats
+    // ✅ CRITICAL: Handle populated likes properly
     let userLiked = false;
     let likeCount = 0;
+    let likesWithUserData = [];
     
     if (photo.likes && Array.isArray(photo.likes)) {
       likeCount = photo.likes.length;
       
-      // Check if likes contains objects with user field or just ObjectIds
+      // Check if likes are populated with user data or just ObjectIds
       if (photo.likes.length > 0) {
         const firstLike = photo.likes[0];
         
-        if (firstLike && typeof firstLike === 'object' && firstLike.user) {
-          // Likes array contains objects with user field
-          userLiked = photo.likes.some(like => 
-            like.user && like.user.toString() === userId.toString()
+        if (firstLike && firstLike.username) {
+          // Likes are populated with user data
+          console.log('✅ Likes are populated with user data');
+          likesWithUserData = photo.likes.map(user => ({
+            _id: user._id,
+            username: user.username,
+            fullName: user.fullName,
+            profilePicture: user.profilePicture
+          }));
+          
+          userLiked = photo.likes.some(user => 
+            user._id.toString() === userId.toString()
           );
         } else {
-          // Likes array contains just ObjectIds
+          // Likes are just ObjectIds - need to populate manually
+          console.log('⚠️ Likes are not populated, manually checking user status');
           userLiked = photo.likes.some(likeId => 
             likeId.toString() === userId.toString()
           );
+          
+          // For response, we'll populate the users
+          const populatedUsers = await User.find({
+            _id: { $in: photo.likes }
+          }).select('username fullName profilePicture');
+          
+          likesWithUserData = populatedUsers.map(user => ({
+            _id: user._id,
+            username: user.username,
+            fullName: user.fullName,
+            profilePicture: user.profilePicture
+          }));
         }
       }
     }
     
-    console.log('📷 Memory photo like status:', {
+    console.log('📊 Final like status:', {
       userLiked,
       likeCount,
-      userId
+      likesWithUserDataCount: likesWithUserData.length,
+      usernames: likesWithUserData.map(u => u.username)
     });
     
-    res.json({
-      likes: photo.likes || [],
+    const response = {
+      success: true,
+      likes: likesWithUserData, // ✅ CRITICAL: Return user objects, not just IDs
       likeCount: likeCount,
-      userLiked: userLiked
-    });
+      userLiked: userLiked,
+      photoId: photoId
+    };
+
+    console.log('📤 Sending likes response with', likesWithUserData.length, 'populated users');
+    console.log('✅ === GET MEMORY PHOTO LIKES COMPLETE ===');
+    
+    res.json(response);
     
   } catch (error) {
-    console.error('Error fetching memory photo likes:', error);
-    res.status(500).json({ message: 'Failed to fetch likes' });
+    console.error('🚨 Error fetching memory photo likes:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch likes',
+      error: 'FETCH_LIKES_ERROR',
+      success: false
+    });
   }
 });
+
 
 // ✅ POST: Add comment to memory photo
 router.post('/photos/:photoId/comments', auth, async (req, res) => {
