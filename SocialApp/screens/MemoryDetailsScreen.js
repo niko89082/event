@@ -172,47 +172,116 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
   // ✅ FIXED: Enhanced like update handler - REPLACE existing handleLikeUpdate
   const handleLikeUpdate = (photoId, likeData) => {
-    console.log('🔄 === HANDLING LIKE UPDATE IN MEMORY DETAILS ===');
-    console.log('📷 Update details:', { 
-      photoId, 
-      likeData,
-      timestamp: new Date().toISOString()
+  console.log('🔄 === HANDLING LIKE UPDATE IN MEMORY DETAILS ===');
+  console.log('📷 Update details:', { 
+    photoId, 
+    likeData,
+    timestamp: new Date().toISOString(),
+    dataKeys: Object.keys(likeData || {}),
+    dataValues: likeData
+  });
+  
+  // Validate inputs
+  if (!photoId) {
+    console.error('❌ handleLikeUpdate: No photoId provided');
+    return;
+  }
+  
+  if (!likeData) {
+    console.error('❌ handleLikeUpdate: No likeData provided');
+    return;
+  }
+  
+  setMemory(prev => {
+    console.log('🔍 Current memory state before update:', {
+      hasMemory: !!prev,
+      hasPhotos: !!prev?.photos,
+      photosCount: prev?.photos?.length || 0,
+      photoIds: prev?.photos?.map(p => p._id) || []
     });
     
-    setMemory(prev => {
-      if (!prev?.photos) {
-        console.warn('⚠️ No photos in memory, cannot update like');
-        return prev;
-      }
-      
-      const updatedMemory = {
-        ...prev,
-        photos: prev.photos.map(photo => {
-          if (photo._id === photoId) {
-            const updatedPhoto = {
-              ...photo,
-              likeCount: Number(likeData.likeCount) || Number(likeData.count) || photo.likeCount || 0,
-              userLiked: Boolean(likeData.userLiked)
-            };
-            
-            console.log('📷 Updated photo in memory state:', {
-              photoId: updatedPhoto._id,
-              oldLikeCount: photo.likeCount,
-              newLikeCount: updatedPhoto.likeCount,
-              oldUserLiked: photo.userLiked,
-              newUserLiked: updatedPhoto.userLiked
-            });
-            
-            return updatedPhoto;
+    if (!prev?.photos) {
+      console.warn('⚠️ No photos in memory, cannot update like');
+      return prev;
+    }
+    
+    const updatedMemory = {
+      ...prev,
+      photos: prev.photos.map(photo => {
+        if (photo._id === photoId) {
+          console.log('🎯 Found matching photo to update:', {
+            photoId: photo._id,
+            currentLikeCount: photo.likeCount,
+            currentUserLiked: photo.userLiked,
+            newLikeData: likeData
+          });
+          
+          // Extract like count from response (handle multiple possible field names)
+          let newLikeCount = 0;
+          if (likeData.likeCount !== undefined) {
+            newLikeCount = Number(likeData.likeCount);
+            console.log('📊 Using likeCount field:', newLikeCount);
+          } else if (likeData.count !== undefined) {
+            newLikeCount = Number(likeData.count);
+            console.log('📊 Using count field:', newLikeCount);
+          } else if (likeData.likesCount !== undefined) {
+            newLikeCount = Number(likeData.likesCount);
+            console.log('📊 Using likesCount field:', newLikeCount);
+          } else {
+            newLikeCount = photo.likeCount || 0;
+            console.warn('⚠️ No like count in response, keeping existing:', newLikeCount);
           }
-          return photo;
-        })
-      };
-      
-      console.log('✅ Memory state updated successfully');
-      return updatedMemory;
+          
+          // Extract user liked status
+          let newUserLiked = false;
+          if (likeData.userLiked !== undefined) {
+            newUserLiked = Boolean(likeData.userLiked);
+            console.log('👤 Using userLiked field:', newUserLiked);
+          } else if (likeData.liked !== undefined) {
+            newUserLiked = Boolean(likeData.liked);
+            console.log('👤 Using liked field:', newUserLiked);
+          } else {
+            newUserLiked = photo.userLiked || false;
+            console.warn('⚠️ No user liked status in response, keeping existing:', newUserLiked);
+          }
+          
+          const updatedPhoto = {
+            ...photo,
+            likeCount: newLikeCount,
+            userLiked: newUserLiked
+          };
+          
+          console.log('✅ Photo updated successfully:', {
+            photoId: updatedPhoto._id,
+            oldLikeCount: photo.likeCount,
+            newLikeCount: updatedPhoto.likeCount,
+            oldUserLiked: photo.userLiked,
+            newUserLiked: updatedPhoto.userLiked,
+            changeDetected: {
+              likeCountChanged: photo.likeCount !== updatedPhoto.likeCount,
+              userLikedChanged: photo.userLiked !== updatedPhoto.userLiked
+            }
+          });
+          
+          return updatedPhoto;
+        }
+        
+        // Return unchanged photo
+        return photo;
+      })
+    };
+    
+    console.log('📝 Memory state update completed:', {
+      photosProcessed: updatedMemory.photos.length,
+      targetPhotoFound: updatedMemory.photos.some(p => p._id === photoId),
+      updatedPhotoData: updatedMemory.photos.find(p => p._id === photoId)
     });
-  };
+    
+    return updatedMemory;
+  });
+  
+  console.log('🏁 handleLikeUpdate completed for photoId:', photoId);
+};
 
   // ✅ FIXED: Fetch photo likes with proper user data - REPLACE existing fetchPhotoLikes
   const fetchPhotoLikes = async (photoId) => {
@@ -604,25 +673,36 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   };
 
   const handleOpenComments = async (photoId) => {
-    try {
-      setCurrentPhotoId(photoId);
-      setCommentsLoading(true);
-      setShowComments(true);
-      
-      const response = await api.get(`/api/memories/photos/${photoId}/comments`);
-      setComments(response.data.comments || []);
-    } catch (error) {
-      console.error('Error fetching comments:', error);
-      Alert.alert('Error', 'Failed to load comments');
-    } finally {
-      setCommentsLoading(false);
-    }
-  };
+  try {
+    // Navigate to UnifiedDetailsScreen instead of opening modal
+    navigation.navigate('UnifiedDetailsScreen', { 
+      postId: photoId,
+      postType: 'memory',
+      openKeyboard: true // Auto-focus comment input
+    });
+  } catch (error) {
+    console.error('Error opening comments:', error);
+    Alert.alert('Error', 'Failed to open comments');
+  }
+};
+
 
   const handleOpenFullscreen = (photo) => {
-    setSelectedPhoto(photo);
-    setShowPhotoModal(true);
-  };
+  navigation.navigate('UnifiedDetailsScreen', { 
+    postId: photo._id,
+    postType: 'memory',
+    post: {
+      ...photo,
+      postType: 'memory',
+      user: photo.uploadedBy,
+      createdAt: photo.uploadedAt,
+      memoryInfo: {
+        memoryId: memory._id,
+        memoryTitle: memory.title
+      }
+    }
+  });
+};
 
   // Participant management
   const searchUsers = async (query) => {

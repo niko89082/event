@@ -1507,9 +1507,14 @@ export default function CompletePostItem({
 
   /* ---- NEW: Open comments modal instead of navigation ----- */
   const openComments = () => {
-    console.log('🟡 PostItem: Opening comments modal for:', isMemoryPost ? 'memory' : 'post', post._id);
-    setShowCommentsModal(true);
-  };
+  console.log('🟡 PostItem: Opening comments for:', isMemoryPost ? 'memory' : 'post', post._id);
+  navigation.navigate('UnifiedDetailsScreen', { 
+    postId: post._id,
+    postType: isMemoryPost ? 'memory' : 'post',
+    post: post,
+    openKeyboard: true // Flag to auto-focus comment input
+  });
+};
 
   /* ---- Handle comment added from modal ----- */
   const handleCommentAdded = (newCommentData) => {
@@ -1629,60 +1634,59 @@ export default function CompletePostItem({
   };
 
   /* ---- double tap handling --------------------------------------- */
-  const handleDoubleTap = () => {
-    const now = Date.now();
-    const timeSince = now - lastTap.current;
+  const handleImagePress = () => {
+  const now = Date.now();
+  
+  if (now - lastTap.current < DOUBLE_PRESS_DELAY) {
+    // Double tap detected - toggle like
+    if (!liked) {
+      heartScale.setValue(0);
+      Animated.sequence([
+        Animated.spring(heartScale, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 100,
+          friction: 5,
+        }),
+        Animated.timing(heartScale, {
+          toValue: 0,
+          duration: 300,
+          delay: 500,
+          useNativeDriver: true,
+        }),
+      ]).start();
 
-    if (timeSince < DOUBLE_PRESS_DELAY) {
-      // Double tap detected
-      if (!liked) {
-        heartScale.setValue(0);
-        Animated.sequence([
-          Animated.spring(heartScale, {
-            toValue: 1,
-            useNativeDriver: true,
-            tension: 100,
-            friction: 5,
-          }),
-          Animated.timing(heartScale, {
-            toValue: 0,
-            duration: 300,
-            delay: 500,
-            useNativeDriver: true,
-          }),
-        ]).start();
+      Animated.sequence([
+        Animated.timing(scaleValue, {
+          toValue: 0.95,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleValue, {
+          toValue: 1,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+      ]).start();
 
-        Animated.sequence([
-          Animated.timing(scaleValue, {
-            toValue: 0.95,
-            duration: 100,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scaleValue, {
-            toValue: 1,
-            duration: 100,
-            useNativeDriver: true,
-          }),
-        ]).start();
-
-        toggleLike();
-      }
-    } else {
-      // Single tap
-      setTimeout(() => {
-        const timeSinceLastTap = Date.now() - lastTap.current;
-        if (timeSinceLastTap >= DOUBLE_PRESS_DELAY) {
-          if (isMemoryPost) {
-            openMemory();
-          } else {
-            openComments();
-          }
-        }
-      }, DOUBLE_PRESS_DELAY);
+      toggleLike();
     }
-
-    lastTap.current = now;
-  };
+  } else {
+    // Single tap - navigate to UnifiedDetailsScreen
+    setTimeout(() => {
+      const timeSinceLastTap = Date.now() - lastTap.current;
+      if (timeSinceLastTap >= DOUBLE_PRESS_DELAY) {
+        navigation.navigate('UnifiedDetailsScreen', { 
+          postId: post._id,
+          postType: isMemoryPost ? 'memory' : 'post',
+          post: post // Pass full post data for immediate display
+        });
+      }
+    }, DOUBLE_PRESS_DELAY);
+  }
+  
+  lastTap.current = now;
+};
 
   /* ---- navigation helpers ---------------------------------------- */
   const openUser = (userId) => {
@@ -1816,7 +1820,7 @@ export default function CompletePostItem({
       )}
 
       {/* ---------- main image with memory effects ---------- */}
-      <Pressable onPress={handleDoubleTap} style={[
+      <Pressable onPress={handleImagePress} style={[
         styles.imageContainer,
         isMemoryPost && {
           width: memoryImageDimensions.width,

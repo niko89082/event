@@ -26,17 +26,52 @@ export default function PostLikesScreen() {
   }, [postId]);
 
   const fetchLikes = async () => {
-    try {
-      setLoading(true);
-      const { data } = await api.get(`/api/photos/${postId}/likes`);
-      setLikes(data.likes || []);
-    } catch (error) {
-      console.error('Error fetching likes:', error);
-      Alert.alert('Error', 'Failed to load likes');
-    } finally {
-      setLoading(false);
+  try {
+    setLoading(true);
+    let response;
+    
+    if (postType === 'memory') {
+      response = await api.get(`/api/memories/photos/${postId}/likes`);
+      // For memory posts, the response should have a likes array with user data
+      setLikes(response.data.likes || []);
+    } else {
+      // For regular posts, we need to get the full post data since there's no dedicated likes endpoint
+      response = await api.get(`/api/photos/${postId}`);
+      
+      // Extract likes array and populate user data
+      const likesArray = response.data.likes || [];
+      
+      if (likesArray.length > 0) {
+        // If likes array contains user IDs, we need to fetch user data
+        // For now, let's try to get populated likes from the response
+        const populatedLikes = response.data.populatedLikes || response.data.likesWithUsers || [];
+        
+        if (populatedLikes.length > 0) {
+          setLikes(populatedLikes);
+        } else {
+          // Fallback: create basic user objects from IDs
+          const basicLikes = likesArray.map((likeId, index) => ({
+            _id: likeId,
+            user: {
+              _id: likeId,
+              username: `User ${index + 1}`,
+              profilePicture: null
+            }
+          }));
+          setLikes(basicLikes);
+        }
+      } else {
+        setLikes([]);
+      }
     }
-  };
+  } catch (error) {
+    console.error('Error fetching likes:', error);
+    Alert.alert('Error', 'Failed to load likes');
+    setLikes([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const fetchFollowingStatus = async () => {
     try {

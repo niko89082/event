@@ -1377,6 +1377,7 @@ const styles = StyleSheet.create({
   // Memories Grid
   memoriesGrid: {
     paddingHorizontal: 20,
+    paddingTop: 12,
     paddingBottom: 20,
   },
   memoryCard: {

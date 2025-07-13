@@ -26,6 +26,7 @@ import CreatePostScreen from './screens/CreatePostScreen';
 import CreatePickerScreen from './screens/CreatePickerScreen';
 import PostPublishedScreen from './screens/PostPublishedScreen';
 import QrScreen from './screens/QrScreen';
+import UnifiedDetailsScreen from './screens/UnifiedDetailsScreen';
 import QrScanScreen from './screens/QrScanScreen';
 import AttendeeListScreen from './screens/AttendeeListScreen';
 import EditEventScreen from './screens/EditEventScreen';
@@ -275,6 +276,12 @@ function AppNavigator({ onLogout }) {
                 headerBackTitleVisible: false,
               }}
             />
+            <RootStack.Screen 
+              name="UnifiedDetailsScreen" 
+              component={UnifiedDetailsScreen}
+              options={{ headerShown: true, title: 'Post' }}
+            />
+
             <RootStack.Screen 
               name="PostDetailsScreen" 
               component={PostDetailsScreen}
