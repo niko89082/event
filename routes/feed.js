@@ -344,8 +344,9 @@ router.get('/feed/events', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;
   const skip = (page - 1) * limit;
+  const { type = 'discover' } = req.query; // Support different feed types
   
-  console.log(`🟡 [API] /feed/events -> user ${req.user._id} page ${page}`);
+  console.log(`🟡 [API] /feed/events -> user ${req.user._id} page ${page} type ${type}`);
 
   try {
     const viewer = await User.findById(req.user._id)
@@ -358,65 +359,150 @@ router.get('/feed/events', protect, async (req, res) => {
     
     console.log(`🔍 User following: ${followingIds.length}, attending: ${attendingEventIds.length}`);
 
-    if (followingIds.length === 0 && attendingEventIds.length === 0) {
-      return res.json({
-        events: [],
-        page: 1,
-        totalPages: 0,
-        hasMore: false
-      });
+    let eventsQuery = {};
+    
+    // Different queries based on feed type
+    switch (type) {
+      case 'following':
+        if (followingIds.length === 0) {
+          return res.json({
+            events: [],
+            page: 1,
+            totalPages: 0,
+            hasMore: false
+          });
+        }
+        
+        // Events from followed users only
+        eventsQuery = {
+          host: { $in: followingIds },
+          time: { $gte: new Date() }, // Only future events
+          $or: [
+            { privacyLevel: 'public' },
+            { privacyLevel: 'friends' },
+            { 
+              privacyLevel: 'private',
+              $or: [
+                { invitedUsers: req.user._id },
+                { attendees: req.user._id }
+              ]
+            }
+          ]
+        };
+        break;
+        
+      case 'discover':
+      default:
+        // Mix of public events, events from followed users, and events user is attending
+        eventsQuery = {
+          time: { $gte: new Date() }, // Only future events
+          $or: [
+            { privacyLevel: 'public' }, // All public events
+            { 
+              privacyLevel: 'friends',
+              host: { $in: followingIds } // Friends events from followed users
+            },
+            { 
+              privacyLevel: 'private',
+              $or: [
+                { invitedUsers: req.user._id },
+                { attendees: req.user._id }
+              ]
+            },
+            { _id: { $in: attendingEventIds } } // Events user is attending
+          ]
+        };
+        break;
     }
 
-    // Events from followed users OR events user is attending
-    const eventsQuery = {
-      $or: [
-        { host: { $in: followingIds } },
-        { _id: { $in: attendingEventIds } }
-      ],
-      time: { $gte: new Date() }
-    };
+    console.log(`🔍 Events query for type ${type}:`, JSON.stringify(eventsQuery, null, 2));
 
     const events = await Event.find(eventsQuery)
       .populate('host', 'username profilePicture')
       .populate('attendees', 'username profilePicture')
-      .sort({ time: 1 })
+      .sort({ createdAt: -1 }) // Newest first for discovery, or use { time: 1 } for chronological
       .skip(skip)
-      .limit(limit)
+      .limit(limit + 1) // Fetch one extra to check if there are more
       .lean();
 
-    console.log(`🎉 Found ${events.length} events for feed`);
+    // Check if there are more events
+    const hasMoreEvents = events.length > limit;
+    const eventsToReturn = hasMoreEvents ? events.slice(0, limit) : events;
 
-    const eventsWithScore = events.map(event => {
+    console.log(`🎉 Found ${eventsToReturn.length} events for ${type} feed`);
+
+    // Enhance events with user context
+    const eventsWithContext = eventsToReturn.map(event => {
       const isAttending = attendingEventIds.some(id => id.toString() === event._id.toString());
       const isHosted = followingIds.some(id => id.toString() === event.host._id.toString());
+      const isHost = event.host._id.toString() === req.user._id.toString();
       
       return {
         ...event,
         isAttending,
         isHosted,
-        source: isAttending ? 'attending' : 'friend'
+        isHost,
+        attendeeCount: event.attendees ? event.attendees.length : 0,
+        source: isAttending ? 'attending' : (isHosted ? 'friend' : 'discover'),
+        // Add recommendation reason for discover feed
+        ...(type === 'discover' && {
+          recommendationReason: generateEventRecommendationReason(event, req.user._id, isHosted, isAttending)
+        })
       };
     });
 
+    // Get total count for pagination (optional, can be expensive for large datasets)
     const totalEvents = await Event.countDocuments(eventsQuery);
     
     const response = {
-      events: eventsWithScore,
+      events: eventsWithContext,
       page,
       totalPages: Math.ceil(totalEvents / limit),
-      hasMore: skip + limit < totalEvents
+      hasMore: hasMoreEvents,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalEvents / limit),
+        totalEvents: totalEvents,
+        hasMore: hasMoreEvents,
+        limit: limit
+      },
+      debug: {
+        type: type,
+        followingCount: followingIds.length,
+        attendingCount: attendingEventIds.length,
+        foundEvents: eventsToReturn.length,
+        userId: req.user._id
+      }
     };
 
-    console.log(`🟢 Sending events response: ${events.length} events`);
+    console.log(`🟢 Sending events response: ${eventsToReturn.length} events, hasMore: ${hasMoreEvents}`);
     res.json(response);
 
   } catch (err) {
     console.error('❌ Feed events error:', err);
     res.status(500).json({ 
       message: 'Server error',
-      error: err.message 
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
+
+// Helper function to generate event recommendation reasons
+function generateEventRecommendationReason(event, userId, isHosted, isAttending) {
+  if (isAttending) return 'You\'re attending';
+  if (isHosted) return 'From someone you follow';
+  
+  const reasons = [
+    'Popular in your area',
+    'Trending now',
+    'Based on your interests',
+    'New event near you',
+    'Similar to events you\'ve attended',
+    'Happening soon'
+  ];
+  
+  return reasons[Math.floor(Math.random() * reasons.length)];
+}
 
 module.exports = router;

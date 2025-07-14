@@ -1,4 +1,4 @@
-// SocialApp/components/EventCard.js - FIXED: Proper state management for attending status
+// components/EventCard.js - Updated with centralized state management
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet,
@@ -7,75 +7,138 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { API_BASE_URL } from '@env';
+import useEventStore from '../stores/eventStore'; // Import centralized store
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function EventCard({
-  event,
+  event: initialEvent,
   currentUserId,
   navigation,
-  onAttend,
   compact = false,
   showRecommendationReason = false,
+  onAttend, // Keep for backward compatibility but won't use
 }) {
-  const [localAttending, setLocalAttending] = useState(false);
-  const [joinRequestSent, setJoinRequestSent] = useState(false);
+  // Get event data and actions from centralized store
+  const storeEvent = useEventStore(state => state.getEvent(initialEvent._id));
+  const toggleRSVP = useEventStore(state => state.toggleRSVP);
+  const confirmEventPayment = useEventStore(state => state.confirmEventPayment);
 
-  // FIXED: Update local state when event prop changes (e.g., after joining from EventDetailsScreen)
+  // Use store data if available, otherwise fall back to initial event
+  const event = storeEvent || initialEvent;
+
+  // Initialize store with this event if not already there
   useEffect(() => {
-    const isCurrentlyAttending = event.attendees?.some(a => 
-      (typeof a === 'string' ? a : a._id) === currentUserId
-    );
-    setLocalAttending(isCurrentlyAttending);
-  }, [event.attendees, currentUserId]);
+    if (!storeEvent) {
+      useEventStore.getState().addEvent(initialEvent, currentUserId);
+    }
+  }, [initialEvent._id, storeEvent, currentUserId]);
+
+  // Local UI state for join request feedback
+  const [joinRequestSent, setJoinRequestSent] = useState(
+    event.joinRequestSent || false
+  );
+  const [processing, setProcessing] = useState(false);
+
+  // Get current RSVP state from store (always up to date)
+  const isAttending = event.isAttending || false;
+  const attendeeCount = event.attendeeCount || 0;
 
   // Event details
   const cover = event.coverImage ? `http://${API_BASE_URL}:3000${event.coverImage}` : null;
   const past = new Date(event.time) <= new Date();
-  const isAttending = event.attendees?.some(a => 
-    (typeof a === 'string' ? a : a._id) === currentUserId
-  ) || localAttending;
   const isHost = (event.host?._id || event.host) === currentUserId;
   const canAttend = !past && !isHost && !isAttending && !joinRequestSent;
 
-  // FIXED: Main card press handler - navigate to event details
-  const handleCardPress = () => {
-    // Navigate to EventDetailsScreen with the correct route name
-    navigation.navigate('EventDetailsScreen', { eventId: event._id });
-  };
-
-  // FIXED: Separate handler for attend button to prevent event bubbling
+  // CENTRALIZED RSVP HANDLING
   const handleAttendPress = async (e) => {
     e.stopPropagation(); // Prevent card press when tapping attend button
     
-    if (!onAttend) return;
+    if (!currentUserId) {
+      Alert.alert('Error', 'Please log in to join events');
+      return;
+    }
+
+    if (processing) return; // Prevent double taps
 
     try {
-      if (event.permissions?.canJoin === 'approval-required') {
-        // Join request flow
-        await onAttend({
-          type: 'request',
-          eventId: event._id,
-          message: 'I would like to join this event.'
-        });
+      setProcessing(true);
+      const result = await toggleRSVP(event._id, currentUserId, event);
+      
+      if (result.type === 'request') {
+        // Join request sent for approval-required events
         setJoinRequestSent(true);
         Alert.alert('Request Sent', 'Your join request has been sent to the event host.');
-      } else {
-        // Direct attendance
-        await onAttend(event);
-        setLocalAttending(true);
+      } else if (result.type === 'payment_required') {
+        // Handle payment required
+        Alert.alert(
+          'Payment Required', 
+          `This event costs ${getFormattedPrice()}. You'll be redirected to payment.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Continue', 
+              onPress: () => {
+                // Navigate to event details for payment
+                navigation.navigate('EventDetailsScreen', { eventId: event._id });
+              }
+            }
+          ]
+        );
+      } else if (result.type === 'permission_denied') {
+        Alert.alert('Access Denied', result.error);
+      } else if (result.type === 'attend' && result.success) {
+        // Successfully joined/left - no need for alert, UI already updated
+        const message = result.attending ? 'Successfully joined the event!' : 'You have left the event.';
+        console.log('✅ RSVP success:', message);
+      } else if (!result.success) {
+        Alert.alert('Error', result.error);
       }
     } catch (error) {
-      console.error('Attend error:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Unable to join event');
+      console.error('❌ RSVP error:', error);
+      const errorMessage = error.response?.data?.message || 'Unable to join event';
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setProcessing(false);
     }
+  };
+
+  // FIXED: Main card press handler - navigate to event details
+  const handleCardPress = () => {
+    navigation.navigate('EventDetailsScreen', { eventId: event._id });
   };
 
   // FIXED: Separate handler for share button
   const handleSharePress = (e) => {
     e.stopPropagation(); // Prevent card press when sharing
-    // Add share functionality here
     Alert.alert('Share', 'Share functionality coming soon!');
+  };
+
+  // Helper function to get formatted price
+  const getFormattedPrice = () => {
+    if (!event.pricing || event.pricing.isFree) return 'Free';
+    
+    // Check if early bird pricing is active
+    if (event.pricing.earlyBirdPricing?.enabled && 
+        event.pricing.earlyBirdPricing?.deadline && 
+        new Date() < new Date(event.pricing.earlyBirdPricing.deadline)) {
+      const earlyPrice = (event.pricing.earlyBirdPricing.amount / 100).toFixed(2);
+      return `$${earlyPrice}`;
+    }
+    
+    const regularPrice = (event.pricing.amount / 100).toFixed(2);
+    return `$${regularPrice}`;
+  };
+
+  // Check if user has paid for this event
+  const hasUserPaid = () => {
+    if (!event.paymentHistory || !currentUserId) return false;
+    
+    return event.paymentHistory.some(payment => 
+      payment.user && 
+      String(payment.user) === String(currentUserId) && 
+      payment.status === 'succeeded'
+    );
   };
 
   // Format date
@@ -88,10 +151,9 @@ export default function EventCard({
     hour12: true 
   });
 
-  // Calculate attendees info
-  const attendeesCount = event.attendees?.length || 0;
+  // Calculate attendees info - use store data
   const maxAttendees = event.maxAttendees;
-  const spotsLeft = maxAttendees ? maxAttendees - attendeesCount : null;
+  const spotsLeft = maxAttendees ? maxAttendees - attendeeCount : null;
 
   // Privacy badge
   const renderPrivacyBadge = () => {
@@ -149,6 +211,28 @@ export default function EventCard({
         <Text style={styles.weatherText}>Weather Dependent</Text>
       </View>
     );
+  };
+
+  // Get button state for paid events
+  const getAttendButtonInfo = () => {
+    if (event.pricing && !event.pricing.isFree && !hasUserPaid()) {
+      return {
+        text: getFormattedPrice(),
+        isPaid: true
+      };
+    }
+    
+    if (event.permissions?.canJoin === 'approval-required') {
+      return {
+        text: 'Request',
+        isPaid: false
+      };
+    }
+    
+    return {
+      text: 'Join',
+      isPaid: false
+    };
   };
 
   return (
@@ -235,16 +319,16 @@ export default function EventCard({
               ))}
             </View>
             <Text style={styles.attendeesText}>
-              {attendeesCount} going
+              {attendeeCount} going
               {spotsLeft && <Text style={styles.spotsLeft}> • {spotsLeft} spots left</Text>}
             </Text>
           </View>
 
           {/* Price */}
-          {event.price > 0 && (
+          {event.pricing && !event.pricing.isFree && (
             <View style={styles.priceContainer}>
               <Text style={styles.priceText}>
-                ${event.price}
+                {getFormattedPrice()}
               </Text>
             </View>
           )}
@@ -255,18 +339,25 @@ export default function EventCard({
           <View style={styles.actionRow}>
             {canAttend ? (
               <TouchableOpacity
-                style={styles.attendButton}
+                style={[styles.attendButton, processing && styles.attendButtonDisabled]}
                 onPress={handleAttendPress}
                 activeOpacity={0.8}
+                disabled={processing}
               >
                 <LinearGradient
                   colors={['#3797EF', '#3797EF']}
                   style={styles.attendButtonGradient}
                 >
-                  <Ionicons name="add" size={16} color="#FFFFFF" />
-                  <Text style={styles.attendButtonText}>
-                    {event.permissions?.canJoin === 'approval-required' ? 'Request' : 'Join'}
-                  </Text>
+                  {processing ? (
+                    <ActivityIndicator size={16} color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="add" size={16} color="#FFFFFF" />
+                      <Text style={styles.attendButtonText}>
+                        {getAttendButtonInfo().text}
+                      </Text>
+                    </>
+                  )}
                 </LinearGradient>
               </TouchableOpacity>
             ) : isAttending ? (
@@ -278,6 +369,11 @@ export default function EventCard({
               <View style={styles.hostBadge}>
                 <Ionicons name="star" size={16} color="#FF9500" />
                 <Text style={styles.hostText}>Hosting</Text>
+              </View>
+            ) : joinRequestSent ? (
+              <View style={styles.requestSentBadge}>
+                <Ionicons name="time" size={16} color="#FF9500" />
+                <Text style={styles.requestSentText}>Request Sent</Text>
               </View>
             ) : (
               <View style={styles.privateEventBadge}>
@@ -314,7 +410,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 20,
     borderWidth: 0.5,
-    borderColor: 'rgba(0, 0, 0, 0.06)', // Very faint border
+    borderColor: 'rgba(0, 0, 0, 0.06)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -529,6 +625,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 12,
   },
+  attendButtonDisabled: {
+    opacity: 0.6,
+  },
   attendButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -572,6 +671,23 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   hostText: {
+    color: '#FF9500',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  requestSentBadge: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFF8E1',
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  requestSentText: {
     color: '#FF9500',
     fontSize: 16,
     fontWeight: '600',
