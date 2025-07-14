@@ -1,4 +1,4 @@
-// SocialApp/screens/UnifiedDetailsScreen.js - Unified screen for both posts and memory photos
+// screens/UnifiedDetailsScreen.js - Unified screen for both posts and memory photos with centralized state
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
@@ -8,6 +8,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../services/AuthContext';
+import usePostsStore from '../stores/postsStore'; // ADD CENTRALIZED STORE
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
@@ -63,15 +64,35 @@ export default function UnifiedDetailsScreen() {
   const { postId, postType, post: initialPost, openKeyboard = false } = params;
   const isMemoryPost = postType === 'memory';
 
-  // State
+  // CENTRALIZED STATE MANAGEMENT - Get post data and actions from store
+  const storePost = usePostsStore(state => state.getPost(postId));
+  const toggleLikeInStore = usePostsStore(state => state.toggleLike);
+  const addCommentInStore = usePostsStore(state => state.addComment);
+
+  // Use store data if available, otherwise fall back to initial post
+  const currentPost = storePost || initialPost;
+
+  // Initialize store with this post if not already there
+  useEffect(() => {
+    if (!storePost && initialPost) {
+      usePostsStore.getState().addPost(initialPost);
+    }
+  }, [postId, storePost, initialPost]);
+
+  // Get current user ID
+  const currentUserId = currentUser?._id;
+
+  // CENTRALIZED STATE - Get state from store (always up to date)
+  const isLiked = currentPost?.userLiked || false;
+  const likeCount = currentPost?.likeCount || 0;
+  const commentCount = currentPost?.commentCount || 0;
+
+  // Local state for UI only
   const [post, setPost] = useState(initialPost || null);
   const [loading, setLoading] = useState(!initialPost);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
-  const [isLiked, setIsLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(0);
-  const [commentCount, setCommentCount] = useState(0);
 
   // Animation for like button
   const heartScale = useRef(new Animated.Value(1)).current;
@@ -124,12 +145,12 @@ export default function UnifiedDetailsScreen() {
   };
 
   useEffect(() => {
-    if (!post && postId) {
+    if (!currentPost && postId) {
       fetchPostDetails();
-    } else if (post) {
-      initializePostData();
+    } else if (currentPost) {
+      setPost(currentPost);
     }
-  }, [postId, post]);
+  }, [postId, currentPost]);
 
   useEffect(() => {
     if (postId) {
@@ -155,19 +176,23 @@ export default function UnifiedDetailsScreen() {
         response = await api.get(`/api/memories/photos/${postId}`);
         // Transform memory photo data to match post structure
         const memoryPhoto = response.data;
-        setPost({
+        const transformedPost = {
           ...memoryPhoto,
           postType: 'memory',
           user: memoryPhoto.uploadedBy,
           createdAt: memoryPhoto.uploadedAt,
           paths: [memoryPhoto.url],
-        });
+        };
+        setPost(transformedPost);
+        // Add to store
+        usePostsStore.getState().addPost(transformedPost);
       } else {
         response = await api.get(`/api/photos/${postId}`);
         setPost(response.data);
+        // Add to store
+        usePostsStore.getState().addPost(response.data);
       }
       
-      initializePostData();
     } catch (error) {
       console.error('Error fetching post details:', error);
       Alert.alert('Error', 'Failed to load post details');
@@ -175,14 +200,6 @@ export default function UnifiedDetailsScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const initializePostData = () => {
-    if (!post) return;
-    
-    setIsLiked(Boolean(post.userLiked));
-    setLikeCount(Number(post.likeCount) || 0);
-    setCommentCount(Number(post.commentCount) || 0);
   };
 
   const fetchComments = async () => {
@@ -197,95 +214,64 @@ export default function UnifiedDetailsScreen() {
         // For regular posts, get full post data which includes comments
         response = await api.get(`/api/photos/${postId}`);
         setComments(response.data.comments || []);
-        setCommentCount(response.data.commentCount || response.data.comments?.length || 0);
+        // Update store with fresh comment count
+        usePostsStore.getState().updatePost(postId, {
+          commentCount: response.data.commentCount || response.data.comments?.length || 0
+        });
       }
     } catch (error) {
       console.error('Error fetching comments:', error);
       // Use existing post data as fallback
-      if (post?.comments) {
-        setComments(post.comments);
-        setCommentCount(post.commentCount || post.comments.length);
+      if (currentPost?.comments) {
+        setComments(currentPost.comments);
       }
     } finally {
       setCommentsLoading(false);
     }
   };
 
+  // CENTRALIZED LIKE HANDLING
   const toggleLike = async () => {
-    if (!post?._id || !currentUser?._id) return;
+    if (!currentPost?._id || !currentUser?._id) return;
+
+    // Animate heart
+    Animated.sequence([
+      Animated.timing(heartScale, {
+        toValue: 1.2,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(heartScale, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
 
     try {
-      // Optimistic update
-      const newLiked = !isLiked;
-      const newCount = newLiked ? likeCount + 1 : likeCount - 1;
-      setIsLiked(newLiked);
-      setLikeCount(newCount);
-
-      // Animate heart
-      Animated.sequence([
-        Animated.timing(heartScale, {
-          toValue: 1.2,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(heartScale, {
-          toValue: 1,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      let response;
-      if (isMemoryPost) {
-        response = await api.post(`/api/memories/photos/${post._id}/like`);
-        setIsLiked(Boolean(response.data.liked || response.data.userLiked));
-        setLikeCount(Number(response.data.likeCount) || 0);
-      } else {
-        response = await api.post(`/api/photos/like/${post._id}`);
-        setIsLiked(Boolean(response.data.liked || response.data.userLiked));
-        setLikeCount(Number(response.data.likeCount) || 0);
-      }
-
-      // Update the original post data to sync with feed
-      if (params.post) {
-        params.post.userLiked = Boolean(response.data.liked || response.data.userLiked);
-        params.post.likeCount = Number(response.data.likeCount) || 0;
-      }
-
+      await toggleLikeInStore(currentPost._id, isMemoryPost, currentUser._id);
     } catch (error) {
       console.error('Error toggling like:', error);
-      // Revert optimistic update
-      setIsLiked(!newLiked);
-      setLikeCount(newLiked ? likeCount - 1 : likeCount + 1);
       Alert.alert('Error', 'Failed to update like');
     }
   };
 
+  // CENTRALIZED COMMENT HANDLING
   const postComment = async () => {
-    if (!newComment.trim()) return;
+    if (!newComment.trim() || commentsLoading) return;
 
     try {
       setCommentsLoading(true);
       const commentText = newComment.trim();
       setNewComment('');
 
-      let response;
+      const response = await addCommentInStore(currentPost._id, commentText, isMemoryPost);
+      
+      // Add to local comments list for immediate display
       if (isMemoryPost) {
-        response = await api.post(`/api/memories/photos/${post._id}/comments`, {
-          text: commentText,
-          tags: []
-        });
-        // For memory posts, add the new comment
-        setComments(prev => [...prev, response.data.comment]);
-        setCommentCount(prev => prev + 1);
+        setComments(prev => [...prev, response.comment]);
       } else {
-        response = await api.post(`/api/photos/comment/${post._id}`, {
-          text: commentText,
-          tags: []
-        });
-        // For regular posts, use the updated comments array
-        setComments(response.data.comments || []);
-        setCommentCount(response.data.comments?.length || 0);
+        setComments(response.comments || []);
       }
 
       // Scroll to bottom to show new comment
@@ -305,7 +291,7 @@ export default function UnifiedDetailsScreen() {
   const handleLikesPress = () => {
     if (likeCount > 0) {
       navigation.navigate('PostLikesScreen', {
-        postId: post._id,
+        postId: currentPost._id,
         postType: isMemoryPost ? 'memory' : 'post',
         likeCount: likeCount
       });
@@ -313,14 +299,14 @@ export default function UnifiedDetailsScreen() {
   };
 
   const handleEventPress = () => {
-    if (post?.event?._id) {
-      navigation.navigate('EventDetailsScreen', { eventId: post.event._id });
+    if (currentPost?.event?._id) {
+      navigation.navigate('EventDetailsScreen', { eventId: currentPost.event._id });
     }
   };
 
   const handleMemoryPress = () => {
-    if (isMemoryPost && post?.memoryInfo?.memoryId) {
-      navigation.navigate('MemoryDetailsScreen', { memoryId: post.memoryInfo.memoryId });
+    if (isMemoryPost && currentPost?.memoryInfo?.memoryId) {
+      navigation.navigate('MemoryDetailsScreen', { memoryId: currentPost.memoryInfo.memoryId });
     }
   };
 
@@ -349,14 +335,14 @@ export default function UnifiedDetailsScreen() {
   );
 
   const renderHeader = () => {
-    if (!post) return null;
+    if (!currentPost) return null;
 
-    const memoryMood = isMemoryPost ? getMemoryMood(post.createdAt || post.uploadedAt) : null;
-    const memoryTimeText = isMemoryPost ? formatMemoryTime(post.createdAt || post.uploadedAt) : null;
+    const memoryMood = isMemoryPost ? getMemoryMood(currentPost.createdAt || currentPost.uploadedAt) : null;
+    const memoryTimeText = isMemoryPost ? formatMemoryTime(currentPost.createdAt || currentPost.uploadedAt) : null;
     
     const imgURL = isMemoryPost 
-      ? (post.url ? `http://${API_BASE_URL}:3000${post.url}` : null)
-      : (post.paths?.[0] ? `http://${API_BASE_URL}:3000/${post.paths[0].replace(/^\/?/, '')}` : null);
+      ? (currentPost.url ? `http://${API_BASE_URL}:3000${currentPost.url}` : null)
+      : (currentPost.paths?.[0] ? `http://${API_BASE_URL}:3000/${currentPost.paths[0].replace(/^\/?/, '')}` : null);
 
     return (
       <View style={styles.headerContainer}>
@@ -377,34 +363,34 @@ export default function UnifiedDetailsScreen() {
 
         {/* Author Section */}
         <View style={styles.authorContainer}>
-          <TouchableOpacity onPress={() => handleUserPress(post.user?._id)} style={styles.authorInfo}>
+          <TouchableOpacity onPress={() => handleUserPress(currentPost.user?._id)} style={styles.authorInfo}>
             <Image
               source={{ 
-                uri: post.user?.profilePicture 
-                  ? `http://${API_BASE_URL}:3000${post.user.profilePicture}`
+                uri: currentPost.user?.profilePicture 
+                  ? `http://${API_BASE_URL}:3000${currentPost.user.profilePicture}`
                   : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
               }}
               style={styles.authorAvatar}
             />
             <View style={styles.authorTextContainer}>
               <View style={styles.usernameRow}>
-                <Text style={styles.authorUsername}>{post.user?.username || 'Unknown'}</Text>
+                <Text style={styles.authorUsername}>{currentPost.user?.username || 'Unknown'}</Text>
                 
                 {/* Context Links */}
-                {isMemoryPost && post.memoryInfo?.memoryTitle && (
+                {isMemoryPost && currentPost.memoryInfo?.memoryTitle && (
                   <>
                     <Text style={styles.contextText}> in </Text>
                     <TouchableOpacity onPress={handleMemoryPress}>
-                      <Text style={styles.memoryLink}>{post.memoryInfo.memoryTitle}</Text>
+                      <Text style={styles.memoryLink}>{currentPost.memoryInfo.memoryTitle}</Text>
                     </TouchableOpacity>
                   </>
                 )}
                 
-                {!isMemoryPost && post.event && (
+                {!isMemoryPost && currentPost.event && (
                   <>
                     <Text style={styles.contextText}> at </Text>
                     <TouchableOpacity onPress={handleEventPress}>
-                      <Text style={styles.eventLink}>{post.event.title}</Text>
+                      <Text style={styles.eventLink}>{currentPost.event.title}</Text>
                     </TouchableOpacity>
                   </>
                 )}
@@ -412,7 +398,7 @@ export default function UnifiedDetailsScreen() {
               
               {/* Time below username like MemoryPhotoItem */}
               <Text style={styles.postTime}>
-                {formatDate(post.createdAt || post.uploadedAt)}
+                {formatDate(currentPost.createdAt || currentPost.uploadedAt)}
               </Text>
             </View>
           </TouchableOpacity>
@@ -480,11 +466,11 @@ export default function UnifiedDetailsScreen() {
         )}
 
         {/* Caption */}
-        {post.caption && (
+        {currentPost.caption && (
           <View style={styles.captionContainer}>
             <Text style={styles.captionText}>
-              <Text style={styles.captionUsername}>{post.user?.username || 'Unknown'}</Text>{' '}
-              {post.caption}
+              <Text style={styles.captionUsername}>{currentPost.user?.username || 'Unknown'}</Text>{' '}
+              {currentPost.caption}
             </Text>
           </View>
         )}
@@ -521,7 +507,7 @@ export default function UnifiedDetailsScreen() {
     );
   }
 
-  if (!post) {
+  if (!currentPost) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Post not found</Text>
@@ -845,6 +831,19 @@ const styles = StyleSheet.create({
   },
 
   // Empty comments
+  emptyCommentsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyCommentsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#8E8E93',
+    marginTop: 16,
+    marginBottom: 8,
+  },
   emptyCommentsSubtitle: {
     fontSize: 14,
     color: '#8E8E93',

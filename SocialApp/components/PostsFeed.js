@@ -1,4 +1,4 @@
-// SocialApp/components/PostsFeed.js - FIXED: Pass currentUserId to PostItem
+// components/PostsFeed.js - Updated with centralized state management
 import React, { useState, useEffect, useCallback, useContext, forwardRef, useImperativeHandle } from 'react';
 import {
   FlatList,
@@ -11,8 +11,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
+import usePostsStore from '../stores/postsStore'; // ADD CENTRALIZED STORE
 import api from '../services/api';
-import PostItem from './PostItem';
+import CompletePostItem from './PostItem'; // Use your existing component name
 
 const PostsFeed = forwardRef(({
   navigation,
@@ -29,6 +30,9 @@ const PostsFeed = forwardRef(({
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [debugInfo, setDebugInfo] = useState(null);
+
+  // Store actions
+  const syncPostsFromFeed = usePostsStore(state => state.syncPostsFromFeed);
 
   // ✅ CRITICAL FIX: Extract currentUserId and validate
   const currentUserId = currentUser?._id;
@@ -87,9 +91,13 @@ const PostsFeed = forwardRef(({
       if (reset) {
         setData(newPosts);
         setPage(2);
+        // SYNC WITH STORE
+        syncPostsFromFeed(newPosts);
       } else {
         setData(prev => [...prev, ...newPosts]);
         setPage(prev => prev + 1);
+        // SYNC WITH STORE
+        syncPostsFromFeed(newPosts);
       }
 
       setHasMore(response.data.hasMore || false);
@@ -127,7 +135,7 @@ const PostsFeed = forwardRef(({
     }
   }, [loading, hasMore, data.length, page]);
 
-  // ✅ CRITICAL FIX: Pass currentUserId to PostItem and add debugging
+  // ✅ UPDATED: Pass currentUserId to PostItem and removed onPostUpdate (store handles this)
   const renderPost = useCallback(({ item }) => {
     console.log('🎯 PostsFeed: Rendering post with currentUserId:', {
       postId: item._id,
@@ -137,22 +145,11 @@ const PostsFeed = forwardRef(({
     
     return (
       <View style={styles.postWrapper}>
-        <PostItem 
+        <CompletePostItem 
           post={item} 
           currentUserId={currentUserId} // ✅ CRITICAL: Pass currentUserId
           navigation={navigation}
-          onLike={(postId, liked) => {
-            setData(prev => prev.map(post =>
-              post._id === postId ? { ...post, liked, likesCount: post.likesCount + (liked ? 1 : -1) } : post
-            ));
-          }}
-          // ✅ ENHANCED: Add post update callback
-          onPostUpdate={(postId, updates) => {
-            console.log('📊 PostsFeed: Updating post', { postId, updates });
-            setData(prev => prev.map(post =>
-              post._id === postId ? { ...post, ...updates } : post
-            ));
-          }}
+          // ✅ REMOVED: onPostUpdate prop - store handles this automatically
         />
       </View>
     );
