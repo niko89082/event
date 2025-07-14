@@ -2157,12 +2157,6 @@ router.post('/:eventId/invite', protect, async (req, res) => {
         event.invitedUsers.push(userId);
         newInvites.push(userId);
 
-        try {
-          console.log(`✅ Notification would be sent to user ${userId}`);
-        } catch (notifError) {
-          console.error(`❌ Failed to send notification to user ${userId}:`, notifError);
-        }
-
       } catch (userError) {
         console.error(`❌ Error processing user ${userId}:`, userError);
         invalidUsers.push(userId);
@@ -2170,6 +2164,32 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     }
 
     await event.save();
+
+    // ✅ NEW: Send invitation notifications (non-blocking)
+    if (newInvites.length > 0) {
+      setImmediate(async () => {
+        try {
+          for (const inviteeId of newInvites) {
+            await notificationService.createNotification({
+              userId: inviteeId,
+              senderId: req.user._id,
+              category: 'events',
+              type: 'event_invitation',
+              title: 'Event Invitation',
+              message: `${req.user.username} invited you to "${event.title}"`,
+              data: {
+                eventId: eventId
+              },
+              actionType: 'VIEW_EVENT',
+              actionData: { eventId }
+            });
+          }
+          console.log(`🔔 Sent ${newInvites.length} event invitation notifications`);
+        } catch (notifError) {
+          console.error('Failed to create invitation notifications:', notifError);
+        }
+      });
+    }
 
     console.log(`✅ Successfully invited ${newInvites.length} users`);
 

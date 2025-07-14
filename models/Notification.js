@@ -112,7 +112,7 @@ NotificationSchema.index({ user: 1, type: 1, createdAt: -1 });
 // Static method to get unread counts by category
 NotificationSchema.statics.getUnreadCountByCategory = function(userId) {
   return this.aggregate([
-    { $match: { user: mongoose.Types.ObjectId(userId), isRead: false } },
+    { $match: { user: new mongoose.Types.ObjectId(userId), isRead: false } }, // ✅ FIXED
     { $group: { _id: '$category', count: { $sum: 1 } } },
     { $project: { category: '$_id', count: 1, _id: 0 } }
   ]);

@@ -1,4 +1,4 @@
-// SocialApp/components/MemoryPhotoItem.js - Enhanced with whimsical UI and better like handling
+// SocialApp/components/MemoryPhotoItem.js - Fixed with centralized state management
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, 
@@ -7,14 +7,13 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../services/AuthContext';
-import api from '../services/api';
+import usePostsStore from '../stores/postsStore';
 import { API_BASE_URL } from '@env';
 
 const { width: screenWidth } = Dimensions.get('window');
 
 export default function MemoryPhotoItem({ 
   photo, 
-  onLikeUpdate, 
   onCommentUpdate, 
   onOpenComments,
   onOpenFullscreen
@@ -22,25 +21,27 @@ export default function MemoryPhotoItem({
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
   
-  const [likes, setLikes] = useState({
-    count: photo.likeCount || 0,
-    userLiked: Boolean(photo.userLiked),
-    loading: false,
-    initialized: false
-  });
-  
-  const [comments, setComments] = useState({
-    count: photo.commentCount || 0
-  });
+  // ✅ FIXED: Use centralized store for post data
+  const { 
+    getPost, 
+    updatePost, 
+    toggleLike, 
+    addComment 
+  } = usePostsStore();
 
-  // Comment input state (like PostItem)
+  // Get post data from store (fallback to prop data)
+  const storePost = getPost(photo._id);
+  const postData = storePost || photo;
+
+  // Local state for UI interactions only
   const [commentText, setCommentText] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [isLiking, setIsLiking] = useState(false);
 
   // State for image dimensions to maintain aspect ratio
   const [imageDimensions, setImageDimensions] = useState({
-    width: screenWidth - 40, // Default width (container padding)
-    height: 300 // Default height
+    width: screenWidth - 40,
+    height: 300
   });
 
   // Animation refs for heart double-tap
@@ -50,36 +51,27 @@ export default function MemoryPhotoItem({
 
   const DOUBLE_PRESS_DELAY = 300;
 
+  // ✅ FIXED: Initialize post in store if not present
   useEffect(() => {
-    if (!likes.initialized) {
-      fetchLikes();
+    if (!storePost && photo._id) {
+      updatePost(photo._id, {
+        ...photo,
+        userLiked: Boolean(photo.userLiked),
+        likeCount: photo.likeCount || 0,
+        commentCount: photo.commentCount || 0,
+        postType: 'memory'
+      });
     }
-  }, [photo._id]);
-
-  useEffect(() => {
-    if (photo.likeCount !== undefined) {
-      setLikes(prev => ({
-        ...prev,
-        count: photo.likeCount,
-        userLiked: Boolean(photo.userLiked)
-      }));
-    }
-    if (photo.commentCount !== undefined) {
-      setComments(prev => ({
-        ...prev,
-        count: photo.commentCount
-      }));
-    }
-  }, [photo.likeCount, photo.commentCount, photo.userLiked]);
+  }, [photo._id, storePost]);
 
   // Get image dimensions to maintain aspect ratio
   useEffect(() => {
     const photoUrl = getImageUrl(photo.url);
     if (photoUrl) {
       Image.getSize(photoUrl, (width, height) => {
-        const containerWidth = screenWidth - 40; // Account for container padding
+        const containerWidth = screenWidth - 40;
         const aspectRatio = height / width;
-        const calculatedHeight = Math.min(containerWidth * aspectRatio, 500); // Max height 500
+        const calculatedHeight = Math.min(containerWidth * aspectRatio, 500);
 
         setImageDimensions({
           width: containerWidth,
@@ -87,7 +79,6 @@ export default function MemoryPhotoItem({
         });
       }, (error) => {
         console.warn('Failed to get image dimensions:', error);
-        // Keep default dimensions if image sizing fails
       });
     }
   }, [photo.url]);
@@ -135,22 +126,97 @@ export default function MemoryPhotoItem({
     }
   };
 
-  const fetchLikes = async () => {
+  // ✅ FIXED: Simplified like handler using centralized store
+  const handleLike = async () => {
+    if (isLiking) {
+      console.log('⚠️ Like request already in progress, ignoring');
+      return;
+    }
+
+    if (!currentUser?._id) {
+      Alert.alert('Error', 'You must be logged in to like photos');
+      return;
+    }
+
+    console.log('🚀 === MEMORY PHOTO LIKE START ===');
+    console.log('📷 Current state before like:', {
+      photoId: photo._id,
+      currentLiked: postData.userLiked,
+      currentCount: postData.likeCount,
+      timestamp: new Date().toISOString()
+    });
+
+    setIsLiking(true);
+
     try {
-      const response = await api.get(`/api/memories/photos/${photo._id}/likes`);
-      setLikes(prev => ({
-        ...prev,
-        count: response.data.likeCount,
-        userLiked: response.data.userLiked,
-        initialized: true
-      }));
+      const newLikedState = await toggleLike(
+        photo._id, 
+        true, // isMemoryPost = true
+        currentUser._id
+      );
+
+      // Animate heart if liking
+      if (newLikedState && !postData.userLiked) {
+        triggerHeartAnimation();
+      }
+
+      console.log('✅ Memory photo like completed successfully');
+
     } catch (error) {
-      console.error('Error fetching likes:', error);
-      setLikes(prev => ({ ...prev, initialized: true }));
+      console.error('❌ Memory photo like error:', error);
+      
+      let errorMessage = 'Failed to update like';
+      
+      if (error.response?.status === 404) {
+        errorMessage = 'Photo not found';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'You do not have permission to like this photo';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Please log in to like photos';
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setIsLiking(false);
     }
   };
 
-  // Submit inline comment (matching PostItem's implementation)
+  // ✅ NEW: Separate heart animation function
+  const triggerHeartAnimation = () => {
+    heartScale.setValue(0);
+    
+    Animated.sequence([
+      Animated.spring(heartScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 5,
+      }),
+      Animated.timing(heartScale, {
+        toValue: 0,
+        duration: 300,
+        delay: 500,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    Animated.sequence([
+      Animated.timing(scaleValue, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleValue, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  // ✅ FIXED: Simplified comment submission using centralized store
   const submitComment = async () => {
     if (!commentText.trim()) {
       console.warn('⚠️ Cannot submit empty inline comment');
@@ -169,175 +235,33 @@ export default function MemoryPhotoItem({
 
     console.log('🔄 Submitting inline memory comment:', {
       photoId: photo._id,
-      commentText: commentText.trim(),
-      endpoint: `/api/memories/photos/${photo._id}/comments`
+      commentText: commentText.trim()
     });
 
     try {
       setSubmittingComment(true);
 
-      const response = await api.post(`/api/memories/photos/${photo._id}/comments`, {
-        text: commentText.trim(),
-        tags: []
-      });
+      await addComment(
+        photo._id, 
+        commentText.trim(), 
+        true // isMemoryPost = true
+      );
       
-      console.log('📝 Memory comment submit response:', response.data);
-      
-      // Update comment count
-      setComments(prev => ({
-        ...prev,
-        count: prev.count + 1
-      }));
-
       setCommentText('');
       console.log('✅ Inline memory comment submitted successfully');
 
-      // Notify parent component
+      // Notify parent component if callback provided
       if (onCommentUpdate) {
         onCommentUpdate(photo._id, {
-          commentCount: comments.count + 1
+          commentCount: postData.commentCount + 1
         });
       }
 
     } catch (error) {
       console.error('❌ Error submitting inline memory comment:', error);
-      console.error('❌ Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
       Alert.alert('Error', 'Failed to post comment');
     } finally {
       setSubmittingComment(false);
-    }
-  };
-
-  const handleLike = async () => {
-    if (likes.loading) {
-      console.log('⚠️ Like request already in progress, ignoring');
-      return;
-    }
-
-    console.log('🚀 === MEMORY PHOTO LIKE START ===');
-    console.log('📷 Current state before like:', {
-      photoId: photo._id,
-      currentLiked: likes.userLiked,
-      currentCount: likes.count,
-      timestamp: new Date().toISOString()
-    });
-
-    setLikes(prev => ({ ...prev, loading: true }));
-
-    try {
-      console.log('📡 Making like API request to:', `/api/memories/photos/${photo._id}/like`);
-      const response = await api.post(`/api/memories/photos/${photo._id}/like`);
-      
-      console.log('📥 Like API response received:', {
-        success: response.data?.success,
-        liked: response.data?.liked,
-        userLiked: response.data?.userLiked,
-        likeCount: response.data?.likeCount,
-        fullResponse: response.data
-      });
-
-      if (response.data && response.data.success) {
-        const apiUserLiked = response.data.userLiked !== undefined ? 
-          response.data.userLiked : response.data.liked;
-        const apiLikeCount = response.data.likeCount !== undefined ? 
-          response.data.likeCount : response.data.likesCount;
-        
-        console.log('✅ Extracted values from API response:', {
-          apiUserLiked,
-          apiLikeCount,
-          originalLiked: likes.userLiked,
-          originalCount: likes.count
-        });
-
-        // ✅ CRITICAL: Update local state IMMEDIATELY from API response
-        setLikes(prev => ({
-          ...prev,
-          userLiked: Boolean(apiUserLiked),
-          count: Number(apiLikeCount) || 0,
-          loading: false
-        }));
-
-        // Animate heart if liking
-        if (apiUserLiked && !likes.userLiked) {
-          heartScale.setValue(0);
-          Animated.sequence([
-            Animated.spring(heartScale, {
-              toValue: 1,
-              useNativeDriver: true,
-              tension: 100,
-              friction: 5,
-            }),
-            Animated.timing(heartScale, {
-              toValue: 0,
-              duration: 300,
-              delay: 500,
-              useNativeDriver: true,
-            }),
-          ]).start();
-
-          Animated.sequence([
-            Animated.timing(scaleValue, {
-              toValue: 0.95,
-              duration: 100,
-              useNativeDriver: true,
-            }),
-            Animated.timing(scaleValue, {
-              toValue: 1,
-              duration: 100,
-              useNativeDriver: true,
-            }),
-          ]).start();
-        }
-
-        // ✅ CRITICAL: Notify parent component immediately
-        if (onLikeUpdate) {
-          console.log('📢 Notifying parent component of like update...');
-          const updateData = {
-            userLiked: Boolean(apiUserLiked),
-            likeCount: Number(apiLikeCount) || 0,
-            liked: Boolean(apiUserLiked),
-            count: Number(apiLikeCount) || 0,
-            timestamp: new Date().toISOString()
-          };
-          
-          console.log('📤 Sending update data to parent:', updateData);
-          onLikeUpdate(photo._id, updateData);
-          console.log('✅ Parent notification completed');
-        }
-
-        console.log('🎉 Like operation completed successfully');
-      } else {
-        throw new Error(response.data?.message || 'Invalid response format from server');
-      }
-
-    } catch (error) {
-      console.error('🚨 === MEMORY PHOTO LIKE ERROR ===');
-      console.error('❌ Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        photoId: photo._id
-      });
-
-      let errorMessage = 'Failed to update like';
-      
-      if (error.response?.status === 404) {
-        errorMessage = 'Photo not found';
-      } else if (error.response?.status === 403) {
-        errorMessage = 'You do not have permission to like this photo';
-      } else if (error.response?.status === 401) {
-        errorMessage = 'Please log in to like photos';
-      } else if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      }
-
-      Alert.alert('Error', errorMessage);
-      
-      setLikes(prev => ({ ...prev, loading: false }));
     }
   };
 
@@ -347,7 +271,7 @@ export default function MemoryPhotoItem({
 
     if (timeSinceLastTap < DOUBLE_PRESS_DELAY) {
       // Double tap - like the photo
-      if (!likes.userLiked) {
+      if (!postData.userLiked) {
         handleLike();
       }
     } else {
@@ -369,13 +293,13 @@ export default function MemoryPhotoItem({
     }
   };
 
-  // NEW: Navigate to dedicated likes screen instead of modal
+  // Navigate to dedicated likes screen
   const handleLikesPress = () => {
-    if (likes.count > 0) {
+    if (postData.likeCount > 0) {
       navigation.navigate('PostLikesScreen', { 
         postId: photo._id,
-        likeCount: likes.count,
-        isMemoryPost: true // This will help the screen handle memory photos correctly
+        likeCount: postData.likeCount,
+        isMemoryPost: true
       });
     }
   };
@@ -458,13 +382,13 @@ export default function MemoryPhotoItem({
           {/* Like Button */}
           <TouchableOpacity
             onPress={handleLike}
-            disabled={likes.loading}
+            disabled={isLiking}
             style={styles.actionButton}
           >
             <Ionicons 
-              name={likes.userLiked ? "heart" : "heart-outline"} 
+              name={postData.userLiked ? "heart" : "heart-outline"} 
               size={28} 
-              color={likes.userLiked ? "#FF3B30" : "#000000"} 
+              color={postData.userLiked ? "#FF3B30" : "#000000"} 
             />
           </TouchableOpacity>
 
@@ -481,10 +405,10 @@ export default function MemoryPhotoItem({
       {/* Stats Section */}
       <View style={styles.statsSection}>
         {/* Like Count - Clickable */}
-        {likes.count > 0 && (
+        {postData.likeCount > 0 && (
           <TouchableOpacity onPress={handleLikesPress} style={styles.likesContainer}>
             <Text style={styles.likesText}>
-              {likes.count.toLocaleString()} {likes.count === 1 ? 'like' : 'likes'}
+              {postData.likeCount.toLocaleString()} {postData.likeCount === 1 ? 'like' : 'likes'}
             </Text>
           </TouchableOpacity>
         )}
@@ -500,16 +424,16 @@ export default function MemoryPhotoItem({
         )}
 
         {/* View Comments Link */}
-        {comments.count > 0 && (
+        {postData.commentCount > 0 && (
           <TouchableOpacity onPress={handleCommentsPress} style={styles.viewCommentsContainer}>
             <Text style={styles.viewCommentsText}>
-              View all {comments.count} comment{comments.count === 1 ? '' : 's'}
+              View all {postData.commentCount} comment{postData.commentCount === 1 ? '' : 's'}
             </Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Inline Comment Input (matching PostItem exactly) */}
+      {/* Inline Comment Input */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.commentInputContainer}
@@ -549,8 +473,8 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
     marginBottom: 20,
-    borderRadius: 20, // More curved edges
-    borderWidth: 1, // Subtle border around component
+    borderRadius: 20,
+    borderWidth: 1,
     borderColor: '#F0F0F0',
     overflow: 'hidden',
     shadowColor: '#000000',
@@ -558,7 +482,7 @@ const styles = StyleSheet.create({
       width: 0,
       height: 4,
     },
-    shadowOpacity: 0.08, // Softer shadow
+    shadowOpacity: 0.08,
     shadowRadius: 12,
     elevation: 6,
   },
@@ -567,22 +491,22 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FAFAFA', // Slightly different background for whimsy
+    backgroundColor: '#FAFAFA',
   },
   userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   avatarContainer: {
-    borderRadius: 14, // More curved
-    borderWidth: 2, // Subtle border around profile picture
+    borderRadius: 14,
+    borderWidth: 2,
     borderColor: '#E8E8E8',
     padding: 2,
   },
   avatar: {
     width: 36,
     height: 36,
-    borderRadius: 12, // More curved corners instead of circle
+    borderRadius: 12,
     backgroundColor: '#F6F6F6',
   },
   userDetails: {
@@ -591,7 +515,7 @@ const styles = StyleSheet.create({
   },
   username: {
     fontSize: 15,
-    fontWeight: '700', // Bolder for more personality
+    fontWeight: '700',
     color: '#000000',
   },
   timeAgo: {
@@ -625,7 +549,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 8, // Reduced padding
+    paddingVertical: 8,
     backgroundColor: '#FFFFFF',
   },
   leftActions: {
@@ -644,7 +568,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   likesContainer: {
-    marginBottom: 4, // Much closer to heart button
+    marginBottom: 4,
   },
   likesText: {
     fontSize: 14,
@@ -671,13 +595,13 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Inline Comment Input Container (matching PostItem exactly)
+  // Inline Comment Input Container
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8, // Reduced from 12 to move comment up
-    paddingBottom: 12, // Reduced from 16 to move comment up
+    paddingVertical: 8,
+    paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 0,
     marginBottom: 4,
@@ -686,13 +610,13 @@ const styles = StyleSheet.create({
   commentInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#EEEEEE', // Very slightly darker gray
+    borderColor: '#EEEEEE',
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 8,
     fontSize: 14,
     maxHeight: 80,
-    backgroundColor: '#F6F6F6', // Very slightly darker gray
+    backgroundColor: '#F6F6F6',
     color: '#000000',
   },
   
@@ -701,16 +625,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: '#E0EBF8', // Very slightly darker blue-gray
+    backgroundColor: '#E0EBF8',
     borderWidth: 1,
-    borderColor: '#B8D4F1', // Very slightly darker border
+    borderColor: '#B8D4F1',
     minWidth: 50,
     alignItems: 'center',
   },
   
   commentSubmitBtnDisabled: {
-    backgroundColor: '#F2F2F2', // Very slightly darker disabled state
-    borderColor: '#DDDDDD', // Very slightly darker border
+    backgroundColor: '#F2F2F2',
+    borderColor: '#DDDDDD',
   },
   
   commentSubmitText: {

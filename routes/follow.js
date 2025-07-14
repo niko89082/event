@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const protect = require('../middleware/auth');
+const notificationService = require('../services/notificationService');
 
 const { createNotification } = require('../utils/notifications');
 
@@ -21,7 +22,7 @@ router.post('/follow/:id', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check if you’re already in their 'followers' (means you’re already following)
+    // Check if you're already in their 'followers'
     if (userToFollow.followers.includes(currentUserId)) {
       return res.status(400).json({ message: 'You are already following this user' });
     }
@@ -31,26 +32,63 @@ router.post('/follow/:id', protect, async (req, res) => {
       return res.status(400).json({ message: 'Follow request already sent' });
     }
 
-    // Distinguish between public and private accounts
     if (userToFollow.isPublic) {
+      // Public account - instant follow
       userToFollow.followers.push(currentUserId);
       req.user.following.push(targetUserId);
 
       await userToFollow.save();
       await req.user.save();
 
-      // Possibly create a “follow” notification:
-      // createNotification(userToFollow._id, 'follow', `${req.user.username} followed you`);
+      // ✅ NEW: Send immediate follow notification (non-blocking)
+      setImmediate(async () => {
+        try {
+          await notificationService.createNotification({
+            userId: targetUserId,
+            senderId: currentUserId,
+            category: 'social',
+            type: 'new_follower',
+            title: 'New Follower',
+            message: `${req.user.username} started following you`,
+            data: {
+              userId: currentUserId
+            },
+            actionType: 'VIEW_PROFILE',
+            actionData: { userId: currentUserId }
+          });
+          console.log('🔔 New follower notification sent');
+        } catch (notifError) {
+          console.error('Failed to create follower notification:', notifError);
+        }
+      });
 
       return res.status(200).json({ message: 'User followed', isFollowing: true });
     } else {
-      // PRIVATE => push to followRequests
+      // Private account - send follow request
       userToFollow.followRequests.push(currentUserId);
       await userToFollow.save();
 
-      // Possibly notify them of the request:
-      // createNotification(userToFollow._id, 'follow-request', 
-      //   `${req.user.username} sent you a follow request`);
+      // ✅ NEW: Send friend request notification (non-blocking)
+      setImmediate(async () => {
+        try {
+          await notificationService.createNotification({
+            userId: targetUserId,
+            senderId: currentUserId,
+            category: 'social',
+            type: 'friend_request',
+            title: 'Follow Request',
+            message: `${req.user.username} sent you a follow request`,
+            data: {
+              userId: currentUserId
+            },
+            actionType: 'ACCEPT_REQUEST',
+            actionData: { requesterId: currentUserId }
+          });
+          console.log('🔔 Friend request notification sent');
+        } catch (notifError) {
+          console.error('Failed to create friend request notification:', notifError);
+        }
+      });
 
       return res.status(200).json({ message: 'Follow request sent', isFollowing: false });
     }
@@ -65,42 +103,68 @@ router.post('/follow/:id', protect, async (req, res) => {
  * Accept a follow request from a given user (requesterId).
  */
 router.post('/accept/:requesterId', protect, async (req, res) => {
-    try {
-      const currentUser = await User.findById(req.user._id);
-      const requestUser = await User.findById(req.params.requesterId);
-      if (!req.params.requesterId || req.params.requesterId === 'undefined') {
-        return res.status(400).json({ message: 'Invalid requesterId parameter' });
-      }
+  try {
+    const requesterId = req.params.requesterId;
+    const currentUserId = req.user._id;
 
-      if (!currentUser || !requestUser) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-  
-      // Check if they are in your followRequests
-      if (!currentUser.followRequests.includes(requestUser._id)) {
-        return res.status(400).json({ message: 'Follow request not found' });
-      }
-  
-      // Remove from pending
-      currentUser.followRequests.pull(requestUser._id);
-      // Add them to your followers
-      if (!currentUser.followers.includes(requestUser._id)) {
-        currentUser.followers.push(requestUser._id);
-      }
-      // Add you to their following
-      if (!requestUser.following.includes(currentUser._id)) {
-        requestUser.following.push(currentUser._id);
-      }
-  
-      await currentUser.save();
-      await requestUser.save();
-  
-      return res.status(200).json({ message: 'Follow request accepted' });
-    } catch (error) {
-      console.error('Accept request error =>', error);
-      return res.status(500).json({ message: 'Server error' });
+    const currentUser = await User.findById(currentUserId);
+    const requester = await User.findById(requesterId);
+
+    if (!req.params.requesterId || req.params.requesterId === 'undefined') {
+      return res.status(400).json({ message: 'Invalid requesterId parameter' });
     }
-  });
+
+    if (!currentUser || !requester) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if they are in your followRequests
+    if (!currentUser.followRequests.includes(requester._id)) {
+      return res.status(400).json({ message: 'Follow request not found' });
+    }
+
+    // Remove from pending
+    currentUser.followRequests.pull(requester._id);
+    // Add them to your followers
+    if (!currentUser.followers.includes(requester._id)) {
+      currentUser.followers.push(requester._id);
+    }
+    // Add you to their following
+    if (!requester.following.includes(currentUser._id)) {
+      requester.following.push(currentUser._id);
+    }
+
+    await currentUser.save();
+    await requester.save();
+
+    // ✅ NEW: Send acceptance notification (non-blocking)
+    setImmediate(async () => {
+      try {
+        await notificationService.createNotification({
+          userId: requesterId,
+          senderId: currentUserId,
+          category: 'social',
+          type: 'friend_request_accepted',
+          title: 'Follow Request Accepted',
+          message: `${req.user.username} accepted your follow request`,
+          data: {
+            userId: currentUserId
+          },
+          actionType: 'VIEW_PROFILE',
+          actionData: { userId: currentUserId }
+        });
+        console.log('🔔 Friend request accepted notification sent');
+      } catch (notifError) {
+        console.error('Failed to create acceptance notification:', notifError);
+      }
+    });
+
+    return res.status(200).json({ message: 'Follow request accepted' });
+  } catch (error) {
+    console.error('Accept request error =>', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
 
 /**
  * DELETE /follow/decline/:requesterId
