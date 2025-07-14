@@ -56,21 +56,20 @@ class NotificationService {
      SOCIAL NOTIFICATIONS
   ═══════════════════════════════════════════════════════════════════ */
 
-  async sendFriendRequest(fromUserId, toUserId) {
-    const fromUser = await User.findById(fromUserId).select('username fullName');
-    
-    return this.createNotification({
-      userId: toUserId,
-      senderId: fromUserId,
-      category: 'social',
-      type: 'friend_request',
-      title: 'New Friend Request',
-      message: `${fromUser.username} sent you a friend request`,
-      actionType: 'VIEW_PROFILE',
-      actionData: { userId: fromUserId },
-      priority: 'high'
-    });
-  }
+  async sendFriendRequest(requesterId, targetId) {
+  const requester = await User.findById(requesterId).select('username');
+  return this.createNotification({
+    userId: targetId,
+    senderId: requesterId,
+    category: 'social',
+    type: 'friend_request',
+    title: 'Follow Request',
+    message: `${requester.username} sent you a follow request`,
+    data: { userId: requesterId },
+    actionType: 'ACCEPT_REQUEST',
+    actionData: { requesterId }
+  });
+}
 
   async sendFriendRequestAccepted(fromUserId, toUserId) {
     const fromUser = await User.findById(fromUserId).select('username fullName');
@@ -87,21 +86,20 @@ class NotificationService {
     });
   }
 
-  async sendNewFollower(followerId, followedUserId) {
-    const follower = await User.findById(followerId).select('username fullName');
-    
-    return this.createNotification({
-      userId: followedUserId,
-      senderId: followerId,
-      category: 'social',
-      type: 'new_follower',
-      title: 'New Follower',
-      message: `${follower.username} started following you`,
-      actionType: 'VIEW_PROFILE',
-      actionData: { userId: followerId }
-    });
-  }
-
+  async sendNewFollower(followerId, targetId) {
+  const follower = await User.findById(followerId).select('username');
+  return this.createNotification({
+    userId: targetId,
+    senderId: followerId,
+    category: 'social',
+    type: 'new_follower',
+    title: 'New Follower',
+    message: `${follower.username} started following you`,
+    data: { userId: followerId },
+    actionType: 'VIEW_PROFILE',
+    actionData: { userId: followerId }
+  });
+}
   /* ═══════════════════════════════════════════════════════════════════
      🆕 MEMORY INVITATION NOTIFICATION (NEW)
   ═══════════════════════════════════════════════════════════════════ */
@@ -393,23 +391,20 @@ class NotificationService {
      ENGAGEMENT NOTIFICATIONS (simplified)
   ═══════════════════════════════════════════════════════════════════ */
 
-  async sendPostLiked(likerId, postId, postOwnerId) {
-    if (String(likerId) === String(postOwnerId)) return null; // Don't notify self
-    
-    const liker = await User.findById(likerId).select('username');
-    
-    return this.createNotification({
-      userId: postOwnerId,
-      senderId: likerId,
-      category: 'social',
-      type: 'post_liked',
-      title: 'Post Liked',
-      message: `${liker.username} liked your post`,
-      actionType: 'VIEW_POST',
-      actionData: { postId },
-      data: { postId }
-    });
-  }
+  async sendPostLiked(likerId, photoId, photoOwnerId) {
+  const liker = await User.findById(likerId).select('username');
+  return this.createNotification({
+    userId: photoOwnerId,
+    senderId: likerId,
+    category: 'social',
+    type: 'post_liked',
+    title: 'Photo Liked',
+    message: `${liker.username} liked your photo`,
+    data: { postId: photoId, userId: likerId },
+    actionType: 'VIEW_POST',
+    actionData: { photoId }
+  });
+}
 
   /* ═══════════════════════════════════════════════════════════════════
      NOTIFICATION RETRIEVAL & MANAGEMENT
@@ -450,6 +445,20 @@ class NotificationService {
         events: eventsUnread
       }
     };
+  }
+  async sendPostCommented(commenterId, photoId, photoOwnerId, commentText) {
+    const commenter = await User.findById(commenterId).select('username');
+    return this.createNotification({
+      userId: photoOwnerId,
+      senderId: commenterId,
+      category: 'social',
+      type: 'post_commented',
+      title: 'New Comment',
+      message: `${commenter.username} commented: "${commentText.substring(0, 50)}..."`,
+      data: { postId: photoId, userId: commenterId },
+      actionType: 'VIEW_POST',
+      actionData: { photoId }
+    });
   }
 
   async getUnreadCount(userId, category = null) {

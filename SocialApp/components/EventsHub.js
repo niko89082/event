@@ -1,4 +1,4 @@
-// SocialApp/components/EventsHub.js - FIXED SYNTAX + ANIMATION + HORIZONTAL SCROLL
+// components/EventsHub.js - Updated with centralized state management
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
 import EventsFeed from './EventsFeed';
+import useEventStore from '../stores/eventStore'; // Import centralized store
 
 // Following and For You tabs (can add more in the future)
 const EVENTS_TABS = [
@@ -40,6 +41,17 @@ const EventsHub = forwardRef(({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
+  // Get centralized store state and actions
+  const {
+    loading: storeLoading,
+    error: storeError,
+    getFeedCache,
+    updateFeedCache,
+    syncEventsFromFeed,
+    needsRefresh,
+    clearEvents
+  } = useEventStore();
+
   // Expose refresh method to parent
   useImperativeHandle(ref, () => ({
     refresh: async () => {
@@ -56,6 +68,7 @@ const EventsHub = forwardRef(({
     }
   }, [parentOnScroll]);
 
+  // Enhanced refresh handler with store integration
   const handleRefresh = async () => {
     console.log('🔄 EventsHub: Refresh triggered for tab:', activeTab);
     setRefreshing(true);
@@ -65,8 +78,14 @@ const EventsHub = forwardRef(({
       // Add a small delay to ensure proper refresh
       await new Promise(resolve => setTimeout(resolve, 300));
       
+      // Clear stale cache for current tab to force fresh data
+      const currentCache = getFeedCache(activeTab);
+      if (currentCache.lastFetch && needsRefresh(2 * 60 * 1000)) { // Force refresh if older than 2 minutes
+        updateFeedCache(activeTab, [], false);
+      }
+      
       // The individual feed components will handle their own refresh
-      // This is mainly for coordinating the refresh state
+      // and update the centralized store
     } catch (error) {
       console.error('EventsHub refresh error:', error);
       setError('Failed to refresh events');
@@ -85,6 +104,27 @@ const EventsHub = forwardRef(({
     }
   };
 
+  // Handle tab change - cache previous tab data
+  const handleTabChange = (newTab) => {
+    console.log('🔄 EventsHub: Tab changed from', activeTab, 'to', newTab);
+    setActiveTab(newTab);
+    setError(null);
+  };
+
+  // Listen for store errors
+  useEffect(() => {
+    if (storeError && !error) {
+      setError(storeError);
+    }
+  }, [storeError, error]);
+
+  // Handle user logout - clear events
+  useEffect(() => {
+    if (!currentUser) {
+      clearEvents();
+    }
+  }, [currentUser, clearEvents]);
+
   const renderTabButton = (tabKey, label, icon) => (
     <TouchableOpacity
       key={tabKey}
@@ -92,7 +132,7 @@ const EventsHub = forwardRef(({
         styles.tabButton,
         activeTab === tabKey && styles.activeTabButton
       ]}
-      onPress={() => setActiveTab(tabKey)}
+      onPress={() => handleTabChange(tabKey)}
       activeOpacity={0.8}
     >
       <Ionicons 
@@ -133,6 +173,9 @@ const EventsHub = forwardRef(({
       onRefresh: handleInternalRefresh,
       onScroll: handleScroll,
       scrollEventThrottle,
+      // Store integration props
+      useEventStore: true, // Flag to enable store usage in child components
+      activeTab, // Pass active tab for cache management
     };
 
     switch (activeTab) {

@@ -1,4 +1,4 @@
-// SocialApp/screens/MemoryDetailsScreen.js - COMPLETE FIXED VERSION
+// SocialApp/screens/MemoryDetailsScreen.js - Fixed with centralized state management
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, ScrollView, SafeAreaView, StatusBar, 
@@ -9,6 +9,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../services/AuthContext';
+import usePostsStore from '../stores/postsStore';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 import MemoryPhotoItem from '../components/MemoryPhotoItem';
@@ -16,11 +17,17 @@ import MemoryPhotoItem from '../components/MemoryPhotoItem';
 const { width: screenWidth } = Dimensions.get('window');
 
 export default function MemoryDetailsScreen({ route, navigation }) {
-  // ✅ FIXED: Add null safety for route params
   const { memoryId } = route?.params || {};
   const { currentUser } = useContext(AuthContext);
   
-  // ✅ FIXED: Early return if no memoryId
+  // ✅ FIXED: Use centralized store
+  const { 
+    getPost, 
+    updatePost, 
+    addPost,
+    syncPostsFromFeed 
+  } = usePostsStore();
+  
   if (!memoryId) {
     console.error('❌ MemoryDetailsScreen: No memoryId provided');
     return (
@@ -52,7 +59,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   const [commentText, setCommentText] = useState('');
   const [commentsLoading, setCommentsLoading] = useState(false);
 
-  // NEW: Likes modal state
+  // Likes modal state
   const [showLikesModal, setShowLikesModal] = useState(false);
   const [currentPhotoLikes, setCurrentPhotoLikes] = useState([]);
   const [likesLoading, setLikesLoading] = useState(false);
@@ -68,7 +75,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   }, [memoryId]);
 
   useEffect(() => {
-    // ✅ FIXED: Add null safety for memory and currentUser
     if (memory?.creator?._id && currentUser?._id) {
       const isHost = memory.creator._id === currentUser._id;
       if (isHost) {
@@ -98,7 +104,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     return `https://placehold.co/40x40/E1E1E1/8E8E93?text=${fallbackText}`;
   };
 
-  // ✅ ENHANCED: Better refresh functionality - UPDATE existing onRefresh
+  // ✅ ENHANCED: Better refresh functionality
   const onRefresh = async () => {
     console.log('🔄 Pull-to-refresh triggered');
     setRefreshing(true);
@@ -112,7 +118,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
-  // ✅ ENHANCED: Improved memory fetching with better like status - UPDATE existing fetchMemoryDetails
+  // ✅ FIXED: Improved memory fetching with store integration
   const fetchMemoryDetails = async () => {
     try {
       setLoading(!refreshing);
@@ -129,22 +135,45 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         photoCount: response.data?.memory?.photos?.length || 0
       });
       
-      // ✅ FIXED: Add null safety for response data
       const memoryData = response.data?.memory;
       if (!memoryData) {
         throw new Error('Memory data not found in response');
       }
       
-      // ✅ ENHANCED: Log photo like status for debugging
+      // ✅ CRITICAL: Sync memory photos with posts store
       if (memoryData.photos && memoryData.photos.length > 0) {
-        console.log('📷 Photos like status summary:');
-        memoryData.photos.forEach((photo, index) => {
-          console.log(`  Photo ${index + 1} (${photo._id}):`, {
-            userLiked: photo.userLiked,
-            likeCount: photo.likeCount,
-            uploadedBy: photo.uploadedBy?.username
-          });
+        console.log('📊 Syncing memory photos with posts store...');
+        
+        // Transform memory photos to post format and sync with store
+        const photosForStore = memoryData.photos.map(photo => ({
+          ...photo,
+          postType: 'memory',
+          user: photo.uploadedBy, // Standardize user field
+          createdAt: photo.uploadedAt, // Standardize date field
+          userLiked: Boolean(photo.userLiked),
+          likeCount: photo.likeCount || 0,
+          commentCount: photo.commentCount || 0
+        }));
+        
+        // Add/update each photo in the store
+        photosForStore.forEach(photo => {
+          const existingPost = getPost(photo._id);
+          if (existingPost) {
+            // Update existing post, preserving any optimistic updates
+            updatePost(photo._id, {
+              ...photo,
+              // Keep current like state if it was optimistically updated
+              userLiked: existingPost.userLiked,
+              likeCount: existingPost.likeCount,
+              commentCount: Math.max(existingPost.commentCount, photo.commentCount)
+            });
+          } else {
+            // Add new post to store
+            addPost(photo);
+          }
         });
+        
+        console.log('✅ Memory photos synced with posts store');
       }
       
       setMemory(memoryData);
@@ -170,127 +199,16 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
-  // ✅ FIXED: Enhanced like update handler - REPLACE existing handleLikeUpdate
-  const handleLikeUpdate = (photoId, likeData) => {
-  console.log('🔄 === HANDLING LIKE UPDATE IN MEMORY DETAILS ===');
-  console.log('📷 Update details:', { 
-    photoId, 
-    likeData,
-    timestamp: new Date().toISOString(),
-    dataKeys: Object.keys(likeData || {}),
-    dataValues: likeData
-  });
-  
-  // Validate inputs
-  if (!photoId) {
-    console.error('❌ handleLikeUpdate: No photoId provided');
-    return;
-  }
-  
-  if (!likeData) {
-    console.error('❌ handleLikeUpdate: No likeData provided');
-    return;
-  }
-  
-  setMemory(prev => {
-    console.log('🔍 Current memory state before update:', {
-      hasMemory: !!prev,
-      hasPhotos: !!prev?.photos,
-      photosCount: prev?.photos?.length || 0,
-      photoIds: prev?.photos?.map(p => p._id) || []
-    });
-    
-    if (!prev?.photos) {
-      console.warn('⚠️ No photos in memory, cannot update like');
-      return prev;
-    }
-    
-    const updatedMemory = {
-      ...prev,
-      photos: prev.photos.map(photo => {
-        if (photo._id === photoId) {
-          console.log('🎯 Found matching photo to update:', {
-            photoId: photo._id,
-            currentLikeCount: photo.likeCount,
-            currentUserLiked: photo.userLiked,
-            newLikeData: likeData
-          });
-          
-          // Extract like count from response (handle multiple possible field names)
-          let newLikeCount = 0;
-          if (likeData.likeCount !== undefined) {
-            newLikeCount = Number(likeData.likeCount);
-            console.log('📊 Using likeCount field:', newLikeCount);
-          } else if (likeData.count !== undefined) {
-            newLikeCount = Number(likeData.count);
-            console.log('📊 Using count field:', newLikeCount);
-          } else if (likeData.likesCount !== undefined) {
-            newLikeCount = Number(likeData.likesCount);
-            console.log('📊 Using likesCount field:', newLikeCount);
-          } else {
-            newLikeCount = photo.likeCount || 0;
-            console.warn('⚠️ No like count in response, keeping existing:', newLikeCount);
-          }
-          
-          // Extract user liked status
-          let newUserLiked = false;
-          if (likeData.userLiked !== undefined) {
-            newUserLiked = Boolean(likeData.userLiked);
-            console.log('👤 Using userLiked field:', newUserLiked);
-          } else if (likeData.liked !== undefined) {
-            newUserLiked = Boolean(likeData.liked);
-            console.log('👤 Using liked field:', newUserLiked);
-          } else {
-            newUserLiked = photo.userLiked || false;
-            console.warn('⚠️ No user liked status in response, keeping existing:', newUserLiked);
-          }
-          
-          const updatedPhoto = {
-            ...photo,
-            likeCount: newLikeCount,
-            userLiked: newUserLiked
-          };
-          
-          console.log('✅ Photo updated successfully:', {
-            photoId: updatedPhoto._id,
-            oldLikeCount: photo.likeCount,
-            newLikeCount: updatedPhoto.likeCount,
-            oldUserLiked: photo.userLiked,
-            newUserLiked: updatedPhoto.userLiked,
-            changeDetected: {
-              likeCountChanged: photo.likeCount !== updatedPhoto.likeCount,
-              userLikedChanged: photo.userLiked !== updatedPhoto.userLiked
-            }
-          });
-          
-          return updatedPhoto;
-        }
-        
-        // Return unchanged photo
-        return photo;
-      })
-    };
-    
-    console.log('📝 Memory state update completed:', {
-      photosProcessed: updatedMemory.photos.length,
-      targetPhotoFound: updatedMemory.photos.some(p => p._id === photoId),
-      updatedPhotoData: updatedMemory.photos.find(p => p._id === photoId)
-    });
-    
-    return updatedMemory;
-  });
-  
-  console.log('🏁 handleLikeUpdate completed for photoId:', photoId);
-};
+  // ✅ REMOVED: handleLikeUpdate - no longer needed with centralized store
 
-  // ✅ FIXED: Fetch photo likes with proper user data - REPLACE existing fetchPhotoLikes
+  // ✅ FIXED: Fetch photo likes with proper user data
   const fetchPhotoLikes = async (photoId) => {
     console.log('🚀 === FETCHING PHOTO LIKES START ===');
     console.log('📷 Photo ID:', photoId);
     
     try {
       setLikesLoading(true);
-      setCurrentPhotoLikes([]); // Clear previous data
+      setCurrentPhotoLikes([]);
       
       console.log('📡 Making API request to get photo likes...');
       const response = await api.get(`/api/memories/photos/${photoId}/likes`);
@@ -378,7 +296,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
-  // ✅ FIXED: Handle opening likes with proper debugging - REPLACE existing handleOpenLikes
+  // ✅ FIXED: Handle opening likes with proper debugging
   const handleOpenLikes = (photoId) => {
     console.log('👥 Opening likes for photo:', photoId);
     fetchPhotoLikes(photoId);
@@ -422,7 +340,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         }
       );
     } else {
-      // For Android, show a simple alert for now
       Alert.alert(
         'Add Photo',
         'How would you like to add a photo?',
@@ -459,7 +376,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
-        allowsMultipleSelection: false, // Ensure single selection
+        allowsMultipleSelection: false,
       };
 
       let result;
@@ -487,7 +404,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         assetCount: result.assets?.length
       });
 
-      // ✅ ENHANCED: Handle both cancelled and canceled (different versions)
       if (result.cancelled || result.canceled) {
         console.log('ℹ️ User cancelled image selection');
         return;
@@ -501,7 +417,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
       const selectedAsset = result.assets[0];
       
-      // ✅ ENHANCED: Validate selected asset
       if (!selectedAsset.uri) {
         console.error('❌ Invalid asset - no URI');
         Alert.alert('Error', 'Invalid image selected. Please try again.');
@@ -516,7 +431,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         type: selectedAsset.type
       });
 
-      // Check file size (optional - backend should also validate)
+      // Check file size
       if (selectedAsset.fileSize && selectedAsset.fileSize > 10 * 1024 * 1024) { // 10MB
         Alert.alert(
           'File Too Large', 
@@ -547,10 +462,8 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     try {
       setUploading(true);
       
-      // ✅ ENHANCED: Prepare FormData with proper validation
       const formData = new FormData();
       
-      // Determine file type and name
       const fileType = asset.type || asset.mimeType || 'image/jpeg';
       const fileName = asset.fileName || asset.filename || `memory-photo-${Date.now()}.jpg`;
       
@@ -566,7 +479,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         name: fileName,
       });
 
-      // Add caption if provided (you can add caption input in UI)
       if (asset.caption) {
         formData.append('caption', asset.caption);
       }
@@ -577,7 +489,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 30000, // 30 second timeout for uploads
+        timeout: 30000,
       });
 
       console.log('📥 Upload response received:', {
@@ -587,14 +499,12 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         photoId: response.data?.photo?._id
       });
 
-      // ✅ CRITICAL: Validate response structure
       if (!response.data || !response.data.photo) {
         throw new Error('Invalid response from server - missing photo data');
       }
 
       const uploadedPhoto = response.data.photo;
       
-      // ✅ CRITICAL: Validate photo object has required fields
       if (!uploadedPhoto._id) {
         throw new Error('Invalid photo data - missing ID');
       }
@@ -607,7 +517,21 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         userLiked: uploadedPhoto.userLiked
       });
 
-      // ✅ ENHANCED: Update memory state with comprehensive validation
+      // ✅ FIXED: Add uploaded photo to posts store
+      const photoForStore = {
+        ...uploadedPhoto,
+        postType: 'memory',
+        user: uploadedPhoto.uploadedBy,
+        createdAt: uploadedPhoto.uploadedAt,
+        userLiked: Boolean(uploadedPhoto.userLiked),
+        likeCount: uploadedPhoto.likeCount || 0,
+        commentCount: uploadedPhoto.commentCount || 0
+      };
+      
+      addPost(photoForStore);
+      console.log('✅ Photo added to posts store');
+
+      // Update memory state
       setMemory(prev => {
         if (!prev) {
           console.warn('⚠️ No previous memory state, cannot add photo');
@@ -628,7 +552,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         return updatedMemory;
       });
 
-      // ✅ ENHANCED: Success feedback with photo info
       Alert.alert(
         'Success', 
         `Photo uploaded successfully! ${response.data.memory?.photoCount || ''} photos in memory.`,
@@ -647,7 +570,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         memoryId
       });
       
-      // ✅ ENHANCED: User-friendly error messages
       let errorMessage = 'Failed to upload photo';
       
       if (error.response?.data?.message) {
@@ -673,36 +595,40 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   };
 
   const handleOpenComments = async (photoId) => {
-  try {
-    // Navigate to UnifiedDetailsScreen instead of opening modal
-    navigation.navigate('UnifiedDetailsScreen', { 
-      postId: photoId,
-      postType: 'memory',
-      openKeyboard: true // Auto-focus comment input
-    });
-  } catch (error) {
-    console.error('Error opening comments:', error);
-    Alert.alert('Error', 'Failed to open comments');
-  }
-};
-
+    try {
+      navigation.navigate('UnifiedDetailsScreen', { 
+        postId: photoId,
+        postType: 'memory',
+        openKeyboard: true
+      });
+    } catch (error) {
+      console.error('Error opening comments:', error);
+      Alert.alert('Error', 'Failed to open comments');
+    }
+  };
 
   const handleOpenFullscreen = (photo) => {
-  navigation.navigate('UnifiedDetailsScreen', { 
-    postId: photo._id,
-    postType: 'memory',
-    post: {
-      ...photo,
+    navigation.navigate('UnifiedDetailsScreen', { 
+      postId: photo._id,
       postType: 'memory',
-      user: photo.uploadedBy,
-      createdAt: photo.uploadedAt,
-      memoryInfo: {
-        memoryId: memory._id,
-        memoryTitle: memory.title
+      post: {
+        ...photo,
+        postType: 'memory',
+        user: photo.uploadedBy,
+        createdAt: photo.uploadedAt,
+        memoryInfo: {
+          memoryId: memory._id,
+          memoryTitle: memory.title
+        }
       }
-    }
-  });
-};
+    });
+  };
+
+  // ✅ SIMPLIFIED: Comment update handler - no longer needed with centralized store
+  const handleCommentUpdate = (photoId, updates) => {
+    // Updates are now handled automatically by the centralized store
+    console.log('📝 Comment update notification received:', { photoId, updates });
+  };
 
   // Participant management
   const searchUsers = async (query) => {
@@ -715,7 +641,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
       setSearchLoading(true);
       const response = await api.get(`/api/search/users?q=${encodeURIComponent(query)}`);
       
-      // ✅ FIXED: Add null safety for search results and memory participants
       const users = response.data?.users || [];
       const filteredResults = users.filter(user => 
         user?._id && 
@@ -785,20 +710,17 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     }
   };
 
-  // Render functions
-  // ✅ ENHANCED: Improved photo rendering with better like status - UPDATE existing renderPhoto
+  // ✅ SIMPLIFIED: Photo rendering using centralized store data
   const renderPhoto = ({ item: photo }) => {
-    console.log('🖼️ Rendering photo:', {
+    console.log('🖼️ Rendering memory photo:', {
       photoId: photo._id,
-      userLiked: photo.userLiked,
-      likeCount: photo.likeCount,
       uploadedBy: photo.uploadedBy?.username
     });
     
     return (
       <MemoryPhotoItem
         photo={photo}
-        onLikeUpdate={handleLikeUpdate}
+        onCommentUpdate={handleCommentUpdate}
         onOpenComments={handleOpenComments}
         onOpenFullscreen={handleOpenFullscreen}
         onOpenLikes={handleOpenLikes}
@@ -806,7 +728,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     );
   };
 
-  // ✅ FIXED: Add null safety for participant rendering
   const renderParticipant = ({ item: participant }) => {
     if (!participant?._id) {
       console.warn('⚠️ Invalid participant data:', participant);
@@ -845,7 +766,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     );
   };
 
-  // ✅ FIXED: Add null safety for search result rendering
   const renderSearchResult = ({ item: user }) => {
     if (!user?._id) {
       console.warn('⚠️ Invalid user data in search results:', user);
@@ -879,7 +799,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     );
   };
 
-  // ✅ FIXED: Add null safety for comment rendering
   const renderComment = ({ item: comment }) => {
     if (!comment?.user) {
       console.warn('⚠️ Invalid comment data:', comment);
@@ -910,7 +829,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     );
   };
 
-  // ✅ IMPROVED: Improved renderLikedUser with better error handling - REPLACE existing renderLikedUser
   const renderLikedUser = ({ item: like, index }) => {
     console.log(`👤 Rendering liked user ${index}:`, {
       hasUser: !!like?.user,
@@ -1021,7 +939,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
               </Text>
             </View>
             
-            {/* NEW: Clickable participants count - Navigate to separate screen */}
             <TouchableOpacity 
               style={styles.metaItem}
               onPress={() => navigation.navigate('MemoryParticipantsScreen', { 
@@ -1037,7 +954,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* NEW: Add Photo Button - Moved above photos */}
+        {/* Add Photo Button */}
         {isParticipant && (
           <View style={styles.addPhotoSection}>
             <TouchableOpacity
@@ -1072,7 +989,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
         )}
       </ScrollView>
 
-      {/* ✅ ENHANCED: Updated Likes Modal */}
+      {/* Likes Modal */}
       <Modal
         visible={showLikesModal}
         transparent={true}
@@ -1103,7 +1020,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
                 data={currentPhotoLikes}
                 renderItem={renderLikedUser}
                 keyExtractor={(item, index) => {
-                  // ✅ IMPROVED: Better key extraction with fallback
                   const key = item?.user?._id || `like-${index}`;
                   console.log(`🔑 Like item key: ${key} for user: ${item?.user?.username || 'unknown'}`);
                   return key;
@@ -1204,7 +1120,6 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     </SafeAreaView>
   );
 }
-
 // ✅ ENHANCED: Updated styles with new additions
 const styles = StyleSheet.create({
   container: {

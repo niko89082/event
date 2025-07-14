@@ -6,7 +6,7 @@ const Photo = require('../models/Photo');
 const Event = require('../models/Event');
 const User = require('../models/User'); // Import the User model
 const protect = require('../middleware/auth');
-
+const notificationService = require('../services/notificationService');
 const router = express.Router();
 
 // Configure Multer for multiple photo uploads with a cap of 10
@@ -479,8 +479,8 @@ router.post('/like/:photoId', protect, async (req, res) => {
       method: req.method
     });
 
-    // Find the photo
-    const photo = await Photo.findById(photoId);
+    // Find the photo and populate owner
+    const photo = await Photo.findById(photoId).populate('user', '_id username');
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
@@ -488,7 +488,7 @@ router.post('/like/:photoId', protect, async (req, res) => {
     // ✅ CRITICAL FIX: Initialize likes array if it doesn't exist
     if (!photo.likes) {
       photo.likes = [];
-      await photo.save(); // Save the initialization
+      await photo.save();
     }
 
     // Check if user already liked this photo
@@ -526,18 +526,41 @@ router.post('/like/:photoId', protect, async (req, res) => {
     photo.likes = newLikesArray;
     await photo.save();
 
-    // ✅ CONSISTENT RESPONSE FORMAT (same as memory photos)
+    // ✅ NEW: Create notification when someone likes a photo (non-blocking)
+    if (newLikedStatus && photo.user._id.toString() !== userId.toString()) {
+      setImmediate(async () => {
+        try {
+          await notificationService.createNotification({
+            userId: photo.user._id,
+            senderId: userId,
+            category: 'social',
+            type: 'post_liked',
+            title: 'Photo Liked',
+            message: `${req.user.username} liked your photo`,
+            data: {
+              postId: photoId,
+              userId: userId
+            },
+            actionType: 'VIEW_POST',
+            actionData: { photoId }
+          });
+          console.log('🔔 Like notification sent');
+        } catch (notifError) {
+          console.error('Failed to create like notification:', notifError);
+        }
+      });
+    }
+
     const finalResponse = {
       success: true,
-      liked: newLikedStatus,        // ✅ CRITICAL: Include this field
-      userLiked: newLikedStatus,    // ✅ ALTERNATIVE: Also include this
+      liked: newLikedStatus,
+      userLiked: newLikedStatus,
       likeCount: newLikesArray.length,
-      likes: newLikesArray,         // ✅ Keep this for compatibility
+      likes: newLikesArray,
       message: newLikedStatus ? 'Photo liked' : 'Photo unliked'
     };
 
     console.log('📸 Sending like response:', finalResponse);
-
     res.status(200).json(finalResponse);
 
   } catch (error) {
@@ -548,6 +571,8 @@ router.post('/like/:photoId', protect, async (req, res) => {
     });
   }
 });
+
+
 router.get('/likes/:photoId', protect, async (req, res) => {
   try {
     const { photoId } = req.params;
@@ -583,35 +608,92 @@ router.get('/likes/:photoId', protect, async (req, res) => {
 });
 
 // ✅ GET: Get photo comments (for loading comments separately)
-router.get('/comments/:photoId', protect, async (req, res) => {
+router.post('/comment/:photoId', protect, async (req, res) => {
+  const { text, tags } = req.body;
   try {
-    const { photoId } = req.params;
-    const { limit = 20, offset = 0 } = req.query;
-    
-    const photo = await Photo.findById(photoId)
-      .populate({
-        path: 'comments.user',
-        select: 'username fullName profilePicture'
-      });
-    
+    // Find photo and populate owner
+    const photo = await Photo.findById(req.params.photoId).populate('user', '_id username');
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
-    
-    // Get comments with pagination
-    const comments = photo.comments
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) // Latest first
-      .slice(parseInt(offset), parseInt(offset) + parseInt(limit));
-    
-    res.json({
-      comments: comments,
-      commentCount: photo.comments.length,
-      hasMore: photo.comments.length > (parseInt(offset) + parseInt(limit))
-    });
-    
+
+    // Add the comment
+    await Photo.findByIdAndUpdate(
+      req.params.photoId,
+      { $push: { comments: { user: req.user._id, text, tags } } },
+      { new: true, runValidators: true }
+    );
+
+    // ✅ NEW: Send notification to photo owner (non-blocking)
+    if (photo.user._id.toString() !== req.user._id.toString()) {
+      setImmediate(async () => {
+        try {
+          await notificationService.createNotification({
+            userId: photo.user._id,
+            senderId: req.user._id,
+            category: 'social',
+            type: 'post_commented',
+            title: 'New Comment',
+            message: `${req.user.username} commented on your photo: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+            data: {
+              postId: req.params.photoId,
+              userId: req.user._id,
+              commentText: text.substring(0, 100)
+            },
+            actionType: 'VIEW_POST',
+            actionData: { photoId: req.params.photoId }
+          });
+          console.log('🔔 Comment notification sent');
+        } catch (notifError) {
+          console.error('Failed to create comment notification:', notifError);
+        }
+      });
+    }
+
+    // ✅ NEW: Send notification to tagged users (non-blocking)
+    if (tags && tags.length > 0) {
+      setImmediate(async () => {
+        try {
+          for (const taggedUserId of tags) {
+            if (taggedUserId !== req.user._id.toString() && taggedUserId !== photo.user._id.toString()) {
+              await notificationService.createNotification({
+                userId: taggedUserId,
+                senderId: req.user._id,
+                category: 'social',
+                type: 'post_commented',
+                title: 'Tagged in Comment',
+                message: `${req.user.username} tagged you in a comment`,
+                data: {
+                  postId: req.params.photoId,
+                  userId: req.user._id,
+                  commentText: text.substring(0, 100)
+                },
+                actionType: 'VIEW_POST',
+                actionData: { photoId: req.params.photoId }
+              });
+            }
+          }
+          console.log('🔔 Tag notifications sent');
+        } catch (notifError) {
+          console.error('Failed to create tag notifications:', notifError);
+        }
+      });
+    }
+
+    // Re-query with full population
+    const updatedPhoto = await Photo.findById(req.params.photoId)
+      .populate('user', 'username')
+      .populate('event', 'title')
+      .populate({
+        path: 'comments.user',
+        select: 'username',
+      });
+
+    res.status(200).json(updatedPhoto);
+
   } catch (error) {
-    console.error('Error fetching photo comments:', error);
-    res.status(500).json({ message: 'Failed to fetch comments' });
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

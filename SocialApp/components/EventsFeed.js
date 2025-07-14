@@ -1,230 +1,459 @@
-// SocialApp/components/EventsFeed.js - FIXED: Content flows naturally under transparent headers
-import React, { useEffect, useState, useContext, forwardRef, useImperativeHandle, useCallback } from 'react';
+// components/EventsFeed.js - FIXED: Use correct feed API endpoints
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, FlatList, ActivityIndicator, StyleSheet, RefreshControl, Text,
+  View,
+  FlatList,
+  StyleSheet,
+  RefreshControl,
+  ActivityIndicator,
+  Text,
+  Alert,
+  Animated,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import api from '../services/api';
 import EventCard from './EventCard';
-import { AuthContext } from '../services/AuthContext';
+import useEventStore from '../stores/eventStore';
 
-const EventsFeed = forwardRef(({ 
-  navigation, 
-  refreshing: externalRefreshing, 
-  onRefresh: externalOnRefresh, 
-  feedType = "discover",
-  onScroll: parentOnScroll,
-  scrollEventThrottle = 16
-}, ref) => {
-  const { currentUser } = useContext(AuthContext);
-  const uid = currentUser?._id;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const PAGE_SIZE = 10;
 
-  const [data, setData] = useState([]);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+export default function EventsFeed({
+  navigation,
+  currentUserId,
+  feedType = 'discover', // 'discover', 'following', 'nearby', etc.
+  refreshing: externalRefreshing = false,
+  onRefresh: externalOnRefresh,
+  onScroll,
+  scrollEventThrottle = 16,
+  useEventStore: useStoreFlag = true,
+  activeTab,
+}) {
+  // Centralized store integration
+  const {
+    getFeedCache,
+    updateFeedCache,
+    appendToFeedCache,
+    syncEventsFromFeed,
+    toggleRSVP,
+    needsRefresh,
+    setLoading: setStoreLoading,
+    setError: setStoreError,
+    loading: storeLoading,
+    error: storeError
+  } = useEventStore();
+
+  // Local state
+  const [localEvents, setLocalEvents] = useState([]);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localRefreshing, setLocalRefreshing] = useState(false);
+  const [localError, setLocalError] = useState(null);
   const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  useEffect(() => { 
-    fetchPage(1); 
+  // Refs
+  const flatListRef = useRef(null);
+  const isMounted = useRef(true);
+
+  // Determine data source - use store cache if available and flag is enabled
+  const useStore = useStoreFlag && currentUserId;
+  const feedCache = useStore ? getFeedCache(feedType) : null;
+  const events = useStore && feedCache?.data?.length > 0 ? feedCache.data : localEvents;
+  const loading = useStore ? storeLoading : localLoading;
+  const refreshing = useStore ? externalRefreshing : localRefreshing;
+  const error = useStore ? storeError : localError;
+
+  // Set mounted flag
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
-  // Expose refresh method to parent
-  useImperativeHandle(ref, () => ({
-    refresh: async () => {
-      console.log('🔄 EventsFeed: Manual refresh triggered');
-      return await fetchPage(1, true);
-    }
-  }));
+  // FIXED: Enhanced fetch events with correct API endpoint
+  const fetchEvents = useCallback(async (isRefresh = false, pageNum = 1) => {
+    if (!isMounted.current) return;
 
-  const fetchPage = async (pageNum, isRefresh = false) => {
     try {
+      // Set loading states
       if (isRefresh) {
-        setRefreshing(true);
+        if (useStore) {
+          setStoreLoading(true);
+        } else {
+          setLocalRefreshing(true);
+        }
       } else if (pageNum === 1) {
-        setLoading(true);
-      }
-
-      console.log('🟡 [EventsFeed] fetching page', pageNum);
-      
-      // Use /api/events with discovery parameters
-      const res = await api.get(`/api/events?page=${pageNum}&limit=12&discover=true`);
-      console.log('🟢 EventsFeed response:', res.status, 'events:', res.data.events?.length);
-
-      const events = res.data.events || res.data || [];
-      console.log('🟡 Events loaded:', events.length);
-
-      if (pageNum === 1) {
-        setData(events);
+        if (useStore) {
+          setStoreLoading(true);
+        } else {
+          setLocalLoading(true);
+        }
       } else {
-        setData(prev => [...prev, ...events]);
+        setLoadingMore(true);
+      }
+
+      // Clear errors
+      if (useStore) {
+        setStoreError(null);
+      } else {
+        setLocalError(null);
+      }
+
+      // FIXED: Use correct API endpoint based on your routes
+      let apiEndpoint;
+      let apiParams = {
+        page: pageNum,
+        limit: PAGE_SIZE,
+      };
+
+      // Map feedType to correct API endpoint
+      switch (feedType) {
+        case 'following':
+          // Use the events feed endpoint for following events
+          apiEndpoint = '/api/feed/events';
+          break;
+        case 'discover':
+        case 'for-you':
+        default:
+          // Use the events feed endpoint for discover
+          apiEndpoint = '/api/feed/events';
+          break;
+      }
+
+      console.log(`✅ EventsFeed: Using API endpoint: ${apiEndpoint} for feedType: ${feedType}`);
+
+      // API call with correct endpoint
+      const response = await api.get(apiEndpoint, {
+        params: apiParams
+      });
+
+      if (!isMounted.current) return;
+
+      // FIXED: Handle the response format from your feed routes
+      const newEvents = response.data.events || [];
+      const hasMoreData = response.data.hasMore !== false && newEvents.length === PAGE_SIZE;
+
+      console.log(`✅ EventsFeed: Fetched ${newEvents.length} events for ${feedType}, page ${pageNum}`);
+
+      if (useStore) {
+        // Store integration - update cache
+        if (isRefresh || pageNum === 1) {
+          // Replace cache with fresh data
+          updateFeedCache(feedType, newEvents, hasMoreData);
+          // Sync with main events store
+          syncEventsFromFeed(newEvents, currentUserId);
+        } else {
+          // Append to existing cache
+          appendToFeedCache(feedType, newEvents);
+          // Sync new events with main store
+          syncEventsFromFeed(newEvents, currentUserId);
+        }
+      } else {
+        // Local state only
+        if (isRefresh || pageNum === 1) {
+          setLocalEvents(newEvents);
+        } else {
+          setLocalEvents(prev => [...prev, ...newEvents]);
+        }
+      }
+
+      setHasMore(hasMoreData);
+      setPage(pageNum);
+
+    } catch (error) {
+      if (!isMounted.current) return;
+
+      console.error(`❌ EventsFeed error (${feedType}):`, error);
+      
+      // FIXED: Better error handling for different API responses
+      let errorMessage = 'Failed to load events';
+      
+      if (error.response?.status === 404) {
+        errorMessage = 'Feed endpoint not found';
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (!error.response) {
+        errorMessage = 'Network connection error';
       }
       
-      setPage(res.data.page || pageNum);
-      setTotalPages(res.data.totalPages || Math.ceil((res.data.total || events.length) / 12));
-      setHasMore(res.data.hasMore || (pageNum * 12 < (res.data.total || events.length)));
-      
-    } catch (error) {
-      console.log('❌ [EventsFeed] error:', error.response?.data || error.message);
-      if (pageNum === 1) setData([]);
+      if (useStore) {
+        setStoreError(errorMessage);
+      } else {
+        setLocalError(errorMessage);
+      }
+
+      // Show user-friendly error for network issues
+      if (!error.response) {
+        Alert.alert('Connection Error', 'Please check your internet connection and try again.');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+      if (!isMounted.current) return;
 
-  const handleAttend = async (event) => {
-    try {
-      await api.post(`/api/events/attend/${event._id}`);
-      fetchPage(1, true); // Refresh to show updated attendance
-    } catch (error) {
-      console.error('Attend event error:', error);
+      // Clear loading states
+      if (useStore) {
+        setStoreLoading(false);
+      } else {
+        setLocalLoading(false);
+        setLocalRefreshing(false);
+      }
+      setLoadingMore(false);
     }
-  };
+  }, [feedType, currentUserId, useStore, setStoreLoading, setStoreError, updateFeedCache, appendToFeedCache, syncEventsFromFeed]);
 
-  const handleLoadMore = () => {
-    if (hasMore && !loading && page < totalPages) {
-      fetchPage(page + 1);
-    }
-  };
+  // Check if we need to fetch data
+  const shouldFetchData = useCallback(() => {
+    if (!useStore) return true; // Always fetch for local state
+    
+    const cache = getFeedCache(feedType);
+    if (!cache.data || cache.data.length === 0) return true;
+    if (needsRefresh(CACHE_DURATION)) return true;
+    
+    return false;
+  }, [useStore, feedType, getFeedCache, needsRefresh]);
 
-  const handleRefresh = async () => {
+  // Initial load and refresh on focus
+  useFocusEffect(
+    useCallback(() => {
+      if (shouldFetchData()) {
+        console.log(`🔄 EventsFeed: Loading ${feedType} feed...`);
+        fetchEvents(false, 1);
+      } else {
+        console.log(`✅ EventsFeed: Using cached ${feedType} feed`);
+      }
+    }, [feedType, shouldFetchData, fetchEvents])
+  );
+
+  // Handle refresh
+  const handleRefresh = useCallback(async () => {
+    console.log(`🔄 EventsFeed: Refreshing ${feedType} feed...`);
+    
     if (externalOnRefresh) {
       await externalOnRefresh();
     } else {
-      await fetchPage(1, true);
+      await fetchEvents(true, 1);
     }
-  };
+  }, [feedType, externalOnRefresh, fetchEvents]);
 
-  // Enhanced scroll handler that combines internal logic with parent callback
-  const handleScroll = useCallback((event) => {
-    // Call parent's scroll handler for tab bar animation
-    if (parentOnScroll) {
-      parentOnScroll(event);
+  // Handle load more
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore || !hasMore || loading) return;
+    
+    console.log(`📄 EventsFeed: Loading more ${feedType} events, page ${page + 1}...`);
+    fetchEvents(false, page + 1);
+  }, [loadingMore, hasMore, loading, feedType, page, fetchEvents]);
+
+  // Enhanced RSVP handler using centralized store
+  const handleAttend = useCallback(async (eventData) => {
+    if (!currentUserId) {
+      Alert.alert('Error', 'Please log in to join events');
+      return;
+    }
+
+    if (!useStore) {
+      // FIXED: Use correct API endpoints for non-store mode
+      try {
+        if (eventData.type === 'request') {
+          await api.post(`/api/events/request-join/${eventData.eventId}`, {
+            message: eventData.message || 'I would like to join this event.'
+          });
+        } else {
+          await api.post(`/api/events/attend/${eventData._id}`);
+        }
+        // Refresh to get updated data
+        await fetchEvents(true, 1);
+      } catch (error) {
+        throw error;
+      }
+      return;
+    }
+
+    // Use centralized store
+    const result = await toggleRSVP(eventData._id, currentUserId, eventData);
+    
+    if (result.type === 'request') {
+      Alert.alert('Request Sent', 'Your join request has been sent to the event host.');
+    } else if (result.type === 'payment_required') {
+      Alert.alert(
+        'Payment Required',
+        'This event requires payment. You\'ll be redirected to the event details.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Continue', 
+            onPress: () => navigation.navigate('EventDetailsScreen', { eventId: eventData._id })
+          }
+        ]
+      );
+    } else if (result.type === 'permission_denied') {
+      Alert.alert('Access Denied', result.error);
+    } else if (!result.success) {
+      throw new Error(result.error);
     }
     
-    // Add any internal scroll logic here if needed
-  }, [parentOnScroll]);
+    // Store automatically updates UI, no need for manual refresh
+  }, [currentUserId, useStore, toggleRSVP, navigation, fetchEvents]);
 
-  const renderEvent = ({ item }) => (
-    <View style={styles.eventWrapper}>
-      <EventCard 
-        event={item}
-        currentUserId={uid}
-        navigation={navigation}
-        onAttend={handleAttend}
-      />
-    </View>
-  );
+  // Render event item
+  const renderEvent = useCallback(({ item, index }) => (
+    <EventCard
+      event={item}
+      currentUserId={currentUserId}
+      navigation={navigation}
+      onAttend={handleAttend}
+      showRecommendationReason={feedType === 'discover'}
+      compact={false}
+    />
+  ), [currentUserId, navigation, handleAttend, feedType]);
 
-  const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>No Events Found</Text>
-      <Text style={styles.emptySubtitle}>
-        Check back later for new events to discover.
-      </Text>
-    </View>
-  );
-
-  const renderFooter = () => {
-    if (!loading || page === 1) return null;
+  // Render loading footer
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    
     return (
-      <View style={styles.footer}>
+      <View style={styles.footerLoader}>
         <ActivityIndicator size="small" color="#3797EF" />
-        <Text style={styles.loadingText}>Loading more events...</Text>
+        <Text style={styles.footerLoaderText}>Loading more events...</Text>
       </View>
     );
-  };
+  }, [loadingMore]);
 
-  if (loading && page === 1) {
+  // Render empty state
+  const renderEmptyState = useCallback(() => {
+    if (loading) return null;
+
     return (
-      <View style={styles.centered}>
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyTitle}>
+          {feedType === 'following' ? 'No events from friends' : 'No events found'}
+        </Text>
+        <Text style={styles.emptySubtitle}>
+          {feedType === 'following' 
+            ? 'Follow some friends to see their events here' 
+            : 'Check back later for new events in your area'
+          }
+        </Text>
+      </View>
+    );
+  }, [loading, feedType]);
+
+  // Render error state
+  const renderErrorState = useCallback(() => (
+    <View style={styles.errorContainer}>
+      <Text style={styles.errorTitle}>Failed to load events</Text>
+      <Text style={styles.errorMessage}>{error}</Text>
+      <TouchableOpacity 
+        style={styles.retryButton} 
+        onPress={() => fetchEvents(true, 1)}
+      >
+        <Text style={styles.retryButtonText}>Try Again</Text>
+      </TouchableOpacity>
+    </View>
+  ), [error, fetchEvents]);
+
+  // Main loading state
+  if (loading && events.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3797EF" />
-        <Text style={styles.loadingText}>Discovering events...</Text>
+        <Text style={styles.loadingText}>Loading events...</Text>
       </View>
     );
   }
 
-  return (
-    <FlatList
-      data={data}
-      renderItem={renderEvent}
-      keyExtractor={item => item._id}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing || externalRefreshing}
-          onRefresh={handleRefresh}
-          tintColor="#3797EF"
-          colors={["#3797EF"]}
-          title="Pull to refresh events"
-          titleColor="#8E8E93"
-          progressBackgroundColor="#FFFFFF"
-        />
-      }
-      onScroll={handleScroll}
-      scrollEventThrottle={scrollEventThrottle}
-      ListEmptyComponent={renderEmptyState}
-      ListFooterComponent={renderFooter}
-      onEndReached={handleLoadMore}
-      onEndReachedThreshold={0.1}
-      contentContainerStyle={data.length === 0 ? styles.emptyContainer : styles.container}
-      // MODERN: Content flows naturally under transparent headers
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustContentInsets={false}
-      // PERFECT ALIGNMENT: Events align with bottom of sub-tabs
-      contentInset={{ top: 194 }} // Back to 194 for sub-tabs alignment
-      scrollIndicatorInsets={{ top: 194 }}
-      // Enhanced props for better performance
-      bounces={true}
-      alwaysBounceVertical={true}
-      removeClippedSubviews={true}
-      initialNumToRender={5}
-      maxToRenderPerBatch={5}
-      windowSize={10}
-    />
-  );
-});
+  // Error state
+  if (error && events.length === 0) {
+    return renderErrorState();
+  }
 
-export default EventsFeed;
+  // Main feed
+  return (
+    <View style={styles.container}>
+      <FlatList
+        ref={flatListRef}
+        data={events}
+        keyExtractor={(item) => item._id}
+        renderItem={renderEvent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3797EF"
+            colors={["#3797EF"]}
+          />
+        }
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.5}
+        onScroll={onScroll}
+        scrollEventThrottle={scrollEventThrottle}
+        ListFooterComponent={renderFooter}
+        ListEmptyComponent={renderEmptyState}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.listContent,
+          events.length === 0 && styles.emptyListContent
+        ]}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={5}
+        updateCellsBatchingPeriod={50}
+        windowSize={10}
+        getItemLayout={undefined}
+      />
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   container: {
-    paddingBottom: 20,
-    backgroundColor: 'transparent', // TRANSPARENT!
+    flex: 1,
+    backgroundColor: 'transparent',
   },
-  emptyContainer: {
+  listContent: {
+    paddingTop: 200,
+    paddingBottom: 100,
+  },
+  emptyListContent: {
     flexGrow: 1,
-    backgroundColor: 'transparent',
+    justifyContent: 'center',
   },
-  eventWrapper: {
-    marginBottom: 12,
-    marginHorizontal: 16,
-    backgroundColor: 'transparent',
-  },
-  centered: {
+  
+  // Loading states
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'transparent',
-    paddingTop: 250, // Account for headers
+    paddingTop: 250,
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
+    textAlign: 'center',
   },
-  emptyState: {
+  footerLoader: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 20,
+    gap: 12,
+  },
+  footerLoaderText: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+
+  // Empty state
+  emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 250, // Account for headers
-    backgroundColor: 'transparent',
+    paddingTop: 100,
   },
   emptyTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '600',
     color: '#000000',
     marginBottom: 8,
     textAlign: 'center',
@@ -233,12 +462,40 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 32,
+    lineHeight: 24,
   },
-  footer: {
-    paddingVertical: 20,
+
+  // Error state
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    paddingHorizontal: 40,
+    paddingTop: 250,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#FF3B30',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
