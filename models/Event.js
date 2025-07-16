@@ -1,6 +1,5 @@
 // models/Event.js - Enhanced with Multi-Provider Payment Support + Phase 1 Form System
 const mongoose = require('mongoose');
-
 // Enhanced Payment History Schema with Multi-Provider Support
 const PaymentHistorySchema = new mongoose.Schema({
   // User or guest information

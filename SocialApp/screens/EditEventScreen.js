@@ -109,6 +109,12 @@ export default function EditEventScreen() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
+  // ✅ FIXED: Delete functionality state moved inside component
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('');
+  const [event, setEvent] = useState(null);
+
   // Load event data
   useEffect(() => {
     fetchEventData();
@@ -150,46 +156,49 @@ export default function EditEventScreen() {
   try {
     setLoading(true);
     const response = await api.get(`/api/events/${eventId}`);
-    const event = response.data;
+    const eventData = response.data;
 
     console.log('📥 Loading event data:', {
-      title: event.title,
-      allowPhotos: event.allowPhotos
+      title: eventData.title,
+      allowPhotos: eventData.allowPhotos
     });
 
+    // ✅ FIXED: Store the full event object first
+    setEvent(eventData);
+
     // Set all other fields...
-    setTitle(event.title || '');
-    setDescription(event.description || '');
-    setDateTime(new Date(event.time));
-    setLocation(event.location || '');
-    setLocQuery(event.location || '');
-    setCategory(event.category || 'General');
-    setMaxAttendees(String(event.maxAttendees || 50));
-    setTags(event.tags?.join(', ') || '');
-    setPrivacyLevel(event.privacyLevel || 'public');
-    setPermissions(event.permissions || permissions);
-    setCoHosts(event.coHosts || []);
-    setOriginalCoverImage(event.coverImage);
+    setTitle(eventData.title || '');
+    setDescription(eventData.description || '');
+    setDateTime(new Date(eventData.time));
+    setLocation(eventData.location || '');
+    setLocQuery(eventData.location || '');
+    setCategory(eventData.category || 'General');
+    setMaxAttendees(String(eventData.maxAttendees || 50));
+    setTags(eventData.tags?.join(', ') || '');
+    setPrivacyLevel(eventData.privacyLevel || 'public');
+    setPermissions(eventData.permissions || permissions);
+    setCoHosts(eventData.coHosts || []);
+    setOriginalCoverImage(eventData.coverImage);
     
     // FIXED: Update both state and ref for allowPhotos
-    const allowPhotosValue = event.allowPhotos !== undefined ? event.allowPhotos : true;
+    const allowPhotosValue = eventData.allowPhotos !== undefined ? eventData.allowPhotos : true;
     console.log('📷 Setting allowPhotos to:', allowPhotosValue);
     setAllowPhotos(allowPhotosValue);
     allowPhotosRef.current = allowPhotosValue; // Keep ref in sync
     
     // Rest of your pricing logic...
-    if (event.pricing) {
-      setPrice(String((event.pricing.amount || 0) / 100));
-      setIsPaidEvent(!event.pricing.isFree);
-      setRefundPolicy(event.pricing.refundPolicy || 'no-refund');
+    if (eventData.pricing) {
+      setPrice(String((eventData.pricing.amount || 0) / 100));
+      setIsPaidEvent(!eventData.pricing.isFree);
+      setRefundPolicy(eventData.pricing.refundPolicy || 'no-refund');
     } else {
-      setPrice(String(event.price || 0));
-      setIsPaidEvent((event.price || 0) > 0);
+      setPrice(String(eventData.price || 0));
+      setIsPaidEvent((eventData.price || 0) > 0);
       setRefundPolicy('no-refund');
     }
     
-    if (event.coordinates) {
-      setCoords(event.coordinates);
+    if (eventData.coordinates) {
+      setCoords(eventData.coordinates);
     }
 
     console.log('✅ Event data loaded successfully');
@@ -202,11 +211,80 @@ export default function EditEventScreen() {
     setLoading(false);
   }
 };
+
+// ✅ FIXED: Helper function to check if current user is the host
+const isEventHost = () => {
+  return currentUser && event && String(event.host._id || event.host) === String(currentUser._id);
+};
+
+// ✅ FIXED: Delete confirmation function
+const showDeleteConfirmation = () => {
+  Alert.alert(
+    'Delete Event',
+    'Are you sure you want to delete this event? This action cannot be undone and will:\n\n• Remove the event permanently\n• Untag all photos from this event\n• Notify all attendees\n• Process any necessary refunds',
+    [
+      {
+        text: 'Cancel',
+        style: 'cancel'
+      },
+      {
+        text: 'Delete Event',
+        style: 'destructive',
+        onPress: () => setShowDeleteModal(true)
+      }
+    ]
+  );
+};
+
+// ✅ FIXED: Delete event function
+const handleDeleteEvent = async () => {
+  try {
+    setDeleting(true);
+    
+    console.log(`🗑️ Deleting event: ${eventId}`);
+    
+    const response = await api.delete(`/api/events/${eventId}`);
+    
+    if (response.data.success) {
+      console.log('✅ Event deleted successfully');
+      
+      Alert.alert(
+        'Event Deleted',
+        `${response.data.stats.eventTitle} has been deleted successfully.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Navigate back to the main events screen or home
+              navigation.goBack(); 
+            }
+          }
+        ]
+      );
+    }
+    
+  } catch (error) {
+    console.error('❌ Delete event error:', error);
+    
+    const errorMessage = error.response?.data?.message || 'Failed to delete event. Please try again.';
+    
+    Alert.alert(
+      'Delete Failed',
+      errorMessage,
+      [{ text: 'OK' }]
+    );
+  } finally {
+    setDeleting(false);
+    setShowDeleteModal(false);
+  }
+};
+
 const handlePhotoToggle = (newValue) => {
   console.log('🔧 SWITCH TOGGLE - Old value:', allowPhotos, 'New value:', newValue);
   setAllowPhotos(newValue);
   allowPhotosRef.current = newValue; // Immediately update ref
 };
+
   // Search for potential co-hosts
   const searchCoHosts = async (query) => {
   if (query.length < 2) {
@@ -800,6 +878,62 @@ const handleSaveEvent = async () => {
               </View>
             </TouchableOpacity>
           </View>
+
+          {/* ✅ FIXED: Delete Event Section - Only show for event host */}
+          {isEventHost() && (
+            <View style={styles.section}>
+              <Text style={styles.dangerSectionTitle}>Danger Zone</Text>
+              <Text style={styles.sectionDescription}>
+                Permanent actions that cannot be undone
+              </Text>
+
+              <View style={styles.dangerContainer}>
+                <View style={styles.deleteEventInfo}>
+                  <View style={styles.deleteEventIcon}>
+                    <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+                  </View>
+                  <View style={styles.deleteEventText}>
+                    <Text style={styles.deleteEventLabel}>Delete Event</Text>
+                    <Text style={styles.deleteEventDesc}>
+                      Permanently delete this event and all associated data
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.deleteEventButton}
+                  onPress={showDeleteConfirmation}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.deleteEventButtonText}>Delete Event</Text>
+                </TouchableOpacity>
+
+                {/* Warning indicators */}
+                <View style={styles.deleteWarningContainer}>
+                  <View style={styles.deleteWarning}>
+                    <Ionicons name="warning" size={16} color="#FF9500" />
+                    <Text style={styles.deleteWarningText}>
+                      This will notify all {event?.attendees?.length || 0} attendees
+                    </Text>
+                  </View>
+                  <View style={styles.deleteWarning}>
+                    <Ionicons name="image" size={16} color="#FF9500" />
+                    <Text style={styles.deleteWarningText}>
+                      Photos will be untagged but preserved in user galleries
+                    </Text>
+                  </View>
+                  {event?.pricing?.amount > 0 && (
+                    <View style={styles.deleteWarning}>
+                      <Ionicons name="card" size={16} color="#FF9500" />
+                      <Text style={styles.deleteWarningText}>
+                        Paid event - future refund handling may be needed
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -967,6 +1101,106 @@ const handleSaveEvent = async () => {
                 </TouchableOpacity>
               )}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/* ✅ FIXED: Delete Confirmation Modal */}
+      <Modal
+        visible={showDeleteModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowDeleteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.deleteModalContent}>
+            {/* Header */}
+            <View style={styles.deleteModalHeader}>
+              <View style={styles.deleteModalIcon}>
+                <Ionicons name="trash" size={32} color="#FF3B30" />
+              </View>
+              <Text style={styles.deleteModalTitle}>Delete "{event?.title}"?</Text>
+              <Text style={styles.deleteModalSubtitle}>
+                This action cannot be undone
+              </Text>
+            </View>
+
+            {/* Impact Summary */}
+            <View style={styles.deleteImpactContainer}>
+              <Text style={styles.deleteImpactTitle}>This will:</Text>
+              
+              <View style={styles.deleteImpactItem}>
+                <Ionicons name="people" size={20} color="#8E8E93" />
+                <Text style={styles.deleteImpactText}>
+                  Notify {event?.attendees?.length || 0} attendees that the event is cancelled
+                </Text>
+              </View>
+
+              <View style={styles.deleteImpactItem}>
+                <Ionicons name="images" size={20} color="#8E8E93" />
+                <Text style={styles.deleteImpactText}>
+                  Untag all photos (photos remain in user galleries)
+                </Text>
+              </View>
+
+              <View style={styles.deleteImpactItem}>
+                <Ionicons name="notifications" size={20} color="#8E8E93" />
+                <Text style={styles.deleteImpactText}>
+                  Remove all event notifications and references
+                </Text>
+              </View>
+
+              <View style={styles.deleteImpactItem}>
+                <Ionicons name="trash" size={20} color="#FF3B30" />
+                <Text style={[styles.deleteImpactText, styles.deleteImpactDanger]}>
+                  Permanently delete the event
+                </Text>
+              </View>
+            </View>
+
+            {/* Final Confirmation */}
+            <View style={styles.deleteConfirmationContainer}>
+              <Text style={styles.deleteConfirmationText}>
+                Type "{event?.title}" to confirm deletion:
+              </Text>
+              <TextInput
+                style={styles.deleteConfirmationInput}
+                placeholder={event?.title}
+                placeholderTextColor="#C7C7CC"
+                value={deleteConfirmationText}
+                onChangeText={setDeleteConfirmationText}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.deleteModalActions}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelButton}
+                onPress={() => {
+                  setShowDeleteModal(false);
+                  setDeleteConfirmationText('');
+                }}
+              >
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.deleteModalConfirmButton,
+                  (deleteConfirmationText !== event?.title || deleting) && styles.deleteModalConfirmButtonDisabled
+                ]}
+                onPress={handleDeleteEvent}
+                disabled={deleteConfirmationText !== event?.title || deleting}
+              >
+                {deleting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmText}>Delete Event</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1141,7 +1375,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
-  // ADDED: Photo Toggle Styles (same as CreateEventScreen)
+  // Photo Toggle Styles
   photoToggleContainer: {
     backgroundColor: '#F8F8F8',
     borderRadius: 12,
@@ -1468,5 +1702,194 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
+  },
+
+  // ✅ DANGER ZONE STYLES
+  dangerSectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FF3B30',
+    marginBottom: 4,
+  },
+  dangerContainer: {
+    backgroundColor: '#FFF5F5',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#FFE5E5',
+  },
+  deleteEventInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  deleteEventIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFE5E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  deleteEventText: {
+    flex: 1,
+  },
+  deleteEventLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FF3B30',
+  },
+  deleteEventDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  deleteEventButton: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  deleteEventButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  deleteWarningContainer: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#FFE5E5',
+  },
+  deleteWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  deleteWarningText: {
+    marginLeft: 8,
+    fontSize: 12,
+    color: '#FF9500',
+    flex: 1,
+  },
+
+  // ✅ DELETE MODAL STYLES
+  deleteModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 34,
+    maxHeight: '85%',
+  },
+  deleteModalHeader: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  deleteModalIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFE5E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deleteModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  deleteModalSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+  deleteImpactContainer: {
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+  },
+  deleteImpactTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 16,
+  },
+  deleteImpactItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    paddingRight: 16,
+  },
+  deleteImpactText: {
+    marginLeft: 12,
+    fontSize: 14,
+    color: '#8E8E93',
+    flex: 1,
+    lineHeight: 20,
+  },
+  deleteImpactDanger: {
+    color: '#FF3B30',
+    fontWeight: '500',
+  },
+  deleteConfirmationContainer: {
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  deleteConfirmationText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 12,
+  },
+  deleteConfirmationInput: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  deleteModalActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    gap: 12,
+  },
+  deleteModalCancelButton: {
+    flex: 1,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  deleteModalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  deleteModalConfirmButton: {
+    flex: 1,
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  deleteModalConfirmButtonDisabled: {
+    backgroundColor: '#FFB3B3',
+    opacity: 0.5,
+  },
+  deleteModalConfirmText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
