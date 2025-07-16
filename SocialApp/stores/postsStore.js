@@ -198,74 +198,75 @@ const usePostsStore = create(
 
     // ✅ ENHANCED: Comment management with memory photo support
     addComment: async (postId, commentText, isMemoryPost = false) => {
-      if (!commentText.trim()) {
-        console.warn('⚠️ Cannot add empty comment');
-        return false;
-      }
+  if (!commentText.trim()) {
+    console.warn('⚠️ Cannot add empty comment');
+    return false;
+  }
 
-      const { posts, updatePost } = get();
-      const post = posts.get(postId);
+  const { posts, updatePost } = get();
+  const post = posts.get(postId);
 
-      console.log('💬 === ADDING COMMENT START ===');
-      console.log('📝 Comment details:', {
-        postId,
-        isMemoryPost,
-        postType: post?.postType,
-        commentLength: commentText.length
+  console.log('💬 === ADDING COMMENT START ===');
+  console.log('📝 Comment details:', {
+    postId,
+    isMemoryPost,
+    postType: post?.postType,
+    commentLength: commentText.length
+  });
+
+  try {
+    // ✅ FIXED: Use correct API endpoints that actually exist
+    let endpoint;
+    if (isMemoryPost || post?.postType === 'memory') {
+      endpoint = `/api/memories/photos/${postId}/comments`;
+      console.log('📡 Using memory photo comment endpoint:', endpoint);
+    } else {
+      // ✅ FIX: Use correct endpoint - note "comment" not "comments"
+      endpoint = `/api/photos/comment/${postId}`;
+      console.log('📡 Using regular post comment endpoint:', endpoint);
+    }
+
+    const response = await api.post(endpoint, { 
+      text: commentText.trim(),
+      tags: [] // Include tags if your API supports them
+    });
+    
+    console.log('📥 Comment API response:', {
+      endpoint,
+      status: response.status,
+      hasComment: !!response.data?.comment,
+      commentId: response.data?.comment?._id
+    });
+    
+    // ✅ CRITICAL: Update comment count in store
+    if (post) {
+      updatePost(postId, {
+        commentCount: post.commentCount + 1
       });
+      
+      console.log('📊 Updated comment count:', {
+        postId,
+        oldCount: post.commentCount,
+        newCount: post.commentCount + 1
+      });
+    }
 
-      try {
-        // ✅ ENHANCED: Determine correct API endpoint
-        let endpoint;
-        if (isMemoryPost || post?.postType === 'memory') {
-          endpoint = `/api/memories/photos/${postId}/comments`;
-          console.log('📡 Using memory photo comment endpoint:', endpoint);
-        } else {
-          endpoint = `/api/photos/${postId}/comments`;
-          console.log('📡 Using regular post comment endpoint:', endpoint);
-        }
+    console.log('✅ Comment added successfully');
+    return response.data;
 
-        const response = await api.post(endpoint, { 
-          text: commentText.trim(),
-          tags: [] // Include tags if your API supports them
-        });
-        
-        console.log('📥 Comment API response:', {
-          endpoint,
-          status: response.status,
-          hasComment: !!response.data?.comment,
-          commentId: response.data?.comment?._id
-        });
-        
-        // ✅ CRITICAL: Update comment count in store
-        if (post) {
-          updatePost(postId, {
-            commentCount: post.commentCount + 1
-          });
-          
-          console.log('📊 Updated comment count:', {
-            postId,
-            oldCount: post.commentCount,
-            newCount: post.commentCount + 1
-          });
-        }
-
-        console.log('✅ Comment added successfully');
-        return response.data;
-
-      } catch (error) {
-        console.error('🚨 === ADD COMMENT ERROR ===');
-        console.error('❌ Error details:', {
-          postId,
-          isMemoryPost,
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status
-        });
-        
-        throw error;
-      }
-    },
+  } catch (error) {
+    console.error('🚨 === ADD COMMENT ERROR ===');
+    console.error('❌ Error details:', {
+      postId,
+      isMemoryPost,
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+    
+    throw error;
+  }
+},
 
     // ✅ NEW: Batch sync posts from feed (useful for feed refreshes)
     syncPostsFromFeed: (feedPosts) => {

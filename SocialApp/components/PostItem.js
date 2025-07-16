@@ -1,10 +1,10 @@
-// components/PostItem.js - Updated with centralized state management
+// components/PostItem.js - Updated with centralized state management and debugging
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, Image, StyleSheet,
   TouchableOpacity, Pressable, Modal, Dimensions, Animated,
   TextInput, KeyboardAvoidingView, Platform, Alert, FlatList,
-  ActivityIndicator, ScrollView, RefreshControl,
+  ActivityIndicator, ScrollView, RefreshControl, Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -150,14 +150,14 @@ const CommentsModal = ({
       isMemoryPost,
       endpoint: isMemoryPost 
         ? `/api/memories/photos/${post._id}/comments`
-        : `/api/photos/${post._id}/comments`
+        : `/api/photos/comment/${postId}`
     });
     
     setLoading(true);
     try {
       const endpoint = isMemoryPost 
         ? `/api/memories/photos/${post._id}/comments`
-        : `/api/photos/${post._id}/comments`;
+        : `/api/photos/comment/${postId}`;
       
       const response = await api.get(endpoint);
       console.log('📝 Comments fetch response:', {
@@ -559,8 +559,12 @@ export default function CompletePostItem({
   // Comments modal state - UPDATED
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [comments, setComments] = useState(currentPost.comments || []);
+  
+  // DEBUG STATE VARIABLES - Enhanced comment input debugging
   const [commentText, setCommentText] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [isCommentFocused, setIsCommentFocused] = useState(false);
+  const commentInputRef = useRef(null);
 
   // Loading states
   const [initialLoading, setInitialLoading] = useState(false);
@@ -572,6 +576,88 @@ export default function CompletePostItem({
   const memoryGlow = useRef(new Animated.Value(0)).current;
   const lastTap = useRef(0);
   const DOUBLE_PRESS_DELAY = 300;
+
+  // DEBUG: Keyboard event listeners for debugging
+  useEffect(() => {
+    console.log('📱 KEYBOARD DEBUG: Setting up keyboard listeners for post:', currentPost._id);
+    
+    const keyboardDidShow = (event) => {
+      console.log('📱 KEYBOARD DEBUG: Keyboard DID SHOW', {
+        postId: currentPost._id,
+        keyboardHeight: event.endCoordinates.height,
+        isCommentFocused,
+        commentText: commentText.length
+      });
+    };
+
+    const keyboardDidHide = (event) => {
+      console.log('📱 KEYBOARD DEBUG: Keyboard DID HIDE', {
+        postId: currentPost._id,
+        isCommentFocused,
+        commentText: commentText.length,
+        reason: 'unknown'
+      });
+    };
+
+    const keyboardWillShow = (event) => {
+      console.log('📱 KEYBOARD DEBUG: Keyboard WILL SHOW', {
+        postId: currentPost._id,
+        keyboardHeight: event.endCoordinates.height,
+        duration: event.duration
+      });
+    };
+
+    const keyboardWillHide = (event) => {
+      console.log('📱 KEYBOARD DEBUG: Keyboard WILL HIDE', {
+        postId: currentPost._id,
+        duration: event.duration
+      });
+    };
+
+    const showListener = Keyboard.addListener('keyboardDidShow', keyboardDidShow);
+    const hideListener = Keyboard.addListener('keyboardDidHide', keyboardDidHide);
+    const willShowListener = Keyboard.addListener('keyboardWillShow', keyboardWillShow);
+    const willHideListener = Keyboard.addListener('keyboardWillHide', keyboardWillHide);
+
+    return () => {
+      console.log('📱 KEYBOARD DEBUG: Cleaning up keyboard listeners for post:', currentPost._id);
+      showListener?.remove();
+      hideListener?.remove();
+      willShowListener?.remove();
+      willHideListener?.remove();
+    };
+  }, [currentPost._id, isCommentFocused, commentText]);
+
+  // DEBUG: Enhanced comment text change handler with debugging
+  const handleCommentTextChange = (text) => {
+    console.log('📝 COMMENT DEBUG: Text changed', {
+      postId: currentPost._id,
+      newLength: text.length,
+      oldLength: commentText.length,
+      isCommentFocused,
+      text: text.substring(0, 20) + (text.length > 20 ? '...' : '')
+    });
+    setCommentText(text);
+  };
+
+  // DEBUG: Enhanced focus handlers with debugging
+  const handleCommentFocus = () => {
+    console.log('📝 COMMENT DEBUG: Input FOCUSED', {
+      postId: currentPost._id,
+      commentText: commentText.length,
+      timestamp: new Date().toISOString()
+    });
+    setIsCommentFocused(true);
+  };
+
+  const handleCommentBlur = () => {
+    console.log('📝 COMMENT DEBUG: Input BLURRED', {
+      postId: currentPost._id,
+      commentText: commentText.length,
+      timestamp: new Date().toISOString()
+    });
+    setIsCommentFocused(false);
+  };
 
   /* ---- Load initial data (likes and comments) on mount with debugging -------- */
   useEffect(() => {
@@ -824,55 +910,63 @@ export default function CompletePostItem({
     }
   };
 
-  /* ---- CENTRALIZED COMMENT HANDLING --------------------------------------- */
+  /* ---- DEBUG: Enhanced submit comment with debugging --------------------------------------- */
   const submitComment = async () => {
+    console.log('🔄 COMMENT DEBUG: Submit attempt', {
+      postId: currentPost._id,
+      hasText: !!commentText.trim(),
+      textLength: commentText.trim().length,
+      isSubmitting: submittingComment,
+      isMemoryPost
+    });
+
     if (!commentText.trim()) {
-      console.warn('⚠️ Cannot submit empty inline comment');
+      console.warn('⚠️ COMMENT DEBUG: Cannot submit empty comment');
       return;
     }
     
     if (submittingComment) {
-      console.warn('⚠️ Already submitting inline comment, skipping');
+      console.warn('⚠️ COMMENT DEBUG: Already submitting comment, skipping');
       return;
     }
 
-    console.log('🔄 Submitting inline comment:', {
-      postId: currentPost._id,
-      isMemoryPost,
-      commentText: commentText.trim()
-    });
+    // Don't dismiss keyboard immediately - let it stay open
+    console.log('🔄 COMMENT DEBUG: Starting comment submission...');
 
     try {
       setSubmittingComment(true);
 
       const response = await addCommentInStore(currentPost._id, commentText.trim(), isMemoryPost);
       
+      console.log('✅ COMMENT DEBUG: Comment submitted successfully', {
+        postId: currentPost._id,
+        responseType: isMemoryPost ? 'memory' : 'regular',
+        hasResponse: !!response
+      });
+      
       if (isMemoryPost) {
-        // Add the new comment to local state
         setComments(prev => {
           const updated = [...prev, response.comment];
-          console.log('📝 Updated memory comments state:', updated);
+          console.log('📝 COMMENT DEBUG: Updated memory comments state:', updated.length);
           return updated;
         });
       } else {
-        // For regular posts, the response includes the full updated photo
         const newComments = response.comments || [];
-        console.log('📝 Setting regular post comments:', {
-          newComments,
-          newCount: newComments.length
-        });
-        
+        console.log('📝 COMMENT DEBUG: Setting regular post comments:', newComments.length);
         setComments(newComments);
       }
 
+      // Clear text and blur input
       setCommentText('');
-      console.log('✅ Inline comment submitted successfully');
+      console.log('📝 COMMENT DEBUG: Clearing text and blurring input');
+      commentInputRef.current?.blur();
 
     } catch (error) {
-      console.error('❌ Error submitting inline comment:', error);
+      console.error('❌ COMMENT DEBUG: Error submitting comment:', error);
       Alert.alert('Error', 'Failed to post comment');
     } finally {
       setSubmittingComment(false);
+      console.log('🔄 COMMENT DEBUG: Submit process completed');
     }
   };
 
@@ -1254,38 +1348,74 @@ export default function CompletePostItem({
         {stamp}
       </Text>
 
-      {/* ---------- IMPROVED: Inline comment input (NO PROFILE PHOTO) ---------- */}
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.commentInputContainer}
-      >
-        <TextInput
-          style={styles.commentInput}
-          placeholder="Add a comment..."
-          placeholderTextColor="#8E8E93"
-          value={commentText}
-          onChangeText={setCommentText}
-          multiline
-          maxLength={500}
-          onSubmitEditing={submitComment}
-          returnKeyType="send"
-        />
-        <TouchableOpacity 
-          onPress={submitComment}
-          disabled={!commentText.trim() || submittingComment}
-          style={[
-            styles.commentSubmitBtn,
-            (!commentText.trim() || submittingComment) && styles.commentSubmitBtnDisabled
-          ]}
+      {/* ---------- ENHANCED DEBUG: Inline comment input ---------- */}
+      <View style={styles.commentInputWrapper}>
+        <Text style={styles.debugText}>
+          DEBUG: Focus={isCommentFocused ? 'YES' : 'NO'} | Text={commentText.length}chars | Submitting={submittingComment ? 'YES' : 'NO'}
+        </Text>
+        
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.commentInputContainer}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
-          <Text style={[
-            styles.commentSubmitText,
-            (!commentText.trim() || submittingComment) && styles.commentSubmitTextDisabled
-          ]}>
-            {submittingComment ? 'Posting...' : 'Post'}
-          </Text>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
+          <TextInput
+            ref={commentInputRef}
+            style={[
+              styles.commentInput,
+              isCommentFocused && styles.commentInputFocused
+            ]}
+            placeholder="Add a comment..."
+            placeholderTextColor="#8E8E93"
+            value={commentText}
+            onChangeText={handleCommentTextChange}
+            onFocus={handleCommentFocus}
+            onBlur={handleCommentBlur}
+            multiline={false} // IMPORTANT: Try with false first
+            maxLength={500}
+            onSubmitEditing={(event) => {
+              console.log('📝 COMMENT DEBUG: onSubmitEditing triggered', {
+                postId: currentPost._id,
+                text: event.nativeEvent.text
+              });
+              submitComment();
+            }}
+            returnKeyType="send"
+            blurOnSubmit={false} // IMPORTANT: Prevent auto-blur
+            enablesReturnKeyAutomatically={true}
+            editable={!submittingComment}
+            autoCorrect={true}
+            autoCapitalize="sentences"
+            keyboardAppearance="default"
+            textContentType="none"
+            autoCompleteType="off"
+            clearButtonMode="while-editing"
+          />
+          <TouchableOpacity 
+            onPress={() => {
+              console.log('📝 COMMENT DEBUG: Submit button pressed', {
+                postId: currentPost._id,
+                hasText: !!commentText.trim(),
+                isSubmitting: submittingComment
+              });
+              submitComment();
+            }}
+            disabled={!commentText.trim() || submittingComment}
+            style={[
+              styles.commentSubmitBtn,
+              (!commentText.trim() || submittingComment) && styles.commentSubmitBtnDisabled
+            ]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={[
+              styles.commentSubmitText,
+              (!commentText.trim() || submittingComment) && styles.commentSubmitTextDisabled
+            ]}>
+              {submittingComment ? 'Posting...' : 'Post'}
+            </Text>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </View>
 
       {/* ---------- delete modal ---------- */}
       <Modal visible={modal} transparent animationType="fade">
@@ -1645,7 +1775,22 @@ const styles = StyleSheet.create({
     color: '#666',
   },
 
-  // Inline Comment Input Container
+  // DEBUG: Enhanced Comment Input Wrapper with Debug Info
+  commentInputWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#EBEBEB',
+  },
+  
+  debugText: {
+    fontSize: 10,
+    color: '#FF0000',
+    paddingHorizontal: 15,
+    paddingVertical: 4,
+    backgroundColor: '#FFEBEE',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1660,26 +1805,33 @@ const styles = StyleSheet.create({
   commentInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#F0F0F0',
+    borderColor: '#E0E0E0',
     borderRadius: 20,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
     fontSize: 14,
-    maxHeight: 80,
+    maxHeight: 60, // Reduced height to prevent layout issues
+    minHeight: 40,
     backgroundColor: '#F8F9FA',
     color: '#000000',
+    textAlignVertical: 'center', // Android-specific
+  },
+  
+  commentInputFocused: {
+    borderColor: '#007AFF',
+    borderWidth: 2,
+    backgroundColor: '#FFFFFF',
   },
   
   commentSubmitBtn: {
     marginLeft: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 18,
-    backgroundColor: '#E3F2FD',
-    borderWidth: 1,
-    borderColor: '#BBDEFB',
-    minWidth: 50,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: '#007AFF',
+    minWidth: 60,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   
   commentSubmitBtnDisabled: {
@@ -1688,9 +1840,9 @@ const styles = StyleSheet.create({
   },
   
   commentSubmitText: {
-    color: '#1976D2',
+    color: '#FFFFFF',
     fontWeight: '600',
-    fontSize: 13,
+    fontSize: 14,
   },
   
   commentSubmitTextDisabled: {

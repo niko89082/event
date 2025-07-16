@@ -103,24 +103,49 @@ const CommentsModal = ({
     }
   }, [visible]);
 
-  const fetchComments = useCallback(async () => {
-    if (!post?._id) return;
+  const fetchComments = async () => {
+  if (!post?._id) {
+    console.error('❌ No post ID available for fetching comments');
+    return;
+  }
+  
+  console.log('🔄 Fetching comments for:', {
+    postId: post._id,
+    isMemoryPost
+  });
+  
+  setLoading(true);
+  try {
+    let endpoint, response;
     
-    setLoading(true);
-    try {
-      const endpoint = isMemoryPost 
-        ? `/api/memories/photos/${post._id}/comments`
-        : `/api/photos/${post._id}/comments`;
-      
-      const response = await api.get(endpoint);
-      setComments(response.data.comments || []);
-    } catch (error) {
-      console.error('Error fetching comments:', error);
-      Alert.alert('Error', 'Failed to load comments');
-    } finally {
-      setLoading(false);
+    if (isMemoryPost) {
+      // Memory photos have dedicated comments endpoint
+      endpoint = `/api/memories/photos/${post._id}/comments`;
+      response = await api.get(endpoint);
+      const fetchedComments = response.data.comments || [];
+      setComments(fetchedComments);
+      console.log('📝 Memory comments fetched:', fetchedComments.length);
+    } else {
+      // ✅ FIX: For regular posts, get full photo data (which includes comments)
+      endpoint = `/api/photos/${post._id}`;
+      response = await api.get(endpoint);
+      const fetchedComments = response.data.comments || [];
+      setComments(fetchedComments);
+      console.log('📝 Regular post comments fetched:', fetchedComments.length);
     }
-  }, [post?._id, isMemoryPost]);
+    
+  } catch (error) {
+    console.error('❌ Error fetching comments:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+    Alert.alert('Error', 'Failed to load comments');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const submitComment = useCallback(async () => {
     if (!newComment.trim() || submitting) return;
@@ -420,6 +445,7 @@ const CommentsModal = ({
     </Modal>
   );
 };
+
 
 const styles = StyleSheet.create({
   modalOverlay: {
