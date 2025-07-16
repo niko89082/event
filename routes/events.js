@@ -3292,6 +3292,9 @@ router.put('/:eventId', protect, async (req, res) => {
       tags,
       coordinates,
       
+      // 🔧 FIXED: Add allowPhotos to destructuring
+      allowPhotos,
+      
       // Pricing fields
       isPaidEvent,
       eventPrice,
@@ -3310,9 +3313,16 @@ router.put('/:eventId', protect, async (req, res) => {
       
       // Legacy compatibility
       price,
+      pricing,
       isPublic,
       openToPublic
     } = req.body;
+
+    console.log('🔍 Request body received:', {
+      allowPhotos,
+      title,
+      // ... other fields for debugging
+    });
 
     // Find the event
     const event = await Event.findById(eventId);
@@ -3337,129 +3347,71 @@ router.put('/:eventId', protect, async (req, res) => {
       return res.status(400).json({ message: 'Event title is required' });
     }
 
-    if (!time) {
-      return res.status(400).json({ message: 'Event time is required' });
-    }
-
     if (!location?.trim()) {
       return res.status(400).json({ message: 'Event location is required' });
     }
 
-    // Validate event time is in the future (only for major changes)
-    const eventTime = new Date(time);
-    const now = new Date();
-    
-    // Allow updates up to 1 hour before event starts
-    const oneHourBefore = new Date(eventTime.getTime() - (60 * 60 * 1000));
-    
-    if (now > oneHourBefore && String(event.time) !== String(time)) {
-      return res.status(400).json({ 
-        message: 'Cannot change event time less than 1 hour before the event' 
-      });
-    }
-
-    // Handle pricing updates
-    let pricingData = null;
-    
-    if (isPaidEvent || price > 0 || eventPrice > 0) {
-      const finalPrice = eventPrice || price || 0;
-      
-      if (finalPrice <= 0) {
-        return res.status(400).json({ 
-          message: 'Paid events must have a price greater than 0' 
-        });
-      }
-
-      pricingData = {
-        isFree: false,
-        amount: Math.round(finalPrice * 100), // Convert to cents
-        currency: 'USD',
-        description: priceDescription || '',
-        refundPolicy: refundPolicy || 'No refunds',
-        earlyBirdPricing: earlyBirdEnabled ? {
-          enabled: true,
-          amount: Math.round((earlyBirdPrice || finalPrice) * 100),
-          deadline: earlyBirdDeadline ? new Date(earlyBirdDeadline) : null
-        } : { enabled: false }
-      };
-
-      // Validate early bird pricing
-      if (earlyBirdEnabled) {
-        if (!earlyBirdDeadline || new Date(earlyBirdDeadline) >= eventTime) {
-          return res.status(400).json({ 
-            message: 'Early bird deadline must be before the event time' 
-          });
-        }
-        
-        if ((earlyBirdPrice || finalPrice) >= finalPrice) {
-          return res.status(400).json({ 
-            message: 'Early bird price must be less than regular price' 
-          });
-        }
-      }
-    } else {
-      pricingData = {
-        isFree: true,
-        amount: 0,
-        currency: 'USD'
-      };
-    }
-
-    // Handle permissions
-    let permissionsData = {
-      canJoin: 'open', // open, approval-required, invite-only
-      canInvite: 'attendees', // host-only, co-hosts, attendees
-      canShare: 'everyone', // host-only, attendees, everyone
-      showAttendeesToPublic: true,
-      allowGuestPasses: false
-    };
-
-    if (permissions) {
-      permissionsData = { ...permissionsData, ...permissions };
-    }
-
-    // Legacy compatibility
-    if (isPublic === false || openToPublic === false) {
-      permissionsData.canJoin = 'invite-only';
-    }
-
-    // Handle privacy level
-    let finalPrivacyLevel = privacyLevel || 'public';
-    
-    // Legacy compatibility
-    if (isPublic === false) {
-      finalPrivacyLevel = 'private';
-    }
-
-    // Validate and process co-hosts
-    let validCoHosts = [];
-    if (coHosts && Array.isArray(coHosts)) {
-      // Remove duplicates and host from co-hosts
-      const uniqueCoHosts = [...new Set(coHosts)].filter(
-        coHostId => String(coHostId) !== String(req.user._id)
-      );
-      
-      if (uniqueCoHosts.length > 0) {
-        const validUsers = await User.find({
-          _id: { $in: uniqueCoHosts }
-        }).select('_id');
-        
-        validCoHosts = validUsers.map(user => user._id);
-      }
-    }
-
-    // Update event fields
+    // Update basic fields
     event.title = title.trim();
     event.description = description?.trim() || '';
-    event.category = category || 'General';
     event.time = new Date(time);
     event.location = location.trim();
-    event.maxAttendees = parseInt(maxAttendees) || 10;
-    event.privacyLevel = finalPrivacyLevel;
-    event.permissions = permissionsData;
-    event.pricing = pricingData;
-    event.coHosts = validCoHosts;
-    event.tags = Array.isArray(tags) ? tags : [];
+    event.category = category || 'General';
+    event.maxAttendees = Math.max(1, parseInt(maxAttendees) || 50);
+    event.privacyLevel = privacyLevel || 'public';
+
+    // 🔧 FIXED: Update allowPhotos field
+    if (allowPhotos !== undefined) {
+      event.allowPhotos = Boolean(allowPhotos);
+      console.log(`📷 Updated allowPhotos to: ${event.allowPhotos}`);
+    }
+
+    // Update permissions
+    if (permissions) {
+      event.permissions = {
+        appearInFeed: Boolean(permissions.appearInFeed),
+        appearInSearch: Boolean(permissions.appearInSearch),
+        canJoin: permissions.canJoin || 'anyone',
+        canShare: permissions.canShare || 'attendees',
+        canInvite: permissions.canInvite || 'attendees',
+        showAttendeesToPublic: Boolean(permissions.showAttendeesToPublic)
+      };
+    }
+
+    // Update pricing - handle both new pricing structure and legacy fields
+    const priceInCents = pricing?.amount || Math.round(parseFloat(eventPrice || price || 0) * 100);
+    const isFreeEvent = priceInCents === 0;
+
+    event.pricing = {
+      isFree: isFreeEvent,
+      amount: priceInCents,
+      currency: pricing?.currency || 'USD',
+      description: priceDescription || pricing?.description || '',
+      refundPolicy: refundPolicy || pricing?.refundPolicy || 'no-refunds'
+    };
+
+    // Legacy price field for backward compatibility
+    event.price = priceInCents / 100;
+
+    // Early bird pricing
+    if (earlyBirdEnabled && !isFreeEvent) {
+      const earlyBirdCents = Math.round(parseFloat(earlyBirdPrice || 0) * 100);
+      event.pricing.earlyBird = {
+        enabled: true,
+        amount: earlyBirdCents,
+        deadline: new Date(earlyBirdDeadline)
+      };
+    } else {
+      event.pricing.earlyBird = { enabled: false };
+    }
+
+    // Update co-hosts
+    if (coHosts && Array.isArray(coHosts)) {
+      event.coHosts = coHosts.filter(id => id && id !== String(event.host));
+    }
+
+    // Update tags
+    event.tags = tags && Array.isArray(tags) ? tags : [];
     
     // Handle coordinates if provided
     if (coordinates && coordinates.latitude && coordinates.longitude) {
@@ -3475,6 +3427,7 @@ router.put('/:eventId', protect, async (req, res) => {
       
       if (requiresFormForCheckIn && checkInForm) {
         // Validate that the form exists and belongs to the user
+        const Form = require('../models/Form'); // Make sure you have this model
         const form = await Form.findOne({
           _id: checkInForm,
           createdBy: req.user._id,
@@ -3500,6 +3453,7 @@ router.put('/:eventId', protect, async (req, res) => {
     await event.save();
 
     console.log(`✅ Event updated successfully: ${event._id}`);
+    console.log(`📷 Final allowPhotos value: ${event.allowPhotos}`);
 
     // Populate the updated event for response
     const updatedEvent = await Event.findById(eventId)

@@ -1,5 +1,5 @@
 // screens/EditEventScreen.js - Updated with Co-host management functionality + Photo Toggle
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useRef} from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
   Switch, TouchableOpacity, Modal, FlatList, SafeAreaView, StatusBar,
@@ -72,6 +72,7 @@ export default function EditEventScreen() {
   const [category, setCategory] = useState('General');
   const [cover, setCover] = useState(null);
   const [originalCoverImage, setOriginalCoverImage] = useState(null);
+  const [debugToggleCount, setDebugToggleCount] = useState(0);
 
   // Advanced fields
   const [maxAttendees, setMaxAttendees] = useState('50');
@@ -89,6 +90,7 @@ export default function EditEventScreen() {
 
   // ADDED: Photo sharing toggle
   const [allowPhotos, setAllowPhotos] = useState(true);
+  const allowPhotosRef = useRef(true); 
 
   // ADDED: Missing pricing fields that might be causing the issue
   const [isPaidEvent, setIsPaidEvent] = useState(false);
@@ -145,89 +147,66 @@ export default function EditEventScreen() {
   }, [saving, title, location, dateTime]);
 
   const fetchEventData = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get(`/api/events/${eventId}`);
-      const event = response.data;
+  try {
+    setLoading(true);
+    const response = await api.get(`/api/events/${eventId}`);
+    const event = response.data;
 
-      console.log('📥 Loading event data:', {
-        title: event.title,
-        pricing: event.pricing,
-        price: event.price,
-        isPaidEvent: event.isPaidEvent
-      });
+    console.log('📥 Loading event data:', {
+      title: event.title,
+      allowPhotos: event.allowPhotos
+    });
 
-      setTitle(event.title || '');
-      setDescription(event.description || '');
-      setDateTime(new Date(event.time));
-      setLocation(event.location || '');
-      setLocQuery(event.location || '');
-      setCategory(event.category || 'General');
-      setMaxAttendees(String(event.maxAttendees || 50));
-      setTags(event.tags?.join(', ') || '');
-      setPrivacyLevel(event.privacyLevel || 'public');
-      setPermissions(event.permissions || permissions);
-      setCoHosts(event.coHosts || []);
-      setOriginalCoverImage(event.coverImage);
-      
-      // ADDED: Set photo sharing toggle from event data
-      setAllowPhotos(event.allowPhotos !== false); // Default to true if not set
-      
-      // FIXED: Properly handle pricing data from both old and new formats
-      if (event.pricing) {
-        // New pricing structure
-        setPrice(String((event.pricing.amount || 0) / 100)); // Convert cents to dollars
-        setIsPaidEvent(!event.pricing.isFree);
-        
-        // FIXED: Map legacy refund policy values to correct enum values
-        let mappedRefundPolicy = event.pricing.refundPolicy || 'no-refund';
-        
-        // Map legacy values to correct enum values
-        const policyMapping = {
-          'No refunds': 'no-refund',
-          'No Refunds': 'no-refund',
-          'Partial refunds': 'partial-refund',
-          'Partial Refunds': 'partial-refund',
-          'Full refunds': 'full-refund',
-          'Full Refunds': 'full-refund',
-          'Full refund': 'full-refund',
-          'Custom': 'custom',
-          'custom': 'custom',
-          // Enum values (should already be correct)
-          'no-refund': 'no-refund',
-          'partial-refund': 'partial-refund',
-          'full-refund': 'full-refund'
-        };
-        
-        mappedRefundPolicy = policyMapping[mappedRefundPolicy] || 'no-refund';
-        setRefundPolicy(mappedRefundPolicy);
-        
-        console.log('📝 Mapped refund policy:', {
-          original: event.pricing.refundPolicy,
-          mapped: mappedRefundPolicy
-        });
-      } else {
-        // Legacy pricing structure
-        setPrice(String(event.price || 0));
-        setIsPaidEvent((event.price || 0) > 0);
-        setRefundPolicy('no-refund'); // Default for legacy events
-      }
-      
-      if (event.coordinates) {
-        setCoords(event.coordinates);
-      }
-
-      console.log('✅ Event data loaded successfully');
-
-    } catch (error) {
-      console.error('Error fetching event:', error);
-      Alert.alert('Error', 'Failed to load event data');
-      navigation.goBack();
-    } finally {
-      setLoading(false);
+    // Set all other fields...
+    setTitle(event.title || '');
+    setDescription(event.description || '');
+    setDateTime(new Date(event.time));
+    setLocation(event.location || '');
+    setLocQuery(event.location || '');
+    setCategory(event.category || 'General');
+    setMaxAttendees(String(event.maxAttendees || 50));
+    setTags(event.tags?.join(', ') || '');
+    setPrivacyLevel(event.privacyLevel || 'public');
+    setPermissions(event.permissions || permissions);
+    setCoHosts(event.coHosts || []);
+    setOriginalCoverImage(event.coverImage);
+    
+    // FIXED: Update both state and ref for allowPhotos
+    const allowPhotosValue = event.allowPhotos !== undefined ? event.allowPhotos : true;
+    console.log('📷 Setting allowPhotos to:', allowPhotosValue);
+    setAllowPhotos(allowPhotosValue);
+    allowPhotosRef.current = allowPhotosValue; // Keep ref in sync
+    
+    // Rest of your pricing logic...
+    if (event.pricing) {
+      setPrice(String((event.pricing.amount || 0) / 100));
+      setIsPaidEvent(!event.pricing.isFree);
+      setRefundPolicy(event.pricing.refundPolicy || 'no-refund');
+    } else {
+      setPrice(String(event.price || 0));
+      setIsPaidEvent((event.price || 0) > 0);
+      setRefundPolicy('no-refund');
     }
-  };
+    
+    if (event.coordinates) {
+      setCoords(event.coordinates);
+    }
 
+    console.log('✅ Event data loaded successfully');
+
+  } catch (error) {
+    console.error('Error fetching event:', error);
+    Alert.alert('Error', 'Failed to load event data');
+    navigation.goBack();
+  } finally {
+    setLoading(false);
+  }
+};
+const handlePhotoToggle = (newValue) => {
+  console.log('🔧 SWITCH TOGGLE - Old value:', allowPhotos, 'New value:', newValue);
+  setAllowPhotos(newValue);
+  allowPhotosRef.current = newValue; // Immediately update ref
+};
   // Search for potential co-hosts
   const searchCoHosts = async (query) => {
   if (query.length < 2) {
@@ -288,162 +267,132 @@ export default function EditEventScreen() {
     return () => clearTimeout(timeoutId);
   }, [coHostSearchQuery]);
 
-  const handleSaveEvent = async () => {
-    // Enhanced validation with debugging
-    console.log('🔍 Saving event with values:', {
-      title: `"${title}"`,
-      titleLength: title.length,
-      titleTrimmed: `"${title.trim()}"`,
-      location: `"${location}"`,
-      locationTrimmed: `"${location.trim()}"`
-    });
+  
+const handleSaveEvent = async () => {
+  // FIXED: Use ref value which updates immediately
+  const currentAllowPhotos = allowPhotosRef.current;
+  
+  console.log('💾 SAVE DEBUG - Values at save time:');
+  console.log('📷 allowPhotos state (may be stale):', allowPhotos);
+  console.log('📷 allowPhotos ref (current):', currentAllowPhotos);
+  console.log('📷 Using ref value for save');
 
-    if (!title || !title.trim()) {
-      console.error('❌ Title validation failed:', { title, trimmed: title.trim() });
-      Alert.alert('Error', 'Event title is required');
-      return;
+  // Validation
+  if (!title || !title.trim()) {
+    Alert.alert('Error', 'Event title is required');
+    return;
+  }
+
+  if (!location || !location.trim()) {
+    Alert.alert('Error', 'Event location is required');
+    return;
+  }
+
+  try {
+    setSaving(true);
+    
+    const priceInCents = Math.round(parseFloat(price || 0) * 100);
+    const updateData = {
+      title: title.trim(),
+      description: description.trim(),
+      time: dateTime.toISOString(),
+      location: location.trim(),
+      category: category,
+      maxAttendees: parseInt(maxAttendees) || 0,
+      privacyLevel: privacyLevel,
+      allowPhotos: currentAllowPhotos, // Use ref value (immediate)
+      coHosts: coHosts.map(coHost => coHost._id),
+      permissions: {
+        appearInFeed: permissions.appearInFeed,
+        appearInSearch: permissions.appearInSearch,
+        canJoin: permissions.canJoin || 'anyone',
+        canShare: permissions.canShare || 'attendees',
+        canInvite: permissions.canInvite || 'attendees',
+        showAttendeesToPublic: permissions.showAttendeesToPublic
+      },
+      pricing: {
+        isFree: priceInCents === 0,
+        amount: priceInCents,
+        currency: 'USD',
+        refundPolicy: refundPolicy
+      },
+      price: parseFloat(price || 0),
+      isPaidEvent: priceInCents > 0,
+      eventPrice: parseFloat(price || 0),
+      refundPolicy: refundPolicy
+    };
+
+    console.log('💾 SAVE DEBUG - Final updateData.allowPhotos:', updateData.allowPhotos);
+
+    // Add tags if provided
+    if (tags && tags.trim()) {
+      const tagArray = tags.split(',').map(tag => tag.trim()).filter(Boolean);
+      updateData.tags = tagArray;
     }
 
-    if (!location || !location.trim()) {
-      console.error('❌ Location validation failed:', { location, trimmed: location.trim() });
-      Alert.alert('Error', 'Event location is required');
-      return;
+    // Add coordinates if available
+    if (coords) {
+      updateData.coordinates = coords;
     }
 
-    try {
-      setSaving(true);
-      console.log('🔄 Preparing event update data...');
-
-      // Prepare the update data
-      const priceInCents = Math.round(parseFloat(price || 0) * 100);
-      const updateData = {
-        title: title.trim(),
-        description: description.trim(),
-        time: dateTime.toISOString(),
-        location: location.trim(),
-        category: category,
-        maxAttendees: parseInt(maxAttendees) || 0,
-        privacyLevel: privacyLevel,
-        allowPhotos: allowPhotos,
-        coHosts: coHosts.map(coHost => coHost._id),
-        permissions: {
-          appearInFeed: permissions.appearInFeed,
-          appearInSearch: permissions.appearInSearch,
-          canJoin: permissions.canJoin || 'anyone',
-          canShare: permissions.canShare || 'attendees',
-          canInvite: permissions.canInvite || 'attendees',
-          showAttendeesToPublic: permissions.showAttendeesToPublic
-        },
-        // FIXED: Include proper pricing structure
-        pricing: {
-          isFree: priceInCents === 0,
-          amount: priceInCents,
-          currency: 'USD',
-          refundPolicy: refundPolicy
-        },
-        // Legacy price field for backward compatibility
-        price: parseFloat(price || 0),
-        // ADDED: Individual pricing fields that backend might expect
-        isPaidEvent: priceInCents > 0,
-        eventPrice: parseFloat(price || 0),
-        refundPolicy: refundPolicy // Also send as individual field
-      };
-
-      // Add tags if provided
-      if (tags && tags.trim()) {
-        const tagArray = tags.split(',').map(tag => tag.trim()).filter(Boolean);
-        updateData.tags = tagArray;
-      }
-
-      // Add coordinates if available
-      if (coords) {
-        updateData.coordinates = coords;
-      }
-
-      console.log('📝 Update data prepared:', {
-        ...updateData,
-        coHosts: updateData.coHosts.length + ' co-hosts',
-        pricingDebug: {
-          refundPolicy: updateData.refundPolicy,
-          pricingRefundPolicy: updateData.pricing.refundPolicy,
-          priceInCents: priceInCents,
-          isFree: priceInCents === 0
+    // Handle cover image separately if it was changed
+    if (cover) {
+      const formData = new FormData();
+      
+      // Add all the regular fields
+      Object.keys(updateData).forEach(key => {
+        if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates' || key === 'pricing') {
+          formData.append(key, JSON.stringify(updateData[key]));
+        } else {
+          formData.append(key, updateData[key].toString());
         }
       });
-
-      // Handle cover image separately if it was changed
-      if (cover) {
-        console.log('🖼️ New cover image detected, using FormData approach');
-        
-        const formData = new FormData();
-        
-        // Add all the regular fields
-        Object.keys(updateData).forEach(key => {
-          if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates' || key === 'pricing') {
-            formData.append(key, JSON.stringify(updateData[key]));
-          } else {
-            formData.append(key, updateData[key].toString());
-          }
-        });
-        
-        // Add the cover image
-        formData.append('coverImage', {
-          uri: cover,
-          type: 'image/jpeg',
-          name: 'cover.jpg',
-        });
-
-        console.log('🚀 Sending update with new cover image');
-        const response = await api.put(`/api/events/${eventId}`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-        
-        console.log('✅ Event update with image successful:', response.data);
-      } else {
-        console.log('📄 No new cover image, using JSON approach');
-        console.log('🚀 Sending JSON update request to /api/events/' + eventId);
-        
-        const response = await api.put(`/api/events/${eventId}`, updateData, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        console.log('✅ Event update successful:', response.data);
-      }
-
-      Alert.alert(
-        'Success!',
-        'Event updated successfully.',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack()
-          }
-        ]
-      );
-
-    } catch (error) {
-      console.error('❌ Event update error:', error);
-      console.error('❌ Error response:', error.response?.data);
-      console.error('❌ Error status:', error.response?.status);
-      console.error('❌ Error config:', error.config);
       
-      // Log the actual data that was sent
-      if (error.config?.data) {
-        console.error('❌ Data sent to server:', error.config.data);
-      }
+      // Add the cover image
+      formData.append('coverImage', {
+        uri: cover,
+        type: 'image/jpeg',
+        name: 'cover.jpg',
+      });
+
+      const response = await api.put(`/api/events/${eventId}`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
       
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to update event. Please try again.'
-      );
-    } finally {
-      setSaving(false);
+      console.log('✅ Event update with image successful');
+    } else {
+      const response = await api.put(`/api/events/${eventId}`, updateData, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      console.log('✅ Event update successful');
     }
-  };
+
+    Alert.alert(
+      'Success!',
+      'Event updated successfully.',
+      [
+        {
+          text: 'OK',
+          onPress: () => navigation.goBack()
+        }
+      ]
+    );
+
+  } catch (error) {
+    console.error('❌ Event update error:', error);
+    Alert.alert(
+      'Error',
+      error.response?.data?.message || 'Failed to update event. Please try again.'
+    );
+  } finally {
+    setSaving(false);
+  }
+};
 
   const pickCoverImage = async () => {
     try {
@@ -703,7 +652,7 @@ export default function EditEventScreen() {
                 </View>
                 <Switch
                   value={allowPhotos}
-                  onValueChange={setAllowPhotos}
+                  onValueChange={handlePhotoToggle}
                   trackColor={{ false: '#E5E5EA', true: '#34C759' }}
                   thumbColor="#FFFFFF"
                 />

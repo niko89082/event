@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - FIXED: UI state updates when leaving event
+// screens/EventDetailsScreen.js - FIXED: Better UI/UX with proper layout
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -19,6 +19,8 @@ import {
   Dimensions,
   TextInput,
   Platform,
+  Animated,
+  LayoutAnimation,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -31,9 +33,9 @@ import { BlurView } from 'expo-blur';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
-import useEventStore from '../stores/eventStore'; // Import centralized store
+import useEventStore from '../stores/eventStore';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function EventDetailsScreen() {
   const route = useRoute();
@@ -64,7 +66,7 @@ export default function EventDetailsScreen() {
     });
   }, [navigation]);
 
-  // State
+  // Enhanced state management
   const [eventPhotos, setEventPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [photosLoading, setPhotosLoading] = useState(false);
@@ -85,6 +87,12 @@ export default function EventDetailsScreen() {
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [searching, setSearching] = useState(false);
   const [inviting, setInviting] = useState(false);
+
+  // NEW: UI Enhancement states
+  const [showFullDescription, setShowFullDescription] = useState(false);
+  const [showQRCode, setShowQRCode] = useState(false);
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [slideAnim] = useState(new Animated.Value(SCREEN_HEIGHT));
 
   // Get current state from store or local fallback
   const attendeeCount = event?.attendeeCount || event?.attendees?.length || 0;
@@ -115,6 +123,23 @@ export default function EventDetailsScreen() {
 
     return unsubscribe;
   }, [eventId]);
+
+  // Enhanced animations
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   // Deep link handling for payment returns with AsyncStorage persistence
   useEffect(() => {
@@ -221,6 +246,36 @@ export default function EventDetailsScreen() {
     );
   };
 
+  // NEW: Photo permission helpers
+  const canUploadPhotos = () => {
+    if (!event?.allowPhotos) return false;
+    if (!isAttending && !isHost && !isCoHost) return false;
+    return true;
+  };
+
+  const canViewPhotos = () => {
+    if (!event?.allowPhotos) return false;
+    return true; // If photos are allowed, they can be viewed by anyone who can see the event
+  };
+
+  const showPhotoSection = () => {
+    return canViewPhotos() && eventPhotos.length > 0;
+  };
+
+  // NEW: Event status helpers
+  const getEventStatus = () => {
+    const now = new Date();
+    const eventTime = new Date(event?.time);
+    const eventEndTime = new Date(eventTime.getTime() + (2 * 60 * 60 * 1000)); // Assume 2 hours duration
+    
+    if (now < eventTime) return 'upcoming';
+    if (now >= eventTime && now < eventEndTime) return 'live';
+    return 'ended';
+  };
+
+  const isEventLive = () => getEventStatus() === 'live';
+  const isEventEnded = () => getEventStatus() === 'ended';
+
   // Error handling helper
   const handlePaymentError = (error) => {
     console.error('Payment error:', error);
@@ -264,9 +319,15 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // Fetch event photos
+  // Enhanced fetch event photos with permission check
   const fetchEventPhotos = async () => {
     try {
+      if (!canViewPhotos()) {
+        console.log('📸 Photos not allowed for this event');
+        setEventPhotos([]);
+        return;
+      }
+
       setPhotosLoading(true);
       console.log(`📸 Fetching photos for event ${eventId}`);
       
@@ -299,8 +360,17 @@ export default function EventDetailsScreen() {
     });
   };
 
-  // Handle photo upload navigation
+  // Enhanced photo upload navigation with permission check
   const handleUploadPhoto = () => {
+    if (!canUploadPhotos()) {
+      if (!event?.allowPhotos) {
+        Alert.alert('Photos Disabled', 'Photo sharing has been disabled for this event.');
+      } else {
+        Alert.alert('Not Attending', 'You must be attending this event to upload photos.');
+      }
+      return;
+    }
+
     navigation.navigate('CreatePostScreen', { 
       selectedEventId: eventId,
       preSelectedEvent: {
@@ -475,6 +545,10 @@ export default function EventDetailsScreen() {
 
       // For free events or if user already paid, use store's toggleRSVP
       setRequestLoading(true);
+      
+      // Add smooth animation
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      
       const result = await toggleRSVP(eventId, currentUser._id, event);
       
       if (result.type === 'request') {
@@ -523,6 +597,10 @@ export default function EventDetailsScreen() {
             onPress: async () => {
               try {
                 setRequestLoading(true);
+                
+                // Add smooth animation
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                
                 const result = await toggleRSVP(eventId, currentUser._id, event);
                 
                 if (result.success && !result.attending) {
@@ -611,6 +689,22 @@ export default function EventDetailsScreen() {
     }
   };
 
+  // NEW: Enhanced share functionality
+  const handleShare = async () => {
+    try {
+      const shareUrl = `https://yourapp.com/events/${eventId}`; // Replace with your actual deep link
+      const shareContent = {
+        message: `Check out this event: ${event.title}\n\n${event.description}\n\n${shareUrl}`,
+        url: shareUrl,
+        title: event.title
+      };
+
+      await Share.share(shareContent);
+    } catch (error) {
+      console.error('Share error:', error);
+    }
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -642,7 +736,6 @@ export default function EventDetailsScreen() {
   const isCoHost = event.coHosts?.some(c => String(c._id || c) === String(currentUser?._id));
   const canInvite = event.canUserInvite?.(currentUser?._id) || isHost || isCoHost;
   const canShare = event.permissions?.canShare !== 'host-only' || isHost || isCoHost;
-  const isPast = new Date(event.time) <= new Date();
 
   // FIXED: Get real-time attendance status from store
   const currentStoreEvent = getEvent(eventId);
@@ -663,6 +756,7 @@ export default function EventDetailsScreen() {
     hour12: true
   });
 
+  // NEW: Enhanced privacy badge with better styling
   const renderPrivacyBadge = () => {
     const privacyConfig = {
       public: { icon: 'globe', color: '#34C759', label: 'Public' },
@@ -681,9 +775,28 @@ export default function EventDetailsScreen() {
     );
   };
 
+  // NEW: Enhanced status badge
+  const renderStatusBadge = () => {
+    const status = getEventStatus();
+    const statusConfig = {
+      upcoming: { icon: 'time', color: '#3797EF', label: 'Upcoming' },
+      live: { icon: 'radio', color: '#FF3B30', label: 'Live Now' },
+      ended: { icon: 'checkmark-circle', color: '#8E8E93', label: 'Ended' }
+    };
+
+    const config = statusConfig[status];
+
+    return (
+      <View style={[styles.statusBadge, { backgroundColor: config.color }]}>
+        <Ionicons name={config.icon} size={12} color="#FFFFFF" />
+        <Text style={styles.statusBadgeText}>{config.label}</Text>
+      </View>
+    );
+  };
+
   // FIXED: Get join button text and styling with real-time data
   const getJoinButtonInfo = () => {
-    if (isPast) {
+    if (isEventEnded()) {
       return { text: 'Event Ended', disabled: true };
     }
 
@@ -706,7 +819,7 @@ export default function EventDetailsScreen() {
     return { text: 'Join Event', disabled: false };
   };
 
-  // ✅ Glassmorphic Bottom Action Bar with real-time data
+  // ✅ Enhanced Glassmorphic Bottom Action Bar with photo permissions
   const renderBottomActionBar = () => {
     const joinButtonInfo = getJoinButtonInfo();
 
@@ -727,7 +840,7 @@ export default function EventDetailsScreen() {
                 activeOpacity={0.7}
               >
                 <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="scan" size={24} color="#000000" />
+                  <Ionicons name="scan" size={20} color="#000000" />
                   <Text style={styles.bottomBarButtonText}>Scan</Text>
                 </View>
               </TouchableOpacity>
@@ -739,22 +852,24 @@ export default function EventDetailsScreen() {
                 activeOpacity={0.7}
               >
                 <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="person-add" size={24} color="#000000" />
+                  <Ionicons name="person-add" size={20} color="#000000" />
                   <Text style={styles.bottomBarButtonText}>Invite</Text>
                 </View>
               </TouchableOpacity>
 
-              {/* Add Photos */}
-              <TouchableOpacity
-                style={styles.bottomBarButton}
-                onPress={handleUploadPhoto}
-                activeOpacity={0.7}
-              >
-                <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="camera" size={24} color="#000000" />
-                  <Text style={styles.bottomBarButtonText}>Add photos</Text>
-                </View>
-              </TouchableOpacity>
+              {/* Add Photos - Only show if photos are allowed */}
+              {canUploadPhotos() && (
+                <TouchableOpacity
+                  style={styles.bottomBarButton}
+                  onPress={handleUploadPhoto}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.bottomBarButtonInner}>
+                    <Ionicons name="camera" size={20} color="#000000" />
+                    <Text style={styles.bottomBarButtonText}>Add photos</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
 
               {/* Edit */}
               <TouchableOpacity
@@ -763,7 +878,7 @@ export default function EventDetailsScreen() {
                 activeOpacity={0.7}
               >
                 <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="create" size={24} color="#000000" />
+                  <Ionicons name="create" size={20} color="#000000" />
                   <Text style={styles.bottomBarButtonText}>Edit</Text>
                 </View>
               </TouchableOpacity>
@@ -781,15 +896,15 @@ export default function EventDetailsScreen() {
             tint="light"
           >
             <View style={styles.bottomBarContent}>
-              {/* Add Photos (if attending) */}
-              {realTimeIsAttending && !isPast && (
+              {/* Add Photos - Only show if attending AND photos are allowed */}
+              {realTimeIsAttending && canUploadPhotos() && !isEventEnded() && (
                 <TouchableOpacity
                   style={styles.bottomBarButton}
                   onPress={handleUploadPhoto}
                   activeOpacity={0.7}
                 >
                   <View style={styles.bottomBarButtonInner}>
-                    <Ionicons name="camera" size={24} color="#000000" />
+                    <Ionicons name="camera" size={20} color="#000000" />
                     <Text style={styles.bottomBarButtonText}>Add photos</Text>
                   </View>
                 </TouchableOpacity>
@@ -800,7 +915,8 @@ export default function EventDetailsScreen() {
                 style={[
                   styles.bottomBarMainButton,
                   joinButtonInfo.disabled && styles.bottomBarMainButtonDisabled,
-                  joinButtonInfo.showWent && styles.bottomBarWentButton
+                  joinButtonInfo.showWent && styles.bottomBarWentButton,
+                  isEventLive() && styles.bottomBarLiveButton
                 ]}
                 onPress={joinButtonInfo.showWent ? handleLeaveEvent : attendEvent}
                 disabled={joinButtonInfo.disabled || requestLoading}
@@ -811,10 +927,11 @@ export default function EventDetailsScreen() {
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
                     <>
-                      {joinButtonInfo.isPaid && <Ionicons name="card" size={20} color="#FFFFFF" />}
-                      {joinButtonInfo.showWent && <Ionicons name="checkmark" size={20} color="#FFFFFF" />}
+                      {joinButtonInfo.isPaid && <Ionicons name="card" size={18} color="#FFFFFF" />}
+                      {joinButtonInfo.showWent && <Ionicons name="checkmark" size={18} color="#FFFFFF" />}
+                      {isEventLive() && <Ionicons name="radio" size={18} color="#FFFFFF" />}
                       <Text style={styles.bottomBarMainButtonText}>
-                        {joinButtonInfo.text}
+                        {isEventLive() && realTimeIsAttending ? 'Live Now' : joinButtonInfo.text}
                       </Text>
                     </>
                   )}
@@ -829,7 +946,7 @@ export default function EventDetailsScreen() {
                   activeOpacity={0.7}
                 >
                   <View style={styles.bottomBarButtonInner}>
-                    <Ionicons name="share" size={24} color="#000000" />
+                    <Ionicons name="share" size={20} color="#000000" />
                     <Text style={styles.bottomBarButtonText}>Share</Text>
                   </View>
                 </TouchableOpacity>
@@ -841,238 +958,486 @@ export default function EventDetailsScreen() {
     }
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              fetchEvent(true);
-              fetchEventPhotos();
-            }}
-            tintColor="#3797EF"
-          />
-        }
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* Cover Image Header */}
-        <View style={styles.coverContainer}>
-          {event.coverImage ? (
-            <Image
-              source={{ uri: `http://${API_BASE_URL}:3000${event.coverImage}` }}
-              style={styles.coverImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <LinearGradient
-              colors={['#667eea', '#764ba2']}
-              style={styles.coverImage}
-            />
-          )}
-          
-          {/* Back Button */}
+  // NEW: Enhanced description component with read more functionality
+  const renderDescription = () => {
+    if (!event.description) return null;
+
+    const isLongDescription = event.description.length > 150;
+    const displayText = showFullDescription || !isLongDescription 
+      ? event.description 
+      : event.description.substring(0, 150) + '...';
+
+    return (
+      <View style={styles.descriptionSection}>
+        <Text style={styles.descriptionText}>{displayText}</Text>
+        {isLongDescription && (
           <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setShowFullDescription(!showFullDescription);
+            }}
+            style={styles.readMoreButton}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.readMoreText}>
+              {showFullDescription ? 'Show less' : 'Read more'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  // NEW: Enhanced photo section with better grid layout
+  const renderPhotoSection = () => {
+    if (!showPhotoSection()) return null;
+
+    return (
+      <View style={styles.photosSection}>
+        <View style={styles.photosSectionHeader}>
+          <Text style={styles.photosSectionTitle}>
+            Photos ({eventPhotos.length})
+            {!event.allowPhotos && (
+              <Text style={styles.photosDisabledText}> • Sharing disabled</Text>
+            )}
+          </Text>
+          {eventPhotos.length > 6 && (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('EventPhotosScreen', { eventId })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.seeAllPhotosText}>See All</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        {photosLoading ? (
+          <View style={styles.photosLoadingContainer}>
+            <ActivityIndicator size="small" color="#3797EF" />
+            <Text style={styles.photosLoadingText}>Loading photos...</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={eventPhotos.slice(0, 6)}
+            renderItem={({ item, index }) => (
+              <TouchableOpacity
+                style={[
+                  styles.photoItem,
+                  // Create varied aspect ratios for more dynamic grid
+                  index === 0 && eventPhotos.length > 1 && styles.featuredPhoto
+                ]}
+                onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
+                activeOpacity={0.9}
+              >
+                <Image
+                  source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
+                  style={styles.photoImage}
+                  loadingIndicatorSource={{ uri: 'https://placehold.co/100x100.png' }}
+                />
+                {/* NEW: Photo overlay for better visual appeal */}
+                <LinearGradient
+                  colors={['transparent', 'rgba(0,0,0,0.3)']}
+                  style={styles.photoOverlay}
+                />
+              </TouchableOpacity>
+            )}
+            keyExtractor={(item) => item._id}
+            numColumns={3}
+            style={styles.photosGrid}
+            scrollEnabled={false}
+          />
+        )}
+
+        {/* NEW: Photo upload prompt for attendees */}
+        {realTimeIsAttending && canUploadPhotos() && !isEventEnded() && eventPhotos.length === 0 && (
+          <TouchableOpacity
+            style={styles.photoUploadPrompt}
+            onPress={handleUploadPhoto}
             activeOpacity={0.8}
           >
-            <Ionicons name="chevron-back" size={28} color="#FFFFFF" />
+            <Ionicons name="camera" size={32} color="#3797EF" />
+            <Text style={styles.photoUploadPromptTitle}>Be the first to share photos!</Text>
+            <Text style={styles.photoUploadPromptSubtitle}>Tap to add photos from this event</Text>
           </TouchableOpacity>
+        )}
 
-          {/* Privacy Badge */}
-          {renderPrivacyBadge()}
+        {/* NEW: Photo disabled message */}
+        {!event.allowPhotos && (
+          <View style={styles.photosDisabledContainer}>
+            <Ionicons name="camera-off" size={32} color="#8E8E93" />
+            <Text style={styles.photosDisabledTitle}>Photo sharing disabled</Text>
+            <Text style={styles.photosDisabledSubtitle}>The host has disabled photo sharing for this event</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
 
-          {/* Price Badge for Paid Events */}
-          {isPaidEvent() && (
-            <View style={styles.priceBadge}>
-              <Text style={styles.priceBadgeText}>{getFormattedPrice()}</Text>
-              {event.pricing.earlyBirdPricing?.enabled && 
-               new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
-                <Text style={styles.earlyBirdText}>Early Bird!</Text>
-              )}
-            </View>
-          )}
+  // NEW: Enhanced share/invite modal
+  const renderShareInviteModal = () => (
+    <Modal
+      visible={showShareInviteModal}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => setShowShareInviteModal(false)}
+    >
+      <SafeAreaView style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <TouchableOpacity
+            onPress={() => setShowShareInviteModal(false)}
+            style={styles.modalCloseButton}
+          >
+            <Text style={styles.modalCloseText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>
+            {shareInviteMode === 'share' ? 'Share Event' : 'Invite Friends'}
+          </Text>
+          <View style={styles.modalHeaderSpacer} />
         </View>
 
-        {/* Event Information */}
-        <View style={styles.contentContainer}>
-          {/* Title and Category */}
-          <View style={styles.headerSection}>
-            <Text style={styles.eventTitle}>{event.title}</Text>
-            <View style={styles.categoryBadge}>
-              <Text style={styles.categoryText}>{event.category}</Text>
-            </View>
-          </View>
-
-          {/* Description */}
-          {event.description && (
-            <View style={styles.descriptionSection}>
-              <Text style={styles.descriptionText}>{event.description}</Text>
-            </View>
-          )}
-
-          {/* Host Information */}
-          <View style={styles.hostSection}>
+        {shareInviteMode === 'share' ? (
+          <View style={styles.shareOptionsContainer}>
             <TouchableOpacity
-              style={styles.hostInfo}
-              onPress={() => navigation.navigate('ProfileScreen', { userId: event.host?._id })}
-              activeOpacity={0.8}
+              style={styles.shareOption}
+              onPress={handleShare}
+              activeOpacity={0.7}
             >
-              <Image
-                source={{
-                  uri: event.host?.profilePicture
-                    ? `http://${API_BASE_URL}:3000${event.host.profilePicture}`
-                    : 'https://placehold.co/32x32.png?text=👤'
-                }}
-                style={styles.hostAvatar}
-              />
-              <View style={styles.hostDetails}>
-                <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
-                {event.coHosts && event.coHosts.length > 0 && (
-                  <Text style={styles.coHostText}>
-                    Co-hosts: {event.coHosts.map(c => c.username || c).join(', ')}
-                  </Text>
-                )}
-              </View>
+              <Ionicons name="share" size={24} color="#3797EF" />
+              <Text style={styles.shareOptionText}>Share Link</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.shareOption}
+              onPress={() => setShareInviteMode('invite')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="person-add" size={24} color="#3797EF" />
+              <Text style={styles.shareOptionText}>Invite Friends</Text>
             </TouchableOpacity>
           </View>
+        ) : (
+          <View style={styles.inviteContainer}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search friends..."
+              value={searchQuery}
+              onChangeText={(text) => {
+                setSearchQuery(text);
+                searchUsers(text);
+              }}
+              autoCapitalize="none"
+            />
 
-          {/* Event Details Cards */}
-          <View style={styles.detailsContainer}>
-            {/* Date & Time Card */}
-            <View style={styles.detailCard}>
-              <View style={styles.detailCardHeader}>
-                <Ionicons name="calendar" size={24} color="#3797EF" />
-                <Text style={styles.detailCardTitle}>When</Text>
-              </View>
-              <Text style={styles.detailCardContent}>{formattedDate}</Text>
-              <Text style={styles.detailCardSubContent}>{formattedTime}</Text>
-            </View>
-
-            {/* Location Card */}
-            <View style={styles.detailCard}>
-              <View style={styles.detailCardHeader}>
-                <Ionicons name="location" size={24} color="#3797EF" />
-                <Text style={styles.detailCardTitle}>Where</Text>
-              </View>
-              <Text style={styles.detailCardContent}>{event.location}</Text>
-            </View>
-
-            {/* Pricing Card for Paid Events */}
-            {isPaidEvent() && (
-              <View style={styles.detailCard}>
-                <View style={styles.detailCardHeader}>
-                  <Ionicons name="card" size={24} color="#FF6B35" />
-                  <Text style={styles.detailCardTitle}>Pricing</Text>
-                </View>
-                <Text style={styles.detailCardContent}>{getFormattedPrice()}</Text>
-                {event.pricing.earlyBirdPricing?.enabled && 
-                 new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
-                  <Text style={styles.detailCardSubContent}>
-                    Early bird until {new Date(event.pricing.earlyBirdPricing.deadline).toLocaleDateString()}
-                  </Text>
-                )}
-                {event.pricing.description && (
-                  <Text style={styles.detailCardSubContent}>{event.pricing.description}</Text>
-                )}
-                {hasUserPaid() && (
-                  <View style={styles.paidStatus}>
-                    <Ionicons name="checkmark-circle" size={16} color="#34C759" />
-                    <Text style={styles.paidStatusText}>Payment Confirmed</Text>
-                  </View>
-                )}
+            {searching && (
+              <View style={styles.searchingContainer}>
+                <ActivityIndicator size="small" color="#3797EF" />
+                <Text style={styles.searchingText}>Searching...</Text>
               </View>
             )}
 
-            {/* Enhanced Attendees Card with real-time data */}
-            <TouchableOpacity 
-              style={styles.detailCard}
-              onPress={() => navigation.navigate('AttendeeListScreen', { 
-                eventId,
-                mode: (isHost || isCoHost) ? 'manage' : 'view'
-              })}
-              activeOpacity={0.8}
-              disabled={false}
-            >
-              <View style={styles.detailCardHeader}>
-                <Ionicons name="people" size={24} color="#3797EF" />
-                <Text style={styles.detailCardTitle}>Who's going</Text>
-                {(event.permissions?.showAttendeesToPublic || isHost || isCoHost) && (
-                  <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
-                )}
-              </View>
-              <Text style={styles.detailCardContent}>
-                {realTimeAttendeeCount} {realTimeAttendeeCount === 1 ? 'person' : 'people'} attending
-              </Text>
-              {/* Show check-in status for hosts */}
-              {(isHost || isCoHost) && checkedInCount > 0 && (
-                <Text style={styles.detailCardSubContent}>
-                  {checkedInCount} checked in ({Math.round((checkedInCount / realTimeAttendeeCount) * 100) || 0}%)
-                </Text>
+            <FlatList
+              data={searchResults}
+              keyExtractor={(item) => item._id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.userItem,
+                    selectedUsers.some(u => u._id === item._id) && styles.userItemSelected
+                  ]}
+                  onPress={() => toggleUserSelection(item)}
+                  activeOpacity={0.7}
+                >
+                  <Image
+                    source={{
+                      uri: item.profilePicture
+                        ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+                        : 'https://placehold.co/40x40.png?text=👤'
+                    }}
+                    style={styles.userAvatar}
+                  />
+                  <Text style={styles.userUsername}>{item.username}</Text>
+                  {selectedUsers.some(u => u._id === item._id) && (
+                    <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
+                  )}
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+              style={styles.usersList}
+            />
 
-            {/* Form Requirement Info */}
-            {event.requiresFormForCheckIn && event.checkInForm && (
-              <View style={styles.detailCard}>
-                <View style={styles.detailCardHeader}>
-                  <Ionicons name="document-text" size={24} color="#FF9500" />
-                  <Text style={styles.detailCardTitle}>Check-in Requirements</Text>
-                </View>
-                <Text style={styles.detailCardContent}>Form required for check-in</Text>
-                <Text style={styles.detailCardSubContent}>
-                  {event.checkInForm.title || 'Check-in form'}
-                </Text>
-              </View>
+            {selectedUsers.length > 0 && (
+              <TouchableOpacity
+                style={styles.sendInvitesButton}
+                onPress={handleSendInvites}
+                disabled={inviting}
+                activeOpacity={0.7}
+              >
+                {inviting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.sendInvitesButtonText}>
+                    Send Invites ({selectedUsers.length})
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      
+      {/* FIXED: Back button moved outside cover image */}
+      <View style={styles.headerContainer}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="arrow-back" size={24} color="#000000" />
+        </TouchableOpacity>
+      </View>
+      
+      <Animated.View style={[styles.animatedContainer, { opacity: fadeAnim }]}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                fetchEvent(true);
+                fetchEventPhotos();
+              }}
+              tintColor="#3797EF"
+            />
+          }
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* Enhanced Cover Image Header - No overlays */}
+          <View style={styles.coverContainer}>
+            {event.coverImage ? (
+              <Image
+                source={{ uri: `http://${API_BASE_URL}:3000${event.coverImage}` }}
+                style={styles.coverImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <LinearGradient
+                colors={['#667eea', '#764ba2']}
+                style={styles.coverImage}
+              />
             )}
           </View>
 
-          {/* Event Photos Section */}
-          {eventPhotos.length > 0 && (
-            <View style={styles.photosSection}>
-              <View style={styles.photosSectionHeader}>
-                <Text style={styles.photosSectionTitle}>Photos ({eventPhotos.length})</Text>
-                {eventPhotos.length > 6 && (
-                  <TouchableOpacity
-                    onPress={() => navigation.navigate('EventPhotosScreen', { eventId })}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.seeAllPhotosText}>See All</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              
-              <FlatList
-                data={eventPhotos.slice(0, 6)}
-                renderItem={({ item, index }) => (
-                  <TouchableOpacity
-                    style={styles.photoItem}
-                    onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
-                    activeOpacity={0.9}
-                  >
-                    <Image
-                      source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
-                      style={styles.photoImage}
-                    />
-                  </TouchableOpacity>
-                )}
-                keyExtractor={(item) => item._id}
-                numColumns={3}
-                style={styles.photosGrid}
-                scrollEnabled={false}
-              />
-            </View>
-          )}
-        </View>
-      </ScrollView>
+          {/* Enhanced Event Information */}
+          {/* Enhanced Content with integrated badges */}
+<Animated.View 
+  style={[
+    styles.contentContainer,
+    { transform: [{ translateY: slideAnim }] }
+  ]}
+>
+  {/* Integrated Badges Row */}
+  <View style={styles.integratedBadgeRow}>
+    <View style={styles.leftBadges}>
+      {renderPrivacyBadge()}
+      {renderStatusBadge()}
+    </View>
+    {isPaidEvent() && (
+      <View style={styles.priceBadge}>
+        <Ionicons name="card" size={14} color="#FFFFFF" style={styles.priceBadgeIcon} />
+        <Text style={styles.priceBadgeText}>{getFormattedPrice()}</Text>
+        {event.pricing.earlyBirdPricing?.enabled && 
+         new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
+          <Text style={styles.earlyBirdText}>Early Bird!</Text>
+        )}
+      </View>
+    )}
+  </View>
 
-      {/* Glassmorphic Bottom Action Bar */}
-      {renderBottomActionBar()}
-    </SafeAreaView>
+  {/* Title and Category */}
+  <View style={styles.headerSection}>
+    <Text style={styles.eventTitle}>{event.title}</Text>
+    <View style={styles.categoryRow}>
+      <View style={styles.categoryBadge}>
+        <Text style={styles.categoryText}>{event.category}</Text>
+      </View>
+      {event.tags && event.tags.length > 0 && (
+        <View style={styles.tagsContainer}>
+          {event.tags.slice(0, 3).map((tag, index) => (
+            <View key={index} style={styles.tagBadge}>
+              <Text style={styles.tagText}>#{tag}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  </View>
+
+  {/* Enhanced Description with Read More */}
+  {renderDescription()}
+
+  {/* Enhanced Host Information with Co-hosts */}
+  <View style={styles.hostSection}>
+    <TouchableOpacity
+      style={styles.hostInfo}
+      onPress={() => navigation.navigate('ProfileScreen', { userId: event.host?._id })}
+      activeOpacity={0.8}
+    >
+      <Image
+        source={{
+          uri: event.host?.profilePicture
+            ? `http://${API_BASE_URL}:3000${event.host.profilePicture}`
+            : 'https://placehold.co/48x48.png?text=👤'
+        }}
+        style={styles.hostAvatar}
+      />
+      <View style={styles.hostDetails}>
+        <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
+        {event.coHosts && event.coHosts.length > 0 && (
+          <View style={styles.coHostsContainer}>
+            <Text style={styles.coHostLabel}>Co-hosts: </Text>
+            <View style={styles.coHostAvatars}>
+              {event.coHosts.slice(0, 3).map((coHost, index) => (
+                <TouchableOpacity 
+                  key={coHost._id || index}
+                  onPress={() => navigation.navigate('ProfileScreen', { userId: coHost._id })}
+                  style={[styles.coHostAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
+                  activeOpacity={0.8}
+                >
+                  <Image
+                    source={{
+                      uri: coHost.profilePicture
+                        ? `http://${API_BASE_URL}:3000${coHost.profilePicture}`
+                        : 'https://placehold.co/24x24.png?text=👤'
+                    }}
+                    style={styles.coHostAvatarImage}
+                  />
+                </TouchableOpacity>
+              ))}
+              {event.coHosts.length > 3 && (
+                <View style={[styles.coHostAvatar, styles.coHostOverflow, { marginLeft: -8 }]}>
+                  <Text style={styles.coHostOverflowText}>+{event.coHosts.length - 3}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+      </View>
+      <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+    </TouchableOpacity>
+  </View>
+
+  {/* Enhanced Event Details Cards */}
+  <View style={styles.detailsContainer}>
+    {/* Date & Time Card with countdown */}
+    <View style={styles.detailCard}>
+      <View style={styles.detailCardHeader}>
+        <Ionicons name="calendar" size={24} color="#FF6B6B" />
+        <Text style={styles.detailCardTitle}>When</Text>
+        {isEventLive() && (
+          <View style={styles.liveIndicator}>
+            <Text style={styles.liveIndicatorText}>LIVE</Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.detailCardContent}>{formattedDate}</Text>
+      <Text style={styles.detailCardSubContent}>{formattedTime}</Text>
+    </View>
+
+    {/* Location Card */}
+    <View style={styles.detailCard}>
+      <View style={styles.detailCardHeader}>
+        <Ionicons name="location" size={24} color="#4ECDC4" />
+        <Text style={styles.detailCardTitle}>Where</Text>
+      </View>
+      <Text style={styles.detailCardContent}>{event.location}</Text>
+    </View>
+
+    {/* Enhanced Pricing Card for Paid Events */}
+    {isPaidEvent() && (
+      <View style={styles.detailCard}>
+        <View style={styles.detailCardHeader}>
+          <Ionicons name="card" size={24} color="#FFB347" />
+          <Text style={styles.detailCardTitle}>Pricing</Text>
+        </View>
+        <Text style={styles.detailCardContent}>{getFormattedPrice()}</Text>
+        {event.pricing.earlyBirdPricing?.enabled && 
+         new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
+          <Text style={styles.detailCardSubContent}>
+            Early bird until {new Date(event.pricing.earlyBirdPricing.deadline).toLocaleDateString()}
+          </Text>
+        )}
+        {event.pricing.description && (
+          <Text style={styles.detailCardSubContent}>{event.pricing.description}</Text>
+        )}
+        {hasUserPaid() && (
+          <View style={styles.paidStatus}>
+            <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+            <Text style={styles.paidStatusText}>Payment Confirmed</Text>
+          </View>
+        )}
+      </View>
+    )}
+
+    {/* Enhanced Attendees Card with real-time data */}
+    <TouchableOpacity 
+      style={styles.detailCard}
+      onPress={() => navigation.navigate('AttendeeListScreen', { 
+        eventId,
+        mode: (isHost || isCoHost) ? 'manage' : 'view'
+      })}
+      activeOpacity={0.8}
+      disabled={false}
+    >
+      <View style={styles.detailCardHeader}>
+        <Ionicons name="people" size={24} color="#9B59B6" />
+        <Text style={styles.detailCardTitle}>Who's going</Text>
+        {(event.permissions?.showAttendeesToPublic || isHost || isCoHost) && (
+          <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+        )}
+      </View>
+      <Text style={styles.detailCardContent}>
+        {realTimeAttendeeCount} {realTimeAttendeeCount === 1 ? 'person' : 'people'} attending
+      </Text>
+      {/* Show check-in status for hosts */}
+      {(isHost || isCoHost) && checkedInCount > 0 && (
+        <Text style={styles.detailCardSubContent}>
+          {checkedInCount} checked in ({Math.round((checkedInCount / realTimeAttendeeCount) * 100) || 0}%)
+        </Text>
+      )}
+    </TouchableOpacity>
+
+    {/* Form Requirement Info */}
+    {event.requiresFormForCheckIn && event.checkInForm && (
+      <View style={styles.detailCard}>
+        <View style={styles.detailCardHeader}>
+          <Ionicons name="document-text" size={24} color="#E67E22" />
+          <Text style={styles.detailCardTitle}>Check-in Requirements</Text>
+        </View>
+        <Text style={styles.detailCardContent}>Form required for check-in</Text>
+        <Text style={styles.detailCardSubContent}>
+          {event.checkInForm.title || 'Check-in form'}
+        </Text>
+      </View>
+    )}
+  </View>
+
+  {/* Enhanced Event Photos Section with permissions */}
+  {renderPhotoSection()}
+</Animated.View>
+        </ScrollView>
+
+        {/* Enhanced Glassmorphic Bottom Action Bar */}
+        {renderBottomActionBar()}
+
+        {/* Enhanced Share/Invite Modal */}
+        {renderShareInviteModal()}
+      </Animated.View>
+    </View>
   );
 }
 
@@ -1081,8 +1446,34 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  // FIXED: Header container for back button
+  headerContainer: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 20,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  animatedContainer: {
+    flex: 1,
+  },
   scrollContent: {
-    paddingBottom: 100,
+    paddingBottom: 80, // Reduced for smaller bottom bar
+    paddingTop: 20
   },
   centered: {
     flex: 1,
@@ -1098,6 +1489,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#FF3B30',
     marginBottom: 16,
+    textAlign: 'center',
   },
   retryButton: {
     backgroundColor: '#3797EF',
@@ -1111,35 +1503,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Cover Image
+  // Enhanced Cover Image - No overlays
   coverContainer: {
-    height: 280,
+    height: 300,
     position: 'relative',
   },
   coverImage: {
     width: '100%',
     height: '100%',
   },
-  backButton: {
-    position: 'absolute',
-    top: 44,
-    left: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  privacyBadge: {
-    position: 'absolute',
-    bottom: 16,
-    left: 16,
+  leftBadges: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    gap: 8,
+  },
+  privacyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
   },
   privacyBadgeText: {
     marginLeft: 4,
@@ -1147,32 +1530,57 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  priceBadge: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    backgroundColor: '#FF6B35',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  statusBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  statusBadgeText: {
+    marginLeft: 4,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  priceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF6B35',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  priceBadgeIcon: {
+    marginRight: 4,
   },
   priceBadgeText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
   },
   earlyBirdText: {
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '500',
-    marginTop: 2,
+    marginLeft: 4,
   },
 
-  // Content
+  // Enhanced Content
   contentContainer: {
-    padding: 20,
-  },
+  backgroundColor: '#FFFFFF',
+  borderTopLeftRadius: 32,
+  borderTopRightRadius: 32,
+  marginTop: -32, // Pull up to overlap cover image
+  paddingTop: 24, // Add top padding for badges
+  paddingHorizontal: 20,
+  paddingBottom: 20,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: -2 },
+  shadowOpacity: 0.1,
+  shadowRadius: 8,
+  elevation: 8,
+},
   headerSection: {
     marginBottom: 16,
   },
@@ -1180,22 +1588,43 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '700',
     color: '#000000',
-    marginBottom: 8,
+    marginBottom: 12,
+    lineHeight: 34,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   categoryBadge: {
     backgroundColor: '#F0F0F0',
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    alignSelf: 'flex-start',
   },
   categoryText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#666666',
   },
+  tagsContainer: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  tagBadge: {
+    backgroundColor: '#E3F2FD',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  tagText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#3797EF',
+  },
 
-  // Description
+  // Enhanced Description
   descriptionSection: {
     marginBottom: 20,
   },
@@ -1204,14 +1633,26 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: '#333333',
   },
+  readMoreButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  readMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
 
-  // Host Section
+  // Enhanced Host Section with Co-hosts
   hostSection: {
     marginBottom: 24,
   },
   hostInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
   },
   hostAvatar: {
     width: 48,
@@ -1226,14 +1667,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
+    marginBottom: 4,
   },
-  coHostText: {
+  coHostsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  coHostLabel: {
     fontSize: 14,
     color: '#8E8E93',
-    marginTop: 2,
+    marginRight: 8,
+  },
+  coHostAvatars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  coHostAvatar: {
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    borderRadius: 12,
+  },
+  coHostAvatarImage: {
+    width: 24,
+    height: 24,
+    borderRadius: 10,
+  },
+  coHostOverflow: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#E1E8ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coHostOverflowText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#666666',
   },
 
-  // Detail Cards
+  // Enhanced Detail Cards
   detailsContainer: {
     marginBottom: 24,
   },
@@ -1255,10 +1729,22 @@ const styles = StyleSheet.create({
     color: '#000000',
     flex: 1,
   },
+  liveIndicator: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  liveIndicatorText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   detailCardContent: {
     fontSize: 16,
     color: '#000000',
     marginLeft: 36,
+    fontWeight: '500',
   },
   detailCardSubContent: {
     fontSize: 14,
@@ -1279,7 +1765,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
-  // Photos Section
+  // Enhanced Photos Section
   photosSection: {
     marginBottom: 24,
   },
@@ -1294,10 +1780,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000000',
   },
+  photosDisabledText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '400',
+  },
   seeAllPhotosText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#3797EF',
+  },
+  photosLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  photosLoadingText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#8E8E93',
   },
   photosGrid: {
     marginHorizontal: -4,
@@ -1308,14 +1810,66 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     borderRadius: 8,
     overflow: 'hidden',
+    position: 'relative',
+  },
+  featuredPhoto: {
+    aspectRatio: 2,
   },
   photoImage: {
     width: '100%',
     height: '100%',
     backgroundColor: '#F6F6F6',
   },
+  photoOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '30%',
+  },
+  photoUploadPrompt: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#E1E8ED',
+    borderStyle: 'dashed',
+  },
+  photoUploadPromptTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginTop: 8,
+  },
+  photoUploadPromptSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  photosDisabledContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+  },
+  photosDisabledTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8E8E93',
+    marginTop: 8,
+  },
+  photosDisabledSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 4,
+    textAlign: 'center',
+  },
 
-  // Glassmorphic Bottom Bar Styles
+  // FIXED: Smaller Glassmorphic Bottom Bar Styles
   bottomBarContainer: {
     position: 'absolute',
     bottom: 20,
@@ -1324,7 +1878,7 @@ const styles = StyleSheet.create({
     paddingBottom: 0,
   },
   bottomBar: {
-    borderRadius: 25,
+    borderRadius: 20, // Reduced from 25
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
@@ -1340,31 +1894,31 @@ const styles = StyleSheet.create({
   bottomBarContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
+    paddingHorizontal: 12, // Reduced from 16
+    paddingVertical: 8,    // Reduced from 12
+    gap: 6,               // Reduced from 8
   },
   bottomBarButton: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,   // Reduced from 8
   },
   bottomBarButtonInner: {
     alignItems: 'center',
-    gap: 4,
+    gap: 3,               // Reduced from 4
   },
   bottomBarButtonText: {
-    fontSize: 11,
+    fontSize: 10,         // Reduced from 11
     fontWeight: '500',
     color: '#000000',
   },
   bottomBarMainButton: {
     flex: 2,
     backgroundColor: '#3797EF',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginHorizontal: 4,
+    borderRadius: 10,     // Reduced from 12
+    paddingVertical: 10,  // Reduced from 12
+    paddingHorizontal: 14, // Reduced from 16
+    marginHorizontal: 3,  // Reduced from 4
   },
   bottomBarMainButtonDisabled: {
     opacity: 0.6,
@@ -1372,15 +1926,138 @@ const styles = StyleSheet.create({
   bottomBarWentButton: {
     backgroundColor: '#34C759',
   },
+  bottomBarLiveButton: {
+    backgroundColor: '#FF3B30',
+  },
   bottomBarMainButtonInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 5,               // Reduced from 6
   },
   bottomBarMainButtonText: {
-    fontSize: 14,
+    fontSize: 13,         // Reduced from 14
     fontWeight: '600',
     color: '#FFFFFF',
   },
+
+  // Enhanced Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E8ED',
+    paddingTop: 50, // Account for status bar
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalCloseText: {
+    fontSize: 16,
+    color: '#3797EF',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  modalHeaderSpacer: {
+    width: 60,
+  },
+
+  // Share Options
+  shareOptionsContainer: {
+    padding: 20,
+  },
+  shareOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  shareOptionText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#000000',
+    marginLeft: 12,
+  },
+
+  // Invite Container
+  inviteContainer: {
+    flex: 1,
+    padding: 20,
+  },
+  searchInput: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  searchingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  searchingText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  usersList: {
+    flex: 1,
+  },
+  userItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  userItemSelected: {
+    backgroundColor: '#E3F2FD',
+  },
+  userAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  userUsername: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#000000',
+    flex: 1,
+  },
+  sendInvitesButton: {
+    backgroundColor: '#3797EF',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  sendInvitesButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // Remove the old badgeRow styles and replace with:
+integratedBadgeRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginBottom: 20,
+},
 });
