@@ -1,4 +1,4 @@
-// screens/EventDetailsScreen.js - FIXED: Better UI/UX with proper layout
+// screens/EventDetailsScreen.js - FIXED: Better UI/UX with proper layout and photo moderation
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
@@ -94,6 +94,11 @@ export default function EventDetailsScreen() {
   const [fadeAnim] = useState(new Animated.Value(0));
   const [slideAnim] = useState(new Animated.Value(SCREEN_HEIGHT));
 
+  // FIXED: Photo moderation states (MISSING BEFORE)
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPhotos, setSelectedPhotos] = useState([]);
+  const [moderatingPhotos, setModeratingPhotos] = useState(false);
+
   // Get current state from store or local fallback
   const attendeeCount = event?.attendeeCount || event?.attendees?.length || 0;
   const checkedInCount = event?.checkedInCount || event?.checkedIn?.length || 0;
@@ -101,9 +106,145 @@ export default function EventDetailsScreen() {
     String(a._id || a) === String(currentUser?._id)
   ) || false;
 
-  // FIXED: Watch for store changes and force re-render
   const [forceUpdate, setForceUpdate] = useState(0);
-  
+  // ✅ Enhanced Glassmorphic Bottom Action Bar with photo permissions
+  const renderBottomActionBar = () => {
+    const joinButtonInfo = getJoinButtonInfo();
+
+    if (isHost || isCoHost) {
+      // Host/Co-host glassmorphic bottom bar
+      return (
+        <View style={styles.bottomBarContainer}>
+          <BlurView 
+            style={styles.bottomBar} 
+            intensity={40}
+            tint="light"
+          >
+            <View style={styles.bottomBarContent}>
+              {/* Scan */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={handleOpenScanner}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="scan" size={20} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Scan</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Invite */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={() => handleShareInvite('invite')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="person-add" size={20} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Invite</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Add Photos - Only show if photos are allowed */}
+              {canUploadPhotos() && (
+                <TouchableOpacity
+                  style={styles.bottomBarButton}
+                  onPress={handleUploadPhoto}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.bottomBarButtonInner}>
+                    <Ionicons name="camera" size={20} color="#000000" />
+                    <Text style={styles.bottomBarButtonText}>Add photos</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {/* Edit */}
+              <TouchableOpacity
+                style={styles.bottomBarButton}
+                onPress={() => navigation.navigate('EditEventScreen', { eventId })}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarButtonInner}>
+                  <Ionicons name="create" size={20} color="#000000" />
+                  <Text style={styles.bottomBarButtonText}>Edit</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </BlurView>
+        </View>
+      );
+    } else {
+      // Regular user glassmorphic bottom bar
+      return (
+        <View style={styles.bottomBarContainer}>
+          <BlurView 
+            style={styles.bottomBar} 
+            intensity={40}
+            tint="light"
+          >
+            <View style={styles.bottomBarContent}>
+              {/* Add Photos - Only show if attending AND photos are allowed */}
+              {realTimeIsAttending && canUploadPhotos() && !isEventEnded() && (
+                <TouchableOpacity
+                  style={styles.bottomBarButton}
+                  onPress={handleUploadPhoto}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.bottomBarButtonInner}>
+                    <Ionicons name="camera" size={20} color="#000000" />
+                    <Text style={styles.bottomBarButtonText}>Add photos</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {/* Main Action Button (Join/Going) */}
+              <TouchableOpacity
+                style={[
+                  styles.bottomBarMainButton,
+                  joinButtonInfo.disabled && styles.bottomBarMainButtonDisabled,
+                  joinButtonInfo.showWent && styles.bottomBarWentButton,
+                  isEventLive() && styles.bottomBarLiveButton
+                ]}
+                onPress={joinButtonInfo.showWent ? handleLeaveEvent : attendEvent}
+                disabled={joinButtonInfo.disabled || requestLoading}
+                activeOpacity={0.7}
+              >
+                <View style={styles.bottomBarMainButtonInner}>
+                  {requestLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      {joinButtonInfo.isPaid && <Ionicons name="card" size={18} color="#FFFFFF" />}
+                      {joinButtonInfo.showWent && <Ionicons name="checkmark" size={18} color="#FFFFFF" />}
+                      {isEventLive() && <Ionicons name="radio" size={18} color="#FFFFFF" />}
+                      <Text style={styles.bottomBarMainButtonText}>
+                        {isEventLive() && realTimeIsAttending ? 'Live Now' : joinButtonInfo.text}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              {/* Share (if allowed) */}
+              {canShare && (
+                <TouchableOpacity
+                  style={styles.bottomBarButton}
+                  onPress={() => handleShareInvite('share')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.bottomBarButtonInner}>
+                    <Ionicons name="share" size={20} color="#000000" />
+                    <Text style={styles.bottomBarButtonText}>Share</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+          </BlurView>
+        </View>
+      );
+    }
+  };
   useEffect(() => {
     // Subscribe to store changes for this specific event
     const unsubscribe = useEventStore.subscribe(
@@ -214,7 +355,117 @@ export default function EventDetailsScreen() {
   const isPaidEvent = () => {
     return event?.pricing && !event.pricing.isFree && event.pricing.amount > 0;
   };
+    const renderShareInviteModal = () => (
+    <Modal
+      visible={showShareInviteModal}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => setShowShareInviteModal(false)}
+    >
+      <SafeAreaView style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <TouchableOpacity
+            onPress={() => setShowShareInviteModal(false)}
+            style={styles.modalCloseButton}
+          >
+            <Text style={styles.modalCloseText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>
+            {shareInviteMode === 'share' ? 'Share Event' : 'Invite Friends'}
+          </Text>
+          <View style={styles.modalHeaderSpacer} />
+        </View>
 
+        {shareInviteMode === 'share' ? (
+          <View style={styles.shareOptionsContainer}>
+            <TouchableOpacity
+              style={styles.shareOption}
+              onPress={handleShare}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="share" size={24} color="#3797EF" />
+              <Text style={styles.shareOptionText}>Share Link</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.shareOption}
+              onPress={() => setShareInviteMode('invite')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="person-add" size={24} color="#3797EF" />
+              <Text style={styles.shareOptionText}>Invite Friends</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.inviteContainer}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search friends..."
+              value={searchQuery}
+              onChangeText={(text) => {
+                setSearchQuery(text);
+                searchUsers(text);
+              }}
+              autoCapitalize="none"
+            />
+
+            {searching && (
+              <View style={styles.searchingContainer}>
+                <ActivityIndicator size="small" color="#3797EF" />
+                <Text style={styles.searchingText}>Searching...</Text>
+              </View>
+            )}
+
+            <FlatList
+              data={searchResults}
+              keyExtractor={(item) => item._id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.userItem,
+                    selectedUsers.some(u => u._id === item._id) && styles.userItemSelected
+                  ]}
+                  onPress={() => toggleUserSelection(item)}
+                  activeOpacity={0.7}
+                >
+                  <Image
+                    source={{
+                      uri: item.profilePicture
+                        ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+                        : 'https://placehold.co/40x40.png?text=👤'
+                    }}
+                    style={styles.userAvatar}
+                  />
+                  <Text style={styles.userUsername}>{item.username}</Text>
+                  {selectedUsers.some(u => u._id === item._id) && (
+                    <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
+                  )}
+                </TouchableOpacity>
+              )}
+              style={styles.usersList}
+            />
+
+            {selectedUsers.length > 0 && (
+              <TouchableOpacity
+                style={styles.sendInvitesButton}
+                onPress={handleSendInvites}
+                disabled={inviting}
+                activeOpacity={0.7}
+              >
+                {inviting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.sendInvitesButtonText}>
+                    Send Invites ({selectedUsers.length})
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
   const getCurrentPrice = () => {
     if (!isPaidEvent()) return 0;
     
@@ -572,7 +823,192 @@ export default function EventDetailsScreen() {
     }
   };
 
-  // FIXED: Enhanced leave event function using centralized store
+  // ============================================
+  // PHOTO MODERATION FUNCTIONS
+  // ============================================
+
+  // Helper function to check if current user can moderate
+  const canModerate = () => {
+    return isHost || isCoHost;
+  };
+
+  // Handle photo long press for hosts (auto-enter selection mode)
+  const handlePhotoLongPress = (photo) => {
+  if (!canModerate()) return;
+  
+  // Haptic feedback - Fixed import
+  if (Platform.OS === 'ios') {
+    try {
+      const { impactAsync, ImpactFeedbackStyle } = require('expo-haptics');
+      impactAsync(ImpactFeedbackStyle.Medium);
+    } catch (error) {
+      console.log('Haptic feedback not available:', error);
+    }
+  }
+
+  // Enter selection mode automatically
+  setSelectionMode(true);
+  setSelectedPhotos([photo._id]);
+  
+  console.log('📸 Entered selection mode with photo:', photo._id);
+};
+
+
+  // Handle photo tap in selection mode
+  const handlePhotoTap = (photo) => {
+    if (!selectionMode) {
+      // Normal tap - view photo
+      navigation.navigate('PostDetailsScreen', { postId: photo._id });
+      return;
+    }
+
+    // Selection mode - toggle selection
+    setSelectedPhotos(prev => {
+      const isSelected = prev.includes(photo._id);
+      if (isSelected) {
+        return prev.filter(id => id !== photo._id);
+      } else {
+        return [...prev, photo._id];
+      }
+    });
+  };
+
+  // Exit selection mode
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedPhotos([]);
+    console.log('📸 Exited selection mode');
+  };
+
+  // Remove single photo
+  const removeSinglePhoto = async (photoId) => {
+  try {
+    setModeratingPhotos(true);
+    
+    // FIXED: Use events router endpoint
+    const response = await api.delete(`/api/events/moderate/${photoId}`, {
+      data: { reason: 'Removed by host' }
+    });
+
+    if (response.data.success) {
+      // Remove from local state
+      setEventPhotos(prev => prev.filter(p => p._id !== photoId));
+      
+      Alert.alert(
+        'Success',
+        'Photo removed from event successfully',
+        [{ text: 'OK' }]
+      );
+    }
+    
+  } catch (error) {
+    console.error('❌ Error removing photo:', error);
+    
+    let errorMessage = 'Failed to remove photo. Please try again.';
+    
+    if (error.response?.status === 404) {
+      errorMessage = 'Photo not found or moderation feature unavailable.';
+    } else if (error.response?.status === 403) {
+      errorMessage = 'You do not have permission to remove this photo.';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    }
+    
+    Alert.alert('Error', errorMessage, [{ text: 'OK' }]);
+  } finally {
+    setModeratingPhotos(false);
+  }
+};
+
+  // Remove selected photos (bulk)
+  const removeSelectedPhotos = async () => {
+  if (selectedPhotos.length === 0) return;
+
+  Alert.alert(
+    'Remove Photos',
+    `Remove ${selectedPhotos.length} photo${selectedPhotos.length === 1 ? '' : 's'} from event?`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Remove', 
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setModeratingPhotos(true);
+            
+            // FIXED: Use events router endpoint
+            const response = await api.post('/api/events/bulk-moderate', {
+              photoIds: selectedPhotos,
+              eventId: eventId,
+              action: 'remove',
+              reason: 'Bulk removed by host'
+            });
+
+            if (response.data.success) {
+              // Remove from local state
+              setEventPhotos(prev => 
+                prev.filter(p => !selectedPhotos.includes(p._id))
+              );
+              
+              // Exit selection mode
+              exitSelectionMode();
+              
+              Alert.alert(
+                'Success',
+                `Successfully removed ${response.data.results.succeeded} photo${response.data.results.succeeded === 1 ? '' : 's'} from the event.`,
+                [{ text: 'OK' }]
+              );
+            }
+            
+          } catch (error) {
+            console.error('❌ Error bulk removing photos:', error);
+            
+            let errorMessage = 'Failed to remove photos. Please try again.';
+            
+            if (error.response?.status === 404) {
+              errorMessage = 'Photo moderation feature is not available. Please contact support.';
+            } else if (error.response?.status === 403) {
+              errorMessage = 'You do not have permission to remove these photos.';
+            } else if (error.response?.data?.message) {
+              errorMessage = error.response.data.message;
+            }
+            
+            Alert.alert('Error', errorMessage, [{ text: 'OK' }]);
+          } finally {
+            setModeratingPhotos(false);
+          }
+        }
+      }
+    ]
+  );
+};
+
+
+  // Auto-cleanup for user removal
+  const handleUserPhotoCleanup = async (userId, reason = 'User removed from event') => {
+  try {
+    console.log(`🧹 Auto-cleaning photos for user: ${userId}, reason: ${reason}`);
+    
+    // FIXED: Use events router endpoint
+    const response = await api.post(`/api/events/cleanup-user-photos/${eventId}`, {
+      userId: userId,
+      reason: reason
+    });
+
+    if (response.data.success && response.data.photosRemoved > 0) {
+      // Refresh event photos to reflect changes
+      await fetchEventPhotos();
+      
+      console.log(`✅ Auto-cleanup completed: ${response.data.photosRemoved} photos removed`);
+    }
+    
+  } catch (error) {
+    console.error('❌ Auto-cleanup error:', error);
+    // Don't show error to user as this is background cleanup
+  }
+};
+
+  // FIXED: Enhanced leave event function using centralized store WITH photo cleanup
   const handleLeaveEvent = async () => {
     try {
       // Check if user paid for this event
@@ -582,8 +1018,17 @@ export default function EventDetailsScreen() {
 
       let confirmMessage = 'Are you sure you want to leave this event?';
       
+      // Add photo cleanup warning
+      const userPhotosInEvent = eventPhotos.filter(p => 
+        String(p.user._id || p.user) === String(currentUser._id)
+      ).length;
+      
+      if (userPhotosInEvent > 0) {
+        confirmMessage += `\n\nNote: Your ${userPhotosInEvent} photo${userPhotosInEvent === 1 ? '' : 's'} will be removed from the event.`;
+      }
+      
       if (userPayment) {
-        confirmMessage += '\n\nNote: Your payment will remain valid if you want to rejoin later.';
+        confirmMessage += '\n\nYour payment will remain valid if you want to rejoin later.';
       }
 
       Alert.alert(
@@ -601,13 +1046,17 @@ export default function EventDetailsScreen() {
                 // Add smooth animation
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 
+                // First, leave the event
                 const result = await toggleRSVP(eventId, currentUser._id, event);
                 
                 if (result.success && !result.attending) {
+                  // Auto-cleanup user's photos
+                  await handleUserPhotoCleanup(currentUser._id, 'User left event');
+                  
                   // FIXED: Force UI update immediately
                   console.log('✅ Successfully left event, updating UI');
                   setForceUpdate(prev => prev + 1);
-                  Alert.alert('Left Event', 'You have left the event.');
+                  Alert.alert('Left Event', 'You have left the event and your photos have been removed.');
                 } else if (!result.success) {
                   Alert.alert('Error', result.error);
                 }
@@ -819,145 +1268,6 @@ export default function EventDetailsScreen() {
     return { text: 'Join Event', disabled: false };
   };
 
-  // ✅ Enhanced Glassmorphic Bottom Action Bar with photo permissions
-  const renderBottomActionBar = () => {
-    const joinButtonInfo = getJoinButtonInfo();
-
-    if (isHost || isCoHost) {
-      // Host/Co-host glassmorphic bottom bar
-      return (
-        <View style={styles.bottomBarContainer}>
-          <BlurView 
-            style={styles.bottomBar} 
-            intensity={40}
-            tint="light"
-          >
-            <View style={styles.bottomBarContent}>
-              {/* Scan */}
-              <TouchableOpacity
-                style={styles.bottomBarButton}
-                onPress={handleOpenScanner}
-                activeOpacity={0.7}
-              >
-                <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="scan" size={20} color="#000000" />
-                  <Text style={styles.bottomBarButtonText}>Scan</Text>
-                </View>
-              </TouchableOpacity>
-
-              {/* Invite */}
-              <TouchableOpacity
-                style={styles.bottomBarButton}
-                onPress={() => handleShareInvite('invite')}
-                activeOpacity={0.7}
-              >
-                <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="person-add" size={20} color="#000000" />
-                  <Text style={styles.bottomBarButtonText}>Invite</Text>
-                </View>
-              </TouchableOpacity>
-
-              {/* Add Photos - Only show if photos are allowed */}
-              {canUploadPhotos() && (
-                <TouchableOpacity
-                  style={styles.bottomBarButton}
-                  onPress={handleUploadPhoto}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.bottomBarButtonInner}>
-                    <Ionicons name="camera" size={20} color="#000000" />
-                    <Text style={styles.bottomBarButtonText}>Add photos</Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-
-              {/* Edit */}
-              <TouchableOpacity
-                style={styles.bottomBarButton}
-                onPress={() => navigation.navigate('EditEventScreen', { eventId })}
-                activeOpacity={0.7}
-              >
-                <View style={styles.bottomBarButtonInner}>
-                  <Ionicons name="create" size={20} color="#000000" />
-                  <Text style={styles.bottomBarButtonText}>Edit</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          </BlurView>
-        </View>
-      );
-    } else {
-      // Regular user glassmorphic bottom bar
-      return (
-        <View style={styles.bottomBarContainer}>
-          <BlurView 
-            style={styles.bottomBar} 
-            intensity={40}
-            tint="light"
-          >
-            <View style={styles.bottomBarContent}>
-              {/* Add Photos - Only show if attending AND photos are allowed */}
-              {realTimeIsAttending && canUploadPhotos() && !isEventEnded() && (
-                <TouchableOpacity
-                  style={styles.bottomBarButton}
-                  onPress={handleUploadPhoto}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.bottomBarButtonInner}>
-                    <Ionicons name="camera" size={20} color="#000000" />
-                    <Text style={styles.bottomBarButtonText}>Add photos</Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-
-              {/* Main Action Button (Join/Going) */}
-              <TouchableOpacity
-                style={[
-                  styles.bottomBarMainButton,
-                  joinButtonInfo.disabled && styles.bottomBarMainButtonDisabled,
-                  joinButtonInfo.showWent && styles.bottomBarWentButton,
-                  isEventLive() && styles.bottomBarLiveButton
-                ]}
-                onPress={joinButtonInfo.showWent ? handleLeaveEvent : attendEvent}
-                disabled={joinButtonInfo.disabled || requestLoading}
-                activeOpacity={0.7}
-              >
-                <View style={styles.bottomBarMainButtonInner}>
-                  {requestLoading ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      {joinButtonInfo.isPaid && <Ionicons name="card" size={18} color="#FFFFFF" />}
-                      {joinButtonInfo.showWent && <Ionicons name="checkmark" size={18} color="#FFFFFF" />}
-                      {isEventLive() && <Ionicons name="radio" size={18} color="#FFFFFF" />}
-                      <Text style={styles.bottomBarMainButtonText}>
-                        {isEventLive() && realTimeIsAttending ? 'Live Now' : joinButtonInfo.text}
-                      </Text>
-                    </>
-                  )}
-                </View>
-              </TouchableOpacity>
-
-              {/* Share (if allowed) */}
-              {canShare && (
-                <TouchableOpacity
-                  style={styles.bottomBarButton}
-                  onPress={() => handleShareInvite('share')}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.bottomBarButtonInner}>
-                    <Ionicons name="share" size={20} color="#000000" />
-                    <Text style={styles.bottomBarButtonText}>Share</Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-          </BlurView>
-        </View>
-      );
-    }
-  };
-
   // NEW: Enhanced description component with read more functionality
   const renderDescription = () => {
     if (!event.description) return null;
@@ -988,57 +1298,130 @@ export default function EventDetailsScreen() {
     );
   };
 
-  // NEW: Enhanced photo section with better grid layout
+  // ENHANCED: Photo section with host moderation capabilities
   const renderPhotoSection = () => {
-    if (!showPhotoSection()) return null;
+    if (!showPhotoSection() && !selectionMode) return null;
 
     return (
       <View style={styles.photosSection}>
+        {/* Enhanced Header with Selection Mode Controls */}
         <View style={styles.photosSectionHeader}>
-          <Text style={styles.photosSectionTitle}>
-            Photos ({eventPhotos.length})
-            {!event.allowPhotos && (
-              <Text style={styles.photosDisabledText}> • Sharing disabled</Text>
+          <View style={styles.photosSectionTitleContainer}>
+            <Text style={styles.photosSectionTitle}>
+              Photos ({eventPhotos.length})
+              {!event.allowPhotos && (
+                <Text style={styles.photosDisabledText}> • Sharing disabled</Text>
+              )}
+            </Text>
+            
+            {/* Selection Mode Indicator */}
+            {selectionMode && (
+              <View style={styles.selectionModeIndicator}>
+                <Text style={styles.selectionModeText}>
+                  {selectedPhotos.length} selected
+                </Text>
+              </View>
             )}
-          </Text>
-          {eventPhotos.length > 6 && (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('EventPhotosScreen', { eventId })}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.seeAllPhotosText}>See All</Text>
-            </TouchableOpacity>
-          )}
+          </View>
+
+          <View style={styles.photosSectionActions}>
+            {/* Selection Mode Controls */}
+            {selectionMode ? (
+              <View style={styles.selectionModeActions}>
+                <TouchableOpacity
+                  onPress={exitSelectionMode}
+                  style={styles.selectionActionButton}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.selectionActionButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                {selectedPhotos.length > 0 && (
+                  <TouchableOpacity
+                    onPress={removeSelectedPhotos}
+                    style={[styles.selectionActionButton, styles.removeButton]}
+                    disabled={moderatingPhotos}
+                    activeOpacity={0.7}
+                  >
+                    {moderatingPhotos ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.removeButtonText}>
+                        Remove ({selectedPhotos.length})
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              // Normal Mode Controls
+              <>
+                {eventPhotos.length > 6 && (
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('EventPhotosScreen', { eventId })}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.seeAllPhotosText}>See All</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
         </View>
-        
+
+        {/* Photos Loading State */}
         {photosLoading ? (
           <View style={styles.photosLoadingContainer}>
             <ActivityIndicator size="small" color="#3797EF" />
             <Text style={styles.photosLoadingText}>Loading photos...</Text>
           </View>
-        ) : (
+        ) : eventPhotos.length > 0 ? (
+          /* Enhanced Photo Grid with Selection Support */
           <FlatList
-            data={eventPhotos.slice(0, 6)}
+            data={eventPhotos.slice(0, selectionMode ? eventPhotos.length : 6)}
             renderItem={({ item, index }) => (
               <TouchableOpacity
                 style={[
                   styles.photoItem,
-                  // Create varied aspect ratios for more dynamic grid
-                  index === 0 && eventPhotos.length > 1 && styles.featuredPhoto
+                  // Remove the featured photo aspect ratio issue
+                  // Selection mode styling
+                  selectedPhotos.includes(item._id) && styles.photoItemSelected
                 ]}
-                onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
+                onPress={() => handlePhotoTap(item)}
+                onLongPress={() => handlePhotoLongPress(item)}
+                disabled={moderatingPhotos}
                 activeOpacity={0.9}
               >
+                {/* Photo Image */}
                 <Image
                   source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
                   style={styles.photoImage}
                   loadingIndicatorSource={{ uri: 'https://placehold.co/100x100.png' }}
                 />
-                {/* NEW: Photo overlay for better visual appeal */}
-                <LinearGradient
-                  colors={['transparent', 'rgba(0,0,0,0.3)']}
-                  style={styles.photoOverlay}
-                />
+
+                {/* Selection Checkbox */}
+                {selectionMode && (
+                  <View style={styles.photoSelectionOverlay}>
+                    <View style={[
+                      styles.photoCheckbox,
+                      selectedPhotos.includes(item._id) && styles.photoCheckboxSelected
+                    ]}>
+                      {selectedPhotos.includes(item._id) && (
+                        <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                {/* Photo overlay for better visual appeal */}
+                {!selectionMode && (
+                  <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.3)']}
+                    style={styles.photoOverlay}
+                  />
+                )}
+
+                {/* REMOVED: Host indicator for moderation - per user request */}
               </TouchableOpacity>
             )}
             keyExtractor={(item) => item._id}
@@ -1046,146 +1429,72 @@ export default function EventDetailsScreen() {
             style={styles.photosGrid}
             scrollEnabled={false}
           />
+        ) : (
+          /* Empty States */
+          <>
+            {/* Photo upload prompt for attendees */}
+            {realTimeIsAttending && canUploadPhotos() && !isEventEnded() && (
+              <TouchableOpacity
+                style={styles.photoUploadPrompt}
+                onPress={handleUploadPhoto}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="camera" size={32} color="#3797EF" />
+                <Text style={styles.photoUploadPromptTitle}>Be the first to share photos!</Text>
+                <Text style={styles.photoUploadPromptSubtitle}>Tap to add photos from this event</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Photo disabled message */}
+            {!event.allowPhotos && (
+              <View style={styles.photosDisabledContainer}>
+                <Ionicons name="camera-off" size={32} color="#8E8E93" />
+                <Text style={styles.photosDisabledTitle}>Photo sharing disabled</Text>
+                <Text style={styles.photosDisabledSubtitle}>The host has disabled photo sharing for this event</Text>
+              </View>
+            )}
+          </>
         )}
 
-        {/* NEW: Photo upload prompt for attendees */}
-        {realTimeIsAttending && canUploadPhotos() && !isEventEnded() && eventPhotos.length === 0 && (
-          <TouchableOpacity
-            style={styles.photoUploadPrompt}
-            onPress={handleUploadPhoto}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="camera" size={32} color="#3797EF" />
-            <Text style={styles.photoUploadPromptTitle}>Be the first to share photos!</Text>
-            <Text style={styles.photoUploadPromptSubtitle}>Tap to add photos from this event</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* NEW: Photo disabled message */}
-        {!event.allowPhotos && (
-          <View style={styles.photosDisabledContainer}>
-            <Ionicons name="camera-off" size={32} color="#8E8E93" />
-            <Text style={styles.photosDisabledTitle}>Photo sharing disabled</Text>
-            <Text style={styles.photosDisabledSubtitle}>The host has disabled photo sharing for this event</Text>
+        {/* Selection Mode Instructions */}
+        {selectionMode && eventPhotos.length > 0 && (
+          <View style={styles.selectionModeInstructions}>
+            <Text style={styles.selectionModeInstructionsText}>
+              Tap photos to select • Selected photos will be removed from the event
+            </Text>
           </View>
         )}
       </View>
     );
   };
 
-  // NEW: Enhanced share/invite modal
-  const renderShareInviteModal = () => (
-    <Modal
-      visible={showShareInviteModal}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={() => setShowShareInviteModal(false)}
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <TouchableOpacity
-            onPress={() => setShowShareInviteModal(false)}
-            style={styles.modalCloseButton}
-          >
-            <Text style={styles.modalCloseText}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.modalTitle}>
-            {shareInviteMode === 'share' ? 'Share Event' : 'Invite Friends'}
-          </Text>
-          <View style={styles.modalHeaderSpacer} />
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading event...</Text>
         </View>
-
-        {shareInviteMode === 'share' ? (
-          <View style={styles.shareOptionsContainer}>
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={handleShare}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="share" size={24} color="#3797EF" />
-              <Text style={styles.shareOptionText}>Share Link</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={() => setShareInviteMode('invite')}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="person-add" size={24} color="#3797EF" />
-              <Text style={styles.shareOptionText}>Invite Friends</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.inviteContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search friends..."
-              value={searchQuery}
-              onChangeText={(text) => {
-                setSearchQuery(text);
-                searchUsers(text);
-              }}
-              autoCapitalize="none"
-            />
-
-            {searching && (
-              <View style={styles.searchingContainer}>
-                <ActivityIndicator size="small" color="#3797EF" />
-                <Text style={styles.searchingText}>Searching...</Text>
-              </View>
-            )}
-
-            <FlatList
-              data={searchResults}
-              keyExtractor={(item) => item._id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.userItem,
-                    selectedUsers.some(u => u._id === item._id) && styles.userItemSelected
-                  ]}
-                  onPress={() => toggleUserSelection(item)}
-                  activeOpacity={0.7}
-                >
-                  <Image
-                    source={{
-                      uri: item.profilePicture
-                        ? `http://${API_BASE_URL}:3000${item.profilePicture}`
-                        : 'https://placehold.co/40x40.png?text=👤'
-                    }}
-                    style={styles.userAvatar}
-                  />
-                  <Text style={styles.userUsername}>{item.username}</Text>
-                  {selectedUsers.some(u => u._id === item._id) && (
-                    <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
-                  )}
-                </TouchableOpacity>
-              )}
-              style={styles.usersList}
-            />
-
-            {selectedUsers.length > 0 && (
-              <TouchableOpacity
-                style={styles.sendInvitesButton}
-                onPress={handleSendInvites}
-                disabled={inviting}
-                activeOpacity={0.7}
-              >
-                {inviting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.sendInvitesButtonText}>
-                    Send Invites ({selectedUsers.length})
-                  </Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
       </SafeAreaView>
-    </Modal>
-  );
+    );
+  }
 
+  if (!event) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Event not found</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => fetchEvent()}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+    // NEW: Enhanced share/invite modal
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -1232,203 +1541,202 @@ export default function EventDetailsScreen() {
             )}
           </View>
 
-          {/* Enhanced Event Information */}
           {/* Enhanced Content with integrated badges */}
-<Animated.View 
-  style={[
-    styles.contentContainer,
-    { transform: [{ translateY: slideAnim }] }
-  ]}
->
-  {/* Integrated Badges Row */}
-  <View style={styles.integratedBadgeRow}>
-    <View style={styles.leftBadges}>
-      {renderPrivacyBadge()}
-      {renderStatusBadge()}
-    </View>
-    {isPaidEvent() && (
-      <View style={styles.priceBadge}>
-        <Ionicons name="card" size={14} color="#FFFFFF" style={styles.priceBadgeIcon} />
-        <Text style={styles.priceBadgeText}>{getFormattedPrice()}</Text>
-        {event.pricing.earlyBirdPricing?.enabled && 
-         new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
-          <Text style={styles.earlyBirdText}>Early Bird!</Text>
-        )}
-      </View>
-    )}
-  </View>
-
-  {/* Title and Category */}
-  <View style={styles.headerSection}>
-    <Text style={styles.eventTitle}>{event.title}</Text>
-    <View style={styles.categoryRow}>
-      <View style={styles.categoryBadge}>
-        <Text style={styles.categoryText}>{event.category}</Text>
-      </View>
-      {event.tags && event.tags.length > 0 && (
-        <View style={styles.tagsContainer}>
-          {event.tags.slice(0, 3).map((tag, index) => (
-            <View key={index} style={styles.tagBadge}>
-              <Text style={styles.tagText}>#{tag}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </View>
-  </View>
-
-  {/* Enhanced Description with Read More */}
-  {renderDescription()}
-
-  {/* Enhanced Host Information with Co-hosts */}
-  <View style={styles.hostSection}>
-    <TouchableOpacity
-      style={styles.hostInfo}
-      onPress={() => navigation.navigate('ProfileScreen', { userId: event.host?._id })}
-      activeOpacity={0.8}
-    >
-      <Image
-        source={{
-          uri: event.host?.profilePicture
-            ? `http://${API_BASE_URL}:3000${event.host.profilePicture}`
-            : 'https://placehold.co/48x48.png?text=👤'
-        }}
-        style={styles.hostAvatar}
-      />
-      <View style={styles.hostDetails}>
-        <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
-        {event.coHosts && event.coHosts.length > 0 && (
-          <View style={styles.coHostsContainer}>
-            <Text style={styles.coHostLabel}>Co-hosts: </Text>
-            <View style={styles.coHostAvatars}>
-              {event.coHosts.slice(0, 3).map((coHost, index) => (
-                <TouchableOpacity 
-                  key={coHost._id || index}
-                  onPress={() => navigation.navigate('ProfileScreen', { userId: coHost._id })}
-                  style={[styles.coHostAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
-                  activeOpacity={0.8}
-                >
-                  <Image
-                    source={{
-                      uri: coHost.profilePicture
-                        ? `http://${API_BASE_URL}:3000${coHost.profilePicture}`
-                        : 'https://placehold.co/24x24.png?text=👤'
-                    }}
-                    style={styles.coHostAvatarImage}
-                  />
-                </TouchableOpacity>
-              ))}
-              {event.coHosts.length > 3 && (
-                <View style={[styles.coHostAvatar, styles.coHostOverflow, { marginLeft: -8 }]}>
-                  <Text style={styles.coHostOverflowText}>+{event.coHosts.length - 3}</Text>
+          <Animated.View 
+            style={[
+              styles.contentContainer,
+              { transform: [{ translateY: slideAnim }] }
+            ]}
+          >
+            {/* Integrated Badges Row */}
+            <View style={styles.integratedBadgeRow}>
+              <View style={styles.leftBadges}>
+                {renderPrivacyBadge()}
+                {renderStatusBadge()}
+              </View>
+              {isPaidEvent() && (
+                <View style={styles.priceBadge}>
+                  <Ionicons name="card" size={14} color="#FFFFFF" style={styles.priceBadgeIcon} />
+                  <Text style={styles.priceBadgeText}>{getFormattedPrice()}</Text>
+                  {event.pricing.earlyBirdPricing?.enabled && 
+                   new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
+                    <Text style={styles.earlyBirdText}>Early Bird!</Text>
+                  )}
                 </View>
               )}
             </View>
-          </View>
-        )}
-      </View>
-      <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
-    </TouchableOpacity>
-  </View>
 
-  {/* Enhanced Event Details Cards */}
-  <View style={styles.detailsContainer}>
-    {/* Date & Time Card with countdown */}
-    <View style={styles.detailCard}>
-      <View style={styles.detailCardHeader}>
-        <Ionicons name="calendar" size={24} color="#FF6B6B" />
-        <Text style={styles.detailCardTitle}>When</Text>
-        {isEventLive() && (
-          <View style={styles.liveIndicator}>
-            <Text style={styles.liveIndicatorText}>LIVE</Text>
-          </View>
-        )}
-      </View>
-      <Text style={styles.detailCardContent}>{formattedDate}</Text>
-      <Text style={styles.detailCardSubContent}>{formattedTime}</Text>
-    </View>
+            {/* Title and Category */}
+            <View style={styles.headerSection}>
+              <Text style={styles.eventTitle}>{event.title}</Text>
+              <View style={styles.categoryRow}>
+                <View style={styles.categoryBadge}>
+                  <Text style={styles.categoryText}>{event.category}</Text>
+                </View>
+                {event.tags && event.tags.length > 0 && (
+                  <View style={styles.tagsContainer}>
+                    {event.tags.slice(0, 3).map((tag, index) => (
+                      <View key={index} style={styles.tagBadge}>
+                        <Text style={styles.tagText}>#{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </View>
 
-    {/* Location Card */}
-    <View style={styles.detailCard}>
-      <View style={styles.detailCardHeader}>
-        <Ionicons name="location" size={24} color="#4ECDC4" />
-        <Text style={styles.detailCardTitle}>Where</Text>
-      </View>
-      <Text style={styles.detailCardContent}>{event.location}</Text>
-    </View>
+            {/* Enhanced Description with Read More */}
+            {renderDescription()}
 
-    {/* Enhanced Pricing Card for Paid Events */}
-    {isPaidEvent() && (
-      <View style={styles.detailCard}>
-        <View style={styles.detailCardHeader}>
-          <Ionicons name="card" size={24} color="#FFB347" />
-          <Text style={styles.detailCardTitle}>Pricing</Text>
-        </View>
-        <Text style={styles.detailCardContent}>{getFormattedPrice()}</Text>
-        {event.pricing.earlyBirdPricing?.enabled && 
-         new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
-          <Text style={styles.detailCardSubContent}>
-            Early bird until {new Date(event.pricing.earlyBirdPricing.deadline).toLocaleDateString()}
-          </Text>
-        )}
-        {event.pricing.description && (
-          <Text style={styles.detailCardSubContent}>{event.pricing.description}</Text>
-        )}
-        {hasUserPaid() && (
-          <View style={styles.paidStatus}>
-            <Ionicons name="checkmark-circle" size={16} color="#34C759" />
-            <Text style={styles.paidStatusText}>Payment Confirmed</Text>
-          </View>
-        )}
-      </View>
-    )}
+            {/* Enhanced Host Information with Co-hosts */}
+            <View style={styles.hostSection}>
+              <TouchableOpacity
+                style={styles.hostInfo}
+                onPress={() => navigation.navigate('ProfileScreen', { userId: event.host?._id })}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={{
+                    uri: event.host?.profilePicture
+                      ? `http://${API_BASE_URL}:3000${event.host.profilePicture}`
+                      : 'https://placehold.co/48x48.png?text=👤'
+                  }}
+                  style={styles.hostAvatar}
+                />
+                <View style={styles.hostDetails}>
+                  <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
+                  {event.coHosts && event.coHosts.length > 0 && (
+                    <View style={styles.coHostsContainer}>
+                      <Text style={styles.coHostLabel}>Co-hosts: </Text>
+                      <View style={styles.coHostAvatars}>
+                        {event.coHosts.slice(0, 3).map((coHost, index) => (
+                          <TouchableOpacity 
+                            key={coHost._id || index}
+                            onPress={() => navigation.navigate('ProfileScreen', { userId: coHost._id })}
+                            style={[styles.coHostAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
+                            activeOpacity={0.8}
+                          >
+                            <Image
+                              source={{
+                                uri: coHost.profilePicture
+                                  ? `http://${API_BASE_URL}:3000${coHost.profilePicture}`
+                                  : 'https://placehold.co/24x24.png?text=👤'
+                              }}
+                              style={styles.coHostAvatarImage}
+                            />
+                          </TouchableOpacity>
+                        ))}
+                        {event.coHosts.length > 3 && (
+                          <View style={[styles.coHostAvatar, styles.coHostOverflow, { marginLeft: -8 }]}>
+                            <Text style={styles.coHostOverflowText}>+{event.coHosts.length - 3}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
 
-    {/* Enhanced Attendees Card with real-time data */}
-    <TouchableOpacity 
-      style={styles.detailCard}
-      onPress={() => navigation.navigate('AttendeeListScreen', { 
-        eventId,
-        mode: (isHost || isCoHost) ? 'manage' : 'view'
-      })}
-      activeOpacity={0.8}
-      disabled={false}
-    >
-      <View style={styles.detailCardHeader}>
-        <Ionicons name="people" size={24} color="#9B59B6" />
-        <Text style={styles.detailCardTitle}>Who's going</Text>
-        {(event.permissions?.showAttendeesToPublic || isHost || isCoHost) && (
-          <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
-        )}
-      </View>
-      <Text style={styles.detailCardContent}>
-        {realTimeAttendeeCount} {realTimeAttendeeCount === 1 ? 'person' : 'people'} attending
-      </Text>
-      {/* Show check-in status for hosts */}
-      {(isHost || isCoHost) && checkedInCount > 0 && (
-        <Text style={styles.detailCardSubContent}>
-          {checkedInCount} checked in ({Math.round((checkedInCount / realTimeAttendeeCount) * 100) || 0}%)
-        </Text>
-      )}
-    </TouchableOpacity>
+            {/* Enhanced Event Details Cards */}
+            <View style={styles.detailsContainer}>
+              {/* Date & Time Card with countdown */}
+              <View style={styles.detailCard}>
+                <View style={styles.detailCardHeader}>
+                  <Ionicons name="calendar" size={24} color="#FF6B6B" />
+                  <Text style={styles.detailCardTitle}>When</Text>
+                  {isEventLive() && (
+                    <View style={styles.liveIndicator}>
+                      <Text style={styles.liveIndicatorText}>LIVE</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.detailCardContent}>{formattedDate}</Text>
+                <Text style={styles.detailCardSubContent}>{formattedTime}</Text>
+              </View>
 
-    {/* Form Requirement Info */}
-    {event.requiresFormForCheckIn && event.checkInForm && (
-      <View style={styles.detailCard}>
-        <View style={styles.detailCardHeader}>
-          <Ionicons name="document-text" size={24} color="#E67E22" />
-          <Text style={styles.detailCardTitle}>Check-in Requirements</Text>
-        </View>
-        <Text style={styles.detailCardContent}>Form required for check-in</Text>
-        <Text style={styles.detailCardSubContent}>
-          {event.checkInForm.title || 'Check-in form'}
-        </Text>
-      </View>
-    )}
-  </View>
+              {/* Location Card */}
+              <View style={styles.detailCard}>
+                <View style={styles.detailCardHeader}>
+                  <Ionicons name="location" size={24} color="#4ECDC4" />
+                  <Text style={styles.detailCardTitle}>Where</Text>
+                </View>
+                <Text style={styles.detailCardContent}>{event.location}</Text>
+              </View>
 
-  {/* Enhanced Event Photos Section with permissions */}
-  {renderPhotoSection()}
-</Animated.View>
+              {/* Enhanced Pricing Card for Paid Events */}
+              {isPaidEvent() && (
+                <View style={styles.detailCard}>
+                  <View style={styles.detailCardHeader}>
+                    <Ionicons name="card" size={24} color="#FFB347" />
+                    <Text style={styles.detailCardTitle}>Pricing</Text>
+                  </View>
+                  <Text style={styles.detailCardContent}>{getFormattedPrice()}</Text>
+                  {event.pricing.earlyBirdPricing?.enabled && 
+                   new Date() < new Date(event.pricing.earlyBirdPricing.deadline) && (
+                    <Text style={styles.detailCardSubContent}>
+                      Early bird until {new Date(event.pricing.earlyBirdPricing.deadline).toLocaleDateString()}
+                    </Text>
+                  )}
+                  {event.pricing.description && (
+                    <Text style={styles.detailCardSubContent}>{event.pricing.description}</Text>
+                  )}
+                  {hasUserPaid() && (
+                    <View style={styles.paidStatus}>
+                      <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                      <Text style={styles.paidStatusText}>Payment Confirmed</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Enhanced Attendees Card with real-time data */}
+              <TouchableOpacity 
+                style={styles.detailCard}
+                onPress={() => navigation.navigate('AttendeeListScreen', { 
+                  eventId,
+                  mode: (isHost || isCoHost) ? 'manage' : 'view'
+                })}
+                activeOpacity={0.8}
+                disabled={false}
+              >
+                <View style={styles.detailCardHeader}>
+                  <Ionicons name="people" size={24} color="#9B59B6" />
+                  <Text style={styles.detailCardTitle}>Who's going</Text>
+                  {(event.permissions?.showAttendeesToPublic || isHost || isCoHost) && (
+                    <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+                  )}
+                </View>
+                <Text style={styles.detailCardContent}>
+                  {realTimeAttendeeCount} {realTimeAttendeeCount === 1 ? 'person' : 'people'} attending
+                </Text>
+                {/* Show check-in status for hosts */}
+                {(isHost || isCoHost) && checkedInCount > 0 && (
+                  <Text style={styles.detailCardSubContent}>
+                    {checkedInCount} checked in ({Math.round((checkedInCount / realTimeAttendeeCount) * 100) || 0}%)
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {/* Form Requirement Info */}
+              {event.requiresFormForCheckIn && event.checkInForm && (
+                <View style={styles.detailCard}>
+                  <View style={styles.detailCardHeader}>
+                    <Ionicons name="document-text" size={24} color="#E67E22" />
+                    <Text style={styles.detailCardTitle}>Check-in Requirements</Text>
+                  </View>
+                  <Text style={styles.detailCardContent}>Form required for check-in</Text>
+                  <Text style={styles.detailCardSubContent}>
+                    {event.checkInForm.title || 'Check-in form'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Enhanced Event Photos Section with permissions */}
+            {renderPhotoSection()}
+          </Animated.View>
         </ScrollView>
 
         {/* Enhanced Glassmorphic Bottom Action Bar */}
@@ -1439,7 +1747,7 @@ export default function EventDetailsScreen() {
       </Animated.View>
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -1568,19 +1876,25 @@ const styles = StyleSheet.create({
 
   // Enhanced Content
   contentContainer: {
-  backgroundColor: '#FFFFFF',
-  borderTopLeftRadius: 32,
-  borderTopRightRadius: 32,
-  marginTop: -32, // Pull up to overlap cover image
-  paddingTop: 24, // Add top padding for badges
-  paddingHorizontal: 20,
-  paddingBottom: 20,
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: -2 },
-  shadowOpacity: 0.1,
-  shadowRadius: 8,
-  elevation: 8,
-},
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    marginTop: -32, // Pull up to overlap cover image
+    paddingTop: 24, // Add top padding for badges
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  integratedBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
   headerSection: {
     marginBottom: 16,
   },
@@ -1774,6 +2088,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
+    minHeight: 32, // Ensure consistent height
+  },
+  photosSectionTitleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   photosSectionTitle: {
     fontSize: 18,
@@ -1785,6 +2105,49 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     fontWeight: '400',
   },
+  photosSectionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  // Selection mode styles
+  selectionModeIndicator: {
+    backgroundColor: '#3797EF',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 12,
+  },
+  selectionModeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  selectionModeActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  selectionActionButton: {
+    backgroundColor: '#F0F0F0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  selectionActionButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#000000',
+  },
+  removeButton: {
+    backgroundColor: '#FF3B30',
+  },
+  removeButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+
   seeAllPhotosText: {
     fontSize: 14,
     fontWeight: '600',
@@ -1812,14 +2175,39 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  featuredPhoto: {
-    aspectRatio: 2,
+  photoItemSelected: {
+    borderWidth: 3,
+    borderColor: '#3797EF',
   },
   photoImage: {
     width: '100%',
     height: '100%',
     backgroundColor: '#F6F6F6',
   },
+
+  // Selection overlay
+  photoSelectionOverlay: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 10,
+  },
+  photoCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoCheckboxSelected: {
+    backgroundColor: '#3797EF',
+    borderColor: '#3797EF',
+  },
+
+  // Photo overlay
   photoOverlay: {
     position: 'absolute',
     bottom: 0,
@@ -1827,6 +2215,23 @@ const styles = StyleSheet.create({
     right: 0,
     height: '30%',
   },
+
+  // Selection mode instructions
+  selectionModeInstructions: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3797EF',
+  },
+  selectionModeInstructionsText: {
+    fontSize: 14,
+    color: '#666666',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
   photoUploadPrompt: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -2053,11 +2458,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  // Remove the old badgeRow styles and replace with:
-integratedBadgeRow: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: 20,
-},
 });
