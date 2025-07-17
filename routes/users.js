@@ -778,66 +778,6 @@ router.get('/event-stats/:period', protect, async (req, res) => {
   }
 });
 
-// Get event photos for a specific event (for memory viewing)
-// In routes/users.js
-router.get('/event-photos/:eventId', protect, async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    const userId = req.user._id;
-
-    console.log(`📸 Fetching photos for event ${eventId}, user ${userId}`);
-
-    // First get the event to check privacy
-    const event = await Event.findById(eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-
-    // Check if user can view photos based on event privacy
-    const isHost = String(event.host) === String(userId);
-    const isCoHost = event.coHosts?.some(c => String(c) === String(userId));
-    const isAttending = event.attendees?.some(a => String(a) === String(userId));
-    
-    // For public events, anyone can see photos
-    let canViewPhotos = false;
-    
-    if (event.privacyLevel === 'public') {
-      canViewPhotos = true; // Public events = public photos
-      console.log('✅ Public event - photos accessible');
-    } else if (event.privacyLevel === 'friends') {
-      // Check if user follows the host
-      const user = await User.findById(userId);
-      const followsHost = user.following?.some(f => String(f) === String(event.host));
-      canViewPhotos = isHost || isCoHost || isAttending || followsHost;
-      console.log(`🔍 Friends event - Access: ${canViewPhotos}`);
-    } else {
-      // Private/secret events - must be attending
-      canViewPhotos = isHost || isCoHost || isAttending;
-      console.log(`🔒 Private event - Access: ${canViewPhotos}`);
-    }
-
-    if (!canViewPhotos) {
-      console.log(`❌ Access denied for user ${userId} to event ${eventId} photos`);
-      return res.status(403).json({ message: 'Access denied to event photos' });
-    }
-
-    // Fetch photos for this event
-    const photos = await Photo.find({ 
-      event: eventId,
-      isDeleted: { $ne: true } // Handle both undefined and false
-    })
-    .populate('user', 'username profilePicture')
-    .sort({ createdAt: -1 });
-
-    console.log(`📸 Found ${photos.length} photos for event ${eventId}`);
-
-    res.json({ photos });
-  } catch (error) {
-    console.error('Error fetching event photos:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
 // Share a memory from a past event
 router.post('/share-memory', protect, async (req, res) => {
   try {
@@ -1006,7 +946,7 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
 
     console.log(`🔍 Getting event photos for event: ${eventId}, user: ${userId}`);
 
-    // ✅ FIX: Get event with proper population
+    // Get event with proper population
     const event = await Event.findById(eventId)
       .populate('host', '_id username')
       .populate('attendees', '_id username');
@@ -1016,7 +956,7 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // ✅ FIX: Improved access control logic
+    // Enhanced access control logic
     const isHost = String(event.host._id || event.host) === String(userId);
     const isAttendee = event.attendees && event.attendees.some(attendee => 
       String(attendee._id || attendee) === String(userId)
@@ -1031,12 +971,19 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
       });
     }
 
-    // ✅ FIX: Build proper photo query
+    // ✅ FIXED: Query both event and taggedEvent fields for consistency
     let photoQuery = {
-      event: eventId,
       $or: [
-        { isDeleted: { $exists: false } },
-        { isDeleted: false }
+        { event: eventId },
+        { taggedEvent: eventId }
+      ],
+      $and: [
+        {
+          $or: [
+            { isDeleted: { $exists: false } },
+            { isDeleted: false }
+          ]
+        }
       ]
     };
 
@@ -1045,6 +992,7 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
       photoQuery = {
         ...photoQuery,
         $and: [
+          ...photoQuery.$and,
           {
             $or: [
               { user: userId }, // User's own photos
@@ -1065,18 +1013,41 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
       .limit(parseInt(limit))
       .skip(parseInt(offset));
 
-    console.log(`✅ Found ${photos.length} photos for event ${eventId}`);
+    // ✅ ADDED: Add like status to each photo (like the main photos endpoint)
+    const photosWithLikeStatus = photos.map(photo => {
+      const photoObj = photo.toObject();
+      
+      // Initialize likes array if it doesn't exist
+      if (!photoObj.likes) {
+        photoObj.likes = [];
+      }
+      
+      // Calculate user liked status
+      const userLiked = photoObj.likes.some(likeId => 
+        likeId.toString() === userId.toString()
+      );
+      const likeCount = photoObj.likes.length;
+      
+      return {
+        ...photoObj,
+        userLiked,
+        likeCount,
+        commentCount: photoObj.comments ? photoObj.comments.length : 0
+      };
+    });
+
+    console.log(`✅ Found ${photosWithLikeStatus.length} photos for event ${eventId}`);
 
     res.json({
-      photos,
+      photos: photosWithLikeStatus, // ✅ Return photos with like status
       event: {
         _id: event._id,
         title: event.title,
         time: event.time,
         location: event.location
       },
-      total: photos.length,
-      hasMore: photos.length === parseInt(limit),
+      total: photosWithLikeStatus.length,
+      hasMore: photosWithLikeStatus.length === parseInt(limit),
       canUpload: isHost || isAttendee
     });
 

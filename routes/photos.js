@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Photo = require('../models/Photo');
 const Event = require('../models/Event');
-const User = require('../models/User'); // Import the User model
+const User = require('../models/User');
 const protect = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 const router = express.Router();
@@ -21,27 +21,174 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { files: 10 } // Cap uploads at 10 files
+  limits: { files: 10 }
 });
 
-// Upload Photos to an Event
-// routes/photos.js   –  inside this router
-// routes/photos.js - FIXED: Upload Photos Endpoint with Better Permissions
+// ============================================
+// HELPER FUNCTIONS FOR PRIVACY CHECKS
+// ============================================
+
+/**
+ * Check if user can access an event
+ */
+async function checkEventAccess(userId, event) {
+  try {
+    let eventObj;
+    
+    // Handle different input types
+    if (event._id) {
+      eventObj = event; // Already an event object
+    } else if (typeof event === 'string' || event.toString) {
+      // It's an event ID, fetch the event
+      eventObj = await Event.findById(event).populate('host coHosts attendees invitedUsers');
+    } else {
+      return { hasAccess: false, reason: 'Invalid event reference' };
+    }
+
+    if (!eventObj) {
+      return { hasAccess: false, reason: 'Event not found' };
+    }
+
+    const userIdStr = String(userId);
+    const hostIdStr = String(eventObj.host._id || eventObj.host);
+
+    // Host can always access
+    if (hostIdStr === userIdStr) {
+      return { hasAccess: true, reason: 'Host access' };
+    }
+
+    // Co-hosts can access
+    if (eventObj.coHosts && eventObj.coHosts.some(c => String(c._id || c) === userIdStr)) {
+      return { hasAccess: true, reason: 'Co-host access' };
+    }
+
+    // Attendees can access
+    if (eventObj.attendees && eventObj.attendees.some(a => String(a._id || a) === userIdStr)) {
+      return { hasAccess: true, reason: 'Attendee access' };
+    }
+
+    // Check based on privacy level
+    const viewerUser = await User.findById(userId).select('following');
+    if (!viewerUser) {
+      return { hasAccess: false, reason: 'User not found' };
+    }
+
+    const isFollowingHost = viewerUser.following.some(f => String(f) === hostIdStr);
+
+    switch (eventObj.privacyLevel) {
+      case 'public':
+        return { hasAccess: true, reason: 'Public event' };
+      case 'friends':
+        if (isFollowingHost) {
+          return { hasAccess: true, reason: 'Friend access' };
+        }
+        break;
+      case 'private':
+      case 'secret':
+        // Only invited users can access
+        if (eventObj.invitedUsers && eventObj.invitedUsers.some(i => String(i._id || i) === userIdStr)) {
+          return { hasAccess: true, reason: 'Invited access' };
+        }
+        break;
+    }
+
+    return { hasAccess: false, reason: 'Privacy restriction' };
+
+  } catch (error) {
+    console.error('Event access check error:', error);
+    return { hasAccess: false, reason: 'Check failed' };
+  }
+}
+
+/**
+ * Check if user can view a photo based on privacy settings
+ */
+async function checkPhotoAccess(userId, photo) {
+  try {
+    const userIdStr = String(userId);
+    const photoOwnerIdStr = String(photo.user._id || photo.user);
+
+    // Owner can always access
+    if (photoOwnerIdStr === userIdStr) {
+      return { hasAccess: true, reason: 'Owner access' };
+    }
+
+    // Check if photo is deleted
+    if (photo.isDeleted) {
+      return { hasAccess: false, reason: 'Photo deleted' };
+    }
+
+    // Check if photo is moderated/rejected
+    if (photo.moderation && photo.moderation.status === 'rejected') {
+      return { hasAccess: false, reason: 'Photo moderated' };
+    }
+
+    // Get photo owner's privacy settings if not already populated
+    let photoUser = photo.user;
+    if (typeof photoUser === 'string' || !photoUser.hasOwnProperty('isPublic')) {
+      photoUser = await User.findById(photoOwnerIdStr).select('isPublic followers');
+      if (!photoUser) {
+        return { hasAccess: false, reason: 'Photo owner not found' };
+      }
+    }
+
+    // Get viewer's following list
+    const viewerUser = await User.findById(userId).select('following');
+    if (!viewerUser) {
+      return { hasAccess: false, reason: 'Viewer not found' };
+    }
+
+    const isFollowingOwner = viewerUser.following.some(f => String(f) === photoOwnerIdStr);
+
+    // If photo is from a private account and viewer doesn't follow them
+    if (photoUser.isPublic === false && !isFollowingOwner) {
+      // Check if they have access through the event
+      if (photo.event || photo.taggedEvent) {
+        const eventId = photo.event || photo.taggedEvent;
+        const eventAccess = await checkEventAccess(userId, eventId);
+        if (!eventAccess.hasAccess) {
+          return { hasAccess: false, reason: 'Private account - not following and no event access' };
+        }
+        // If they have event access, continue to event privacy check
+      } else {
+        return { hasAccess: false, reason: 'Private account - not following' };
+      }
+    }
+
+    // Check event privacy if photo is tagged to an event
+    if (photo.event || photo.taggedEvent) {
+      const eventId = photo.event || photo.taggedEvent;
+      const eventAccess = await checkEventAccess(userId, eventId);
+      if (!eventAccess.hasAccess) {
+        return { hasAccess: false, reason: `Event privacy restriction: ${eventAccess.reason}` };
+      }
+    }
+
+    return { hasAccess: true, reason: 'Access granted' };
+
+  } catch (error) {
+    console.error('Photo access check error:', error);
+    return { hasAccess: false, reason: 'Check failed' };
+  }
+}
+
+// ============================================
+// UPLOAD ENDPOINTS
+// ============================================
 
 // Upload Photos to an Event
-// FIXED VERSION - routes/photos.js
-// Upload Photos to an Event - FIXED permission checks
 router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res) => {
   const { eventId } = req.params;
 
   try {
     const event = await Event.findById(eventId).populate('host');
-    if (!event) return res.status(404).json({ message: 'Event not found' });
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
 
     console.log(`📸 Photo upload attempt - User: ${req.user._id}, Event: ${event.title}`);
-    console.log(`👥 Event attendees:`, event.attendees.map(id => String(id)));
 
-    /* ─── 1) permission checks ───────────────────────────────────────────── */
+    // Permission checks
     if (!event.allowPhotos) {
       console.log('❌ Photo uploads disabled for this event');
       return res.status(403).json({ message: 'Photo uploads are disabled' });
@@ -57,31 +204,26 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
       return res.status(403).json({ message: 'Only attendees may upload' });
     }
 
-    // ✅ Allow uploads at any time (before, during, and after events)
-    console.log('✅ Upload timing: Always allowed - no time restrictions');
-
     if (req.files.length === 0) {
       return res.status(400).json({ message: 'No photos uploaded' });
     }
 
     console.log(`✅ Permission granted - uploading ${req.files.length} photos`);
 
-    /* ─── 2) save a Photo doc for every file ─────────────────────────────── */
+    // Save photos
     const savedPhotos = [];
     for (const file of req.files) {
       const p = new Photo({
         user: req.user._id,
-        event: eventId,           // ✅ MAIN: Save with 'event' field
-        taggedEvent: eventId,     // ✅ ALSO: Save with 'taggedEvent' field for compatibility
+        event: eventId,           // ✅ Primary field
+        taggedEvent: eventId,     // ✅ Compatibility field
         paths: [`/uploads/photos/${file.filename}`],
         visibleInEvent: true,
       });
       await p.save();
 
-      /* do NOT re‑add a photo the host previously removed */
-      // ✅ FIXED: Check if removedPhotos array exists before using includes()
+      // Add to event if not removed
       if (!event.removedPhotos || !event.removedPhotos.includes(p._id)) {
-        // ✅ FIXED: Ensure photos array exists before pushing
         if (!event.photos) {
           event.photos = [];
         }
@@ -91,27 +233,207 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
     }
     await event.save();
 
-    /* also add the photos to the uploader's profile pics array */
+    // Add to user's photos
     await User.findByIdAndUpdate(
       req.user._id,
-      { $addToSet: { photos: { $each: savedPhotos.map(p => p._id) } } },
+      { $addToSet: { photos: { $each: savedPhotos.map(p => p._id) } } }
     );
 
     console.log(`✅ Successfully uploaded ${savedPhotos.length} photos to event`);
     
-    // ✅ ENHANCED: Return more detailed response
-    res.status(201).json({
-      success: true,
-      photos: savedPhotos,
-      message: `Successfully uploaded ${savedPhotos.length} photo(s)`,
-      eventId: eventId
-    });
+    res.status(200).json(user.photos);
   } catch (error) {
-    console.error('❌ Photo upload error:', error);
+    console.error('Error fetching user posts:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+// Share Photo
+router.get('/share/:photoId', protect, async (req, res) => {
+  try {
+    const photo = await Photo.findById(req.params.photoId);
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Check access
+    const { hasAccess } = await checkPhotoAccess(req.user._id, photo);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied to this photo' });
+    }
+
+    // Increment share count
+    photo.shareCount += 1;
+    await photo.save();
+
+    const shareLink = `${req.protocol}://${req.get('host')}/photos/${photo._id}`;
+    const socialLinks = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
+      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
+      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
+      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
+    };
+
+    res.status(200).json({ shareLink, socialLinks });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get trending photos
+router.get('/trending', protect, async (req, res) => {
+  try {
+    const photos = await Photo.find({
+      isDeleted: { $ne: true }
+    })
+    .populate('user', 'username profilePicture isPublic')
+    .sort({ likes: -1 })
+    .limit(10);
+
+    // Filter for accessible photos
+    const accessiblePhotos = [];
+    for (const photo of photos) {
+      const { hasAccess } = await checkPhotoAccess(req.user._id, photo);
+      if (hasAccess) {
+        accessiblePhotos.push(photo);
+      }
+    }
+
+    res.status(200).json(accessiblePhotos);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ============================================
+// HOST MODERATION ENDPOINTS
+// ============================================
+
+// Host/Co-host moderate photo
+router.delete('/moderate/:photoId', protect, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+    const { reason } = req.body;
+    
+    const photo = await Photo.findById(photoId).populate('event');
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Check if user can moderate (host/co-host)
+    let canModerate = false;
+    if (photo.event) {
+      const isHost = String(photo.event.host) === String(req.user._id);
+      const isCoHost = photo.event.coHosts && photo.event.coHosts.some(c => 
+        String(c) === String(req.user._id)
+      );
+      canModerate = isHost || isCoHost;
+    }
+
+    if (!canModerate) {
+      return res.status(403).json({ message: 'Not authorized to moderate this photo' });
+    }
+
+    // Update moderation status
+    if (!photo.moderation) {
+      photo.moderation = {};
+    }
+    photo.moderation.status = 'rejected';
+    photo.moderation.moderatedBy = req.user._id;
+    photo.moderation.moderatedAt = new Date();
+    photo.moderation.moderationNote = reason || 'Removed by event host';
+    photo.visibleInEvent = false;
+    
+    await photo.save();
+
+    // Remove from event photos array
+    if (photo.event) {
+      await Event.findByIdAndUpdate(
+        photo.event._id,
+        { 
+          $pull: { photos: photo._id },
+          $addToSet: { removedPhotos: photo._id }
+        }
+      );
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Photo moderated successfully',
+      action: 'rejected'
+    });
+    
+  } catch (error) {
+    console.error('Photo moderation error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Flag photo for review
+router.post('/flag/:photoId', protect, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const photoId = req.params.photoId;
+    
+    const photo = await Photo.findById(photoId);
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Check access to photo
+    const { hasAccess } = await checkPhotoAccess(req.user._id, photo);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied to this photo' });
+    }
+    
+    // Initialize moderation if it doesn't exist
+    if (!photo.moderation) {
+      photo.moderation = {
+        status: 'approved',
+        flaggedBy: []
+      };
+    }
+
+    // Check if already flagged by this user
+    const alreadyFlagged = photo.moderation.flaggedBy && photo.moderation.flaggedBy.some(
+      flag => String(flag.user) === String(req.user._id)
+    );
+    
+    if (alreadyFlagged) {
+      return res.status(400).json({ message: 'You have already flagged this photo' });
+    }
+
+    // Add flag
+    if (!photo.moderation.flaggedBy) {
+      photo.moderation.flaggedBy = [];
+    }
+    
+    photo.moderation.flaggedBy.push({
+      user: req.user._id,
+      reason: reason || 'Inappropriate content',
+      flaggedAt: new Date()
+    });
+    
+    // Update status if enough flags
+    if (photo.moderation.flaggedBy.length >= 3) {
+      photo.moderation.status = 'flagged';
+    }
+    
+    await photo.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Photo flagged for review',
+      flagCount: photo.moderation.flaggedBy.length
+    });
+    
+  } catch (error) {
+    console.error('Photo flag error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Single photo upload
 router.post('/upload', protect, upload.single('photo'), async (req, res) => {
   try {
     const { eventId, caption } = req.body;
@@ -146,8 +468,8 @@ router.post('/upload', protect, upload.single('photo'), async (req, res) => {
     // Create photo document
     const photo = new Photo({
       user: req.user._id,
-      event: eventId,           // ✅ MAIN: Save with 'event' field
-      taggedEvent: eventId,     // ✅ ALSO: Save with 'taggedEvent' field for compatibility
+      event: eventId,           // ✅ Primary field
+      taggedEvent: eventId,     // ✅ Compatibility field
       paths: [`/uploads/photos/${req.file.filename}`],
       visibleInEvent: true,
       caption: caption || ''
@@ -185,236 +507,80 @@ router.post('/upload', protect, upload.single('photo'), async (req, res) => {
   }
 });
 
+// ============================================
+// PHOTO RETRIEVAL WITH PRIVACY
+// ============================================
+
 // Get all photos
 router.get('/', protect, async (req, res) => {
   try {
     const { eventId, limit = 50, offset = 0 } = req.query;
     const userId = req.user._id;
     
-    let query = {};
+    let query = {
+      isDeleted: { $ne: true }
+    };
     
     // If eventId is provided, filter by event
     if (eventId) {
-      query = {
-        $or: [
-          { event: eventId },
-          { taggedEvent: eventId }
-        ],
-        $and: [
-          {
-            $or: [
-              { isDeleted: { $exists: false } },
-              { isDeleted: false }
-            ]
-          }
-        ]
-      };
+      query.$or = [
+        { event: eventId },
+        { taggedEvent: eventId }
+      ];
     }
     
     const photos = await Photo.find(query)
-      .populate('user', 'username profilePicture')
-      .populate('event', 'title time')
+      .populate('user', 'username profilePicture isPublic followers')
+      .populate('event', 'title time host attendees privacyLevel')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(parseInt(offset));
     
-    // ✅ CRITICAL FIX: Add like status to each photo
-    const photosWithLikeStatus = photos.map(photo => {
-      const photoObj = photo.toObject();
-      
-      // Initialize likes array if it doesn't exist
-      if (!photoObj.likes) {
-        photoObj.likes = [];
+    // Filter photos based on privacy
+    const accessiblePhotos = [];
+    for (const photo of photos) {
+      const { hasAccess } = await checkPhotoAccess(userId, photo);
+      if (hasAccess) {
+        // Add like status
+        const photoObj = photo.toObject();
+        if (!photoObj.likes) {
+          photoObj.likes = [];
+        }
+        photoObj.userLiked = photoObj.likes.some(likeId => 
+          likeId.toString() === userId.toString()
+        );
+        photoObj.likeCount = photoObj.likes.length;
+        photoObj.commentCount = photoObj.comments ? photoObj.comments.length : 0;
+        
+        accessiblePhotos.push(photoObj);
       }
-      
-      // Calculate user liked status
-      const userLiked = photoObj.likes.some(likeId => 
-        likeId.toString() === userId.toString()
-      );
-      const likeCount = photoObj.likes.length;
-      
-      return {
-        ...photoObj,
-        userLiked,
-        likeCount,
-        commentCount: photoObj.comments ? photoObj.comments.length : 0
-      };
-    });
+    }
     
-    res.status(200).json(photosWithLikeStatus);
+    res.status(200).json(accessiblePhotos);
   } catch (error) {
     console.error('❌ Get photos error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-
-// ---------------------
-// POST a new comment on a photo (single route)
-// ---------------------
-router.post('/comment/:photoId', protect, async (req, res) => {
-  const { text, tags } = req.body;
-  try {
-    // 1) Append the new comment to the photo
-    await Photo.findByIdAndUpdate(
-      req.params.photoId,
-      { $push: { comments: { user: req.user._id, text, tags } } },
-      { new: true, runValidators: true }
-    );
-
-    // 2) Re-query with full population
-    const updatedPhoto = await Photo.findById(req.params.photoId)
-      .populate('user', 'username')
-      .populate('event', 'title')
-      .populate({
-        path: 'comments.user',
-        select: 'username',
-      });
-
-    if (!updatedPhoto) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-
-    // Return the entire updated, populated photo
-    res.status(200).json(updatedPhoto);
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Delete Photo
-router.delete('/:photoId', protect, async (req, res) => {
-  try {
-    const photo = await Photo.findById(req.params.photoId);
-    if (!photo) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-
-    // Only the owner can delete
-    if (photo.user.toString() !== req.user._id.toString()) {
-      return res.status(401).json({ message: 'User not authorized' });
-    }
-
-    // Delete each file in photo.paths
-    photo.paths.forEach((photoPath) => {
-      const absolutePath = path.join(__dirname, '..', photoPath);
-      fs.unlink(absolutePath, (err) => {
-        if (err) console.error('Error deleting file:', err);
-      });
-    });
-
-    await Photo.findByIdAndDelete(req.params.photoId);
-
-    // If it was an event photo, remove from event
-    const event = await Event.findById(photo.event);
-    if (event) {
-      event.photos.pull(photo._id);
-      await event.save();
-    }
-
-    // Also remove from the user's photos
-    const user = await User.findById(photo.user);
-    if (user) {
-      user.photos.pull(photo._id);
-      await user.save();
-    }
-
-    res.status(200).json({ message: 'Photo deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-router.get('/user/:userId', protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.params.userId)
-      .populate({
-        path: 'photos',
-        populate: { path: 'event', select: 'title' }
-      })
-      .select('username photos'); // show whichever fields you want
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // user.photos is an array of Photo docs, each can have .paths, .event, etc.
-    res.status(200).json(user.photos);
-  } catch (error) {
-    console.error('Error fetching user posts:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-router.put('/:photoId', protect, async (req, res) => {
-  const { caption, eventId } = req.body;
-  const photo = await Photo.findById(req.params.photoId).populate('event');
-
-  if (!photo) return res.status(404).json({ message: 'Photo not found' });
-  if (String(photo.user) !== String(req.user._id))
-    return res.status(401).json({ message: 'Not authorised' });
-
-  if (caption !== undefined) photo.caption = caption;
-
-  /* handle event re-linking */
-  const oldEvId = photo.event ? String(photo.event._id) : null;
-  const newEvId = eventId || null;        // null or '' means remove link
-
-  if (oldEvId !== newEvId) {
-    if (oldEvId) await Event.findByIdAndUpdate(oldEvId, { $pull: { photos: photo._id } });
-
-    if (newEvId) {
-      const ev = await Event.findById(newEvId);
-      if (!ev) return res.status(404).json({ message: 'Event not found' });
-
-      const banned = ev.removedPhotos?.some(id => String(id) === String(photo._id));
-      if (!banned) await Event.findByIdAndUpdate(newEvId, { $addToSet: { photos: photo._id } });
-
-      photo.event = newEvId;
-    } else {
-      photo.event = undefined;
-    }
-  }
-
-  await photo.save();
-
-  const updated = await Photo.findById(photo._id)
-    .populate('user', 'username')
-    .populate('event', 'title');
-
-  res.json(updated);
-});
-
-// Update Photo Visibility
-router.put('/visibility/:photoId', protect, async (req, res) => {
-  const { visibleInEvent } = req.body;
-
-  try {
-    const photo = await Photo.findById(req.params.photoId);
-    if (!photo) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-
-    if (photo.user.toString() !== req.user._id.toString()) {
-      return res.status(401).json({ message: 'User not authorized to update this photo' });
-    }
-
-    photo.visibleInEvent = visibleInEvent;
-    await photo.save();
-
-    res.status(200).json(photo);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-// GET photos for a specific event
+// Get photos for a specific event
 router.get('/event/:eventId', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
     const userId = req.user._id;
     
     console.log(`🔍 Getting photos for event: ${eventId}`);
+
+    // Check event access first
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const eventAccess = await checkEventAccess(userId, event);
+    if (!eventAccess.hasAccess) {
+      return res.status(403).json({ message: 'Access denied to event photos' });
+    }
 
     // Query photos using both possible field names for compatibility
     const photos = await Photo.find({ 
@@ -431,41 +597,134 @@ router.get('/event/:eventId', protect, async (req, res) => {
         }
       ]
     })
-    .populate('user', 'username profilePicture')
+    .populate('user', 'username profilePicture isPublic followers')
     .populate('event', 'title time')
     .sort({ createdAt: -1 });
 
-    // ✅ CRITICAL FIX: Add like status to each photo
-    const photosWithLikeStatus = photos.map(photo => {
-      const photoObj = photo.toObject();
-      
-      // Initialize likes array if it doesn't exist
-      if (!photoObj.likes) {
-        photoObj.likes = [];
+    // Filter and add context to photos
+    const accessiblePhotos = [];
+    for (const photo of photos) {
+      const { hasAccess } = await checkPhotoAccess(userId, photo);
+      if (hasAccess) {
+        const photoObj = photo.toObject();
+        
+        // Initialize likes array if it doesn't exist
+        if (!photoObj.likes) {
+          photoObj.likes = [];
+        }
+        
+        // Calculate user liked status
+        const userLiked = photoObj.likes.some(likeId => 
+          likeId.toString() === userId.toString()
+        );
+        const likeCount = photoObj.likes.length;
+        
+        accessiblePhotos.push({
+          ...photoObj,
+          userLiked,
+          likeCount,
+          commentCount: photoObj.comments ? photoObj.comments.length : 0
+        });
       }
-      
-      // Calculate user liked status
-      const userLiked = photoObj.likes.some(likeId => 
-        likeId.toString() === userId.toString()
-      );
-      const likeCount = photoObj.likes.length;
-      
-      return {
-        ...photoObj,
-        userLiked,
-        likeCount,
-        commentCount: photoObj.comments ? photoObj.comments.length : 0
-      };
-    });
+    }
 
-    console.log(`✅ Found ${photosWithLikeStatus.length} photos for event ${eventId}`);
-    res.json(photosWithLikeStatus);
+    console.log(`✅ Found ${accessiblePhotos.length} accessible photos for event ${eventId}`);
+    res.json(accessiblePhotos);
 
   } catch (error) {
     console.error('❌ Get event photos error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+// Get single photo
+router.get('/:photoId', protect, async (req, res) => {
+  try {
+    const photoId = req.params.photoId;
+    const userId = req.user._id;
+
+    console.log('📸 GET photo request:', {
+      photoId,
+      userId: userId.toString()
+    });
+
+    const photo = await Photo.findById(photoId)
+      .populate('user', 'username profilePicture isPublic followers')
+      .populate('event', 'title time location host attendees privacyLevel coHosts invitedUsers')
+      .populate('comments.user', 'username profilePicture');
+
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    console.log('📸 Photo found, checking access:', {
+      photoId,
+      photoUser: photo.user?.username || 'No user data',
+      eventId: photo.event?._id || photo.taggedEvent || 'No event',
+      eventHost: photo.event?.host?.username || photo.event?.host || 'No host data'
+    });
+
+    // Check access
+    const { hasAccess, reason } = await checkPhotoAccess(userId, photo);
+    if (!hasAccess) {
+      console.log('❌ Access denied:', {
+        photoId,
+        userId: userId.toString(),
+        reason,
+        photoOwner: photo.user?.username,
+        eventHost: photo.event?.host?.username || photo.event?.host
+      });
+      return res.status(403).json({ 
+        message: 'Access denied to this photo',
+        reason: reason
+      });
+    }
+
+    console.log('✅ Access granted:', {
+      photoId,
+      userId: userId.toString(),
+      reason
+    });
+
+    // Initialize likes array if it doesn't exist
+    if (!photo.likes) {
+      photo.likes = [];
+    }
+
+    // Calculate user liked status
+    const userLiked = photo.likes.some(likeId => 
+      likeId.toString() === userId.toString()
+    );
+    const likeCount = photo.likes.length;
+
+    console.log('📸 Photo like status calculated:', {
+      photoId,
+      userId: userId.toString(),
+      userLiked,
+      likeCount
+    });
+
+    const response = {
+      ...photo.toObject(),
+      userLiked,
+      likeCount,
+      commentCount: photo.comments ? photo.comments.length : 0
+    };
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    console.error('❌ Get photo error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: error.message 
+    });
+  }
+});
+
+// ============================================
+// PHOTO INTERACTIONS
+// ============================================
 
 // Like Photo
 router.post('/like/:photoId', protect, async (req, res) => {
@@ -485,7 +744,13 @@ router.post('/like/:photoId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Photo not found' });
     }
 
-    // ✅ CRITICAL FIX: Initialize likes array if it doesn't exist
+    // Check access
+    const { hasAccess } = await checkPhotoAccess(userId, photo);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied to this photo' });
+    }
+
+    // Initialize likes array if it doesn't exist
     if (!photo.likes) {
       photo.likes = [];
       await photo.save();
@@ -526,7 +791,7 @@ router.post('/like/:photoId', protect, async (req, res) => {
     photo.likes = newLikesArray;
     await photo.save();
 
-    // ✅ NEW: Create notification when someone likes a photo (non-blocking)
+    // Create notification when someone likes a photo (non-blocking)
     if (newLikedStatus && photo.user._id.toString() !== userId.toString()) {
       setImmediate(async () => {
         try {
@@ -572,42 +837,7 @@ router.post('/like/:photoId', protect, async (req, res) => {
   }
 });
 
-
-router.get('/likes/:photoId', protect, async (req, res) => {
-  try {
-    const { photoId } = req.params;
-    const userId = req.user._id;
-    
-    const photo = await Photo.findById(photoId)
-      .populate('likes', 'username fullName profilePicture');
-    
-    if (!photo) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-    
-    // Initialize likes array if it doesn't exist
-    if (!photo.likes) {
-      photo.likes = [];
-    }
-
-    // Calculate user liked status
-    const userLiked = photo.likes.some(likeId => 
-      likeId.toString() === userId.toString()
-    );
-    
-    res.json({
-      likes: photo.likes,
-      likeCount: photo.likes.length,
-      userLiked: userLiked
-    });
-    
-  } catch (error) {
-    console.error('Error fetching photo likes:', error);
-    res.status(500).json({ message: 'Failed to fetch likes' });
-  }
-});
-
-// ✅ GET: Get photo comments (for loading comments separately)
+// Add comment
 router.post('/comment/:photoId', protect, async (req, res) => {
   const { text, tags } = req.body;
   try {
@@ -617,6 +847,12 @@ router.post('/comment/:photoId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Photo not found' });
     }
 
+    // Check access
+    const { hasAccess } = await checkPhotoAccess(req.user._id, photo);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied to this photo' });
+    }
+
     // Add the comment
     await Photo.findByIdAndUpdate(
       req.params.photoId,
@@ -624,7 +860,7 @@ router.post('/comment/:photoId', protect, async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // ✅ NEW: Send notification to photo owner (non-blocking)
+    // Send notification to photo owner (non-blocking)
     if (photo.user._id.toString() !== req.user._id.toString()) {
       setImmediate(async () => {
         try {
@@ -650,36 +886,6 @@ router.post('/comment/:photoId', protect, async (req, res) => {
       });
     }
 
-    // ✅ NEW: Send notification to tagged users (non-blocking)
-    if (tags && tags.length > 0) {
-      setImmediate(async () => {
-        try {
-          for (const taggedUserId of tags) {
-            if (taggedUserId !== req.user._id.toString() && taggedUserId !== photo.user._id.toString()) {
-              await notificationService.createNotification({
-                userId: taggedUserId,
-                senderId: req.user._id,
-                category: 'social',
-                type: 'post_commented',
-                title: 'Tagged in Comment',
-                message: `${req.user.username} tagged you in a comment`,
-                data: {
-                  postId: req.params.photoId,
-                  userId: req.user._id,
-                  commentText: text.substring(0, 100)
-                },
-                actionType: 'VIEW_POST',
-                actionData: { photoId: req.params.photoId }
-              });
-            }
-          }
-          console.log('🔔 Tag notifications sent');
-        } catch (notifError) {
-          console.error('Failed to create tag notifications:', notifError);
-        }
-      });
-    }
-
     // Re-query with full population
     const updatedPhoto = await Photo.findById(req.params.photoId)
       .populate('user', 'username')
@@ -697,101 +903,160 @@ router.post('/comment/:photoId', protect, async (req, res) => {
   }
 });
 
-// ✅ Enhanced GET photo by ID with like status and proper population
-router.get('/:photoId', protect, async (req, res) => {
-  try {
-    const photoId = req.params.photoId;
-    const userId = req.user._id;
+// ============================================
+// PHOTO MANAGEMENT
+// ============================================
 
-    console.log('📸 GET photo request:', {
-      photoId,
-      userId: userId.toString()
-    });
-
-    const photo = await Photo.findById(photoId)
-      .populate('user', 'username profilePicture')
-      .populate('event', 'title time location')
-      .populate('comments.user', 'username profilePicture');
-
-    if (!photo) {
-      return res.status(404).json({ message: 'Photo not found' });
-    }
-
-    // ✅ CRITICAL FIX: Proper like status calculation
-    // Initialize likes array if it doesn't exist
-    if (!photo.likes) {
-      photo.likes = [];
-    }
-
-    // Calculate user liked status - check if userId is in likes array
-    const userLiked = photo.likes.some(likeId => 
-      likeId.toString() === userId.toString()
-    );
-    const likeCount = photo.likes.length;
-
-    console.log('📸 Photo like status calculated:', {
-      photoId,
-      userId: userId.toString(),
-      likesArray: photo.likes.map(id => id.toString()),
-      userLiked,
-      likeCount
-    });
-
-    const response = {
-      ...photo.toObject(),
-      userLiked,           // ✅ CRITICAL: Include this
-      likeCount,           // ✅ CRITICAL: Include this
-      commentCount: photo.comments ? photo.comments.length : 0
-    };
-
-    res.status(200).json(response);
-
-  } catch (error) {
-    console.error('❌ Get photo error:', error);
-    res.status(500).json({ 
-      message: 'Server error',
-      error: error.message 
-    });
-  }
-});
-
-// Get trending photos
-router.get('/trending', async (req, res) => {
-  try {
-    const photos = await Photo.find().sort({ likes: -1 }).limit(10).populate('user', 'username');
-    res.status(200).json(photos);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Share Photo
-router.get('/share/:photoId', async (req, res) => {
+// Delete Photo
+router.delete('/:photoId', protect, async (req, res) => {
   try {
     const photo = await Photo.findById(req.params.photoId);
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
     }
 
-    // Increment share count
-    photo.shareCount += 1;
-    await photo.save();
+    // Only the owner can delete
+    if (photo.user.toString() !== req.user._id.toString()) {
+      return res.status(401).json({ message: 'User not authorized' });
+    }
 
-    const shareLink = `${req.protocol}://${req.get('host')}/photos/${photo._id}`;
-    const socialLinks = {
-      facebook: `https://www.facebook.com/sharer/sharer.php?u=${shareLink}`,
-      twitter: `https://twitter.com/intent/tweet?text=Check%20this%20out!%20${shareLink}`,
-      whatsapp: `https://api.whatsapp.com/send?text=Check%20this%20out!%20${shareLink}`,
-      email: `mailto:?subject=Check%20this%20out!&body=Here%20is%20something%20interesting:%20${shareLink}`
-    };
+    // Delete each file in photo.paths
+    photo.paths.forEach((photoPath) => {
+      const absolutePath = path.join(__dirname, '..', photoPath);
+      fs.unlink(absolutePath, (err) => {
+        if (err) console.error('Error deleting file:', err);
+      });
+    });
 
-    res.status(200).json({ shareLink, socialLinks });
+    await Photo.findByIdAndDelete(req.params.photoId);
+
+    // If it was an event photo, remove from event
+    const event = await Event.findById(photo.event);
+    if (event) {
+      event.photos.pull(photo._id);
+      await event.save();
+    }
+
+    // Also remove from the user's photos
+    const user = await User.findById(photo.user);
+    if (user) {
+      user.photos.pull(photo._id);
+      await user.save();
+    }
+
+    res.status(200).json({ message: 'Photo deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
+// Update photo
+router.put('/:photoId', protect, async (req, res) => {
+  const { caption, eventId } = req.body;
+  const photo = await Photo.findById(req.params.photoId).populate('event');
 
+  if (!photo) return res.status(404).json({ message: 'Photo not found' });
+  if (String(photo.user) !== String(req.user._id))
+    return res.status(401).json({ message: 'Not authorised' });
+
+  if (caption !== undefined) photo.caption = caption;
+
+  // Handle event re-linking
+  const oldEvId = photo.event ? String(photo.event._id) : null;
+  const newEvId = eventId || null;
+
+  if (oldEvId !== newEvId) {
+    if (oldEvId) await Event.findByIdAndUpdate(oldEvId, { $pull: { photos: photo._id } });
+
+    if (newEvId) {
+      const ev = await Event.findById(newEvId);
+      if (!ev) return res.status(404).json({ message: 'Event not found' });
+
+      const banned = ev.removedPhotos?.some(id => String(id) === String(photo._id));
+      if (!banned) await Event.findByIdAndUpdate(newEvId, { $addToSet: { photos: photo._id } });
+
+      photo.event = newEvId;
+      photo.taggedEvent = newEvId; // Keep both fields in sync
+    } else {
+      photo.event = undefined;
+      photo.taggedEvent = undefined;
+    }
+  }
+
+  await photo.save();
+
+  const updated = await Photo.findById(photo._id)
+    .populate('user', 'username')
+    .populate('event', 'title');
+
+  res.json(updated);
+});
+
+// Update Photo Visibility
+router.put('/visibility/:photoId', protect, async (req, res) => {
+  const { visibleInEvent } = req.body;
+
+  try {
+    const photo = await Photo.findById(req.params.photoId);
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    if (photo.user.toString() !== req.user._id.toString()) {
+      return res.status(401).json({ message: 'User not authorized to update this photo' });
+    }
+
+    photo.visibleInEvent = visibleInEvent;
+    await photo.save();
+
+    res.status(200).json(photo);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get photo likes
+router.get('/likes/:photoId', protect, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+    const userId = req.user._id;
+    
+    const photo = await Photo.findById(photoId)
+      .populate('likes', 'username fullName profilePicture');
+    
+    if (!photo) {
+      return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Check access
+    const { hasAccess } = await checkPhotoAccess(userId, photo);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied to this photo' });
+    }
+    
+    // Initialize likes array if it doesn't exist
+    if (!photo.likes) {
+      photo.likes = [];
+    }
+
+    // Calculate user liked status
+    const userLiked = photo.likes.some(likeId => 
+      likeId.toString() === userId.toString()
+    );
+    
+    res.json({
+      likes: photo.likes,
+      likeCount: photo.likes.length,
+      userLiked: userLiked
+    });
+    
+  } catch (error) {
+    console.error('Error fetching photo likes:', error);
+    res.status(500).json({ message: 'Failed to fetch likes' });
+  }
+});
+
+// Delete comment
 router.delete('/comment/:photoId/:commentId', protect, async (req, res) => {
   try {
     const { photoId, commentId } = req.params;
@@ -799,6 +1064,12 @@ router.delete('/comment/:photoId/:commentId', protect, async (req, res) => {
 
     if (!photo) {
       return res.status(404).json({ message: 'Photo not found' });
+    }
+
+    // Check access
+    const { hasAccess } = await checkPhotoAccess(req.user._id, photo);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied to this photo' });
     }
 
     // Find the comment
@@ -839,5 +1110,30 @@ router.delete('/comment/:photoId/:commentId', protect, async (req, res) => {
   }
 });
 
+// Get user photos
+router.get('/user/:userId', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId)
+      .populate({
+        path: 'photos',
+        populate: { path: 'event', select: 'title' }
+      })
+      .select('username photos');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(201).json({
+      success: true,
+      photos: savedPhotos,
+      message: `Successfully uploaded ${savedPhotos.length} photo(s)`,
+      eventId: eventId
+    });
+  } catch (error) {
+    console.error('❌ Photo upload error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 module.exports = router;

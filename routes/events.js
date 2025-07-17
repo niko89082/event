@@ -1814,7 +1814,7 @@ router.delete('/:eventId', protect, async (req, res) => {
     const { eventId } = req.params;
     const userId = req.user._id;
     
-    console.log(`🗑️ Starting deletion process for event: ${eventId} by user: ${userId}`);
+    console.log(`🗑️ Starting enhanced deletion process for event: ${eventId} by user: ${userId}`);
 
     // ============================================
     // 1. VALIDATION & AUTHORIZATION
@@ -1827,19 +1827,19 @@ router.delete('/:eventId', protect, async (req, res) => {
 
     if (!event) {
       console.log(`❌ Event not found: ${eventId}`);
-      return res.status(404).json({ message: 'Event not found' });
+      return res.status(404).json({ 
+        message: 'Event not found',
+        code: 'EVENT_NOT_FOUND'
+      });
     }
 
-    // Check if user is authorized to delete (host or co-host)
-    const isHost = String(event.host._id) === String(userId);
-    const isCoHost = event.coHosts && event.coHosts.some(coHost => 
-      String(coHost._id || coHost) === String(userId)
-    );
-
-    if (!isHost && !isCoHost) {
+    // Check authorization using event method
+    const canManage = event.canUserManage(userId);
+    if (!canManage) {
       console.log(`❌ Unauthorized deletion attempt by user: ${userId}`);
       return res.status(403).json({ 
-        message: 'Only the host or co-hosts can delete this event' 
+        message: 'Only the host or co-hosts can delete this event',
+        code: 'DELETION_DENIED'
       });
     }
 
@@ -1853,110 +1853,75 @@ router.delete('/:eventId', protect, async (req, res) => {
       console.log(`🔄 Starting transaction for event deletion`);
 
       // ============================================
-      // 3. PHOTO CLEANUP
+      // 3. ENHANCED PHOTO CLEANUP (Phase 1 & 2)
       // ============================================
       
-      console.log(`📸 Cleaning up photos for event: ${eventId}`);
+      console.log(`📸 Starting enhanced photo cleanup for event: ${eventId}`);
       
-      // Find all photos associated with this event
-      const eventPhotos = await Photo.find({
-        $or: [
-          { event: eventId },
-          { taggedEvent: eventId }
-        ]
-      }).session(session);
+      // ✅ PHASE 1: Use static method for efficient cleanup
+      const photoCleanupResult = await Photo.cleanupEventReferences(eventId, { session });
+      
+      console.log(`📸 Cleaned up ${photoCleanupResult.modifiedCount} photos - removed event references`);
 
-      console.log(`📸 Found ${eventPhotos.length} photos to clean up`);
+      // ✅ PHASE 2: Additional privacy-aware cleanup for flagged/moderated photos
+      const moderatedPhotosResult = await Photo.updateMany(
+        {
+          $or: [
+            { event: eventId },
+            { taggedEvent: eventId }
+          ],
+          'moderation.status': { $in: ['flagged', 'pending'] }
+        },
+        {
+          $set: {
+            'moderation.status': 'approved', // Reset moderation status
+            'moderation.moderatedBy': userId,
+            'moderation.moderatedAt': new Date(),
+            'moderation.moderationNote': 'Event deleted - auto-approved'
+          }
+        },
+        { session }
+      );
 
-      if (eventPhotos.length > 0) {
-        // Remove event references from photos (untag them)
-        const photoUpdateResult = await Photo.updateMany(
-          {
-            $or: [
-              { event: eventId },
-              { taggedEvent: eventId }
-            ]
-          },
-          {
-            $unset: { 
-              event: 1,
-              taggedEvent: 1 
-            },
-            $set: {
-              visibleInEvent: false
+      console.log(`📸 Reset moderation status for ${moderatedPhotosResult.modifiedCount} photos`);
+
+      // ============================================
+      // 4. USER CLEANUP (Enhanced)
+      // ============================================
+      
+      console.log(`👥 Cleaning up user references`);
+
+      // Remove event from all attendees' arrays
+      const attendeeIds = event.attendees.map(a => a._id);
+      if (attendeeIds.length > 0) {
+        const userUpdateResult = await User.updateMany(
+          { _id: { $in: attendeeIds } },
+          { 
+            $pull: { 
+              attendingEvents: eventId,
+              savedEvents: eventId 
             }
           },
           { session }
         );
 
-        console.log(`📸 Updated ${photoUpdateResult.modifiedCount} photos - removed event references`);
+        console.log(`👥 Removed event from ${userUpdateResult.modifiedCount} user profiles`);
       }
 
-      // ============================================
-      // 4. USER REFERENCES CLEANUP
-      // ============================================
-      
-      console.log(`👥 Cleaning up user references`);
-
-      // Remove event from all attendees' attendingEvents arrays
-      if (event.attendees && event.attendees.length > 0) {
-        const attendeeIds = event.attendees.map(attendee => attendee._id || attendee);
-        
-        const userUpdateResult = await User.updateMany(
-          { _id: { $in: attendeeIds } },
-          { $pull: { attendingEvents: eventId } },
-          { session }
-        );
-
-        console.log(`👥 Updated ${userUpdateResult.modifiedCount} users - removed from attendingEvents`);
-      }
-
-      // Remove event from host's hostedEvents array (if this field exists)
+      // Remove from host's hosted events if that field exists
       await User.findByIdAndUpdate(
         event.host._id,
-        { $pull: { hostedEvents: eventId } },
+        { 
+          $pull: { 
+            hostedEvents: eventId,
+            savedEvents: eventId 
+          }
+        },
         { session }
       );
 
-      // Remove event from co-hosts' arrays if applicable
-      if (event.coHosts && event.coHosts.length > 0) {
-        await User.updateMany(
-          { _id: { $in: event.coHosts } },
-          { $pull: { hostedEvents: eventId } },
-          { session }
-        );
-      }
-
-      console.log(`👥 Cleaned up host and co-host references`);
-
       // ============================================
-      // 5. GROUP REFERENCES CLEANUP
-      // ============================================
-      
-      console.log(`🏷️ Cleaning up group references`);
-
-      // Remove event from any groups that reference it
-      const groupUpdateResult = await Group.updateMany(
-        { events: eventId },
-        { $pull: { events: eventId } },
-        { session }
-      );
-
-      console.log(`🏷️ Updated ${groupUpdateResult.modifiedCount} groups - removed event reference`);
-
-      // ============================================
-      // 6. MEMORY CLEANUP
-      // ============================================
-      
-      console.log(`💭 Cleaning up memory references`);
-
-      // Note: Based on your Memory schema, memories don't directly reference events
-      // But if they do in the future, handle them here
-      // For now, we'll log this step for completeness
-      console.log(`💭 Memory cleanup completed (no direct event references found)`);
-
-      // ============================================
-      // 7. NOTIFICATION CLEANUP
+      // 5. NOTIFICATION CLEANUP (Enhanced)
       // ============================================
       
       console.log(`🔔 Cleaning up notifications`);
@@ -1969,8 +1934,92 @@ router.delete('/:eventId', protect, async (req, res) => {
 
       console.log(`🔔 Deleted ${notificationDeleteResult.deletedCount} event-related notifications`);
 
+      // ✅ PHASE 2: Send deletion notifications to attendees
+      const deletionNotifications = attendeeIds.map(attendeeId => ({
+        user: attendeeId,
+        sender: userId,
+        category: 'events',
+        type: 'event_cancelled',
+        title: 'Event Cancelled',
+        message: `The event "${event.title}" has been cancelled by the host`,
+        data: {
+          eventId: eventId,
+          eventTitle: event.title,
+          cancellationReason: 'Event deleted by host'
+        },
+        createdAt: new Date()
+      }));
+
+      if (deletionNotifications.length > 0) {
+        await Notification.insertMany(deletionNotifications, { session });
+        console.log(`🔔 Sent cancellation notifications to ${deletionNotifications.length} attendees`);
+      }
+
       // ============================================
-      // 8. FINAL EVENT DELETION
+      // 6. PAYMENT CLEANUP (if applicable)
+      // ============================================
+      
+      if (event.pricing && !event.pricing.isFree && event.paymentHistory?.length > 0) {
+        console.log(`💳 Processing refunds for paid event`);
+        
+        // Note: In a real implementation, you'd integrate with Stripe/PayPal APIs here
+        // For now, we'll just log the refund requirements
+        const refundablePayments = event.paymentHistory.filter(
+          payment => payment.status === 'succeeded'
+        );
+        
+        console.log(`💳 Found ${refundablePayments.length} payments requiring refund processing`);
+        
+        // Update payment statuses to indicate refund needed
+        await Event.findByIdAndUpdate(
+          eventId,
+          {
+            $set: {
+              'paymentHistory.$[payment].refundStatus': 'pending',
+              'paymentHistory.$[payment].refundInitiatedAt': new Date(),
+              'paymentHistory.$[payment].refundReason': 'Event cancelled by host'
+            }
+          },
+          {
+            arrayFilters: [{ 'payment.status': 'succeeded' }],
+            session
+          }
+        );
+      }
+
+      // ============================================
+      // 7. GROUP CLEANUP (if event belongs to a group)
+      // ============================================
+      
+      if (event.group) {
+        console.log(`👥 Removing event from group: ${event.group}`);
+        
+        const Group = require('../models/Group');
+        await Group.findByIdAndUpdate(
+          event.group,
+          { $pull: { events: eventId } },
+          { session }
+        );
+      }
+
+      // ============================================
+      // 8. MEMORY/HIGHLIGHT CLEANUP
+      // ============================================
+      
+      console.log(`📱 Cleaning up memories and highlights`);
+      
+      // If you have a Memory model, clean up memories associated with this event
+      const Memory = require('../models/Memory');
+      if (Memory) {
+        await Memory.updateMany(
+          { events: eventId },
+          { $pull: { events: eventId } },
+          { session }
+        );
+      }
+
+      // ============================================
+      // 9. FINAL EVENT DELETION
       // ============================================
       
       console.log(`🗑️ Deleting the event itself`);
@@ -1986,34 +2035,68 @@ router.delete('/:eventId', protect, async (req, res) => {
     }); // End transaction
 
     // ============================================
-    // 9. SUCCESS RESPONSE
+    // 10. POST-DELETION PROCESSING
     // ============================================
     
     console.log(`🎉 Event deletion completed successfully`);
 
-    // Calculate cleanup stats for response
+    // ✅ PHASE 2: Enhanced cleanup stats
     const cleanupStats = {
       eventId: eventId,
       eventTitle: event.title,
-      attendeesNotified: event.attendees ? event.attendees.length : 0,
-      photosUntagged: await Photo.countDocuments({
-        $and: [
-          { user: { $in: event.attendees || [] } },
-          { event: { $exists: false } },
-          { taggedEvent: { $exists: false } }
-        ]
-      }),
-      deletedAt: new Date()
+      deletedAt: new Date(),
+      deletedBy: {
+        _id: userId,
+        username: req.user.username
+      },
+      impact: {
+        attendeesNotified: event.attendees ? event.attendees.length : 0,
+        photosUntagged: await Photo.countDocuments({
+          $and: [
+            { 
+              $or: [
+                { event: { $exists: false } },
+                { event: null }
+              ]
+            },
+            { 
+              $or: [
+                { taggedEvent: { $exists: false } },
+                { taggedEvent: null }
+              ]
+            },
+            { visibleInEvent: false }
+          ]
+        }),
+        notificationsRemoved: await Notification.countDocuments({
+          'data.eventId': eventId
+        }),
+        paymentsRequiringRefund: event.paymentHistory ? 
+          event.paymentHistory.filter(p => p.status === 'succeeded').length : 0
+      },
+      privacyLevel: event.privacyLevel,
+      hadPhotos: event.allowPhotos,
+      wasPaymentRequired: event.pricing && !event.pricing.isFree
     };
+
+    // ✅ PHASE 2: Log detailed analytics for cleanup verification
+    console.log('📊 Cleanup Statistics:', JSON.stringify(cleanupStats, null, 2));
 
     res.status(200).json({
       success: true,
       message: 'Event deleted successfully',
-      stats: cleanupStats
+      stats: cleanupStats,
+      actions: [
+        'Event permanently deleted',
+        'Photos untagged and preserved in user galleries', 
+        'Attendees notified of cancellation',
+        'Related notifications cleaned up',
+        event.pricing && !event.pricing.isFree ? 'Refund processing initiated' : null
+      ].filter(Boolean)
     });
 
   } catch (error) {
-    console.error('❌ Event deletion failed:', error);
+    console.error('❌ Enhanced event deletion failed:', error);
     
     // Detailed error logging for debugging
     console.error('Error details:', {
@@ -2026,6 +2109,7 @@ router.delete('/:eventId', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete event',
+      code: 'DELETION_FAILED',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
 
@@ -2034,6 +2118,424 @@ router.delete('/:eventId', protect, async (req, res) => {
     console.log(`🔄 Database session ended`);
   }
 });
+
+// ============================================
+// PHASE 1: HELPER FUNCTION - Enhanced Batch Photo Cleanup
+// ============================================
+
+/**
+ * Enhanced helper function for cleaning up large numbers of photos efficiently
+ * Uses cursor-based processing with privacy context updates
+ */
+async function enhancedCleanupPhotosInBatches(eventId, session, batchSize = 100) {
+  console.log(`📸 Starting enhanced batch photo cleanup for event: ${eventId}`);
+  
+  let processedCount = 0;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const photos = await Photo.find({
+      $or: [
+        { event: eventId },
+        { taggedEvent: eventId }
+      ]
+    })
+    .limit(batchSize)
+    .session(session);
+
+    if (photos.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    const photoIds = photos.map(photo => photo._id);
+    
+    // ✅ PHASE 1 & 2: Enhanced cleanup with privacy context reset
+    await Photo.updateMany(
+      { _id: { $in: photoIds } },
+      {
+        $unset: { 
+          event: 1,
+          taggedEvent: 1 
+        },
+        $set: {
+          visibleInEvent: false,
+          'privacyContext.isInPrivateEvent': false,
+          'moderation.status': 'approved' // Reset any pending moderation
+        }
+      },
+      { session }
+    );
+
+    processedCount += photos.length;
+    console.log(`📸 Enhanced processed ${processedCount} photos so far...`);
+
+    // If we got fewer photos than the batch size, we're done
+    if (photos.length < batchSize) {
+      hasMore = false;
+    }
+  }
+
+  console.log(`📸 Enhanced batch photo cleanup completed. Total processed: ${processedCount}`);
+  return processedCount;
+}
+router.delete('/admin/bulk-delete', protect, async (req, res) => {
+  try {
+    // Check if user is admin (implement your admin check logic)
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ 
+        message: 'Admin access required',
+        code: 'ADMIN_ONLY'
+      });
+    }
+
+    const { eventIds, reason } = req.body;
+    
+    if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0) {
+      return res.status(400).json({ 
+        message: 'Event IDs array is required',
+        code: 'MISSING_EVENT_IDS'
+      });
+    }
+
+    if (eventIds.length > 50) {
+      return res.status(400).json({ 
+        message: 'Maximum 50 events can be deleted at once',
+        code: 'TOO_MANY_EVENTS'
+      });
+    }
+
+    console.log(`🗑️ Admin bulk deletion: ${eventIds.length} events`);
+
+    const results = [];
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const eventId of eventIds) {
+      try {
+        // Use the enhanced cleanup for each event
+        const cleanupResult = await Photo.cleanupEventReferences(eventId);
+        
+        // Delete the event
+        const deletedEvent = await Event.findByIdAndDelete(eventId);
+        
+        if (deletedEvent) {
+          results.push({
+            eventId,
+            success: true,
+            title: deletedEvent.title,
+            photosUntagged: cleanupResult.modifiedCount
+          });
+          successCount++;
+        } else {
+          results.push({
+            eventId,
+            success: false,
+            error: 'Event not found'
+          });
+          errorCount++;
+        }
+      } catch (error) {
+        results.push({
+          eventId,
+          success: false,
+          error: error.message
+        });
+        errorCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Bulk deletion completed: ${successCount} succeeded, ${errorCount} failed`,
+      results,
+      stats: {
+        requested: eventIds.length,
+        succeeded: successCount,
+        failed: errorCount,
+        reason: reason || 'Admin bulk deletion'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Bulk deletion error:', error);
+    res.status(500).json({ 
+      message: 'Bulk deletion failed',
+      code: 'BULK_DELETE_FAILED'
+    });
+  }
+});
+
+router.delete('/moderate/:photoId', protect, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+    const { reason } = req.body;
+    
+    const photo = await Photo.findById(photoId)
+      .populate('event', 'title host coHosts')
+      .populate('user', 'username');
+    
+    if (!photo) {
+      return res.status(404).json({ 
+        message: 'Photo not found',
+        code: 'PHOTO_NOT_FOUND'
+      });
+    }
+
+    // Check if user can remove (host/co-host)
+    let canRemove = false;
+    if (photo.event) {
+      const isHost = String(photo.event.host) === String(req.user._id);
+      const isCoHost = photo.event.coHosts && photo.event.coHosts.some(c => 
+        String(c) === String(req.user._id)
+      );
+      canRemove = isHost || isCoHost;
+    }
+
+    if (!canRemove) {
+      return res.status(403).json({ 
+        message: 'Not authorized to remove this photo',
+        code: 'REMOVAL_DENIED'
+      });
+    }
+
+    const originalEventId = photo.event._id;
+
+    // SIMPLIFIED: Just remove from event
+    photo.event = null;
+    photo.taggedEvent = null;
+    photo.visibleInEvent = false;
+    
+    await photo.save();
+
+    // Remove from event photos array
+    await Event.findByIdAndUpdate(originalEventId, {
+      $pull: { photos: photo._id }
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Photo removed from event successfully',
+      photoId: photoId,
+      action: 'removed'
+    });
+    
+  } catch (error) {
+    console.error('❌ Photo removal error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      code: 'REMOVAL_FAILED'
+    });
+  }
+});
+
+router.post('/bulk-moderate', protect, async (req, res) => {
+  try {
+    const { photoIds, eventId, action, reason } = req.body;
+    
+    if (!photoIds || !Array.isArray(photoIds) || photoIds.length === 0) {
+      return res.status(400).json({ 
+        message: 'Photo IDs array is required',
+        code: 'MISSING_PHOTO_IDS'
+      });
+    }
+
+    if (!eventId) {
+      return res.status(400).json({ 
+        message: 'Event ID is required',
+        code: 'MISSING_EVENT_ID'
+      });
+    }
+
+    console.log(`🗑️ Bulk photo removal - Photos: ${photoIds.length}, Event: ${eventId}, Host: ${req.user._id}`);
+
+    // Verify host permissions
+    const event = await Event.findById(eventId).select('title host coHosts');
+    if (!event) {
+      return res.status(404).json({ 
+        message: 'Event not found',
+        code: 'EVENT_NOT_FOUND'
+      });
+    }
+
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(c => String(c) === String(req.user._id));
+    
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        message: 'Not authorized to remove photos from this event',
+        code: 'REMOVAL_DENIED'
+      });
+    }
+
+    // Get all photos to remove
+    const photos = await Photo.find({
+      _id: { $in: photoIds },
+      $or: [
+        { event: eventId },
+        { taggedEvent: eventId }
+      ]
+    }).populate('user', 'username');
+
+    if (photos.length === 0) {
+      return res.status(404).json({ 
+        message: 'No photos found to remove',
+        code: 'NO_PHOTOS_FOUND'
+      });
+    }
+
+    console.log(`📸 Found ${photos.length} photos to remove from event`);
+
+    const results = [];
+
+    // Process each photo - SIMPLIFIED: Just remove from event
+    for (const photo of photos) {
+      try {
+        // Simply remove event references
+        photo.event = null;
+        photo.taggedEvent = null;
+        photo.visibleInEvent = false;
+        
+        await photo.save();
+
+        results.push({
+          photoId: photo._id,
+          success: true,
+          owner: photo.user?.username
+        });
+
+        console.log(`✅ Removed photo ${photo._id} from event`);
+
+      } catch (error) {
+        console.error(`❌ Error processing photo ${photo._id}:`, error);
+        results.push({
+          photoId: photo._id,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+
+    // Remove photos from event array
+    await Event.findByIdAndUpdate(eventId, {
+      $pull: { photos: { $in: photoIds } }
+    });
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    console.log(`📊 Bulk removal complete - Success: ${successCount}, Failed: ${failCount}`);
+
+    res.json({
+      success: true,
+      message: `Bulk removal completed: ${successCount} succeeded, ${failCount} failed`,
+      results: {
+        total: photoIds.length,
+        succeeded: successCount,
+        failed: failCount,
+        eventTitle: event.title
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Bulk removal error:', error);
+    res.status(500).json({ 
+      message: 'Bulk removal failed',
+      code: 'BULK_REMOVAL_FAILED'
+    });
+  }
+});
+
+
+// Auto-cleanup photos when user leaves/is removed from event
+router.post('/cleanup-user-photos/:eventId', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userId, reason } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ 
+        message: 'User ID is required',
+        code: 'MISSING_USER_ID'
+      });
+    }
+
+    console.log(`🧹 Auto-cleanup photos - Event: ${eventId}, User: ${userId}, Reason: ${reason}`);
+
+    // Verify permissions
+    const event = await Event.findById(eventId).select('title host coHosts');
+    if (!event) {
+      return res.status(404).json({ 
+        message: 'Event not found',
+        code: 'EVENT_NOT_FOUND'
+      });
+    }
+
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(c => String(c) === String(req.user._id));
+    const isSelfRemoval = String(userId) === String(req.user._id);
+    
+    if (!isHost && !isCoHost && !isSelfRemoval) {
+      return res.status(403).json({ 
+        message: 'Not authorized to cleanup user photos',
+        code: 'CLEANUP_DENIED'
+      });
+    }
+
+    // Find all photos from this user in this event
+    const userPhotos = await Photo.find({
+      user: userId,
+      $or: [
+        { event: eventId },
+        { taggedEvent: eventId }
+      ]
+    });
+
+    console.log(`📸 Found ${userPhotos.length} photos to cleanup for user ${userId}`);
+
+    if (userPhotos.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No photos to cleanup',
+        photosRemoved: 0
+      });
+    }
+
+    // SIMPLIFIED: Just remove event references from all user photos
+    const photoIds = userPhotos.map(p => p._id);
+    
+    await Photo.updateMany(
+      { _id: { $in: photoIds } },
+      {
+        $unset: { event: 1, taggedEvent: 1 },
+        $set: { visibleInEvent: false }
+      }
+    );
+
+    // Remove from event photos array
+    await Event.findByIdAndUpdate(eventId, {
+      $pull: { photos: { $in: photoIds } }
+    });
+
+    console.log(`✅ Auto-cleanup complete - Removed ${userPhotos.length} photos`);
+
+    res.json({
+      success: true,
+      message: `Successfully removed ${userPhotos.length} photos from event`,
+      photosRemoved: userPhotos.length,
+      eventTitle: event.title
+    });
+
+  } catch (error) {
+    console.error('❌ Photo cleanup error:', error);
+    res.status(500).json({ 
+      message: 'Photo cleanup failed',
+      code: 'CLEANUP_FAILED'
+    });
+  }
+});
+
+
 
 // ============================================
 // HELPER FUNCTION: Batch Photo Cleanup
