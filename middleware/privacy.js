@@ -10,6 +10,55 @@ const Photo = require('../models/Photo');
 class PrivacyMiddleware {
   
   /**
+   * NEW: Check if user can access private account photos via event photo sharing settings
+   */
+  static async checkEventPhotoSharingAccess(userId, event, photo) {
+    try {
+      const userIdStr = String(userId);
+      
+      // Host can always access
+      if (String(event.host) === userIdStr) {
+        return { hasAccess: true, reason: 'Event host access' };
+      }
+
+      // Co-hosts can access
+      if (event.coHosts && event.coHosts.some(c => String(c) === userIdStr)) {
+        return { hasAccess: true, reason: 'Event co-host access' };
+      }
+
+      // Check if user is event attendee
+      const isAttendee = event.attendees.some(a => String(a) === userIdStr);
+      if (!isAttendee) {
+        return { hasAccess: false, reason: 'Not event attendee' };
+      }
+
+      // Check event photo sharing permissions
+      const photoSharingLevel = event.permissions?.canShare || 'attendees';
+      
+      switch (photoSharingLevel) {
+        case 'anyone':
+          return { hasAccess: true, reason: 'Open photo sharing' };
+        
+        case 'attendees':
+          return { hasAccess: true, reason: 'Attendee photo sharing' };
+        
+        case 'co-hosts':
+          return { hasAccess: false, reason: 'Co-hosts only photo sharing' };
+        
+        case 'host-only':
+          return { hasAccess: false, reason: 'Host only photo sharing' };
+        
+        default:
+          return { hasAccess: true, reason: 'Default attendee access' };
+      }
+
+    } catch (error) {
+      console.error('Event photo sharing access error:', error);
+      return { hasAccess: false, reason: 'Check failed' };
+    }
+  }
+
+  /**
    * Check if user can view specific content
    * @param {string} contentType - Type of content ('photo', 'event', 'user')
    * @param {Object} options - Additional options
@@ -67,13 +116,14 @@ class PrivacyMiddleware {
   }
 
   /**
-   * Check photo access permissions
+   * ENHANCED: Check photo access permissions with proper private account + event filtering
    */
   static async checkPhotoAccess(userId, photoId, options = {}) {
     try {
       const photo = await Photo.findById(photoId)
         .populate('user', '_id username isPrivate followers following')
-        .populate('event', '_id host attendees privacyLevel permissions');
+        .populate('event', '_id host attendees privacyLevel permissions')
+        .populate('taggedEvent', '_id host attendees privacyLevel permissions'); // Handle both event fields
 
       if (!photo) {
         return { hasAccess: false, content: null, reason: 'Photo not found' };
@@ -96,19 +146,25 @@ class PrivacyMiddleware {
 
       // Get user relationship context
       const viewerUser = await User.findById(userId).select('following');
+      if (!viewerUser) {
+        return { hasAccess: false, content: photo, reason: 'Viewer not found' };
+      }
+
       const isFollowingOwner = viewerUser.following.some(f => String(f) === String(photo.user._id));
       const ownerFollowsViewer = photo.user.followers.some(f => String(f) === String(userId));
       const areFriends = isFollowingOwner && ownerFollowsViewer;
 
-      // Check event-based permissions
+      // Get event access for both event and taggedEvent
       let eventAccess = false;
-      if (photo.event) {
-        const isEventHost = String(photo.event.host) === String(userId);
-        const isEventAttendee = photo.event.attendees.some(a => String(a) === String(userId));
+      const eventToCheck = photo.event || photo.taggedEvent;
+      
+      if (eventToCheck) {
+        const isEventHost = String(eventToCheck.host) === String(userId);
+        const isEventAttendee = eventToCheck.attendees.some(a => String(a) === String(userId));
         eventAccess = isEventHost || isEventAttendee;
       }
 
-      // Check photo visibility level
+      // Check photo visibility level first
       switch (photo.visibility?.level || 'public') {
         case 'private':
           return { hasAccess: false, content: photo, reason: 'Private photo' };
@@ -131,15 +187,45 @@ class PrivacyMiddleware {
           break;
       }
 
-      // Check photo owner's privacy settings
-      if (photo.user.isPrivate && !areFriends && !eventAccess) {
-        return { hasAccess: false, content: photo, reason: 'Private account' };
+      // ENHANCED: Private account logic for event-tagged photos
+      if (photo.user.isPrivate) {
+        // Private account owner - check multiple access paths
+        
+        // Path 1: Direct following relationship
+        if (isFollowingOwner) {
+          return { hasAccess: true, content: photo, reason: 'Following private account' };
+        }
+        
+        // Path 2: Event access with photo sharing permissions
+        if (eventToCheck && eventAccess) {
+          console.log(`🔍 Private account photo tagged to event ${eventToCheck._id} - checking photo sharing permissions`);
+          
+          // User has access to the event, but we need to check event's photo sharing policy
+          const eventPhotoAccess = await this.checkEventPhotoSharingAccess(userId, eventToCheck, photo);
+          if (eventPhotoAccess.hasAccess) {
+            console.log(`✅ Private account photo accessible via event: ${eventPhotoAccess.reason}`);
+            return { 
+              hasAccess: true, 
+              content: photo, 
+              reason: `Private account photo accessible via event: ${eventPhotoAccess.reason}` 
+            };
+          } else {
+            console.log(`❌ Private account photo not accessible via event: ${eventPhotoAccess.reason}`);
+          }
+        }
+        
+        // Path 3: No access - private account and not following
+        return { 
+          hasAccess: false, 
+          content: photo, 
+          reason: 'Private account - not following and no event access' 
+        };
       }
 
-      // Check event privacy if photo is tagged to an event
-      if (photo.event) {
-        const { hasAccess: eventAccess } = await this.checkEventAccess(userId, photo.event._id);
-        if (!eventAccess) {
+      // Public account - check event privacy if photo is tagged to event
+      if (eventToCheck) {
+        const { hasAccess: eventAccessCheck } = await this.checkEventAccess(userId, eventToCheck._id);
+        if (!eventAccessCheck) {
           return { hasAccess: false, content: photo, reason: 'Event privacy restriction' };
         }
       }
@@ -183,6 +269,10 @@ class PrivacyMiddleware {
 
       // Check based on privacy level
       const viewerUser = await User.findById(userId).select('following');
+      if (!viewerUser) {
+        return { hasAccess: false, content: event, reason: 'Viewer not found' };
+      }
+
       const isFollowingHost = viewerUser.following.some(f => String(f) === String(event.host._id));
 
       switch (event.privacyLevel) {
@@ -255,6 +345,10 @@ class PrivacyMiddleware {
       if (targetUser.isPrivate) {
         // Check if viewer follows target user
         const viewerUser = await User.findById(userId).select('following');
+        if (!viewerUser) {
+          return { hasAccess: false, content: targetUser, reason: 'Viewer not found' };
+        }
+
         const isFollowing = viewerUser.following.some(f => String(f) === String(targetUserId));
         
         if (!isFollowing) {
@@ -417,6 +511,47 @@ class PrivacyMiddleware {
       return { hasPermission: false, reason: 'Check failed' };
     }
   }
+
+  /**
+   * ENHANCED: Check if user can access photos in a specific event
+   */
+  static async checkEventPhotoAccess(userId, eventId, photoOwnerId) {
+    try {
+      // First check if user can access the event
+      const { hasAccess: eventAccess } = await this.checkEventAccess(userId, eventId);
+      if (!eventAccess) {
+        return { hasAccess: false, reason: 'No event access' };
+      }
+
+      // Check if photo owner is private
+      const photoOwner = await User.findById(photoOwnerId).select('isPrivate followers');
+      if (!photoOwner) {
+        return { hasAccess: false, reason: 'Photo owner not found' };
+      }
+
+      // If photo owner is private, check additional permissions
+      if (photoOwner.isPrivate) {
+        const viewerUser = await User.findById(userId).select('following');
+        const isFollowing = viewerUser.following.some(f => String(f) === String(photoOwnerId));
+        
+        if (!isFollowing) {
+          // Not following, check event photo sharing permissions
+          const event = await Event.findById(eventId).select('permissions host coHosts attendees');
+          const eventPhotoAccess = await this.checkEventPhotoSharingAccess(userId, event, null);
+          
+          if (!eventPhotoAccess.hasAccess) {
+            return { hasAccess: false, reason: `Private account photo restricted: ${eventPhotoAccess.reason}` };
+          }
+        }
+      }
+
+      return { hasAccess: true, reason: 'Event photo access granted' };
+
+    } catch (error) {
+      console.error('Event photo access check error:', error);
+      return { hasAccess: false, reason: 'Check failed' };
+    }
+  }
 }
 
 /**
@@ -465,10 +600,42 @@ const requireActionPermission = (contentType, action) => {
   };
 };
 
+// NEW: Event photo access middleware
+const requireEventPhotoAccess = () => {
+  return async (req, res, next) => {
+    try {
+      const userId = req.user._id;
+      const eventId = req.params.eventId;
+      const photoOwnerId = req.params.photoOwnerId || req.body.photoOwnerId;
+      
+      if (!eventId) {
+        return res.status(400).json({ message: 'Event ID required' });
+      }
+      
+      const { hasAccess, reason } = await PrivacyMiddleware.checkEventPhotoAccess(
+        userId, eventId, photoOwnerId
+      );
+      
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Event photo access denied',
+          reason 
+        });
+      }
+      
+      next();
+    } catch (error) {
+      console.error('Event photo access middleware error:', error);
+      res.status(500).json({ message: 'Event photo access check failed' });
+    }
+  };
+};
+
 module.exports = {
   PrivacyMiddleware,
   requirePhotoAccess,
   requireEventAccess,
   requireProfileAccess,
-  requireActionPermission
+  requireActionPermission,
+  requireEventPhotoAccess
 };
