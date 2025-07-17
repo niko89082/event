@@ -44,7 +44,7 @@ router.get('/feed/posts', protect, async (req, res) => {
     /* 2) ✅ FIXED: Fetch regular posts with PROPER LIKE STATUS using aggregation */
     const friendPostsQuery = {
       user: { $in: followingIds },
-      visibleInEvent: { $ne: false }, // Include both true and undefined
+      //visibleInEvent: { $ne: false }, // Include both true and undefined
       $and: [
         {
           $or: [
