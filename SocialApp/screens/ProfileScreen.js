@@ -269,26 +269,34 @@ export default function ProfileScreen() {
 
   // Fetch user events
   const fetchUserEvents = async () => {
-    try {
-      setEventsLoading(true);
-      const { data } = await api.get(`/api/events/user/${userId}`);
-      
-      // Sort events by date (newest first)
-      const sortedEvents = (data.events || []).sort((a, b) => 
-        new Date(b.time) - new Date(a.time)
-      );
-      
-      setEvents(sortedEvents);
-      
-      if (isSelf && data.sharedEventIds) {
-        setSharedEventIds(new Set(data.sharedEventIds));
-      }
-    } catch (error) {
-      console.error('Error fetching events:', error);
-    } finally {
-      setEventsLoading(false);
+  try {
+    setEventsLoading(true);
+    
+    // PHASE 1 FIX: Always include past events
+    const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
+    
+    // Sort events by date (newest first for better UX)
+    const sortedEvents = (data.events || []).sort((a, b) => 
+      new Date(b.time) - new Date(a.time)
+    );
+    
+    setEvents(sortedEvents);
+    
+    // Set shared event IDs if available
+    if (isSelf && data.sharedEventIds) {
+      setSharedEventIds(new Set(data.sharedEventIds));
     }
-  };
+    
+    console.log(`✅ Loaded ${sortedEvents.length} events for user ${userId}`);
+    
+  } catch (error) {
+    console.error('❌ Error fetching events:', error);
+    // Show user-friendly error
+    Alert.alert('Error', 'Failed to load events. Please try again.');
+  } finally {
+    setEventsLoading(false);
+  }
+};
 
   // Fetch user memories
   const fetchUserMemories = async () => {
@@ -326,38 +334,41 @@ export default function ProfileScreen() {
 
   // Apply event filters
   useEffect(() => {
-    if (!Array.isArray(events)) {
-      setFilteredEvents([]);
-      return;
-    }
+  if (!Array.isArray(events)) {
+    setFilteredEvents([]);
+    return;
+  }
 
-    let filtered = [...events];
-    const now = new Date();
+  let filtered = [...events];
+  const now = new Date();
 
-    switch (eventFilter) {
-      case 'upcoming':
-        filtered = events.filter(e => new Date(e.time) > now);
-        filtered.sort((a, b) => new Date(a.time) - new Date(b.time));
-        break;
-      case 'past':
-        filtered = events.filter(e => new Date(e.time) <= now);
-        filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
-        break;
-      case 'hosted':
-        filtered = events.filter(e => e.isHost);
-        break;
-      case 'attending':
-        filtered = events.filter(e => e.isAttending && !e.isHost);
-        break;
-      case 'shared':
-        filtered = events.filter(e => sharedEventIds.has(e._id));
-        break;
-      default:
-        break;
-    }
+  switch (eventFilter) {
+    case 'upcoming':
+      filtered = events.filter(e => new Date(e.time) > now);
+      filtered.sort((a, b) => new Date(a.time) - new Date(b.time)); // Upcoming: earliest first
+      break;
+    case 'past':
+      filtered = events.filter(e => new Date(e.time) <= now);
+      filtered.sort((a, b) => new Date(b.time) - new Date(a.time)); // Past: most recent first
+      break;
+    case 'hosted':
+      filtered = events.filter(e => e.isHost || e.userRelationship === 'host');
+      break;
+    case 'attending':
+      filtered = events.filter(e => (e.isAttending || e.userRelationship === 'attendee') && !e.isHost);
+      break;
+    case 'shared':
+      filtered = events.filter(e => sharedEventIds.has(e._id));
+      break;
+    default: // 'all'
+      // Keep all events, sorted by date (most recent first)
+      filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
+      break;
+  }
 
-    setFilteredEvents(filtered);
-  }, [events, eventFilter, sharedEventIds]);
+  setFilteredEvents(filtered);
+  console.log(`📊 Filtered events: ${filtered.length} (filter: ${eventFilter})`);
+}, [events, eventFilter, sharedEventIds]);
 
   // Load profile on mount and when userId changes
   useEffect(() => {

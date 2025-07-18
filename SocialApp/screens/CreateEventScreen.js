@@ -13,6 +13,8 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
 import PaymentSetupComponent from '../components/PaymentSetupComponent';
+import SimplifiedEventPrivacySettings from '../components/SimplifiedEventPrivacySettings';
+
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -365,26 +367,27 @@ export default function CreateEventScreen({ navigation, route }) {
   };
 
   const handleCreate = async () => {
-    if (!canProceed() || creating) return;
+  if (!canProceed() || creating) return;
 
-    try {
-      setCreating(true);
+  try {
+    setCreating(true);
 
-      const formData = new FormData();
-      
-      // Basic fields
-      formData.append('title', title.trim());
-      formData.append('description', description.trim());
-      formData.append('time', dateTime.toISOString());
-      formData.append('location', location.trim());
-      formData.append('category', category);
-      formData.append('maxAttendees', parseInt(maxAttendees) || 0);
-      
-      // PHASE 2: Simplified privacy (auto-calculated permissions)
-      formData.append('privacyLevel', privacyLevel);
-      
-      // ADDED: Photo sharing setting
-      formData.append('allowPhotos', allowPhotos);
+    const formData = new FormData();
+    
+    // Basic fields
+    formData.append('title', title.trim());
+    formData.append('description', description.trim());
+    formData.append('time', dateTime.toISOString());
+    formData.append('location', location.trim());
+    formData.append('category', category);
+    formData.append('maxAttendees', parseInt(maxAttendees) || 0);
+    
+    // PHASE 1: Only send privacy level - backend sets appropriate permissions
+    formData.append('privacyLevel', privacyLevel);
+    formData.append('allowGuestPasses', true); // Enable guest passes for all privacy levels
+    
+    // ADDED: Photo sharing setting
+    formData.append('allowPhotos', allowPhotos);
       
       // PHASE 2: Form integration
       if (requiresCheckInForm && selectedForm) {

@@ -156,19 +156,13 @@ export default function EditEventScreen() {
   const fetchEventData = async () => {
   try {
     setLoading(true);
-    console.log('📥 ===== FETCH EVENT DEBUG START =====');
     console.log('📥 Fetching event data for eventId:', eventId);
     
     const response = await api.get(`/api/events/${eventId}`);
     const eventData = response.data;
 
-    console.log('📥 ===== COHOST SECTION FROM BACKEND =====');
-    console.log('📥 eventData.coHosts:', eventData.coHosts);
-    
-    // ✅ FIXED: Store the full event object first
+    // Set basic fields
     setEvent(eventData);
-
-    // Set all other fields...
     setTitle(eventData.title || '');
     setDescription(eventData.description || '');
     setDateTime(new Date(eventData.time));
@@ -177,20 +171,18 @@ export default function EditEventScreen() {
     setCategory(eventData.category || 'General');
     setMaxAttendees(String(eventData.maxAttendees || 50));
     setTags(eventData.tags?.join(', ') || '');
+    
+    // PHASE 1: Only set privacy level - don't manage complex permissions
     setPrivacyLevel(eventData.privacyLevel || 'public');
-    setPermissions(eventData.permissions || permissions);
+    // Remove: setPermissions(eventData.permissions || permissions); // DELETE THIS
     
-    // ✅ ENHANCED: Co-hosts with ref update
+    // Co-hosts handling
     const coHostsData = eventData.coHosts || [];
-    console.log('👥 Setting coHosts state and ref:', coHostsData);
     setCoHosts(coHostsData);
-    coHostsRef.current = coHostsData; // ✅ Update ref immediately
+    coHostsRef.current = coHostsData;
     
-    // Rest of the setup...
-    setOriginalCoverImage(eventData.coverImage);
-    
+    // Photo sharing
     const allowPhotosValue = eventData.allowPhotos !== undefined ? eventData.allowPhotos : true;
-    console.log('📷 Setting allowPhotos to:', allowPhotosValue);
     setAllowPhotos(allowPhotosValue);
     allowPhotosRef.current = allowPhotosValue;
     
@@ -425,44 +417,11 @@ useEffect(() => {
   
 const handleSaveEvent = async () => {
   const currentAllowPhotos = allowPhotosRef.current;
-  const currentCoHosts = coHostsRef.current; // ✅ Use ref for current co-hosts
+  const currentCoHosts = coHostsRef.current;
   
-  console.log('💾 ===== SAVE DEBUG START =====');
-  console.log('📷 allowPhotos state (may be stale):', allowPhotos);
-  console.log('📷 allowPhotos ref (current):', currentAllowPhotos);
-  
-  // 🔍 FIXED CO-HOST DEBUGGING - Use ref instead of state
-  console.log('👥 ===== CO-HOST DEBUG =====');
-  console.log('👥 coHosts state (may be stale):', coHosts);
-  console.log('👥 coHosts ref (current):', currentCoHosts);
-  console.log('👥 Using coHosts ref for save');
-  console.log('👥 currentCoHosts type:', typeof currentCoHosts);
-  console.log('👥 currentCoHosts isArray:', Array.isArray(currentCoHosts));
-  console.log('👥 currentCoHosts length:', currentCoHosts?.length);
-  console.log('👥 currentCoHosts raw:', currentCoHosts);
-  
-  console.log('👥 currentCoHosts individual items:');
-  currentCoHosts.forEach((coHost, index) => {
-    console.log(`  [${index}]:`, {
-      _id: coHost._id,
-      username: coHost.username,
-      type: typeof coHost._id
-    });
-  });
-  
-  const coHostIds = currentCoHosts.map(coHost => coHost._id);
-  console.log('👥 Mapped coHost IDs:', coHostIds);
-  console.log('👥 coHostIds type:', typeof coHostIds);
-  console.log('👥 coHostIds isArray:', Array.isArray(coHostIds));
-
   // Validation
   if (!title || !title.trim()) {
     Alert.alert('Error', 'Event title is required');
-    return;
-  }
-
-  if (!location || !location.trim()) {
-    Alert.alert('Error', 'Event location is required');
     return;
   }
 
@@ -471,7 +430,7 @@ const handleSaveEvent = async () => {
     
     const priceInCents = Math.round(parseFloat(price || 0) * 100);
     
-    // 🔍 BUILD UPDATE DATA WITH FIXED CO-HOSTS
+    // PHASE 1: Simplified update data - let backend handle permissions
     const updateData = {
       title: title.trim(),
       description: description.trim(),
@@ -479,17 +438,11 @@ const handleSaveEvent = async () => {
       location: location.trim(),
       category: category,
       maxAttendees: parseInt(maxAttendees) || 0,
-      privacyLevel: privacyLevel,
+      privacyLevel: privacyLevel, // Only send privacy level
       allowPhotos: currentAllowPhotos,
-      coHosts: coHostIds, // ✅ Use the mapped IDs from ref
-      permissions: {
-        appearInFeed: permissions.appearInFeed,
-        appearInSearch: permissions.appearInSearch,
-        canJoin: permissions.canJoin || 'anyone',
-        canShare: permissions.canShare || 'attendees',
-        canInvite: permissions.canInvite || 'attendees',
-        showAttendeesToPublic: permissions.showAttendeesToPublic
-      },
+      allowGuestPasses: true, // Always enable guest passes
+      coHosts: currentCoHosts.map(coHost => coHost._id),
+      // Remove complex permissions object - backend handles this
       pricing: {
         isFree: priceInCents === 0,
         amount: priceInCents,
@@ -501,6 +454,7 @@ const handleSaveEvent = async () => {
       eventPrice: parseFloat(price || 0),
       refundPolicy: refundPolicy
     };
+    // Rest of the save logic remains the same...
 
     console.log('💾 ===== UPDATE DATA DEBUG =====');
     console.log('💾 updateData.coHosts:', updateData.coHosts);
