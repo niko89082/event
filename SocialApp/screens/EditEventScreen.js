@@ -91,6 +91,7 @@ export default function EditEventScreen() {
   // ADDED: Photo sharing toggle
   const [allowPhotos, setAllowPhotos] = useState(true);
   const allowPhotosRef = useRef(true); 
+  const coHostsRef = useRef([]);
 
   // ADDED: Missing pricing fields that might be causing the issue
   const [isPaidEvent, setIsPaidEvent] = useState(false);
@@ -155,14 +156,15 @@ export default function EditEventScreen() {
   const fetchEventData = async () => {
   try {
     setLoading(true);
+    console.log('📥 ===== FETCH EVENT DEBUG START =====');
+    console.log('📥 Fetching event data for eventId:', eventId);
+    
     const response = await api.get(`/api/events/${eventId}`);
     const eventData = response.data;
 
-    console.log('📥 Loading event data:', {
-      title: eventData.title,
-      allowPhotos: eventData.allowPhotos
-    });
-
+    console.log('📥 ===== COHOST SECTION FROM BACKEND =====');
+    console.log('📥 eventData.coHosts:', eventData.coHosts);
+    
     // ✅ FIXED: Store the full event object first
     setEvent(eventData);
 
@@ -177,16 +179,22 @@ export default function EditEventScreen() {
     setTags(eventData.tags?.join(', ') || '');
     setPrivacyLevel(eventData.privacyLevel || 'public');
     setPermissions(eventData.permissions || permissions);
-    setCoHosts(eventData.coHosts || []);
+    
+    // ✅ ENHANCED: Co-hosts with ref update
+    const coHostsData = eventData.coHosts || [];
+    console.log('👥 Setting coHosts state and ref:', coHostsData);
+    setCoHosts(coHostsData);
+    coHostsRef.current = coHostsData; // ✅ Update ref immediately
+    
+    // Rest of the setup...
     setOriginalCoverImage(eventData.coverImage);
     
-    // FIXED: Update both state and ref for allowPhotos
     const allowPhotosValue = eventData.allowPhotos !== undefined ? eventData.allowPhotos : true;
     console.log('📷 Setting allowPhotos to:', allowPhotosValue);
     setAllowPhotos(allowPhotosValue);
-    allowPhotosRef.current = allowPhotosValue; // Keep ref in sync
+    allowPhotosRef.current = allowPhotosValue;
     
-    // Rest of your pricing logic...
+    // Pricing logic...
     if (eventData.pricing) {
       setPrice(String((eventData.pricing.amount || 0) / 100));
       setIsPaidEvent(!eventData.pricing.isFree);
@@ -202,9 +210,10 @@ export default function EditEventScreen() {
     }
 
     console.log('✅ Event data loaded successfully');
+    console.log('📥 ===== FETCH EVENT DEBUG END =====');
 
   } catch (error) {
-    console.error('Error fetching event:', error);
+    console.error('❌ Error fetching event:', error);
     Alert.alert('Error', 'Failed to load event data');
     navigation.goBack();
   } finally {
@@ -216,6 +225,27 @@ export default function EditEventScreen() {
 const isEventHost = () => {
   return currentUser && event && String(event.host._id || event.host) === String(currentUser._id);
 };
+const isEventCoHost = () => {
+  if (!currentUser || !event || isEventHost()) return false;
+  return event.coHosts && event.coHosts.some(
+    coHost => String(coHost._id || coHost) === String(currentUser._id)
+  );
+};
+
+
+const canEditField = (fieldName) => {
+  if (isEventHost()) return true; // Host can edit everything
+  if (!isEventCoHost()) return false; // Non-co-hosts can't edit anything
+  
+  // Co-host restrictions
+  const restrictedFields = [
+    'title', 'pricing', 'maxAttendees', 'privacyLevel', 
+    'coHosts', 'deleteEvent', 'coverImage'
+  ];
+  
+  return !restrictedFields.includes(fieldName);
+};
+
 
 // ✅ FIXED: Delete confirmation function
 const showDeleteConfirmation = () => {
@@ -326,15 +356,45 @@ const handlePhotoToggle = (newValue) => {
 
   // Add co-host
   const addCoHost = (user) => {
-    setCoHosts(prev => [...prev, user]);
-    setCoHostSearchQuery('');
-    setCoHostSearchResults([]);
-  };
+  if (coHosts.length >= 10) {
+    Alert.alert('Limit Reached', 'You can have a maximum of 10 co-hosts.');
+    return;
+  }
+  
+  console.log('👥 ===== ADD COHOST DEBUG =====');
+  console.log('👥 Adding user:', user);
+  console.log('👥 Current coHosts before add:', coHosts);
+  console.log('👥 Current coHostsRef before add:', coHostsRef.current);
+  
+  const newCoHosts = [...coHosts, user];
+  setCoHosts(newCoHosts);
+  coHostsRef.current = newCoHosts; // ✅ Update ref immediately
+  
+  console.log('👥 New coHosts array after add:', newCoHosts);
+  console.log('👥 Updated coHostsRef.current:', coHostsRef.current);
+  
+  setCoHostSearchQuery('');
+  setCoHostSearchResults([]);
+  
+  console.log('👥 ===== ADD COHOST DEBUG END =====');
+};
 
   // Remove co-host
   const removeCoHost = (userId) => {
-    setCoHosts(prev => prev.filter(coHost => coHost._id !== userId));
-  };
+  console.log('👥 ===== REMOVE COHOST DEBUG =====');
+  console.log('👥 Removing userId:', userId);
+  console.log('👥 Current coHosts before remove:', coHosts);
+  console.log('👥 Current coHostsRef before remove:', coHostsRef.current);
+  
+  const filtered = coHosts.filter(coHost => coHost._id !== userId);
+  setCoHosts(filtered);
+  coHostsRef.current = filtered; // ✅ Update ref immediately
+  
+  console.log('👥 Filtered coHosts after remove:', filtered);
+  console.log('👥 Updated coHostsRef.current:', coHostsRef.current);
+  
+  console.log('👥 ===== REMOVE COHOST DEBUG END =====');
+};
 
   // Debounced search effect
   useEffect(() => {
@@ -345,15 +405,55 @@ const handlePhotoToggle = (newValue) => {
     return () => clearTimeout(timeoutId);
   }, [coHostSearchQuery]);
 
+useEffect(() => {
+  console.log('👥 ===== COHOST STATE CHANGED =====');
+  console.log('👥 New coHosts state:', coHosts);
+  console.log('👥 New coHosts length:', coHosts?.length);
+  
+  // ✅ FIXED: Keep ref in sync with state
+  coHostsRef.current = coHosts;
+  console.log('👥 Updated coHostsRef.current:', coHostsRef.current);
+  
+  coHosts.forEach((coHost, index) => {
+    console.log(`👥 CoHost [${index}]:`, {
+      _id: coHost._id,
+      username: coHost.username
+    });
+  });
+  console.log('👥 ===== COHOST STATE CHANGED END =====');
+}, [coHosts]);
   
 const handleSaveEvent = async () => {
-  // FIXED: Use ref value which updates immediately
   const currentAllowPhotos = allowPhotosRef.current;
+  const currentCoHosts = coHostsRef.current; // ✅ Use ref for current co-hosts
   
-  console.log('💾 SAVE DEBUG - Values at save time:');
+  console.log('💾 ===== SAVE DEBUG START =====');
   console.log('📷 allowPhotos state (may be stale):', allowPhotos);
   console.log('📷 allowPhotos ref (current):', currentAllowPhotos);
-  console.log('📷 Using ref value for save');
+  
+  // 🔍 FIXED CO-HOST DEBUGGING - Use ref instead of state
+  console.log('👥 ===== CO-HOST DEBUG =====');
+  console.log('👥 coHosts state (may be stale):', coHosts);
+  console.log('👥 coHosts ref (current):', currentCoHosts);
+  console.log('👥 Using coHosts ref for save');
+  console.log('👥 currentCoHosts type:', typeof currentCoHosts);
+  console.log('👥 currentCoHosts isArray:', Array.isArray(currentCoHosts));
+  console.log('👥 currentCoHosts length:', currentCoHosts?.length);
+  console.log('👥 currentCoHosts raw:', currentCoHosts);
+  
+  console.log('👥 currentCoHosts individual items:');
+  currentCoHosts.forEach((coHost, index) => {
+    console.log(`  [${index}]:`, {
+      _id: coHost._id,
+      username: coHost.username,
+      type: typeof coHost._id
+    });
+  });
+  
+  const coHostIds = currentCoHosts.map(coHost => coHost._id);
+  console.log('👥 Mapped coHost IDs:', coHostIds);
+  console.log('👥 coHostIds type:', typeof coHostIds);
+  console.log('👥 coHostIds isArray:', Array.isArray(coHostIds));
 
   // Validation
   if (!title || !title.trim()) {
@@ -370,6 +470,8 @@ const handleSaveEvent = async () => {
     setSaving(true);
     
     const priceInCents = Math.round(parseFloat(price || 0) * 100);
+    
+    // 🔍 BUILD UPDATE DATA WITH FIXED CO-HOSTS
     const updateData = {
       title: title.trim(),
       description: description.trim(),
@@ -378,8 +480,8 @@ const handleSaveEvent = async () => {
       category: category,
       maxAttendees: parseInt(maxAttendees) || 0,
       privacyLevel: privacyLevel,
-      allowPhotos: currentAllowPhotos, // Use ref value (immediate)
-      coHosts: coHosts.map(coHost => coHost._id),
+      allowPhotos: currentAllowPhotos,
+      coHosts: coHostIds, // ✅ Use the mapped IDs from ref
       permissions: {
         appearInFeed: permissions.appearInFeed,
         appearInSearch: permissions.appearInSearch,
@@ -400,7 +502,11 @@ const handleSaveEvent = async () => {
       refundPolicy: refundPolicy
     };
 
-    console.log('💾 SAVE DEBUG - Final updateData.allowPhotos:', updateData.allowPhotos);
+    console.log('💾 ===== UPDATE DATA DEBUG =====');
+    console.log('💾 updateData.coHosts:', updateData.coHosts);
+    console.log('💾 updateData.coHosts type:', typeof updateData.coHosts);
+    console.log('💾 updateData.coHosts isArray:', Array.isArray(updateData.coHosts));
+    console.log('💾 updateData.coHosts length:', updateData.coHosts?.length);
 
     // Add tags if provided
     if (tags && tags.trim()) {
@@ -413,15 +519,27 @@ const handleSaveEvent = async () => {
       updateData.coordinates = coords;
     }
 
+    console.log('🔄 ===== SENDING REQUEST =====');
+    console.log('🔄 Request URL:', `/api/events/${eventId}`);
+    
+    // 🔍 LOG THE EXACT PAYLOAD BEING SENT
+    const payloadToSend = JSON.stringify(updateData);
+    console.log('🔄 Raw JSON payload:', payloadToSend);
+    console.log('🔄 Payload coHosts section:', JSON.stringify(updateData.coHosts));
+
     // Handle cover image separately if it was changed
     if (cover) {
+      console.log('📸 Using FormData (with cover image)');
       const formData = new FormData();
       
       // Add all the regular fields
       Object.keys(updateData).forEach(key => {
         if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates' || key === 'pricing') {
-          formData.append(key, JSON.stringify(updateData[key]));
+          const jsonValue = JSON.stringify(updateData[key]);
+          console.log(`📸 FormData ${key}:`, jsonValue);
+          formData.append(key, jsonValue);
         } else {
+          console.log(`📸 FormData ${key}:`, updateData[key].toString());
           formData.append(key, updateData[key].toString());
         }
       });
@@ -439,16 +557,40 @@ const handleSaveEvent = async () => {
         },
       });
       
-      console.log('✅ Event update with image successful');
+      console.log('✅ Event update with image successful:', response.data);
+      console.log('✅ Response coHosts:', response.data?.event?.coHosts);
+      
+      if (response.data.event) {
+        setEvent(response.data.event);
+        const backendCoHosts = response.data.event.coHosts || [];
+        setCoHosts(backendCoHosts);
+        coHostsRef.current = backendCoHosts; // ✅ Update ref too
+        console.log('🔄 Updated local co-hosts state from backend:', backendCoHosts);
+      }
     } else {
+      console.log('📄 Using JSON payload (no cover image)');
+      
       const response = await api.put(`/api/events/${eventId}`, updateData, {
         headers: {
           'Content-Type': 'application/json',
         },
       });
       
-      console.log('✅ Event update successful');
+      console.log('✅ Event update successful - Response status:', response.status);
+      console.log('✅ Response coHosts:', response.data?.event?.coHosts);
+      
+      if (response.data.event) {
+        console.log('🔄 Setting event state with:', response.data.event);
+        setEvent(response.data.event);
+        const backendCoHosts = response.data.event.coHosts || [];
+        console.log('🔄 Setting coHosts state with:', backendCoHosts);
+        setCoHosts(backendCoHosts);
+        coHostsRef.current = backendCoHosts; // ✅ Update ref too
+        console.log('🔄 Updated local co-hosts state from backend:', backendCoHosts);
+      }
     }
+
+    console.log('💾 ===== SAVE DEBUG END =====');
 
     Alert.alert(
       'Success!',
@@ -462,15 +604,25 @@ const handleSaveEvent = async () => {
     );
 
   } catch (error) {
-    console.error('❌ Event update error:', error);
-    Alert.alert(
-      'Error',
-      error.response?.data?.message || 'Failed to update event. Please try again.'
-    );
+    console.error('❌ ===== SAVE ERROR =====');
+    console.error('❌ Error:', error.response?.data || error.message);
+    
+    let errorMessage = 'Failed to update event. Please try again.';
+    
+    if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+      
+      if (error.response.data.restrictedFields) {
+        errorMessage += `\n\nRestricted fields: ${error.response.data.restrictedFields.join(', ')}`;
+      }
+    }
+    
+    Alert.alert('Error', errorMessage);
   } finally {
     setSaving(false);
   }
 };
+
 
   const pickCoverImage = async () => {
     try {
@@ -581,22 +733,46 @@ const handleSaveEvent = async () => {
               </View>
             </TouchableOpacity>
           </View>
-
+          {/* Co-host Permission Banner */}
+          {isEventCoHost() && (
+            <View style={styles.coHostBanner}>
+              <View style={styles.coHostBannerContent}>
+                <Ionicons name="information-circle" size={20} color="#3797EF" />
+                <Text style={styles.coHostBannerText}>
+                  You're a co-host! You can edit event details, but some settings are restricted to the main host.
+                </Text>
+              </View>
+            </View>
+          )}
           {/* Basic Information */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Event Details</Text>
             
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Event Title *</Text>
-              <TextInput
-                style={styles.input}
-                value={title}
-                onChangeText={setTitle}
-                placeholder="What's your event called?"
-                placeholderTextColor="#C7C7CC"
-                maxLength={100}
-              />
-            </View>
+  <Text style={styles.label}>
+    Event Title *
+    {!canEditField('title') && (
+      <Text style={styles.restrictedLabel}> (Host Only)</Text>
+    )}
+  </Text>
+  <TextInput
+    style={[
+      styles.input,
+      !canEditField('title') && styles.inputDisabled
+    ]}
+    value={title}
+    onChangeText={canEditField('title') ? setTitle : undefined}
+    placeholder="What's your event called?"
+    placeholderTextColor="#C7C7CC"
+    maxLength={100}
+    editable={canEditField('title')}
+  />
+  {!canEditField('title') && (
+    <Text style={styles.restrictedHint}>
+      Only the event host can change the title
+    </Text>
+  )}
+</View>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Description</Text>
@@ -756,131 +932,193 @@ const handleSaveEvent = async () => {
             </View>
           </View>
 
-          {/* Co-hosts Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Co-hosts</Text>
-            <Text style={styles.sectionDescription}>
-              Manage friends who can help you run this event
-            </Text>
+          {/* Co-hosts Section - Only show if user can edit co-hosts */}
+          {canEditField('coHosts') && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Co-hosts</Text>
+              <Text style={styles.sectionDescription}>
+                Manage friends who can help you run this event
+              </Text>
 
-            {/* Selected Co-hosts */}
-            {coHosts.length > 0 && (
-              <View style={styles.coHostsList}>
-                {coHosts.map((coHost) => (
-                  <View key={coHost._id} style={styles.coHostItem}>
-                    <View style={styles.coHostInfo}>
-                      <View style={styles.coHostAvatar}>
-                        {coHost.profilePicture ? (
-                          <Image 
-                            source={{ uri: coHost.profilePicture }} 
-                            style={styles.coHostAvatarImage} 
-                          />
-                        ) : (
-                          <View style={styles.coHostAvatarPlaceholder}>
-                            <Text style={styles.coHostAvatarText}>
-                              {coHost.username.charAt(0).toUpperCase()}
-                            </Text>
-                          </View>
-                        )}
+              {/* Selected Co-hosts */}
+              {coHosts.length > 0 && (
+                <View style={styles.coHostsList}>
+                  {coHosts.map((coHost) => (
+                    <View key={coHost._id} style={styles.coHostItem}>
+                      <View style={styles.coHostInfo}>
+                        <View style={styles.coHostAvatar}>
+                          {coHost.profilePicture ? (
+                            <Image 
+                              source={{ uri: coHost.profilePicture }} 
+                              style={styles.coHostAvatarImage} 
+                            />
+                          ) : (
+                            <View style={styles.coHostAvatarPlaceholder}>
+                              <Text style={styles.coHostAvatarText}>
+                                {coHost.username.charAt(0).toUpperCase()}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.coHostDetails}>
+                          <Text style={styles.coHostName}>{coHost.username}</Text>
+                          <Text style={styles.coHostRole}>Co-host</Text>
+                        </View>
                       </View>
-                      <View style={styles.coHostDetails}>
-                        <Text style={styles.coHostName}>{coHost.username}</Text>
-                        <Text style={styles.coHostRole}>Co-host</Text>
-                      </View>
+                      <TouchableOpacity
+                        onPress={() => removeCoHost(coHost._id)}
+                        style={styles.removeCoHostButton}
+                      >
+                        <Ionicons name="close" size={20} color="#FF3B30" />
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => removeCoHost(coHost._id)}
-                      style={styles.removeCoHostButton}
-                    >
-                      <Ionicons name="close" size={20} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
+                  ))}
+                </View>
+              )}
 
-            {/* Add Co-host Button */}
-            <TouchableOpacity
-              style={styles.addCoHostButton}
-              onPress={() => setShowCoHostModal(true)}
-            >
-              <Ionicons name="person-add-outline" size={20} color="#3797EF" />
-              <Text style={styles.addCoHostButtonText}>Add Co-host</Text>
-            </TouchableOpacity>
-          </View>
+              {/* Add Co-host Button */}
+              <TouchableOpacity
+                style={styles.addCoHostButton}
+                onPress={() => setShowCoHostModal(true)}
+              >
+                <Ionicons name="person-add-outline" size={20} color="#3797EF" />
+                <Text style={styles.addCoHostButtonText}>Add Co-host</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Event Settings */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Settings</Text>
+<View style={styles.section}>
+  <Text style={styles.sectionTitle}>Settings</Text>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Max Attendees</Text>
-              <TextInput
-                style={styles.input}
-                value={maxAttendees}
-                onChangeText={setMaxAttendees}
-                placeholder="50"
-                placeholderTextColor="#C7C7CC"
-                keyboardType="numeric"
-              />
-            </View>
+  {/* Max Attendees - Host Only */}
+  {canEditField('maxAttendees') ? (
+    <View style={styles.inputGroup}>
+      <Text style={styles.label}>Max Attendees</Text>
+      <TextInput
+        style={styles.input}
+        value={maxAttendees}
+        onChangeText={setMaxAttendees}
+        placeholder="50"
+        placeholderTextColor="#C7C7CC"
+        keyboardType="numeric"
+      />
+    </View>
+  ) : (
+    <View style={styles.inputGroup}>
+      <Text style={styles.label}>
+        Max Attendees <Text style={styles.restrictedLabel}>(Host Only)</Text>
+      </Text>
+      <View style={[styles.input, styles.inputDisabled]}>
+        <Text style={styles.disabledText}>{maxAttendees}</Text>
+      </View>
+      <Text style={styles.restrictedHint}>
+        Only the host can change attendee limits
+      </Text>
+    </View>
+  )}
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Ticket Price ($)</Text>
-              <TextInput
-                style={styles.input}
-                value={price}
-                onChangeText={setPrice}
-                placeholder="0.00"
-                placeholderTextColor="#C7C7CC"
-                keyboardType="numeric"
-              />
-            </View>
+  {/* Ticket Price - Host Only */}
+  {canEditField('pricing') ? (
+    <View style={styles.inputGroup}>
+      <Text style={styles.label}>Ticket Price ($)</Text>
+      <TextInput
+        style={styles.input}
+        value={price}
+        onChangeText={setPrice}
+        placeholder="0.00"
+        placeholderTextColor="#C7C7CC"
+        keyboardType="numeric"
+      />
+    </View>
+  ) : (
+    <View style={styles.inputGroup}>
+      <Text style={styles.label}>
+        Ticket Price ($) <Text style={styles.restrictedLabel}>(Host Only)</Text>
+      </Text>
+      <View style={[styles.input, styles.inputDisabled]}>
+        <Text style={styles.disabledText}>${price}</Text>
+      </View>
+      <Text style={styles.restrictedHint}>
+        Only the host can change pricing
+      </Text>
+    </View>
+  )}
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Tags (optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={tags}
-                onChangeText={setTags}
-                placeholder="music, party, fun (separated by commas)"
-                placeholderTextColor="#C7C7CC"
-              />
-            </View>
-          </View>
+  {/* Tags - Co-hosts CAN edit this */}
+  <View style={styles.inputGroup}>
+    <Text style={styles.label}>Tags (optional)</Text>
+    <TextInput
+      style={styles.input}
+      value={tags}
+      onChangeText={setTags}
+      placeholder="music, party, fun (separated by commas)"
+      placeholderTextColor="#C7C7CC"
+    />
+  </View>
+</View>
 
           {/* Privacy Settings */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Privacy Level</Text>
-            <Text style={styles.sectionDescription}>
-              Controls who can see and join your event
-            </Text>
+{canEditField('privacyLevel') ? (
+  <View style={styles.section}>
+    <Text style={styles.sectionTitle}>Privacy Level</Text>
+    <Text style={styles.sectionDescription}>
+      Controls who can see and join your event
+    </Text>
 
-            <TouchableOpacity
-              style={styles.privacyButton}
-              onPress={() => setShowPrivacyModal(true)}
-            >
-              <View style={styles.privacyButtonContent}>
-                <Ionicons 
-                  name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
-                  size={24} 
-                  color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
-                />
-                <View style={styles.privacyButtonText}>
-                  <Text style={styles.privacyLabel}>
-                    {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
-                  </Text>
-                  <Text style={styles.privacyDesc}>
-                    {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-              </View>
-            </TouchableOpacity>
-          </View>
+    <TouchableOpacity
+      style={styles.privacyButton}
+      onPress={() => setShowPrivacyModal(true)}
+    >
+      <View style={styles.privacyButtonContent}>
+        <Ionicons 
+          name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+          size={24} 
+          color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
+        />
+        <View style={styles.privacyButtonText}>
+          <Text style={styles.privacyLabel}>
+            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
+          </Text>
+          <Text style={styles.privacyDesc}>
+            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+      </View>
+    </TouchableOpacity>
+  </View>
+) : (
+  <View style={styles.section}>
+    <Text style={styles.sectionTitle}>
+      Privacy Level <Text style={styles.restrictedLabel}>(Host Only)</Text>
+    </Text>
+    <Text style={styles.sectionDescription}>
+      Only the host can change privacy settings
+    </Text>
 
-          {/* ✅ FIXED: Delete Event Section - Only show for event host */}
-          {isEventHost() && (
+    <View style={[styles.privacyButton, styles.privacyButtonDisabled]}>
+      <View style={styles.privacyButtonContent}>
+        <Ionicons 
+          name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+          size={24} 
+          color="#8E8E93"
+        />
+        <View style={styles.privacyButtonText}>
+          <Text style={styles.disabledText}>
+            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
+          </Text>
+          <Text style={styles.restrictedHint}>
+            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+          </Text>
+        </View>
+      </View>
+    </View>
+  </View>
+)}
+
+          {/* Delete Event Section - Only show for event host */}
+          {canEditField('deleteEvent') && (
             <View style={styles.section}>
               <Text style={styles.dangerSectionTitle}>Danger Zone</Text>
               <Text style={styles.sectionDescription}>
@@ -938,87 +1176,93 @@ const handleSaveEvent = async () => {
       </KeyboardAvoidingView>
 
       {/* Co-host Search Modal */}
-      <Modal
-        visible={showCoHostModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowCoHostModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.coHostModal}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Co-host</Text>
-              <TouchableOpacity onPress={() => setShowCoHostModal(false)}>
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
+        <Modal
+      visible={showCoHostModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowCoHostModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.coHostModal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Co-host</Text>
+            <TouchableOpacity onPress={() => setShowCoHostModal(false)}>
+              <Ionicons name="close" size={24} color="#8E8E93" />
+            </TouchableOpacity>
+          </View>
 
-            <View style={styles.searchContainer}>
-              <View style={styles.searchInputContainer}>
-                <Ionicons name="search" size={20} color="#8E8E93" />
-                <TextInput
-                  style={styles.searchInput}
-                  value={coHostSearchQuery}
-                  onChangeText={setCoHostSearchQuery}
-                  placeholder="Search for friends..."
-                  placeholderTextColor="#C7C7CC"
-                  autoFocus
-                />
-                {searchingCoHosts && (
-                  <ActivityIndicator size="small" color="#8E8E93" />
-                )}
-              </View>
-            </View>
-
-            <FlatList
-              data={coHostSearchResults}
-              keyExtractor={(item) => item._id}
-              style={styles.searchResultsList}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.searchResultItem}
-                  onPress={() => addCoHost(item)}
-                >
-                  <View style={styles.searchResultAvatar}>
-                    {item.profilePicture ? (
-                      <Image 
-                        source={{ uri: item.profilePicture }} 
-                        style={styles.searchResultAvatarImage} 
-                      />
-                    ) : (
-                      <View style={styles.searchResultAvatarPlaceholder}>
-                        <Text style={styles.searchResultAvatarText}>
-                          {item.username.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.searchResultInfo}>
-                    <Text style={styles.searchResultName}>{item.username}</Text>
-                    {item.displayName && (
-                      <Text style={styles.searchResultDisplayName}>{item.displayName}</Text>
-                    )}
-                  </View>
-                  <Ionicons name="add-circle" size={24} color="#3797EF" />
-                </TouchableOpacity>
+          <View style={styles.searchContainer}>
+            <View style={styles.searchInputContainer}>
+              <Ionicons name="search" size={20} color="#8E8E93" />
+              <TextInput
+                style={styles.searchInput}
+                value={coHostSearchQuery}
+                onChangeText={setCoHostSearchQuery}
+                placeholder="Search for friends..."
+                placeholderTextColor="#C7C7CC"
+                autoFocus
+              />
+              {searchingCoHosts && (
+                <ActivityIndicator size="small" color="#8E8E93" />
               )}
-              ListEmptyComponent={() => (
-                <View style={styles.emptySearchResults}>
-                  {coHostSearchQuery ? (
-                    <Text style={styles.emptySearchText}>
-                      {searchingCoHosts ? 'Searching...' : 'No users found'}
-                    </Text>
+            </View>
+          </View>
+
+          <FlatList
+            data={coHostSearchResults}
+            keyExtractor={(item) => item._id}
+            style={styles.searchResultsList}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.searchResultItem}
+                onPress={() => addCoHost(item)}
+              >
+                <View style={styles.searchResultAvatar}>
+                  {item.profilePicture ? (
+                    <Image 
+                      source={{ 
+                        uri: item.profilePicture.startsWith('http') 
+                          ? item.profilePicture 
+                          : `http://${API_BASE_URL}:3000${item.profilePicture}` 
+                      }} 
+                      style={styles.searchResultAvatarImage} 
+                    />
                   ) : (
-                    <Text style={styles.emptySearchText}>
-                      Search for friends to add as co-hosts
+                    <View style={styles.searchResultAvatarPlaceholder}>
+                      <Text style={styles.searchResultAvatarText}>
+                        {item.username.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.searchResultInfo}>
+                  <Text style={styles.searchResultName}>{item.username}</Text>
+                  {item.bio && (
+                    <Text style={styles.searchResultDisplayName} numberOfLines={1}>
+                      {item.bio}
                     </Text>
                   )}
                 </View>
-              )}
-            />
-          </View>
+                <Ionicons name="add-circle" size={24} color="#3797EF" />
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={() => (
+              <View style={styles.emptySearchResults}>
+                {coHostSearchQuery ? (
+                  <Text style={styles.emptySearchText}>
+                    {searchingCoHosts ? 'Searching...' : 'No users found'}
+                  </Text>
+                ) : (
+                  <Text style={styles.emptySearchText}>
+                    Search for friends to add as co-hosts {coHosts.length >= 10 ? '(Limit: 10)' : `(${coHosts.length}/10)`}
+                  </Text>
+                )}
+              </View>
+            )}
+          />
         </View>
-      </Modal>
+      </View>
+        </Modal>
 
       {/* Category Modal */}
       <Modal
@@ -1450,24 +1694,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   coHostAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  coHostAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 20,
-  },
-  coHostAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 20,
-    backgroundColor: '#3797EF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  width: 40,
+  height: 40,
+  borderRadius: 8, // ✅ FIXED: Square with rounded corners
+  marginRight: 12,
+},
+coHostAvatarImage: {
+  width: '100%',
+  height: '100%',
+  borderRadius: 8, // ✅ FIXED: Square with rounded corners
+},
+coHostAvatarPlaceholder: {
+  width: '100%',
+  height: '100%',
+  borderRadius: 8, // ✅ FIXED: Square with rounded corners
+  backgroundColor: '#3797EF',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
   coHostAvatarText: {
     fontSize: 16,
     fontWeight: '600',
@@ -1658,24 +1902,24 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E5EA',
   },
   searchResultAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    marginRight: 12,
-  },
-  searchResultAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 22,
-  },
-  searchResultAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 22,
-    backgroundColor: '#C7C7CC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  width: 44,
+  height: 44,
+  borderRadius: 8, // ✅ FIXED: Square with rounded corners
+  marginRight: 12,
+},
+searchResultAvatarImage: {
+  width: '100%',
+  height: '100%',
+  borderRadius: 8, // ✅ FIXED: Square with rounded corners
+},
+searchResultAvatarPlaceholder: {
+  width: '100%',
+  height: '100%',
+  borderRadius: 8, // ✅ FIXED: Square with rounded corners
+  backgroundColor: '#3797EF', // Changed from #C7C7CC
+  justifyContent: 'center',
+  alignItems: 'center',
+},
   searchResultAvatarText: {
     fontSize: 18,
     fontWeight: '600',
@@ -1892,4 +2136,54 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  // Add these styles to your existing StyleSheet (before the closing });
+
+// Co-host Banner
+coHostBanner: {
+  backgroundColor: '#E3F2FD',
+  borderRadius: 12,
+  marginHorizontal: 16,
+  marginBottom: 20,
+  borderLeftWidth: 4,
+  borderLeftColor: '#3797EF',
+},
+coHostBannerContent: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 16,
+},
+coHostBannerText: {
+  flex: 1,
+  marginLeft: 12,
+  fontSize: 14,
+  color: '#1976D2',
+  lineHeight: 20,
+},
+
+// Restricted Fields
+restrictedLabel: {
+  fontSize: 12,
+  color: '#FF9500',
+  fontWeight: '500',
+},
+restrictedHint: {
+  fontSize: 12,
+  color: '#8E8E93',
+  marginTop: 4,
+  fontStyle: 'italic',
+},
+inputDisabled: {
+  backgroundColor: '#F0F0F0',
+  borderColor: '#E5E5EA',
+  opacity: 0.7,
+},
+disabledText: {
+  fontSize: 16,
+  color: '#8E8E93',
+  paddingVertical: 14,
+},
+privacyButtonDisabled: {
+  opacity: 0.7,
+  backgroundColor: '#F0F0F0',
+},
 });

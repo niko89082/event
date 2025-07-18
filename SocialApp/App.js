@@ -1,6 +1,6 @@
 // App.js - Updated with enhanced navigation support
 import React, { useContext, useEffect } from 'react';
-import { View, Text, ActivityIndicator, Alert, Linking } from 'react-native';
+import { View, Text, ActivityIndicator, Alert, Linking, TextInput  } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StripeProvider } from '@stripe/stripe-react-native';
@@ -42,6 +42,12 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
 import { StatusBar } from 'react-native';
+
+Text.defaultProps = Text.defaultProps || {};
+Text.defaultProps.allowFontScaling = false;
+
+TextInput.defaultProps = TextInput.defaultProps || {};
+TextInput.defaultProps.allowFontScaling = false;
 
 // Environment check
 if (!API_BASE_URL) {

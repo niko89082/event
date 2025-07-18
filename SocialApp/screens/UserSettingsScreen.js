@@ -150,7 +150,105 @@ export default function UserSettingsScreen({ navigation }) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This action cannot be undone. All your photos, events, and data will be permanently deleted.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: showPasswordConfirmation
+        }
+      ]
+    );
+  };
 
+  const showPasswordConfirmation = () => {
+    Alert.prompt(
+      'Enter Password',
+      'Please enter your password to confirm account deletion',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: (password) => {
+            if (!password || password.trim().length === 0) {
+              Alert.alert('Error', 'Password is required');
+              return;
+            }
+            showFinalConfirmation(password);
+          }
+        }
+      ],
+      'secure-text'
+    );
+  };
+
+  const showFinalConfirmation = (password) => {
+    Alert.prompt(
+      'Final Confirmation',
+      'Type "DELETE" to permanently delete your account',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Delete Forever',
+          style: 'destructive',
+          onPress: (confirmText) => {
+            if (confirmText === 'DELETE') {
+              performAccountDeletion(password);
+            } else {
+              Alert.alert('Error', 'Please type "DELETE" exactly to confirm');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const performAccountDeletion = async (password) => {
+    try {
+      Alert.alert('Deleting Account', 'Please wait while we delete your account...', [], { cancelable: false });
+      
+      // Verify password first (you'll need to add this endpoint)
+      await api.post('/auth/verify-password', { password });
+      
+      // Perform deletion
+      await api.delete('/profile/delete');
+      
+      // Logout and redirect
+      Alert.alert(
+        'Account Deleted',
+        'Your account has been successfully deleted.',
+        [
+          {
+            text: 'OK',
+            onPress: async () => {
+              await logout();
+              // Navigation will be handled by AuthContext
+            }
+          }
+        ],
+        { cancelable: false }
+      );
+      
+    } catch (error) {
+      console.error('Delete account error:', error);
+      const message = error.response?.data?.message || 'Failed to delete account. Please try again.';
+      Alert.alert('Error', message);
+    }
+  };
   const handlePayPalUpdate = async () => {
     if (!validateEmail(paypalEmail)) {
       setEmailError('Please enter a valid email address');
@@ -265,7 +363,7 @@ export default function UserSettingsScreen({ navigation }) {
   };
 
   const handlePaymentSettings = () => {
-    navigation.navigate('PaymentSettings');
+    navigation.navigate('PaymentSettingsScreen');
   };
 
   const handlePrivacyPolicy = () => {
@@ -546,7 +644,25 @@ export default function UserSettingsScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         </View>
-
+          <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          
+          <TouchableOpacity
+            style={styles.deleteAccountButton}
+            onPress={handleDeleteAccount}
+            activeOpacity={0.8}
+          >
+            <View style={styles.deleteAccountContent}>
+              <View style={styles.menuItemLeft}>
+                <View style={[styles.menuIcon, { backgroundColor: '#FF3B30' }]}>
+                  <Ionicons name="trash-outline" size={18} color="#FFFFFF" />
+                </View>
+                <Text style={styles.deleteAccountText}>Delete Account</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#C7C7CC" />
+            </View>
+          </TouchableOpacity>
+        </View>
         {/* Logout Section */}
         <View style={styles.section}>
           <TouchableOpacity
@@ -998,5 +1114,25 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  deleteAccountButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  deleteAccountContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+  },
+  deleteAccountText: {
+    fontSize: 16,
+    color: '#FF3B30',
+    fontWeight: '500',
   },
 });

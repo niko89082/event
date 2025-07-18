@@ -299,6 +299,15 @@ export default function EventCard({
               {event.location}
             </Text>
           </View>
+          <View style={styles.detailItem}>
+          <Ionicons name="person-outline" size={16} color="#8E8E93" />
+          <Text style={styles.detailText} numberOfLines={1}>
+            {event.host?.username || 'Unknown Host'}
+            {event.coHosts && event.coHosts.length > 0 && (
+              <Text style={styles.coHostsText}> +{event.coHosts.length} cohost{event.coHosts.length > 1 ? 's' : ''}</Text>
+            )}
+          </Text>
+        </View>
         </View>
 
         {/* Attendees and Price */}
@@ -730,4 +739,9 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     fontWeight: '500',
   },
+  coHostsText: {
+  color: '#8E8E93',
+  fontWeight: '400',
+  fontSize: 13,
+},
 });

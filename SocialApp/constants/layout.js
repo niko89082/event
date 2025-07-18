@@ -1,14 +1,22 @@
-// constants/layout.js - Shared layout constants for consistent measurements
-import { Platform, StatusBar, Dimensions } from 'react-native';
+// constants/layout.js - Enhanced with dynamic font scaling
+import { Platform, StatusBar, Dimensions, PixelRatio } from 'react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const fontScale = PixelRatio.getFontScale();
+
+// Dynamic height calculations
+const getScaledHeight = (baseHeight) => {
+  const maxScale = 1.3; // Limit scaling for layout elements
+  const cappedScale = Math.min(fontScale, maxScale);
+  return Math.ceil(baseHeight * cappedScale);
+};
 
 // Status bar height calculation
 export const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 24;
 
-// Header dimensions
-export const MAIN_HEADER_HEIGHT = Platform.OS === 'ios' ? 60 : 56;
-export const SUB_TAB_HEIGHT = 56;
+// Dynamic header dimensions
+export const MAIN_HEADER_HEIGHT = getScaledHeight(Platform.OS === 'ios' ? 60 : 56);
+export const SUB_TAB_HEIGHT = getScaledHeight(56);
 export const TOTAL_HEADER_HEIGHT = STATUS_BAR_HEIGHT + MAIN_HEADER_HEIGHT + SUB_TAB_HEIGHT;
 
 // Tab dimensions for main Posts/Events tabs
@@ -23,8 +31,8 @@ export const SUB_TAB_WIDTH = (SCREEN_WIDTH - 80) / SUB_TAB_COUNT; // Account for
 export const SUB_TAB_INDICATOR_WIDTH = 60;
 export const SUB_TAB_INDICATOR_OFFSET = (SUB_TAB_WIDTH - SUB_TAB_INDICATOR_WIDTH) / 2;
 
-// Content padding
-export const CONTENT_PADDING_TOP = TOTAL_HEADER_HEIGHT + 10;
+// Dynamic content padding
+export const CONTENT_PADDING_TOP = TOTAL_HEADER_HEIGHT + getScaledHeight(10);
 
 // Screen dimensions
 export { SCREEN_WIDTH, SCREEN_HEIGHT };
@@ -46,10 +54,10 @@ export const Z_INDEX = {
   TOAST: 3000,
 };
 
-console.log('📏 Layout Constants Loaded:', {
-  STATUS_BAR_HEIGHT,
-  MAIN_HEADER_HEIGHT,
-  SUB_TAB_HEIGHT,
-  TOTAL_HEADER_HEIGHT,
-  CONTENT_PADDING_TOP,
+console.log('📏 Dynamic Layout Constants:', {
+  fontScale,
+  scaledMainHeaderHeight: MAIN_HEADER_HEIGHT,
+  scaledSubTabHeight: SUB_TAB_HEIGHT,
+  totalHeaderHeight: TOTAL_HEADER_HEIGHT,
+  contentPaddingTop: CONTENT_PADDING_TOP,
 });

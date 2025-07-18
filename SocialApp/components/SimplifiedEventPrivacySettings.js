@@ -1,8 +1,9 @@
-// components/SimplifiedEventPrivacySettings.js - Cleaned up privacy without redundant toggles
+// components/SimplifiedEventPrivacySettings.js - PHASE 1.7: Enhanced with guest pass awareness
+
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal,
-  SafeAreaView, ScrollView
+  SafeAreaView, ScrollView, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -13,7 +14,9 @@ const PRIVACY_LEVELS = [
     description: 'Anyone can discover and join',
     icon: 'globe-outline',
     color: '#34C759',
-    details: 'Appears in search • Visible in feeds • Open to everyone'
+    details: 'Appears in search • Visible in feeds • Open to everyone',
+    guestPassSupport: 'full',
+    guestPassInfo: 'Guest passes work seamlessly for everyone'
   },
   {
     key: 'friends',
@@ -21,7 +24,9 @@ const PRIVACY_LEVELS = [
     description: 'Only your followers can see and join',
     icon: 'people-outline',
     color: '#3797EF',
-    details: 'Visible to followers • Limited discovery'
+    details: 'Visible to followers • Limited discovery • Guest passes allowed',
+    guestPassSupport: 'limited',
+    guestPassInfo: 'Guest passes work, but event won\'t appear in public feeds'
   },
   {
     key: 'private',
@@ -29,7 +34,9 @@ const PRIVACY_LEVELS = [
     description: 'Invitation only, but attendees can share',
     icon: 'lock-closed-outline',
     color: '#FF9500',
-    details: 'Invitation required • Hidden from search • Attendees can invite'
+    details: 'Invitation required • Hidden from search • Attendees can invite',
+    guestPassSupport: 'full',
+    guestPassInfo: 'Guest passes work perfectly for private invitations'
   },
   {
     key: 'secret',
@@ -37,22 +44,75 @@ const PRIVACY_LEVELS = [
     description: 'Completely hidden, host controls everything',
     icon: 'eye-off-outline',
     color: '#FF3B30',
-    details: 'Maximum privacy • Host-only invitations • No public sharing'
+    details: 'Maximum privacy • Host-only invitations • No public sharing',
+    guestPassSupport: 'host-only',
+    guestPassInfo: 'Only you can create guest passes for this event'
   }
 ];
 
 export default function SimplifiedEventPrivacySettings({
   privacyLevel,
   onPrivacyChange,
-  style
+  style,
+  showGuestPassInfo = true // PHASE 1: New prop to show guest pass information
 }) {
   const [showModal, setShowModal] = useState(false);
 
   const selectedPrivacy = PRIVACY_LEVELS.find(p => p.key === privacyLevel) || PRIVACY_LEVELS[0];
 
   const handlePrivacySelect = (newPrivacy) => {
+    // PHASE 1: Show warning for privacy levels that affect guest access
+    if (newPrivacy === 'secret' && privacyLevel !== 'secret') {
+      Alert.alert(
+        'Secret Event',
+        'Secret events have the highest privacy. Only you can create guest passes, and the event is completely hidden from discovery.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Continue', 
+            onPress: () => {
+              onPrivacyChange(newPrivacy);
+              setShowModal(false);
+            }
+          }
+        ]
+      );
+      return;
+    }
+
+    if (newPrivacy === 'friends' && privacyLevel !== 'friends') {
+      Alert.alert(
+        'Friends Only Event',
+        'This event will only be visible to your followers. Guest passes will still work, but the event won\'t appear in public feeds.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Continue', 
+            onPress: () => {
+              onPrivacyChange(newPrivacy);
+              setShowModal(false);
+            }
+          }
+        ]
+      );
+      return;
+    }
+
     onPrivacyChange(newPrivacy);
     setShowModal(false);
+  };
+
+  const getGuestPassStatusIcon = (support) => {
+    switch (support) {
+      case 'full':
+        return { name: 'checkmark-circle', color: '#34C759' };
+      case 'limited':
+        return { name: 'warning', color: '#FF9500' };
+      case 'host-only':
+        return { name: 'lock-closed', color: '#FF3B30' };
+      default:
+        return { name: 'help-circle', color: '#8E8E93' };
+    }
   };
 
   return (
@@ -80,9 +140,24 @@ export default function SimplifiedEventPrivacySettings({
       </TouchableOpacity>
 
       <View style={styles.privacyHint}>
-        <Ionicons name="information-circle-outline" size={16} color="#8E8E93" />
+        <Ionicons name="information-circle-outline" size={16} color="#3797EF" />
         <Text style={styles.privacyHintText}>{selectedPrivacy.details}</Text>
       </View>
+
+      {/* PHASE 1: Guest Pass Information */}
+      {showGuestPassInfo && (
+        <View style={styles.guestPassInfo}>
+          <View style={styles.guestPassHeader}>
+            <Ionicons 
+              name={getGuestPassStatusIcon(selectedPrivacy.guestPassSupport).name} 
+              size={16} 
+              color={getGuestPassStatusIcon(selectedPrivacy.guestPassSupport).color} 
+            />
+            <Text style={styles.guestPassTitle}>Guest Pass Access</Text>
+          </View>
+          <Text style={styles.guestPassText}>{selectedPrivacy.guestPassInfo}</Text>
+        </View>
+      )}
 
       {/* Privacy Selection Modal */}
       <Modal
@@ -119,6 +194,23 @@ export default function SimplifiedEventPrivacySettings({
                     <Text style={styles.privacyOptionLabel}>{privacy.label}</Text>
                     <Text style={styles.privacyOptionDescription}>{privacy.description}</Text>
                     <Text style={styles.privacyOptionDetails}>{privacy.details}</Text>
+                    
+                    {/* PHASE 1: Guest pass support indicator */}
+                    {showGuestPassInfo && (
+                      <View style={styles.guestPassSupport}>
+                        <Ionicons 
+                          name={getGuestPassStatusIcon(privacy.guestPassSupport).name} 
+                          size={14} 
+                          color={getGuestPassStatusIcon(privacy.guestPassSupport).color} 
+                        />
+                        <Text style={[
+                          styles.guestPassSupportText,
+                          { color: getGuestPassStatusIcon(privacy.guestPassSupport).color }
+                        ]}>
+                          {privacy.guestPassInfo}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                   {privacyLevel === privacy.key && (
                     <Ionicons name="checkmark-circle" size={24} color={privacy.color} />
@@ -186,12 +278,38 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     gap: 8,
+    marginBottom: 12,
   },
   privacyHintText: {
     flex: 1,
     fontSize: 13,
     color: '#3797EF',
     lineHeight: 18,
+  },
+
+  // PHASE 1: Guest Pass Information Styles
+  guestPassInfo: {
+    backgroundColor: '#F8F9FA',
+    padding: 12,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#34C759',
+  },
+  guestPassHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  guestPassTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+    marginLeft: 6,
+  },
+  guestPassText: {
+    fontSize: 13,
+    color: '#666666',
+    lineHeight: 16,
   },
 
   // Modal styles
@@ -235,7 +353,7 @@ const styles = StyleSheet.create({
   },
   privacyOptionContent: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   privacyOptionIcon: {
     width: 56,
@@ -263,5 +381,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     lineHeight: 20,
+    marginBottom: 8,
+  },
+  
+  // PHASE 1: Guest pass support in modal
+  guestPassSupport: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  guestPassSupportText: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 4,
+    lineHeight: 16,
+    flex: 1,
   },
 });
