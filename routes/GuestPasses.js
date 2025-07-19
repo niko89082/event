@@ -52,94 +52,151 @@ router.post('/:eventId/guest-pass', protect, createGuestPassLimiter, async (req,
       return res.status(403).json({ message: 'Only hosts and co-hosts can create guest passes' });
     }
 
-    // PHASE 1: Privacy level validation for guest pass creation
+    // PHASE 1: Fixed privacy level validation (removed secret)
     const privacyValidation = validatePrivacyForGuestPass(event.privacyLevel, event.permissions);
+    
     if (!privacyValidation.allowed) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: privacyValidation.message,
-        privacyLevel: event.privacyLevel,
         suggestion: privacyValidation.suggestion
       });
     }
 
-    // Check if event is paid and validate host payment setup
-    const isEventPaid = event.isPaidEvent();
-    if (isEventPaid && !event.host.paymentAccounts?.stripe?.chargesEnabled) {
-      return res.status(400).json({ 
-        message: 'Host must complete payment setup before creating paid guest passes',
-        needsPaymentSetup: true
-      });
+    // Show warnings if any
+    if (privacyValidation.warning) {
+      console.log(`⚠️ Guest pass warning for event ${event._id}:`, privacyValidation.warning);
     }
 
-    // Create guest pass with privacy-appropriate settings
-    const guestPass = new GuestPass({
-      event: event._id,
+    // Calculate expiry based on privacy level and event settings
+    const expiresAt = calculateGuestPassExpiry(event);
+
+    // Generate unique token
+    const guestPassData = {
+      eventId: event._id,
       guestName: guestName.trim(),
       guestEmail: guestEmail?.trim(),
       guestPhone: guestPhone?.trim(),
-      status: 'pending',
-      
-      // Payment configuration
-      payment: {
-        required: isEventPaid,
-        amount: isEventPaid ? event.ticketPrice : 0,
-        currency: event.currency || 'USD',
-        status: isEventPaid ? 'pending' : 'not_required'
-      },
-      
-      // Set expiry based on privacy level
-      expiresAt: calculateGuestPassExpiry(event),
-      
-      // PHASE 1: Set permissions based on privacy level
-      permissions: getGuestPermissionsForPrivacyLevel(event.privacyLevel)
+      createdBy: req.user._id,
+      expiresAt,
+      privacyLevel: event.privacyLevel // Store for validation
+    };
+
+    const token = jwt.sign(guestPassData, process.env.JWT_SECRET, {
+      expiresIn: '7d' // Max 7 days
     });
 
-    // Generate secure token
-    const payload = {
-      guestPassId: guestPass._id,
-      eventId: event._id,
-      nonce: crypto.randomBytes(16).toString('hex')
-    };
-    
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    
-    guestPass.token = tokenHash;
-    guestPass.nonce = payload.nonce;
+    // Create guest pass record
+    const guestPass = new GuestPass({
+      event: event._id,
+      createdBy: req.user._id,
+      guestName: guestName.trim(),
+      guestEmail: guestEmail?.trim(),
+      guestPhone: guestPhone?.trim(),
+      token,
+      expiresAt,
+      privacyLevel: event.privacyLevel
+    });
+
     await guestPass.save();
 
-    // Create invitation URL
-    const inviteUrl = `${process.env.FRONTEND_URL}/guest-pass/rsvp/${token}`;
+    // Generate QR code
+    const qrCodeData = {
+      type: 'guest-pass',
+      token,
+      eventId: event._id,
+      eventTitle: event.title
+    };
 
-    console.log(`✅ Guest pass created for ${guestName} (Privacy: ${event.privacyLevel})`);
+    const qrCode = await QRCode.toDataURL(JSON.stringify(qrCodeData));
+
+    // Create shareable link
+    const shareableLink = `${process.env.FRONTEND_URL}/guest-pass/${token}`;
+
+    console.log(`✅ Guest pass created for event ${event._id} by ${req.user._id}`);
 
     res.status(201).json({
       success: true,
-      message: 'Guest pass created successfully',
       guestPass: {
-        id: guestPass._id,
+        _id: guestPass._id,
         guestName: guestPass.guestName,
-        status: guestPass.status,
-        expiresAt: guestPass.expiresAt,
+        token,
+        qrCode,
+        shareableLink,
+        expiresAt,
+        eventTitle: event.title,
         privacyLevel: event.privacyLevel
       },
-      payment: {
-        required: isEventPaid,
-        amount: guestPass.payment.amount,
-        currency: guestPass.payment.currency
-      },
-      inviteUrl: inviteUrl,
-      privacyInfo: privacyValidation.info
+      privacyInfo: {
+        level: event.privacyLevel,
+        message: privacyValidation.message,
+        info: privacyValidation.info,
+        warning: privacyValidation.warning
+      }
     });
 
   } catch (error) {
-    console.error('❌ Create guest pass error:', error);
-    res.status(500).json({ 
-      message: 'Failed to create guest pass', 
-      error: error.message 
+    console.error('Guest pass creation error:', error);
+    res.status(500).json({
+      message: 'Failed to create guest pass',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Please try again.'
     });
   }
 });
+
+// ============================================
+// PHASE 1 COMPLETED: HELPER FUNCTIONS WITH FIXED PRIVACY VALIDATION
+// ============================================
+
+/**
+ * PHASE 1 COMPLETED: Validate if guest passes are allowed for this privacy level
+ */
+function validatePrivacyForGuestPass(privacyLevel, permissions) {
+  switch (privacyLevel) {
+    case PRIVACY_LEVELS.PUBLIC:
+      return {
+        allowed: true,
+        message: 'Guest passes allowed for public events',
+        info: 'Guests can join this public event'
+      };
+      
+    case PRIVACY_LEVELS.FRIENDS:
+      return {
+        allowed: true,
+        message: 'Guest passes allowed for friends-only events',
+        info: 'Guests can access this event via direct invitation, but it won\'t appear in their feeds',
+        warning: 'Event is limited to your followers, but guests can still join via invitation'
+      };
+      
+    case PRIVACY_LEVELS.PRIVATE:
+      return {
+        allowed: true,
+        message: 'Guest passes allowed for private events',
+        info: 'Only invited guests can access this private event'
+      };
+      
+    default:
+      return {
+        allowed: false,
+        message: 'Unknown privacy level'
+      };
+  }
+}
+
+/**
+ * PHASE 1 COMPLETED: Calculate guest pass expiry based on privacy level and event settings
+ */
+function calculateGuestPassExpiry(event) {
+  const eventTime = new Date(event.time);
+  const now = new Date();
+  
+  // For friends/private events, moderate expiry
+  if ([PRIVACY_LEVELS.FRIENDS, PRIVACY_LEVELS.PRIVATE].includes(event.privacyLevel)) {
+    return new Date(eventTime.getTime() - (4 * 60 * 60 * 1000)); // 4 hours before
+  }
+  
+  // For public events, standard expiry
+  return new Date(eventTime.getTime() - (1 * 60 * 60 * 1000)); // 1 hour before
+}
 
 // ============================================
 // PHASE 1: ENHANCED GUEST RSVP PAGE WITH PRIVACY SUPPORT
@@ -190,123 +247,7 @@ router.get('/rsvp/:token', validateGuestRSVPAccess, async (req, res) => {
 // PHASE 1: HELPER FUNCTIONS FOR PRIVACY VALIDATION
 // ============================================
 
-/**
- * Validate if guest passes are allowed for this privacy level
- */
-function validatePrivacyForGuestPass(privacyLevel, permissions) {
-  switch (privacyLevel) {
-    case 'public':
-      return {
-        allowed: true,
-        message: 'Guest passes allowed for public events',
-        info: 'Guests can join this public event'
-      };
-      
-    case 'friends':
-      return {
-        allowed: true,
-        message: 'Guest passes allowed for friends-only events',
-        info: 'Guests can access this event via direct invitation, but it won\'t appear in their feeds',
-        warning: 'Event is limited to your followers, but guests can still join via invitation'
-      };
-      
-    case 'private':
-      return {
-        allowed: true,
-        message: 'Guest passes allowed for private events',
-        info: 'Only invited guests can access this private event'
-      };
-      
-    case 'secret':
-      // Secret events allow guest passes but with restrictions
-      if (permissions?.canInvite === 'host-only') {
-        return {
-          allowed: true,
-          message: 'Guest passes allowed but restricted for secret events',
-          info: 'Only you can create invitations for this secret event',
-          warning: 'Guest passes will not be shareable by attendees'
-        };
-      }
-      return {
-        allowed: false,
-        message: 'Guest passes not allowed for this secret event configuration',
-        suggestion: 'Change privacy settings to allow host-only invitations'
-      };
-      
-    default:
-      return {
-        allowed: false,
-        message: 'Unknown privacy level'
-      };
-  }
-}
 
-/**
- * Calculate guest pass expiry based on privacy level and event settings
- */
-function calculateGuestPassExpiry(event) {
-  const eventTime = new Date(event.time);
-  const now = new Date();
-  
-  // For secret events, shorter expiry window
-  if (event.privacyLevel === 'secret') {
-    return new Date(eventTime.getTime() - (2 * 60 * 60 * 1000)); // 2 hours before
-  }
-  
-  // For friends/private events, moderate expiry
-  if (['friends', 'private'].includes(event.privacyLevel)) {
-    return new Date(eventTime.getTime() - (4 * 60 * 60 * 1000)); // 4 hours before
-  }
-  
-  // For public events, standard expiry
-  return new Date(eventTime.getTime() - (1 * 60 * 60 * 1000)); // 1 hour before
-}
-
-/**
- * Get guest permissions based on privacy level
- */
-function getGuestPermissionsForPrivacyLevel(privacyLevel) {
-  switch (privacyLevel) {
-    case 'public':
-      return {
-        canUploadPhotos: true,
-        canViewAttendees: true,
-        canInviteOthers: false
-      };
-      
-    case 'friends':
-      return {
-        canUploadPhotos: true,
-        canViewAttendees: false, // Don't show attendee list to guests
-        canInviteOthers: false
-      };
-      
-    case 'private':
-      return {
-        canUploadPhotos: true,
-        canViewAttendees: false,
-        canInviteOthers: false
-      };
-      
-    case 'secret':
-      return {
-        canUploadPhotos: false, // Very restricted
-        canViewAttendees: false,
-        canInviteOthers: false
-      };
-      
-    default:
-      return {
-        canUploadPhotos: false,
-        canViewAttendees: false,
-        canInviteOthers: false
-      };
-  }
-}
-
-/**
- * Get privacy information to display to guests
- */
 function getPrivacyInfoForGuest(privacyLevel) {
   switch (privacyLevel) {
     case 'public':

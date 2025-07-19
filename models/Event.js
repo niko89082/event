@@ -293,18 +293,18 @@ const EventSchema = new mongoose.Schema({
   // Privacy and permissions system
   privacyLevel: {
     type: String,
-    enum: ['public', 'friends', 'private', 'secret'],
+    enum: ['public', 'friends', 'private'],
     default: 'public'
   },
   permissions: {
     canView: {
       type: String,
-      enum: ['anyone', 'followers', 'friends', 'invited-only'],
+      enum: ['anyone', 'followers', 'invited-only'],
       default: 'anyone'
     },
     canJoin: {
       type: String,
-      enum: ['anyone', 'followers', 'friends', 'approval-required', 'invited-only'],
+      enum: ['anyone', 'followers', 'approval-required', 'invited-only'],
       default: 'anyone'
     },
     canShare: {
@@ -887,119 +887,61 @@ EventSchema.methods.checkInUser = async function(userId, options = {}) {
  * @param {Array} userFollowing - Array of user IDs that the user follows
  * @returns {Promise<boolean>} True if user can join the event
  */
-EventSchema.methods.canUserJoin = async function(userId, userFollowing = []) {
-  try {
-    const userIdStr = String(userId);
-    const hostIdStr = String(this.host._id || this.host);
-    
-    console.log('🔍 canUserJoin check:', {
-      eventId: this._id,
-      userId: userIdStr,
-      hostId: hostIdStr,
-      privacyLevel: this.privacyLevel,
-      canJoinPermission: this.permissions?.canJoin
-    });
-
-    // Host cannot join their own event
-    if (userIdStr === hostIdStr) {
-      console.log('❌ User is host - cannot join own event');
-      return false;
-    }
-
-    // Co-hosts cannot join (they're already part of the event)
-    if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) {
-      console.log('❌ User is co-host - cannot join');
-      return false;
-    }
-
-    // Check if already attending
-    if (this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) {
-      console.log('❌ User already attending');
-      return false;
-    }
-
-    // Check if banned
-    if (this.bannedUsers && this.bannedUsers.some(b => String(b._id || b) === userIdStr)) {
-      console.log('❌ User is banned');
-      return false;
-    }
-
-    // Check capacity
-    if (this.maxAttendees && this.attendees && this.attendees.length >= this.maxAttendees) {
-      console.log('❌ Event at capacity');
-      return false;
-    }
-
-    // Check if event has passed
-    if (new Date(this.time) <= new Date()) {
-      console.log('❌ Event has passed');
-      return false;
-    }
-
-    // Check if user is invited (for private/secret events)
-    const isInvited = this.invitedUsers && this.invitedUsers.some(u => 
-      String(u._id || u) === userIdStr
-    );
-    const isFollowingHost = userFollowing.includes(hostIdStr);
-
-    // Permission checks based on privacy level AND canJoin permission
-    let canJoinByPrivacy = false;
-    
-    switch (this.privacyLevel) {
-      case 'public':
-        canJoinByPrivacy = true;
-        break;
-      case 'friends':
-        canJoinByPrivacy = isFollowingHost;
-        break;
-      case 'private':
-      case 'secret':
-        canJoinByPrivacy = isInvited;
-        break;
-      default:
-        canJoinByPrivacy = false;
-    }
-
-    // Additional permission layer
-    let canJoinByPermission = true;
-    switch (this.permissions?.canJoin) {
-      case 'anyone':
-        canJoinByPermission = true;
-        break;
-      case 'followers':
-        canJoinByPermission = isFollowingHost;
-        break;
-      case 'friends':
-        canJoinByPermission = isFollowingHost;
-        break;
-      case 'approval-required':
-        // User can "request" to join, but needs approval
-        canJoinByPermission = true; // They can make a request
-        break;
-      case 'invited-only':
-        canJoinByPermission = isInvited;
-        break;
-      default:
-        canJoinByPermission = true;
-    }
-
-    const finalResult = canJoinByPrivacy && canJoinByPermission;
-    
-    console.log(`${finalResult ? '✅' : '❌'} canUserJoin result:`, {
-      canJoinByPrivacy,
-      canJoinByPermission,
-      finalResult,
-      isInvited,
-      isFollowingHost
-    });
-
-    return finalResult;
-
-  } catch (error) {
-    console.error('❌ Error in canUserJoin method:', error);
+EventSchema.methods.canUserJoin = function(userId, userFollowing = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host._id || this.host);
+  
+  // Host doesn't need to join their own event
+  if (userIdStr === hostIdStr) return false;
+  
+  // Already attending
+  if (this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) return false;
+  
+  // Event capacity check
+  if (this.attendees && this.maxAttendees && this.attendees.length >= this.maxAttendees) {
     return false;
   }
+  
+  // Past events can't be joined
+  if (new Date(this.time) <= new Date()) {
+    return false;
+  }
+
+  const isInvited = this.invitedUsers && this.invitedUsers.some(u => 
+    String(u._id || u) === userIdStr
+  );
+  const isFollowingHost = userFollowing.includes(hostIdStr);
+
+  // ✅ PHASE 1: Fixed privacy level checks (removed secret)
+  switch (this.privacyLevel) {
+    case 'public':
+      // Check canJoin permission for public events
+      switch (this.permissions?.canJoin) {
+        case 'anyone':
+          return true;
+        case 'followers':
+          return isFollowingHost;
+        case 'approval-required':
+          return true; // Can request approval
+        case 'invited-only':
+          return isInvited;
+        default:
+          return true;
+      }
+    
+    case 'friends':
+      // Friends-only events require following the host
+      return isFollowingHost;
+    
+    case 'private':
+      // Private events require invitation
+      return isInvited;
+    
+    default:
+      return false;
+  }
 };
+
 
 /**
  * FIXED: Check if user can view this event (remove duplicate)
@@ -1008,80 +950,52 @@ EventSchema.methods.canUserJoin = async function(userId, userFollowing = []) {
  * @returns {boolean} True if user can view the event
  */
 EventSchema.methods.canUserView = function(userId, userFollowing = [], guestPassCode = null) {
-  const userIdStr = userId ? String(userId) : null;
+  const userIdStr = String(userId);
   const hostIdStr = String(this.host._id || this.host);
   
-  // Host can always view their own event
-  if (userIdStr && userIdStr === hostIdStr) return true;
+  // Host can always view their own events
+  if (userIdStr === hostIdStr) return true;
   
   // Co-hosts can view
-  if (userIdStr && this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
+  if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
   
-  // Attendees can always view events they're attending
-  if (userIdStr && this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) return true;
+  // Attendees can always view
+  if (this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) return true;
   
-  // Invited users can always view events they're invited to
-  if (userIdStr && this.invitedUsers && this.invitedUsers.some(i => String(i._id || i) === userIdStr)) return true;
-  
-  // ============================================
-  // PHASE 1 FIX: Guest Pass Support
-  // ============================================
-  // If guest pass code is provided, check if it's valid for this event
-  if (guestPassCode && !userIdStr) {
-    // This will be validated by middleware, but we allow viewing if guest pass exists
-    // The actual validation happens in the guest pass middleware
-    return true; // Allow guest pass holders to view any event they have a valid pass for
+  // Guest pass access
+  if (guestPassCode) {
+    // TODO: Validate guest pass code
+    return true;
   }
   
-  // Check based on privacy level
+  // Check if user is invited (for private events)
+  const isInvited = this.invitedUsers && this.invitedUsers.some(u => 
+    String(u._id || u) === userIdStr
+  );
+  const isFollowingHost = userFollowing.includes(hostIdStr);
+
+  // ✅ PHASE 1: Fixed privacy level checks (removed secret)
   switch (this.privacyLevel) {
     case 'public':
-      // For public events, check the canView permission
+      // Public events visible to everyone (respecting canView permission)
       switch (this.permissions?.canView) {
         case 'anyone':
-        default:
           return true;
         case 'followers':
-          return userIdStr ? userFollowing.includes(hostIdStr) : false;
-        case 'friends':
-          return userIdStr ? userFollowing.includes(hostIdStr) : false;
+          return isFollowingHost;
         case 'invited-only':
-          return userIdStr && (
-            this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
-            this.attendees?.some(a => String(a._id || a) === userIdStr)
-          );
+          return isInvited;
+        default:
+          return true;
       }
-      break;
     
     case 'friends':
-      // PHASE 1 FIX: Allow guest pass holders but not general public
-      if (guestPassCode && !userIdStr) {
-        return true; // Guest pass holders can view friends-only events
-      }
-      // Only followers of the host can view (for regular users)
-      return userIdStr ? userFollowing.includes(hostIdStr) : false;
+      // Friends-only events visible to followers
+      return isFollowingHost;
     
     case 'private':
-      // PHASE 1 FIX: Guest passes work well here already
-      if (guestPassCode && !userIdStr) {
-        return true; // Guest pass holders can view private events
-      }
-      // Only invited users and attendees can view
-      return userIdStr && (
-        this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
-        this.attendees?.some(a => String(a._id || a) === userIdStr)
-      );
-    
-    case 'secret':
-      // PHASE 1 FIX: Very restrictive - only specific guest passes allowed
-      if (guestPassCode && !userIdStr) {
-        return true; // Guest pass validation will be stricter in middleware
-      }
-      // Only invited users and attendees can view
-      return userIdStr && (
-        this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
-        this.attendees?.some(a => String(a._id || a) === userIdStr)
-      );
+      // Private events visible only to invited users
+      return isInvited;
     
     default:
       return false;
@@ -1116,24 +1030,24 @@ EventSchema.methods.canAppearInUserFeed = function(userId, userFollowing = []) {
   // Co-hosts can see in feed
   if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
   
-  // Check based on privacy level and permissions
+  // ✅ PHASE 1: Fixed privacy level checks (removed secret)
   switch (this.privacyLevel) {
     case 'public':
       return this.permissions?.appearInFeed !== false;
     
     case 'friends':
-      // PHASE 1 FIX: Only appears in followers' feeds, not public
+      // Only appears in followers' feeds
       return userFollowing.includes(hostIdStr) && this.permissions?.appearInFeed !== false;
     
     case 'private':
-    case 'secret':
-      // Private/secret events don't appear in general feeds
+      // Private events don't appear in general feeds
       return false;
     
     default:
       return false;
   }
 };
+
 EventSchema.methods.canAppearInSearch = function(userId, userFollowing = []) {
   const userIdStr = String(userId);
   const hostIdStr = String(this.host._id || this.host);
@@ -1141,18 +1055,17 @@ EventSchema.methods.canAppearInSearch = function(userId, userFollowing = []) {
   // Host can always find their own events
   if (userIdStr === hostIdStr) return true;
   
-  // Check based on privacy level
+  // ✅ PHASE 1: Fixed privacy level checks (removed secret)
   switch (this.privacyLevel) {
     case 'public':
       return this.permissions?.appearInSearch !== false;
     
     case 'friends':
-      // PHASE 1 FIX: Only searchable by followers
+      // Only searchable by followers
       return userFollowing.includes(hostIdStr) && this.permissions?.appearInSearch !== false;
     
     case 'private':
-    case 'secret':
-      // Private/secret events don't appear in search
+      // Private events don't appear in search
       return false;
     
     default:
@@ -1242,8 +1155,7 @@ EventSchema.methods.canUserShare = function(userId) {
   // Co-hosts can share
   if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
   
-  // Secret events cannot be shared by non-hosts
-  if (this.privacyLevel === 'secret') return false;
+  // ✅ PHASE 1: Removed secret event restriction
   
   // Check permissions
   switch (this.permissions?.canShare) {

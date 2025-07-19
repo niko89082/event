@@ -13,6 +13,7 @@ const {
   skipValidation,
   logPrivacyEnforcement 
 } = require('../middleware/privacyValidation');
+const { PRIVACY_LEVELS, getPrivacyPreset } = require('../constants/privacyConstants');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const { validateGuestPassAccess, canAccessEvent } = require('../middleware/guestPassValidation');
@@ -1302,10 +1303,11 @@ const checkPaymentStatus = async (userId) => {
 };
 
 
-router.post('/create', protect, uploadCover.single('coverImage'), async (req, res) => {
+router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uploadCover.single('coverImage'), async (req, res) => {
   try {
-    console.log('📝 Creating new event...');
-    console.log('📝 Full request body:', JSON.stringify(req.body, null, 2));
+    console.log('📝 PHASE 2: Creating new event with privacy validation...');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+    console.log('🔒 Validated privacy:', req.validatedPrivacy);
 
     const {
       title, description, category = 'General',
@@ -1314,9 +1316,6 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       // Enhanced pricing fields
       isPaidEvent, eventPrice, priceDescription,
       refundPolicy, earlyBirdEnabled, earlyBirdPrice, earlyBirdDeadline,
-
-      // Privacy and permissions - handle directly in route
-      privacyLevel, permissions,
 
       // Co-hosts and invitations
       coHosts, invitedUsers, tags, coordinates, groupId,
@@ -1330,39 +1329,6 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       requiresFormForCheckIn = false,
 
     } = req.body;
-
-    // 🔧 DIRECT PRIVACY HANDLING - No middleware dependency
-    console.log('🔒 Direct privacy handling - received privacyLevel:', privacyLevel);
-    
-    const validPrivacyLevels = ['public', 'friends', 'private'];
-    let finalPrivacyLevel = 'public'; // default
-    
-    if (privacyLevel && typeof privacyLevel === 'string') {
-      const normalized = privacyLevel.toLowerCase().trim();
-      if (validPrivacyLevels.includes(normalized)) {
-        finalPrivacyLevel = normalized;
-        console.log(`✅ Using provided privacy level: "${finalPrivacyLevel}"`);
-      } else {
-        console.warn(`⚠️ Invalid privacy level "${privacyLevel}", using default: "public"`);
-      }
-    } else {
-      console.log('📝 No privacy level provided, using default: "public"');
-    }
-
-    // Apply privacy permissions based on level
-    const finalPermissions = PRIVACY_PRESETS[finalPrivacyLevel];
-    console.log('🔧 Applied privacy permissions:', finalPermissions);
-
-    // Enhanced validation
-    if (!title?.trim()) return res.status(400).json({ message: 'Event title is required' });
-    if (!time) return res.status(400).json({ message: 'Event time is required' });
-    if (!location?.trim()) return res.status(400).json({ message: 'Event location is required' });
-
-    // Validate event time
-    const eventDate = new Date(time);
-    if (isNaN(eventDate.getTime()) || eventDate <= new Date()) {
-      return res.status(400).json({ message: 'Event time must be in the future' });
-    }
 
     // Handle pricing
     const isPaid = isPaidEvent === 'true' || isPaidEvent === true;
@@ -1400,6 +1366,16 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       }
     }
 
+    // Parse invited users for private events
+    let invitedUsersArray = [];
+    if (invitedUsers && req.validatedPrivacy.privacyLevel === PRIVACY_LEVELS.PRIVATE) {
+      try {
+        invitedUsersArray = typeof invitedUsers === 'string' ? JSON.parse(invitedUsers) : invitedUsers;
+      } catch (e) {
+        console.log('Invalid invitedUsers format:', invitedUsers);
+      }
+    }
+
     // Helper functions
     const bool = (val) => val === 'true' || val === true;
     const parseIntSafe = (val) => {
@@ -1407,7 +1383,7 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       return isNaN(parsed) ? undefined : parsed;
     };
 
-    // Create event data
+    // ✅ PHASE 2: Create event data with validated privacy
     const eventData = {
       title: title.trim(),
       description: description?.trim() || '',
@@ -1433,15 +1409,18 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
         }
       },
 
-      // 🔧 PRIVACY: Use direct privacy handling instead of middleware
-      privacyLevel: finalPrivacyLevel,
-      permissions: finalPermissions,
+      // ✅ PHASE 2: Use validated privacy from middleware
+      privacyLevel: req.validatedPrivacy.privacyLevel,
+      permissions: req.validatedPrivacy.permissions,
+
+      // Invited users for private events
+      invitedUsers: req.validatedPrivacy.privacyLevel === PRIVACY_LEVELS.PRIVATE ? invitedUsersArray : [],
 
       // Legacy compatibility
       price: eventPriceNum,
-      isPublic: bool(isPublic) ?? (finalPrivacyLevel === 'public'),
+      isPublic: bool(isPublic) ?? (req.validatedPrivacy.privacyLevel === PRIVACY_LEVELS.PUBLIC),
       allowPhotos: bool(allowPhotos) ?? true,
-      openToPublic: bool(openToPublic) ?? (finalPermissions?.canJoin === 'anyone'),
+      openToPublic: bool(openToPublic) ?? (req.validatedPrivacy.permissions?.canJoin === 'anyone'),
       allowUploads: bool(allowUploads) ?? true,
       allowUploadsBeforeStart: bool(allowUploadsBeforeStart) ?? true,
 
@@ -1468,7 +1447,7 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       }
     };
 
-    // 🔧 FIX: Handle coordinates properly
+    // Handle coordinates properly
     if (coordinates) {
       try {
         const coords = typeof coordinates === 'string' 
@@ -1508,6 +1487,11 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       eventData.coverImage = `/uploads/covers/${req.file.filename}`;
     }
 
+    console.log('🔧 PHASE 2: Final event data:', JSON.stringify({
+      ...eventData,
+      permissions: eventData.permissions
+    }, null, 2));
+
     // Create the event
     const event = new Event(eventData);
     await event.save();
@@ -1518,26 +1502,40 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       await group.save(); 
     }
 
-    // Auto-invite for private/secret events created from groups
-    if ((finalPrivacyLevel === 'private' || finalPrivacyLevel === 'secret') && group) {
-      event.invitedUsers = group.members.filter(m => String(m) !== String(req.user._id));
+    // ✅ PHASE 2: Auto-invite for private events created from groups
+    if (eventData.privacyLevel === PRIVACY_LEVELS.PRIVATE && group && invitedUsersArray.length === 0) {
+      // Auto-invite group members if no specific invites provided
+      const autoInvites = group.members.filter(m => String(m) !== String(req.user._id));
+      event.invitedUsers = autoInvites;
       await event.save();
+      console.log(`🎫 Auto-invited ${autoInvites.length} group members to private event`);
     }
 
-    console.log(`✅ Event created: ${event._id} (Paid: ${isPaid}, Privacy: ${finalPrivacyLevel})`);
+    // ✅ PHASE 2: Log privacy enforcement
+    logPrivacyEnforcement(event._id, event.privacyLevel, event.permissions);
+
+    console.log(`✅ PHASE 2: Event created successfully: ${event._id}`);
+    console.log(`🔒 Privacy Level: ${event.privacyLevel}`);
+    console.log(`🔧 Permissions Applied:`, event.permissions);
 
     res.status(201).json({
       message: 'Event created successfully',
       _id: event._id,
       event: event,
       isPaidEvent: isPaid,
-      privacyLevel: finalPrivacyLevel,
+      privacyLevel: event.privacyLevel,
+      permissions: event.permissions,
       hasCheckInForm: !!checkInFormId,
-      needsPaymentSetup: false
+      needsPaymentSetup: false,
+      privacyValidation: {
+        applied: true,
+        level: event.privacyLevel,
+        validatedByMiddleware: true
+      }
     });
 
   } catch (err) {
-    console.error('❌ Event creation error:', err);
+    console.error('❌ PHASE 2: Event creation error:', err);
     res.status(500).json({ 
       message: 'Failed to create event', 
       error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
@@ -1578,176 +1576,195 @@ router.post('/create-from-group/:groupId', protect, upload.single('coverImage'),
 // ============================================
 router.get('/', protect, async (req, res) => {
   try {
-    console.log('🔍 PHASE 2: GET /api/events - Enhanced with privacy filtering');
-    
     const { 
-      host,
-      attendee, 
-      location, 
-      radius, 
-      interests, 
-      includePast = 'false',
-      includePrivate = 'false',
-      category,
-      search,
+      page = 1, 
       limit = 20, 
-      skip = 0,
-      sortBy = 'time'
+      category, 
+      search, 
+      privacy,
+      location,
+      radius = 50 // km
     } = req.query;
 
-    const requestingUserId = req.user._id;
+    const userId = req.user._id;
+    const skip = (page - 1) * limit;
 
-    console.log('📋 Query parameters:', {
-      host, attendee, location, radius, category, search,
-      includePast, includePrivate, limit, skip
-    });
+    console.log('🔍 PHASE 2: Event discovery request');
+    console.log(`   User: ${userId}`);
+    console.log(`   Filters: category=${category}, search=${search}, privacy=${privacy}`);
 
-    // PHASE 2: Handle specific user event requests with privacy filtering
-    if (host || attendee) {
-      const targetUserId = host || attendee;
-      const isOwnEvents = String(requestingUserId) === String(targetUserId);
+    // Get user's following list for privacy filtering
+    const user = await User.findById(userId).select('following');
+    const userFollowing = user.following.map(f => String(f));
 
-      console.log(`👤 Requesting events for user ${targetUserId}, own events: ${isOwnEvents}`);
+    // ✅ PHASE 2: Build privacy-aware query
+    const query = { $and: [] };
 
-      // Use privacy-aware user events service
-      const events = await EventDiscoveryService.getUserEvents(
-        targetUserId,
-        requestingUserId,
-        {
-          limit: parseInt(limit),
-          skip: parseInt(skip),
-          includePast: includePast === 'true'
-        }
-      );
+    // Base time filter (only future events)
+    query.$and.push({ time: { $gte: new Date() } });
 
-      // Add metadata to events
-      const eventsWithMetadata = events.map(event => {
-        const isHost = String(event.host._id) === String(requestingUserId);
-        const isAttending = event.attendees.some(a => String(a._id) === String(requestingUserId));
-        const isPast = new Date(event.time) < new Date();
-        
-        return {
-          ...event.toObject(),
-          isHost,
-          isAttending,
-          isPast,
-          relationshipType: isHost ? 'host' : 'attendee',
-          // PHASE 2: Add privacy metadata
-          privacyMetadata: {
-            level: event.privacyLevel,
-            canUserView: true, // If we got here, user can view
-            canUserJoin: event.canUserJoin ? event.canUserJoin(requestingUserId) : false,
-            isDiscoverable: event.permissions?.appearInSearch || false
-          }
-        };
-      });
-
-      return res.json({
-        events: eventsWithMetadata,
-        total: eventsWithMetadata.length,
-        isOwnProfile: isOwnEvents,
-        // PHASE 2: Privacy filtering applied
-        privacyFiltered: !isOwnEvents
-      });
-    }
-
-    // PHASE 2: Handle search requests with privacy filtering
-    if (search) {
-      console.log(`🔍 Search request: "${search}"`);
+    // ✅ PHASE 2: Privacy filtering based on user relationship
+    const privacyConditions = [
+      // 1. User's own events (always visible)
+      { host: userId },
       
-      const searchResults = await EventDiscoveryService.searchEvents(
-        search,
-        requestingUserId,
-        {
-          limit: parseInt(limit),
-          skip: parseInt(skip),
-          category
-        }
-      );
+      // 2. Events where user is co-host (always visible)
+      { coHosts: userId },
+      
+      // 3. Events where user is attendee (always visible)
+      { attendees: userId },
+      
+      // 4. Events where user is invited (always visible)
+      { invitedUsers: userId },
+      
+      // 5. Public events (visible to everyone)
+      {
+        privacyLevel: PRIVACY_LEVELS.PUBLIC,
+        'permissions.canView': { $in: ['anyone'] },
+        'permissions.appearInSearch': true
+      },
+      
+      // 6. Friends-only events (visible to followers)
+      {
+        privacyLevel: PRIVACY_LEVELS.FRIENDS,
+        host: { $in: userFollowing },
+        'permissions.canView': { $in: ['followers'] },
+        'permissions.appearInSearch': true
+      }
+      
+      // Note: Private events are only visible through conditions 1-4 above
+    ];
 
-      return res.json({
-        events: searchResults,
-        total: searchResults.length,
-        searchQuery: search,
-        privacyFiltered: true
+    query.$and.push({ $or: privacyConditions });
+
+    // Category filter
+    if (category && category !== 'all') {
+      query.$and.push({ category: category });
+    }
+
+    // Search filter
+    if (search) {
+      query.$and.push({
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { tags: { $in: [new RegExp(search, 'i')] } }
+        ]
       });
     }
 
-    // PHASE 2: Handle discovery/feed requests with privacy filtering
-    console.log('🌟 Discovery/feed request');
-    
-    const options = {
-      limit: parseInt(limit),
-      skip: parseInt(skip),
-      category,
-      includePrivate: includePrivate === 'true',
-      sortBy
-    };
+    // Privacy level filter (if specifically requested)
+    if (privacy && Object.values(PRIVACY_LEVELS).includes(privacy)) {
+      query.$and.push({ privacyLevel: privacy });
+    }
 
-    // Add location filtering if provided
-    if (location && radius) {
+    // Location filter
+    if (location) {
       try {
-        const locationObj = typeof location === 'string' ? JSON.parse(location) : location;
-        options.location = locationObj;
-        options.radius = parseFloat(radius);
-      } catch (e) {
+        const coords = JSON.parse(location);
+        if (Array.isArray(coords) && coords.length === 2) {
+          query.$and.push({
+            geo: {
+              $near: {
+                $geometry: {
+                  type: 'Point',
+                  coordinates: [parseFloat(coords[0]), parseFloat(coords[1])]
+                },
+                $maxDistance: radius * 1000 // Convert km to meters
+              }
+            }
+          });
+        }
+      } catch (error) {
         console.log('Invalid location format:', location);
       }
     }
 
-    // Get discoverable events with privacy filtering
-    const discoverableEvents = await EventDiscoveryService.getDiscoverableEvents(
-      requestingUserId,
-      options
-    );
+    console.log('🔍 PHASE 2: Privacy-aware query:', JSON.stringify(query, null, 2));
 
-    // Add metadata to discoverable events
-    const eventsWithMetadata = discoverableEvents.map(event => {
-      const isHost = String(event.host._id) === String(requestingUserId);
-      const isAttending = event.attendees.some(a => String(a._id) === String(requestingUserId));
-      const isPast = new Date(event.time) < new Date();
-      
+    // Execute query with privacy filtering
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username profilePicture')
+      .populate('coHosts', 'username profilePicture')
+      .sort({ 
+        time: 1,           // Upcoming events first
+        createdAt: -1      // Then by newest
+      })
+      .limit(parseInt(limit))
+      .skip(skip);
+
+    // ✅ PHASE 2: Add privacy metadata to each event
+    const eventsWithMetadata = events.map(event => {
+      const eventObj = event.toObject();
+      const isHost = String(event.host._id) === String(userId);
+      const isCoHost = event.coHosts?.some(c => String(c._id) === String(userId));
+      const isAttending = event.attendees?.some(a => String(a._id) === String(userId));
+      const isInvited = event.invitedUsers?.some(u => String(u) === String(userId));
+      const isFollowingHost = userFollowing.includes(String(event.host._id));
+
       return {
-        ...event.toObject(),
-        isHost,
-        isAttending,
-        isPast,
-        // PHASE 2: Enhanced privacy metadata
-        privacyMetadata: {
+        ...eventObj,
+        // User relationship metadata
+        userRelationship: {
+          isHost,
+          isCoHost,
+          isAttending,
+          isInvited,
+          isFollowingHost,
+          canJoin: event.canUserJoin(userId, userFollowing),
+          canView: event.canUserView(userId, userFollowing),
+          canShare: event.canUserShare(userId),
+          canInvite: event.canUserInvite(userId)
+        },
+        // Privacy visibility explanation
+        privacyVisibility: {
           level: event.privacyLevel,
-          canUserView: true,
-          canUserJoin: event.canUserJoin ? event.canUserJoin(requestingUserId) : false,
-          isDiscoverable: event.permissions?.appearInSearch || false,
-          isInFeed: event.permissions?.appearInFeed || false,
-          discoveryReason: isHost ? 'own_event' : 
-                          event.privacyLevel === 'public' ? 'public_discovery' :
-                          event.privacyLevel === 'friends' ? 'following_host' :
-                          'invited_to_private'
+          reason: isHost ? 'own-event' : 
+                  isCoHost ? 'co-host' : 
+                  isAttending ? 'attendee' : 
+                  isInvited ? 'invited' :
+                  event.privacyLevel === PRIVACY_LEVELS.PUBLIC ? 'public' :
+                  event.privacyLevel === PRIVACY_LEVELS.FRIENDS && isFollowingHost ? 'following-host' :
+                  'unknown'
         }
       };
     });
 
-    console.log(`✅ PHASE 2: Returning ${eventsWithMetadata.length} events with privacy filtering`);
+    console.log(`✅ PHASE 2: Found ${eventsWithMetadata.length} events for user ${userId}`);
+
+    // Get total count for pagination
+    const totalEvents = await Event.countDocuments(query);
 
     res.json({
+      success: true,
       events: eventsWithMetadata,
-      total: eventsWithMetadata.length,
-      privacyFiltered: true,
-      filterCriteria: {
-        privacyLevelsIncluded: includePrivate === 'true' ? 
-          ['public', 'friends', 'private'] : 
-          ['public', 'friends'],
-        category: category || 'all',
-        location: location ? 'filtered' : 'all',
-        radius: radius || null
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalEvents / limit),
+        totalEvents,
+        hasMore: skip + events.length < totalEvents
+      },
+      filters: {
+        category,
+        search,
+        privacy,
+        location: location ? JSON.parse(location) : null,
+        radius
+      },
+      privacyInfo: {
+        userFollowingCount: userFollowing.length,
+        privacyLevelsSearched: Object.values(PRIVACY_LEVELS),
+        filterApplied: 'privacy-aware'
       }
     });
 
   } catch (error) {
-    console.error('❌ PHASE 2: Get events error:', error);
+    console.error('❌ PHASE 2: Event discovery error:', error);
     res.status(500).json({ 
-      message: 'Server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Failed to fetch events'
+      success: false,
+      message: 'Failed to fetch events',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
 });
@@ -4030,55 +4047,183 @@ router.post('/create-paypal-order/:eventId', protect, async (req, res) => {
 });
 router.get('/search', protect, async (req, res) => {
   try {
-    console.log('🔍 PHASE 2: GET /api/events/search - Privacy-filtered search');
-    
-    const { q: query, category, limit = 20, skip = 0 } = req.query;
-    const userId = req.user._id;
+    const { 
+      q: searchQuery, 
+      category, 
+      location, 
+      radius = 25,
+      privacy,
+      limit = 20, 
+      skip = 0 
+    } = req.query;
 
-    if (!query || query.trim().length === 0) {
-      return res.status(400).json({ message: 'Search query is required' });
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query must be at least 2 characters long'
+      });
     }
 
-    console.log(`🔍 Searching for: "${query}" with category: ${category || 'all'}`);
+    const userId = req.user._id;
+    console.log(`🔍 PHASE 2: Searching events for "${searchQuery}"`);
 
-    // Search with privacy filtering
-    const searchResults = await EventDiscoveryService.searchEvents(
-      query.trim(),
-      userId,
-      {
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        category
+    // Get user following for privacy filtering
+    const user = await User.findById(userId).select('following');
+    const userFollowing = user.following.map(f => String(f));
+
+    // ✅ PHASE 2: Build privacy-aware search query
+    const searchConditions = {
+      $and: [
+        // Text search conditions
+        {
+          $or: [
+            { title: { $regex: searchQuery, $options: 'i' } },
+            { description: { $regex: searchQuery, $options: 'i' } },
+            { tags: { $in: [new RegExp(searchQuery, 'i')] } },
+            { category: { $regex: searchQuery, $options: 'i' } }
+          ]
+        },
+        
+        // Privacy filtering for search
+        {
+          $or: [
+            // User's own events (always searchable)
+            { host: userId },
+            
+            // Co-hosted events (always searchable)
+            { coHosts: userId },
+            
+            // Events where user is invited (always searchable)
+            { invitedUsers: userId },
+            
+            // Public events that appear in search
+            {
+              privacyLevel: PRIVACY_LEVELS.PUBLIC,
+              'permissions.appearInSearch': true
+            },
+            
+            // Friends-only events from followed users that appear in search
+            {
+              privacyLevel: PRIVACY_LEVELS.FRIENDS,
+              host: { $in: userFollowing },
+              'permissions.appearInSearch': true
+            }
+            
+            // Private events don't appear in search unless user is involved
+          ]
+        },
+        
+        // Only future events
+        { time: { $gte: new Date() } }
+      ]
+    };
+
+    // Add additional filters
+    if (category && category !== 'all') {
+      searchConditions.$and.push({ category: category });
+    }
+
+    if (privacy && Object.values(PRIVACY_LEVELS).includes(privacy)) {
+      searchConditions.$and.push({ privacyLevel: privacy });
+    }
+
+    // Location-based search
+    if (location) {
+      try {
+        const coords = JSON.parse(location);
+        if (Array.isArray(coords) && coords.length === 2) {
+          searchConditions.$and.push({
+            geo: {
+              $near: {
+                $geometry: {
+                  type: 'Point',
+                  coordinates: [parseFloat(coords[0]), parseFloat(coords[1])]
+                },
+                $maxDistance: radius * 1000
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.log('Invalid location format for search:', location);
       }
-    );
+    }
 
-    // Add metadata
+    console.log('🔍 PHASE 2: Search query with privacy:', JSON.stringify(searchConditions, null, 2));
+
+    // Execute search
+    const searchResults = await Event.find(searchConditions)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username profilePicture')
+      .sort({ 
+        // Relevance scoring (simplified)
+        $expr: {
+          $add: [
+            // Boost exact title matches
+            { $cond: [{ $regexMatch: { input: '$title', regex: new RegExp(`^${searchQuery}`, 'i') } }, 10, 0] },
+            // Boost events from followed users
+            { $cond: [{ $in: ['$host', userFollowing] }, 5, 0] },
+            // Boost by attendee count (popularity)
+            { $min: [{ $size: { $ifNull: ['$attendees', []] } }, 3] }
+          ]
+        },
+        time: 1
+      })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip));
+
+    // Add search-specific metadata
     const resultsWithMetadata = searchResults.map(event => {
-      const isHost = String(event.host._id) === String(userId);
-      const isAttending = event.attendees.some(a => String(a._id) === String(userId));
+      const eventObj = event.toObject();
+      const isFollowingHost = userFollowing.includes(String(event.host._id));
+      
+      // Calculate search relevance indicators
+      const titleMatch = event.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const descriptionMatch = event.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      const tagMatch = event.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
       
       return {
-        ...event.toObject(),
-        isHost,
-        isAttending,
-        searchRelevance: event._score || 1, // Text search score
-        privacyLevel: event.privacyLevel
+        ...eventObj,
+        searchMetadata: {
+          query: searchQuery,
+          relevance: {
+            titleMatch,
+            descriptionMatch,
+            tagMatch,
+            fromFollowedUser: isFollowingHost
+          },
+          privacyContext: {
+            level: event.privacyLevel,
+            visibleBecause: String(event.host._id) === String(userId) ? 'own-event' :
+                           event.coHosts?.some(c => String(c._id) === String(userId)) ? 'co-host' :
+                           event.invitedUsers?.some(u => String(u) === String(userId)) ? 'invited' :
+                           event.privacyLevel === PRIVACY_LEVELS.PUBLIC ? 'public-searchable' :
+                           isFollowingHost ? 'following-host' : 'unknown'
+          }
+        }
       };
     });
 
-    console.log(`✅ PHASE 2: Search found ${resultsWithMetadata.length} results`);
+    console.log(`🔍 Search completed: ${resultsWithMetadata.length} results for "${searchQuery}"`);
 
     res.json({
-      events: resultsWithMetadata,
-      total: resultsWithMetadata.length,
-      searchQuery: query,
-      category: category || 'all',
-      privacyFiltered: true
+      success: true,
+      query: searchQuery,
+      results: resultsWithMetadata,
+      searchInfo: {
+        totalResults: resultsWithMetadata.length,
+        privacyFiltered: true,
+        filters: { category, location, privacy, radius }
+      }
     });
 
   } catch (error) {
-    console.error('❌ PHASE 2: Search events error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ PHASE 2: Search error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Search failed',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
   }
 });
 

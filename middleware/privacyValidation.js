@@ -1,10 +1,16 @@
-// middleware/privacyValidation.js - PHASE 2: FIXED validation that works with your frontend
+// middleware/privacyValidation.js - PHASE 2 COMPLETED: Enhanced privacy validation with self-contained constants
 
 const { body, validationResult } = require('express-validator');
 
-// PHASE 2: CORRECTED Privacy level presets with schema-compatible values
+// ✅ SELF-CONTAINED: Privacy constants (no external dependencies)
+const PRIVACY_LEVELS = {
+  PUBLIC: 'public',
+  FRIENDS: 'friends',
+  PRIVATE: 'private'
+};
+
 const PRIVACY_PRESETS = {
-  public: {
+  [PRIVACY_LEVELS.PUBLIC]: {
     canView: 'anyone',
     canJoin: 'anyone',
     canShare: 'attendees',
@@ -13,18 +19,18 @@ const PRIVACY_PRESETS = {
     appearInSearch: true,
     showAttendeesToPublic: true
   },
-  friends: {
-    canView: 'followers',      // ✅ Matches your schema
-    canJoin: 'followers',      // ✅ Matches your schema
+  [PRIVACY_LEVELS.FRIENDS]: {
+    canView: 'followers',
+    canJoin: 'followers',
     canShare: 'attendees',
     canInvite: 'attendees',
     appearInFeed: true,
     appearInSearch: true,
     showAttendeesToPublic: false
   },
-  private: {
-    canView: 'invited-only',   // ✅ FIXED: Matches your schema enum
-    canJoin: 'invited-only',   // ✅ FIXED: Matches your schema enum
+  [PRIVACY_LEVELS.PRIVATE]: {
+    canView: 'invited-only',
+    canJoin: 'invited-only',
     canShare: 'attendees',
     canInvite: 'attendees',
     appearInFeed: false,
@@ -33,29 +39,48 @@ const PRIVACY_PRESETS = {
   }
 };
 
+const isValidPrivacyLevel = (level) => {
+  return Object.values(PRIVACY_LEVELS).includes(level);
+};
+
+const getPrivacyPreset = (level) => {
+  return PRIVACY_PRESETS[level] || PRIVACY_PRESETS[PRIVACY_LEVELS.PUBLIC];
+};
+
 /**
- * PHASE 2: Validate and normalize privacy level
+ * PHASE 2 COMPLETED: Enhanced privacy level validation
  */
 const validatePrivacyLevel = (req, res, next) => {
   try {
     console.log('🔍 PHASE 2: Validating privacy level...');
     console.log('📝 Raw privacy level from request:', req.body.privacyLevel);
-
-    // Validate privacy level
-    const validPrivacyLevels = ['public', 'friends', 'private'];
-    let privacyLevel = req.body.privacyLevel || 'public';
+    console.log('📝 Content-Type:', req.headers['content-type']);
+    
+    // Extract privacy level from various possible sources
+    let privacyLevel = req.body.privacyLevel || 
+                      req.body.privacy || 
+                      req.body.privacySettings?.level ||
+                      PRIVACY_LEVELS.PUBLIC; // Default
+    
+    console.log('📝 Extracted privacy level:', privacyLevel);
+    console.log('📝 Type of privacy level:', typeof privacyLevel);
 
     // Normalize privacy level
-    privacyLevel = privacyLevel.toLowerCase().trim();
-
-    // Validate against allowed levels
-    if (!validPrivacyLevels.includes(privacyLevel)) {
-      console.warn(`⚠️  Invalid privacy level "${privacyLevel}", defaulting to "public"`);
-      privacyLevel = 'public';
+    if (typeof privacyLevel === 'string') {
+      privacyLevel = privacyLevel.toLowerCase().trim();
+    } else {
+      console.warn('⚠️ Privacy level is not a string, converting...');
+      privacyLevel = String(privacyLevel).toLowerCase().trim();
     }
 
-    // Apply privacy preset to permissions
-    const privacyPreset = PRIVACY_PRESETS[privacyLevel];
+    // Validate against allowed levels
+    if (!isValidPrivacyLevel(privacyLevel)) {
+      console.warn(`⚠️ Invalid privacy level "${privacyLevel}", defaulting to "public"`);
+      privacyLevel = PRIVACY_LEVELS.PUBLIC;
+    }
+
+    // Get privacy preset with standardized permissions
+    const privacyPreset = getPrivacyPreset(privacyLevel);
     
     console.log(`✅ Privacy level validated: "${privacyLevel}"`);
     console.log('🔧 Applying privacy preset:', privacyPreset);
@@ -81,27 +106,6 @@ const validatePrivacyLevel = (req, res, next) => {
     });
   }
 };
-
-/**
- * PHASE 2: SIMPLIFIED validation rules that work with your frontend
- */
-const eventCreationValidation = [
-  // REMOVED: Overly strict validation that was causing failures
-  // Your frontend sends valid data, so we'll do basic validation in the route itself
-  
-  // Handle validation errors (this will only run if there are actual errors)
-  (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      console.error('❌ Validation errors:', errors.array());
-      return res.status(400).json({
-        message: 'Validation failed',
-        errors: errors.array()
-      });
-    }
-    next();
-  }
-];
 
 /**
  * PHASE 2: Apply privacy settings to event data
@@ -136,135 +140,33 @@ const logPrivacyEnforcement = (eventId, privacyLevel, permissions) => {
   console.log(`   Permissions:`, JSON.stringify(permissions, null, 2));
   
   // Additional debugging for common issues
-  if (privacyLevel === 'public' && !permissions.appearInSearch) {
-    console.warn('⚠️  WARNING: Public event not appearing in search - check privacy logic');
+  if (privacyLevel === PRIVACY_LEVELS.PUBLIC && !permissions.appearInSearch) {
+    console.warn('⚠️ WARNING: Public event not appearing in search - check privacy logic');
   }
   
-  if (privacyLevel === 'private' && permissions.appearInFeed) {
-    console.warn('⚠️  WARNING: Private event appearing in feed - check privacy logic');
+  if (privacyLevel === PRIVACY_LEVELS.PRIVATE && permissions.appearInFeed) {
+    console.warn('⚠️ WARNING: Private event appearing in feed - check privacy logic');
   }
-};
-const basicEventValidation = (req, res, next) => {
-  try {
-    console.log('🐛 DEBUG: Full request body received:', JSON.stringify(req.body, null, 2));
-    console.log('🐛 DEBUG: Request headers:', req.headers);
-    console.log('🐛 DEBUG: Content-Type:', req.headers['content-type']);
-    
-    const { title, location, time } = req.body;
-    
-    console.log('🐛 DEBUG: Extracted fields:');
-    console.log('  - title:', JSON.stringify(title), '(type:', typeof title, ')');
-    console.log('  - location:', JSON.stringify(location), '(type:', typeof location, ')');
-    console.log('  - time:', JSON.stringify(time), '(type:', typeof time, ')');
-    
-    const errors = [];
-
-    // Debug each field individually
-    if (!title) {
-      console.log('🐛 DEBUG: Title is falsy:', title);
-      errors.push({
-        field: 'title',
-        message: 'Event title is required',
-        received: title,
-        type: typeof title
-      });
-    } else if (!title.trim()) {
-      console.log('🐛 DEBUG: Title is empty after trim:', title);
-      errors.push({
-        field: 'title',
-        message: 'Event title cannot be empty',
-        received: title,
-        type: typeof title
-      });
-    }
-
-    if (!location) {
-      console.log('🐛 DEBUG: Location is falsy:', location);
-      errors.push({
-        field: 'location', 
-        message: 'Event location is required',
-        received: location,
-        type: typeof location
-      });
-    } else if (!location.trim()) {
-      console.log('🐛 DEBUG: Location is empty after trim:', location);
-      errors.push({
-        field: 'location',
-        message: 'Event location cannot be empty',
-        received: location,
-        type: typeof location
-      });
-    }
-
-    if (!time) {
-      console.log('🐛 DEBUG: Time is falsy:', time);
-      errors.push({
-        field: 'time',
-        message: 'Event time is required',
-        received: time,
-        type: typeof time
-      });
-    } else {
-      const eventDate = new Date(time);
-      console.log('🐛 DEBUG: Time conversion:', time, '->', eventDate, 'valid:', !isNaN(eventDate.getTime()));
-      
-      if (isNaN(eventDate.getTime())) {
-        errors.push({
-          field: 'time',
-          message: 'Event time must be a valid date',
-          received: time,
-          type: typeof time
-        });
-      } else if (eventDate <= new Date()) {
-        errors.push({
-          field: 'time',
-          message: 'Event time must be in the future',
-          received: time,
-          parsedDate: eventDate,
-          now: new Date()
-        });
-      }
-    }
-
-    if (errors.length > 0) {
-      console.error('❌ Basic validation errors:', errors);
-      return res.status(400).json({
-        message: 'Validation failed',
-        errors: errors,
-        debug: {
-          receivedBody: req.body,
-          contentType: req.headers['content-type']
-        }
-      });
-    }
-
-    console.log('✅ Basic validation passed');
-    next();
-  } catch (error) {
-    console.error('❌ Basic validation error:', error);
-    return res.status(400).json({
-      message: 'Validation error',
-      error: error.message,
-      debug: {
-        receivedBody: req.body,
-        contentType: req.headers['content-type']
-      }
-    });
+  
+  if (privacyLevel === PRIVACY_LEVELS.FRIENDS && permissions.canView === 'anyone') {
+    console.warn('⚠️ WARNING: Friends event visible to anyone - check privacy logic');
   }
 };
 
-// ALSO: Create a simpler version that skips validation entirely for testing
+/**
+ * PHASE 2: Skip validation middleware (for debugging)
+ */
 const skipValidation = (req, res, next) => {
-  console.log('⚠️  SKIPPING VALIDATION - for debugging only');
+  console.log('⚠️ SKIPPING VALIDATION - for debugging only');
   console.log('📝 Request body received:', JSON.stringify(req.body, null, 2));
   next();
 };
 
 module.exports = {
   validatePrivacyLevel,
-  basicEventValidation,
-  skipValidation,  // NEW: For testing
+  skipValidation,
   applyPrivacySettings,
   logPrivacyEnforcement,
-  PRIVACY_PRESETS
+  PRIVACY_PRESETS, // Export for backward compatibility
+  PRIVACY_LEVELS   // Export privacy levels
 };

@@ -1,4 +1,5 @@
-// routes/feed.js - UPDATED: Enhanced Posts Feed with Memory Photos and PROPER LIKE STATUS
+// routes/feed.js - PHASE 2 COMPLETED: Enhanced Posts Feed with Memory Photos and PROPER PRIVACY INTEGRATION
+
 const express = require('express');
 const Photo = require('../models/Photo');
 const MemoryPhoto = require('../models/MemoryPhoto');
@@ -6,9 +7,9 @@ const Memory = require('../models/Memory');
 const Event = require('../models/Event');
 const User = require('../models/User');
 const protect = require('../middleware/auth');
-const EventDiscoveryService = require('../services/eventDiscoveryService'); // Import Phase 2 service
+const { PRIVACY_LEVELS } = require('../constants/privacyConstants');
 
-console.log('🔧 Feed route loaded with Memory Photo support and Instagram-style likes');
+console.log('🔧 PHASE 2: Feed route loaded with Privacy-Aware Event Discovery');
 
 const router = express.Router();
 
@@ -45,7 +46,6 @@ router.get('/feed/posts', protect, async (req, res) => {
     /* 2) ✅ FIXED: Fetch regular posts with PROPER LIKE STATUS using aggregation */
     const friendPostsQuery = {
       user: { $in: followingIds },
-      //visibleInEvent: { $ne: false }, // Include both true and undefined
       $and: [
         {
           $or: [
@@ -340,12 +340,12 @@ router.get('/feed/posts', protect, async (req, res) => {
   }
 });
 
-/* ─── Fallback Events Feed (unchanged) ─── */
+/* ─── PHASE 2 COMPLETED: PRIVACY-AWARE EVENTS FEED ─── */
 router.get('/feed/events', protect, async (req, res) => {
   const page = +req.query.page || 1;
   const limit = +req.query.limit || 10;
   const skip = (page - 1) * limit;
-  const { type = 'discover' } = req.query; // Support different feed types
+  const { type = 'discover' } = req.query;
   
   console.log(`🟡 [PHASE 2] /feed/events -> user ${req.user._id} page ${page} type ${type}`);
 
@@ -363,40 +363,122 @@ router.get('/feed/events', protect, async (req, res) => {
     let events = [];
     let totalEvents = 0;
 
-    // PHASE 2: Use consistent privacy-aware discovery service
-    switch (type) {
-      case 'following':
-        console.log(`📱 [PHASE 2] Getting following feed for user ${req.user._id}`);
-        
-        if (followingIds.length === 0) {
-          return res.json({
-            events: [],
-            page: 1,
-            totalPages: 0,
-            hasMore: false,
-            message: 'Follow some users to see their events in your feed!'
-          });
-        }
-        
-        // PHASE 2: Use EventDiscoveryService for consistent privacy filtering
-        events = await EventDiscoveryService.getFollowingFeed(req.user._id, {
-          limit: limit + 1, // Get one extra to check for more
-          skip,
-          followingIds
+    // ✅ PHASE 2: Privacy-aware event discovery based on feed type
+    if (type === 'following') {
+      console.log(`📱 [PHASE 2] Getting following feed for user ${req.user._id}`);
+      
+      if (followingIds.length === 0) {
+        return res.json({
+          events: [],
+          page: 1,
+          totalPages: 0,
+          hasMore: false,
+          message: 'Follow some users to see their events in your feed!'
         });
-        break;
-        
-      case 'discover':
-      default:
-        console.log(`🌟 [PHASE 2] Getting discovery feed for user ${req.user._id}`);
-        
-        // PHASE 2: Use EventDiscoveryService for discovery with privacy filtering
-        events = await EventDiscoveryService.getFeedEvents(req.user._id, {
-          limit: limit + 1, // Get one extra to check for more
-          skip,
-          includeRecommendations: true
-        });
-        break;
+      }
+      
+      // ✅ PHASE 2: Privacy-aware following feed query
+      const followingFeedQuery = {
+        $and: [
+          // Only future events
+          { time: { $gte: new Date() } },
+          
+          // Privacy filtering for following feed
+          {
+            $or: [
+              // User's own events
+              { host: req.user._id },
+              
+              // Co-hosted events
+              { coHosts: req.user._id },
+              
+              // Events user is attending
+              { attendees: req.user._id },
+              
+              // Public events from followed users that appear in feed
+              {
+                host: { $in: followingIds },
+                privacyLevel: PRIVACY_LEVELS.PUBLIC,
+                'permissions.appearInFeed': true
+              },
+              
+              // Friends-only events from followed users that appear in feed
+              {
+                host: { $in: followingIds },
+                privacyLevel: PRIVACY_LEVELS.FRIENDS,
+                'permissions.appearInFeed': true
+              }
+              
+              // Private events only appear if user is invited (covered by attendees/invitedUsers above)
+            ]
+          }
+        ]
+      };
+
+      events = await Event.find(followingFeedQuery)
+        .populate('host', 'username profilePicture')
+        .populate('attendees', 'username profilePicture')
+        .sort({ time: 1, createdAt: -1 })
+        .limit(limit + 1) // Get one extra to check for more
+        .skip(skip);
+
+      totalEvents = await Event.countDocuments(followingFeedQuery);
+      
+    } else {
+      // Discovery feed
+      console.log(`🌟 [PHASE 2] Getting discovery feed for user ${req.user._id}`);
+      
+      // ✅ PHASE 2: Privacy-aware discovery feed query
+      const discoveryFeedQuery = {
+        $and: [
+          // Only future events
+          { time: { $gte: new Date() } },
+          
+          // Privacy filtering for discovery
+          {
+            $or: [
+              // User's own events
+              { host: req.user._id },
+              
+              // Co-hosted events
+              { coHosts: req.user._id },
+              
+              // Events user is attending
+              { attendees: req.user._id },
+              
+              // Events where user is invited
+              { invitedUsers: req.user._id },
+              
+              // Public events that appear in feed
+              {
+                privacyLevel: PRIVACY_LEVELS.PUBLIC,
+                'permissions.appearInFeed': true
+              },
+              
+              // Friends-only events from followed users that appear in feed
+              {
+                privacyLevel: PRIVACY_LEVELS.FRIENDS,
+                host: { $in: followingIds },
+                'permissions.appearInFeed': true
+              }
+              
+              // Private events don't appear in discovery unless user is involved
+            ]
+          }
+        ]
+      };
+
+      events = await Event.find(discoveryFeedQuery)
+        .populate('host', 'username profilePicture')
+        .populate('attendees', 'username profilePicture')
+        .sort({ 
+          time: 1, // Sort by event time first
+          createdAt: -1 // Then by newest
+        })
+        .limit(limit + 1) // Get one extra to check for more
+        .skip(skip);
+
+      totalEvents = await Event.countDocuments(discoveryFeedQuery);
     }
 
     // Check if there are more events
@@ -405,66 +487,56 @@ router.get('/feed/events', protect, async (req, res) => {
 
     console.log(`🎉 [PHASE 2] Found ${eventsToReturn.length} events for ${type} feed`);
 
-    // PHASE 2: Enhanced events with privacy-aware context
+    // ✅ PHASE 2: Enhanced events with privacy-aware context
     const eventsWithContext = eventsToReturn.map(event => {
       const isAttending = attendingEventIds.includes(event._id.toString());
       const isHosted = followingIds.includes(event.host._id.toString());
       const isHost = event.host._id.toString() === req.user._id.toString();
+      const isInvited = event.invitedUsers?.some(u => u.toString() === req.user._id.toString());
       
       return {
-        ...event.toObject ? event.toObject() : event,
+        ...event.toObject(),
         isAttending,
         isHosted,
         isHost,
+        isInvited,
         attendeeCount: event.attendees ? event.attendees.length : 0,
         source: isAttending ? 'attending' : (isHosted ? 'friend' : 'discover'),
         
-        // PHASE 2: Add privacy metadata
+        // ✅ PHASE 2: Add privacy metadata
         privacyMetadata: {
           level: event.privacyLevel,
           canUserView: true, // If we got here, user can view
-          canUserJoin: event.canUserJoin ? event.canUserJoin(req.user._id) : false,
+          canUserJoin: event.canUserJoin(req.user._id, followingIds),
           isDiscoverable: event.permissions?.appearInFeed || false,
           discoveryReason: isHost ? 'own_event' : 
                           isAttending ? 'attending' :
+                          isInvited ? 'invited' :
                           isHosted ? 'following_host' :
-                          event.privacyLevel === 'public' ? 'public_discovery' :
-                          'invited_to_private'
+                          event.privacyLevel === PRIVACY_LEVELS.PUBLIC ? 'public_discovery' :
+                          'unknown'
         },
         
         // Add recommendation reason for discover feed
         ...(type === 'discover' && {
-          recommendationReason: generateEventRecommendationReason(event, req.user._id, isHosted, isAttending)
+          recommendationReason: generateEventRecommendationReason(event, req.user._id, isHosted, isAttending, isInvited)
         })
       };
     });
-
-    // PHASE 2: Get accurate total count using privacy-aware service
-    let totalCount = 0;
-    try {
-      if (type === 'following') {
-        totalCount = await EventDiscoveryService.getFollowingFeedCount(req.user._id, { followingIds });
-      } else {
-        totalCount = await EventDiscoveryService.getFeedEventsCount(req.user._id);
-      }
-    } catch (countError) {
-      console.warn('⚠️ [PHASE 2] Could not get total count:', countError.message);
-      totalCount = eventsToReturn.length; // Fallback
-    }
     
     const response = {
       events: eventsWithContext,
       page,
-      totalPages: Math.ceil(totalCount / limit),
+      totalPages: Math.ceil(totalEvents / limit),
       hasMore: hasMoreEvents,
       pagination: {
         currentPage: page,
-        totalPages: Math.ceil(totalCount / limit),
-        totalEvents: totalCount,
+        totalPages: Math.ceil(totalEvents / limit),
+        totalEvents: totalEvents,
         hasMore: hasMoreEvents,
         limit: limit
       },
-      // PHASE 2: Enhanced debugging with privacy info
+      // ✅ PHASE 2: Enhanced debugging with privacy info
       debug: {
         type: type,
         followingCount: followingIds.length,
@@ -490,13 +562,14 @@ router.get('/feed/events', protect, async (req, res) => {
   }
 });
 
-// PHASE 2: Helper function to generate event recommendation reasons (enhanced)
-function generateEventRecommendationReason(event, userId, isHosted, isAttending) {
+// ✅ PHASE 2: Helper function to generate event recommendation reasons
+function generateEventRecommendationReason(event, userId, isHosted, isAttending, isInvited) {
   if (isAttending) return 'You\'re attending';
+  if (isInvited) return 'You\'re invited';
   if (isHosted) return 'From someone you follow';
   
-  // PHASE 2: More intelligent recommendation reasons based on privacy level
-  if (event.privacyLevel === 'public') {
+  // Privacy-aware recommendation reasons
+  if (event.privacyLevel === PRIVACY_LEVELS.PUBLIC) {
     const publicReasons = [
       'Popular public event',
       'Trending in your area',
@@ -506,9 +579,9 @@ function generateEventRecommendationReason(event, userId, isHosted, isAttending)
       'Happening soon'
     ];
     return publicReasons[Math.floor(Math.random() * publicReasons.length)];
-  } else if (event.privacyLevel === 'friends') {
+  } else if (event.privacyLevel === PRIVACY_LEVELS.FRIENDS) {
     return 'Shared by someone you follow';
-  } else if (event.privacyLevel === 'private') {
+  } else if (event.privacyLevel === PRIVACY_LEVELS.PRIVATE) {
     return 'You\'re invited to this private event';
   }
   
