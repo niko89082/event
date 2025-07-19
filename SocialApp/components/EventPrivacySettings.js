@@ -1,4 +1,4 @@
-// components/EventPrivacySettings.js - Advanced Privacy Controls Component
+// components/EventPrivacySettings.js - PHASE 1: Advanced Privacy Controls Component (3 levels only)
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, FlatList,
@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+// PHASE 1: UPDATED TO 3 PRIVACY LEVELS ONLY
 const PRIVACY_LEVELS = [
   {
     key: 'public',
@@ -30,14 +31,6 @@ const PRIVACY_LEVELS = [
     icon: 'lock-closed-outline',
     color: '#FF9500',
     features: ['Invitation required', 'Hidden from search', 'Attendees can invite others']
-  },
-  {
-    key: 'secret',
-    label: 'Secret',
-    description: 'Completely hidden, host controls everything',
-    icon: 'eye-off-outline',
-    color: '#FF3B30',
-    features: ['Completely hidden', 'Host-only invitations', 'No sharing allowed']
   }
 ];
 
@@ -90,7 +83,7 @@ export default function EventPrivacySettings({
   });
 
   useEffect(() => {
-    // Auto-adjust permissions based on privacy level
+    // PHASE 1: Auto-adjust permissions based on privacy level (3 levels only)
     const newPermissions = { ...localPermissions };
     
     switch (privacyLevel) {
@@ -106,21 +99,22 @@ export default function EventPrivacySettings({
         newPermissions.canJoin = 'followers';
         newPermissions.appearInFeed = true;
         newPermissions.appearInSearch = true;
+        newPermissions.showAttendeesToPublic = false;
         break;
       case 'private':
         newPermissions.canView = 'invitees';
         newPermissions.canJoin = 'invited';
         newPermissions.appearInFeed = false;
         newPermissions.appearInSearch = false;
-        break;
-      case 'secret':
-        newPermissions.canView = 'invitees';
-        newPermissions.canJoin = 'invited';
-        newPermissions.canShare = 'host-only';
-        newPermissions.canInvite = 'host-only';
-        newPermissions.appearInFeed = false;
-        newPermissions.appearInSearch = false;
         newPermissions.showAttendeesToPublic = false;
+        break;
+      default:
+        // Default to public if invalid privacy level
+        newPermissions.canView = 'anyone';
+        newPermissions.canJoin = 'anyone';
+        newPermissions.appearInFeed = true;
+        newPermissions.appearInSearch = true;
+        newPermissions.showAttendeesToPublic = true;
         break;
     }
     
@@ -183,7 +177,7 @@ export default function EventPrivacySettings({
                   <Ionicons name="checkmark-circle" size={24} color={level.color} />
                 )}
               </View>
-              
+
               <View style={styles.privacyFeatures}>
                 {level.features.map((feature, index) => (
                   <View key={index} style={styles.featureRow}>
@@ -199,60 +193,53 @@ export default function EventPrivacySettings({
     </Modal>
   );
 
-  const renderPermissionModal = () => {
-    if (!currentPermission) return null;
-
-    const options = PERMISSION_OPTIONS[currentPermission.key] || [];
-
-    return (
-      <Modal
-        visible={showPermissionModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowPermissionModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowPermissionModal(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>{currentPermission.label}</Text>
-            <View style={{ width: 60 }} />
-          </View>
-
-          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-            {options.map(option => (
-              <TouchableOpacity
-                key={option.key}
-                style={[
-                  styles.permissionOption,
-                  localPermissions[currentPermission.key] === option.key && styles.selectedPermissionOption
-                ]}
-                onPress={() => {
-                  handlePermissionChange(currentPermission.key, option.key);
-                  setShowPermissionModal(false);
-                }}
-                activeOpacity={0.8}
-              >
-                <View style={styles.permissionOptionContent}>
-                  <Text style={styles.permissionOptionLabel}>{option.label}</Text>
-                  <Text style={styles.permissionOptionDescription}>{option.description}</Text>
-                </View>
-                {localPermissions[currentPermission.key] === option.key && (
-                  <Ionicons name="checkmark" size={20} color="#3797EF" />
-                )}
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+  const renderPermissionModal = () => (
+    <Modal
+      visible={showPermissionModal}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => setShowPermissionModal(false)}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <TouchableOpacity onPress={() => setShowPermissionModal(false)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>{currentPermission?.label}</Text>
+          <View style={{ width: 60 }} />
         </View>
-      </Modal>
-    );
-  };
+
+        <ScrollView style={styles.modalContent}>
+          {currentPermission && PERMISSION_OPTIONS[currentPermission.key]?.map(option => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.permissionOption,
+                localPermissions[currentPermission.key] === option.key && styles.selectedPermissionOption
+              ]}
+              onPress={() => {
+                handlePermissionChange(currentPermission.key, option.key);
+                setShowPermissionModal(false);
+              }}
+            >
+              <View style={styles.permissionOptionContent}>
+                <Text style={styles.permissionOptionLabel}>{option.label}</Text>
+                <Text style={styles.permissionOptionDescription}>{option.description}</Text>
+              </View>
+              {localPermissions[currentPermission.key] === option.key && (
+                <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
+              )}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
 
   return (
     <View style={[styles.container, style]}>
-      <Text style={styles.sectionTitle}>Privacy & Permissions</Text>
-      
+      <Text style={styles.sectionTitle}>Privacy Settings</Text>
+
       {/* Privacy Level Selector */}
       <TouchableOpacity
         style={styles.privacyLevelCard}
@@ -261,134 +248,114 @@ export default function EventPrivacySettings({
       >
         <View style={styles.privacyLevelHeader}>
           <View style={[styles.privacyIconContainer, { backgroundColor: selectedPrivacy.color }]}>
-            <Ionicons name={selectedPrivacy.icon} size={20} color="#FFFFFF" />
+            <Ionicons name={selectedPrivacy.icon} size={24} color="#FFFFFF" />
           </View>
           <View style={styles.privacyLevelInfo}>
             <Text style={styles.privacyLevelLabel}>{selectedPrivacy.label}</Text>
             <Text style={styles.privacyLevelDescription}>{selectedPrivacy.description}</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+          <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
         </View>
       </TouchableOpacity>
 
-      {/* Granular Permissions */}
+      {/* Advanced Permissions */}
       <View style={styles.permissionsSection}>
-        <Text style={styles.permissionsSectionTitle}>Detailed Permissions</Text>
+        <Text style={styles.permissionsSectionTitle}>Advanced Permissions</Text>
         
         <View style={styles.permissionsGrid}>
           <TouchableOpacity
             style={styles.permissionCard}
             onPress={() => openPermissionModal('canView', 'Who Can View')}
-            activeOpacity={0.8}
           >
             <View style={styles.permissionCardHeader}>
               <Ionicons name="eye-outline" size={20} color="#3797EF" />
-              <Text style={styles.permissionCardTitle}>Who Can View</Text>
+              <Text style={styles.permissionCardTitle}>View</Text>
             </View>
             <Text style={styles.permissionCardValue}>
-              {PERMISSION_OPTIONS.canView.find(o => o.key === localPermissions.canView)?.label}
+              {PERMISSION_OPTIONS.canView.find(p => p.key === localPermissions.canView)?.label || 'Anyone'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.permissionCard}
             onPress={() => openPermissionModal('canJoin', 'Who Can Join')}
-            activeOpacity={0.8}
           >
             <View style={styles.permissionCardHeader}>
-              <Ionicons name="person-add-outline" size={20} color="#3797EF" />
-              <Text style={styles.permissionCardTitle}>Who Can Join</Text>
+              <Ionicons name="person-add-outline" size={20} color="#34C759" />
+              <Text style={styles.permissionCardTitle}>Join</Text>
             </View>
             <Text style={styles.permissionCardValue}>
-              {PERMISSION_OPTIONS.canJoin.find(o => o.key === localPermissions.canJoin)?.label}
+              {PERMISSION_OPTIONS.canJoin.find(p => p.key === localPermissions.canJoin)?.label || 'Anyone'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.permissionCard}
             onPress={() => openPermissionModal('canShare', 'Who Can Share')}
-            activeOpacity={0.8}
           >
             <View style={styles.permissionCardHeader}>
-              <Ionicons name="share-outline" size={20} color="#3797EF" />
-              <Text style={styles.permissionCardTitle}>Who Can Share</Text>
+              <Ionicons name="share-outline" size={20} color="#FF9500" />
+              <Text style={styles.permissionCardTitle}>Share</Text>
             </View>
             <Text style={styles.permissionCardValue}>
-              {PERMISSION_OPTIONS.canShare.find(o => o.key === localPermissions.canShare)?.label}
+              {PERMISSION_OPTIONS.canShare.find(p => p.key === localPermissions.canShare)?.label || 'Attendees'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.permissionCard}
             onPress={() => openPermissionModal('canInvite', 'Who Can Invite')}
-            activeOpacity={0.8}
           >
             <View style={styles.permissionCardHeader}>
-              <Ionicons name="mail-outline" size={20} color="#3797EF" />
-              <Text style={styles.permissionCardTitle}>Who Can Invite</Text>
+              <Ionicons name="mail-outline" size={20} color="#FF3B30" />
+              <Text style={styles.permissionCardTitle}>Invite</Text>
             </View>
             <Text style={styles.permissionCardValue}>
-              {PERMISSION_OPTIONS.canInvite.find(o => o.key === localPermissions.canInvite)?.label}
+              {PERMISSION_OPTIONS.canInvite.find(p => p.key === localPermissions.canInvite)?.label || 'Attendees'}
             </Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Discovery Settings */}
-      <View style={styles.discoverySection}>
-        <Text style={styles.discoverySectionTitle}>Discovery Settings</Text>
-        
-        <View style={styles.toggleRow}>
-          <View style={styles.toggleInfo}>
-            <Text style={styles.toggleLabel}>Appear in Feed</Text>
-            <Text style={styles.toggleDescription}>Show in users' event feeds</Text>
-          </View>
+      {/* Toggle Options */}
+      <View style={styles.toggleSection}>
+        <View style={styles.toggleOption}>
+          <Text style={styles.toggleLabel}>Appear in Feed</Text>
           <Switch
             value={localPermissions.appearInFeed}
             onValueChange={(value) => handlePermissionChange('appearInFeed', value)}
-            trackColor={{ false: '#E1E1E1', true: '#3797EF' }}
-            thumbColor={'#FFFFFF'}
+            trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+            thumbColor="#FFFFFF"
           />
         </View>
 
-        <View style={styles.toggleRow}>
-          <View style={styles.toggleInfo}>
-            <Text style={styles.toggleLabel}>Appear in Search</Text>
-            <Text style={styles.toggleDescription}>Allow discovery through search</Text>
-          </View>
+        <View style={styles.toggleOption}>
+          <Text style={styles.toggleLabel}>Appear in Search</Text>
           <Switch
             value={localPermissions.appearInSearch}
             onValueChange={(value) => handlePermissionChange('appearInSearch', value)}
-            trackColor={{ false: '#E1E1E1', true: '#3797EF' }}
-            thumbColor={'#FFFFFF'}
+            trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+            thumbColor="#FFFFFF"
           />
         </View>
 
-        <View style={styles.toggleRow}>
-          <View style={styles.toggleInfo}>
-            <Text style={styles.toggleLabel}>Show Attendees Publicly</Text>
-            <Text style={styles.toggleDescription}>Display attendee list to everyone</Text>
-          </View>
+        <View style={styles.toggleOption}>
+          <Text style={styles.toggleLabel}>Show Attendees Publicly</Text>
           <Switch
             value={localPermissions.showAttendeesToPublic}
             onValueChange={(value) => handlePermissionChange('showAttendeesToPublic', value)}
-            trackColor={{ false: '#E1E1E1', true: '#3797EF' }}
-            thumbColor={'#FFFFFF'}
+            trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+            thumbColor="#FFFFFF"
           />
         </View>
       </View>
 
-      {/* Privacy Info Box */}
-      <View style={styles.privacyInfoBox}>
-        <View style={styles.privacyInfoHeader}>
-          <Ionicons name="information-circle-outline" size={20} color="#3797EF" />
-          <Text style={styles.privacyInfoTitle}>Privacy Tip</Text>
-        </View>
-        <Text style={styles.privacyInfoText}>
-          {privacyLevel === 'public' && 'Your event will be discoverable by anyone and appear in search results and feeds.'}
+      {/* Privacy Level Description */}
+      <View style={styles.descriptionSection}>
+        <Text style={styles.descriptionText}>
+          {privacyLevel === 'public' && 'This event is completely open to the public. Anyone can discover, view, and join this event.'}
           {privacyLevel === 'friends' && 'Only your followers will be able to see and join this event.'}
           {privacyLevel === 'private' && 'This event requires invitations, but attendees can invite others and share the event.'}
-          {privacyLevel === 'secret' && 'This event is completely hidden and only you can manage invitations and sharing.'}
         </Text>
       </View>
 

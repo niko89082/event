@@ -17,7 +17,35 @@ import SimplifiedEventPrivacySettings from '../components/SimplifiedEventPrivacy
 
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
+const PERMISSION_PRESETS = {
+  public: {
+    canView: 'anyone',
+    canJoin: 'anyone',
+    canShare: 'attendees',
+    canInvite: 'attendees',
+    appearInFeed: true,
+    appearInSearch: true,
+    showAttendeesToPublic: true
+  },
+  friends: {
+    canView: 'followers',
+    canJoin: 'followers',
+    canShare: 'attendees',
+    canInvite: 'attendees',
+    appearInFeed: true,
+    appearInSearch: true,
+    showAttendeesToPublic: false
+  },
+  private: {
+    canView: 'invited-only',
+    canJoin: 'invited-only',
+    canShare: 'attendees',
+    canInvite: 'attendees',
+    appearInFeed: false,
+    appearInSearch: false,
+    showAttendeesToPublic: false
+  }
+};
 // PHASE 2: Simplified Privacy Levels (auto-calculated permissions)
 const PRIVACY_LEVELS = [
   { 
@@ -40,13 +68,6 @@ const PRIVACY_LEVELS = [
     desc: 'Invite-only, but guests can share', 
     icon: 'lock-closed-outline',
     color: '#FF9500'
-  },
-  { 
-    key: 'secret', 
-    label: 'Secret', 
-    desc: 'Completely hidden, host controls all', 
-    icon: 'eye-off-outline',
-    color: '#FF3B30'
   }
 ];
 

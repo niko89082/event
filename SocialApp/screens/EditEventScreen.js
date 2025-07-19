@@ -43,15 +43,9 @@ const PRIVACY_LEVELS = [
     desc: 'Invite-only, but guests can share', 
     icon: 'lock-closed-outline',
     color: '#FF9500'
-  },
-  { 
-    key: 'secret', 
-    label: 'Secret', 
-    desc: 'Completely hidden, host controls all', 
-    icon: 'eye-off-outline',
-    color: '#FF3B30'
   }
 ];
+
 
 export default function EditEventScreen() {
   const route = useRoute();
@@ -73,6 +67,7 @@ export default function EditEventScreen() {
   const [cover, setCover] = useState(null);
   const [originalCoverImage, setOriginalCoverImage] = useState(null);
   const [debugToggleCount, setDebugToggleCount] = useState(0);
+  const privacyLevelRef = useRef('public');
 
   // Advanced fields
   const [maxAttendees, setMaxAttendees] = useState('50');
@@ -120,6 +115,92 @@ export default function EditEventScreen() {
   useEffect(() => {
     fetchEventData();
   }, [eventId]);
+const PrivacyDebugPanel = ({ privacyLevel, onPrivacyChange }) => {
+  if (process.env.NODE_ENV !== 'development') return null;
+
+  return (
+    <View style={{
+      backgroundColor: '#FFF3CD',
+      borderWidth: 1,
+      borderColor: '#FFEAA7',
+      borderRadius: 8,
+      padding: 16,
+      margin: 16
+    }}>
+      <Text style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 8 }}>
+        🐛 DEBUG: Privacy Level State
+      </Text>
+      <Text style={{ fontSize: 12, marginBottom: 4 }}>
+        State: "{privacyLevel}" | Ref: "{privacyLevelRef.current}" | Match: {privacyLevel === privacyLevelRef.current ? '✅' : '❌'}
+      </Text>
+      <Text style={{ fontSize: 12, marginBottom: 4 }}>
+        Type: {typeof privacyLevel} | Timestamp: {new Date().toLocaleTimeString()}
+      </Text>
+      
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+        {['public', 'friends', 'private'].map(level => (
+          <TouchableOpacity
+            key={level}
+            onPress={() => {
+              console.log(`🐛 DEBUG: Manually setting privacy to "${level}"`);
+              onPrivacyChange(level);
+            }}
+            style={{
+              backgroundColor: privacyLevel === level ? '#007AFF' : '#E0E0E0',
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 4,
+              marginRight: 8,
+              marginBottom: 4
+            }}
+          >
+            <Text style={{
+              color: privacyLevel === level ? 'white' : 'black',
+              fontSize: 12
+            }}>
+              {level}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+};
+
+useEffect(() => {
+  privacyLevelRef.current = privacyLevel;
+  console.log(`🔒 FRONTEND: Privacy level ref updated to: "${privacyLevelRef.current}"`);
+}, [privacyLevel]);
+
+useEffect(() => {
+  console.log(`🔒 FRONTEND: Privacy level state changed to: "${privacyLevel}" (type: ${typeof privacyLevel})`);
+  console.log(`🔒 FRONTEND: Privacy level state update timestamp: ${new Date().toISOString()}`);
+}, [privacyLevel]);
+// PHASE 2: Enhanced privacy selection handler
+const handlePrivacySelect = (newPrivacyLevel) => {
+  console.log(`🔒 FRONTEND: Privacy selection - changing from "${privacyLevel}" to "${newPrivacyLevel}"`);
+  
+  // Validate the new privacy level
+  if (!['public', 'friends', 'private'].includes(newPrivacyLevel)) {
+    console.error(`❌ Invalid privacy level: "${newPrivacyLevel}"`);
+    return;
+  }
+  
+  // Update state
+  setPrivacyLevel(newPrivacyLevel);
+  setShowPrivacyModal(false);
+  
+  // FIXED: Remove setTimeout verification - it reads old state due to React's async nature
+  // Instead, log the new value directly
+  console.log(`✅ FRONTEND: Privacy level set to: "${newPrivacyLevel}"`);
+  
+  // Show confirmation with the new value (not state)
+  Alert.alert(
+    'Privacy Updated',
+    `Event privacy changed to: ${newPrivacyLevel}`,
+    [{ text: 'OK' }]
+  );
+};
 
   // Set up navigation header
   useEffect(() => {
@@ -161,6 +242,11 @@ export default function EditEventScreen() {
     const response = await api.get(`/api/events/${eventId}`);
     const eventData = response.data;
 
+    console.log('📥 Event data received:', {
+      privacyLevel: eventData.privacyLevel,
+      permissions: eventData.permissions
+    });
+
     // Set basic fields
     setEvent(eventData);
     setTitle(eventData.title || '');
@@ -172,9 +258,17 @@ export default function EditEventScreen() {
     setMaxAttendees(String(eventData.maxAttendees || 50));
     setTags(eventData.tags?.join(', ') || '');
     
-    // PHASE 1: Only set privacy level - don't manage complex permissions
-    setPrivacyLevel(eventData.privacyLevel || 'public');
-    // Remove: setPermissions(eventData.permissions || permissions); // DELETE THIS
+    // PHASE 2: Enhanced privacy level setting with validation
+    const incomingPrivacyLevel = eventData.privacyLevel || 'public';
+    console.log(`🔒 FRONTEND: Setting privacy level from server: "${incomingPrivacyLevel}"`);
+    
+    if (['public', 'friends', 'private'].includes(incomingPrivacyLevel)) {
+      setPrivacyLevel(incomingPrivacyLevel);
+      console.log(`✅ FRONTEND: Privacy level set to: "${incomingPrivacyLevel}"`);
+    } else {
+      console.warn(`⚠️ Invalid privacy level from server: "${incomingPrivacyLevel}", defaulting to "public"`);
+      setPrivacyLevel('public');
+    }
     
     // Co-hosts handling
     const coHostsData = eventData.coHosts || [];
@@ -202,7 +296,6 @@ export default function EditEventScreen() {
     }
 
     console.log('✅ Event data loaded successfully');
-    console.log('📥 ===== FETCH EVENT DEBUG END =====');
 
   } catch (error) {
     console.error('❌ Error fetching event:', error);
@@ -298,6 +391,18 @@ const handleDeleteEvent = async () => {
   } finally {
     setDeleting(false);
     setShowDeleteModal(false);
+  }
+};
+const getPrivacyDescription = (privacyLevel) => {
+  switch (privacyLevel) {
+    case 'public':
+      return 'This event is completely open. Anyone can discover, view, and join this event.';
+    case 'friends':
+      return 'Only your followers will be able to see and join this event.';
+    case 'private':
+      return 'This event requires invitations, but attendees can invite others and share the event.';
+    default:
+      return 'This event is completely open. Anyone can discover, view, and join this event.';
   }
 };
 
@@ -418,6 +523,7 @@ useEffect(() => {
 const handleSaveEvent = async () => {
   const currentAllowPhotos = allowPhotosRef.current;
   const currentCoHosts = coHostsRef.current;
+  const currentPrivacyLevel = privacyLevelRef.current; // Use ref for immediate access
   
   // Validation
   if (!title || !title.trim()) {
@@ -430,7 +536,7 @@ const handleSaveEvent = async () => {
     
     const priceInCents = Math.round(parseFloat(price || 0) * 100);
     
-    // PHASE 1: Simplified update data - let backend handle permissions
+    // PHASE 2: Enhanced update data with ref-based privacy level
     const updateData = {
       title: title.trim(),
       description: description.trim(),
@@ -438,11 +544,10 @@ const handleSaveEvent = async () => {
       location: location.trim(),
       category: category,
       maxAttendees: parseInt(maxAttendees) || 0,
-      privacyLevel: privacyLevel, // Only send privacy level
+      privacyLevel: currentPrivacyLevel, // FIXED: Use ref instead of state
       allowPhotos: currentAllowPhotos,
-      allowGuestPasses: true, // Always enable guest passes
+      allowGuestPasses: true,
       coHosts: currentCoHosts.map(coHost => coHost._id),
-      // Remove complex permissions object - backend handles this
       pricing: {
         isFree: priceInCents === 0,
         amount: priceInCents,
@@ -454,13 +559,14 @@ const handleSaveEvent = async () => {
       eventPrice: parseFloat(price || 0),
       refundPolicy: refundPolicy
     };
-    // Rest of the save logic remains the same...
 
-    console.log('💾 ===== UPDATE DATA DEBUG =====');
-    console.log('💾 updateData.coHosts:', updateData.coHosts);
-    console.log('💾 updateData.coHosts type:', typeof updateData.coHosts);
-    console.log('💾 updateData.coHosts isArray:', Array.isArray(updateData.coHosts));
-    console.log('💾 updateData.coHosts length:', updateData.coHosts?.length);
+    // PHASE 2: Debug logging for privacy level
+    console.log('💾 ===== FRONTEND UPDATE DATA DEBUG =====');
+    console.log('💾 Current privacyLevel state:', privacyLevel);
+    console.log('💾 Current privacyLevel ref:', currentPrivacyLevel);
+    console.log('💾 updateData.privacyLevel:', updateData.privacyLevel);
+    console.log('💾 privacyLevel type:', typeof updateData.privacyLevel);
+    console.log('💾 State vs Ref match:', privacyLevel === currentPrivacyLevel);
 
     // Add tags if provided
     if (tags && tags.trim()) {
@@ -475,11 +581,9 @@ const handleSaveEvent = async () => {
 
     console.log('🔄 ===== SENDING REQUEST =====');
     console.log('🔄 Request URL:', `/api/events/${eventId}`);
-    
-    // 🔍 LOG THE EXACT PAYLOAD BEING SENT
-    const payloadToSend = JSON.stringify(updateData);
-    console.log('🔄 Raw JSON payload:', payloadToSend);
-    console.log('🔄 Payload coHosts section:', JSON.stringify(updateData.coHosts));
+    console.log('🔄 Privacy level being sent:', updateData.privacyLevel);
+
+    let response;
 
     // Handle cover image separately if it was changed
     if (cover) {
@@ -505,73 +609,69 @@ const handleSaveEvent = async () => {
         name: 'cover.jpg',
       });
 
-      const response = await api.put(`/api/events/${eventId}`, formData, {
+      response = await api.put(`/api/events/${eventId}`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      
-      console.log('✅ Event update with image successful:', response.data);
-      console.log('✅ Response coHosts:', response.data?.event?.coHosts);
-      
-      if (response.data.event) {
-        setEvent(response.data.event);
-        const backendCoHosts = response.data.event.coHosts || [];
-        setCoHosts(backendCoHosts);
-        coHostsRef.current = backendCoHosts; // ✅ Update ref too
-        console.log('🔄 Updated local co-hosts state from backend:', backendCoHosts);
-      }
     } else {
-      console.log('📄 Using JSON payload (no cover image)');
+      console.log('📝 Using JSON (no cover image)');
+      console.log('📝 JSON payload:', JSON.stringify(updateData, null, 2));
       
-      const response = await api.put(`/api/events/${eventId}`, updateData, {
+      response = await api.put(`/api/events/${eventId}`, updateData, {
         headers: {
           'Content-Type': 'application/json',
         },
       });
+    }
+
+    console.log('✅ ===== RESPONSE RECEIVED =====');
+    console.log('✅ Response status:', response.status);
+    console.log('✅ Response data:', JSON.stringify(response.data, null, 2));
+
+    // PHASE 2: Check if privacy was actually updated
+    if (response.data.privacyUpdate) {
+      console.log('🔒 Privacy update verification:', response.data.privacyUpdate);
       
-      console.log('✅ Event update successful - Response status:', response.status);
-      console.log('✅ Response coHosts:', response.data?.event?.coHosts);
-      
-      if (response.data.event) {
-        console.log('🔄 Setting event state with:', response.data.event);
-        setEvent(response.data.event);
-        const backendCoHosts = response.data.event.coHosts || [];
-        console.log('🔄 Setting coHosts state with:', backendCoHosts);
-        setCoHosts(backendCoHosts);
-        coHostsRef.current = backendCoHosts; // ✅ Update ref too
-        console.log('🔄 Updated local co-hosts state from backend:', backendCoHosts);
+      if (response.data.privacyUpdate.privacyLevelChanged) {
+        console.log('✅ Privacy level was successfully changed!');
+      } else {
+        console.log('📋 Privacy level remained the same');
       }
     }
 
-    console.log('💾 ===== SAVE DEBUG END =====');
-
     Alert.alert(
       'Success!',
-      'Event updated successfully.',
+      'Your event has been updated successfully.',
       [
         {
           text: 'OK',
-          onPress: () => navigation.goBack()
+          onPress: () => {
+            // PHASE 2: Navigate back and refresh
+            navigation.goBack();
+          }
         }
       ]
     );
 
   } catch (error) {
     console.error('❌ ===== SAVE ERROR =====');
-    console.error('❌ Error:', error.response?.data || error.message);
+    console.error('❌ Error object:', error);
+    console.error('❌ Error message:', error.message);
+    console.error('❌ Error response:', error.response?.data);
     
-    let errorMessage = 'Failed to update event. Please try again.';
-    
-    if (error.response?.data?.message) {
-      errorMessage = error.response.data.message;
-      
-      if (error.response.data.restrictedFields) {
-        errorMessage += `\n\nRestricted fields: ${error.response.data.restrictedFields.join(', ')}`;
-      }
+    // PHASE 2: Enhanced error handling for privacy issues
+    if (error.response?.data?.message?.includes('privacy')) {
+      Alert.alert(
+        'Privacy Update Error',
+        error.response.data.message || 'Failed to update privacy settings. Please try again.'
+      );
+    } else {
+      Alert.alert(
+        'Error',
+        error.response?.data?.message || 'Failed to update event. Please try again.'
+      );
     }
-    
-    Alert.alert('Error', errorMessage);
   } finally {
     setSaving(false);
   }
@@ -1261,47 +1361,78 @@ const handleSaveEvent = async () => {
       </Modal>
 
       {/* Privacy Level Modal */}
-      <Modal
-        visible={showPrivacyModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowPrivacyModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Privacy Level</Text>
-              <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={PRIVACY_LEVELS}
-              keyExtractor={(item) => item.key}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.privacyOption}
-                  onPress={() => {
-                    setPrivacyLevel(item.key);
-                    setShowPrivacyModal(false);
-                  }}
-                >
-                  <View style={styles.privacyOptionContent}>
-                    <Ionicons name={item.icon} size={24} color={item.color} />
-                    <View style={styles.privacyOptionText}>
-                      <Text style={styles.privacyOptionLabel}>{item.label}</Text>
-                      <Text style={styles.privacyOptionDesc}>{item.desc}</Text>
-                    </View>
-                    {privacyLevel === item.key && (
-                      <Ionicons name="checkmark" size={20} color="#3797EF" />
-                    )}
-                  </View>
-                </TouchableOpacity>
+     <Modal
+  visible={showPrivacyModal}
+  transparent={true}
+  animationType="slide"
+  onRequestClose={() => setShowPrivacyModal(false)}
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalContent}>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>Privacy Level</Text>
+        <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
+          <Ionicons name="close" size={24} color="#8E8E93" />
+        </TouchableOpacity>
+      </View>
+
+      {/* PHASE 2: Debug current selection */}
+      <View style={styles.debugSection}>
+        <Text style={styles.debugText}>
+          Current: {privacyLevel} | Type: {typeof privacyLevel}
+        </Text>
+      </View>
+
+      <FlatList
+        data={PRIVACY_LEVELS}
+        keyExtractor={(item) => item.key}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.privacyOption}
+            onPress={() => {
+              console.log(`🔒 FRONTEND: Modal selection - "${item.key}"`);
+              handlePrivacySelect(item.key); // Use the enhanced handler instead of direct setState
+            }}
+          >
+            <View style={styles.privacyOptionContent}>
+              <Ionicons name={item.icon} size={24} color={item.color} />
+              <View style={styles.privacyOptionText}>
+                <Text style={styles.privacyOptionLabel}>{item.label}</Text>
+                <Text style={styles.privacyOptionDesc}>{item.desc}</Text>
+              </View>
+              {privacyLevel === item.key && (
+                <Ionicons name="checkmark" size={20} color="#3797EF" />
               )}
-            />
-          </View>
-        </View>
-      </Modal>
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+
+      {/* PHASE 2: Manual testing buttons */}
+      <View style={styles.testSection}>
+        <Text style={styles.testTitle}>🧪 Quick Test (Development Only)</Text>
+        {['public', 'friends', 'private'].map(testLevel => (
+          <TouchableOpacity
+            key={testLevel}
+            style={[styles.testButton, privacyLevel === testLevel && styles.testButtonActive]}
+            onPress={() => {
+              console.log(`🧪 TEST: Setting privacy to "${testLevel}"`);
+              setPrivacyLevel(testLevel);
+              setShowPrivacyModal(false);
+            }}
+          >
+            <Text style={[
+              styles.testButtonText, 
+              privacyLevel === testLevel && styles.testButtonTextActive
+            ]}>
+              {testLevel.toUpperCase()}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  </View>
+</Modal>
 
       {/* ✅ FIXED: Delete Confirmation Modal */}
       <Modal

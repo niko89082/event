@@ -111,7 +111,6 @@ export default function EventsFeed({
       // Map feedType to correct API endpoint
       switch (feedType) {
         case 'following':
-          // Use the events feed endpoint for following events
           apiEndpoint = '/api/feed/events';
           break;
         case 'discover':

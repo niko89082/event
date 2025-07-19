@@ -1,4 +1,4 @@
-// components/SimplifiedEventPrivacySettings.js - PHASE 1.7: Enhanced with guest pass awareness
+// components/SimplifiedEventPrivacySettings.js - PHASE 1: Cleaned up to 3 privacy levels
 
 import React, { useState } from 'react';
 import {
@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+// PHASE 1: SIMPLIFIED TO 3 PRIVACY LEVELS ONLY
 const PRIVACY_LEVELS = [
   {
     key: 'public',
@@ -37,16 +38,6 @@ const PRIVACY_LEVELS = [
     details: 'Invitation required • Hidden from search • Attendees can invite',
     guestPassSupport: 'full',
     guestPassInfo: 'Guest passes work perfectly for private invitations'
-  },
-  {
-    key: 'secret',
-    label: 'Secret Event',
-    description: 'Completely hidden, host controls everything',
-    icon: 'eye-off-outline',
-    color: '#FF3B30',
-    details: 'Maximum privacy • Host-only invitations • No public sharing',
-    guestPassSupport: 'host-only',
-    guestPassInfo: 'Only you can create guest passes for this event'
   }
 ];
 
@@ -54,18 +45,19 @@ export default function SimplifiedEventPrivacySettings({
   privacyLevel,
   onPrivacyChange,
   style,
-  showGuestPassInfo = true // PHASE 1: New prop to show guest pass information
+  showGuestPassInfo = true
 }) {
   const [showModal, setShowModal] = useState(false);
 
+  // Default to 'public' if invalid privacy level is provided
   const selectedPrivacy = PRIVACY_LEVELS.find(p => p.key === privacyLevel) || PRIVACY_LEVELS[0];
 
   const handlePrivacySelect = (newPrivacy) => {
-    // PHASE 1: Show warning for privacy levels that affect guest access
-    if (newPrivacy === 'secret' && privacyLevel !== 'secret') {
+    // PHASE 1: Updated warnings for simplified privacy levels
+    if (newPrivacy === 'private' && privacyLevel !== 'private') {
       Alert.alert(
-        'Secret Event',
-        'Secret events have the highest privacy. Only you can create guest passes, and the event is completely hidden from discovery.',
+        'Private Event',
+        'This event will require invitations to join. Only invited people will be able to see and attend the event.',
         [
           { text: 'Cancel', style: 'cancel' },
           { 
@@ -98,38 +90,21 @@ export default function SimplifiedEventPrivacySettings({
       return;
     }
 
+    // For public events, no warning needed
     onPrivacyChange(newPrivacy);
     setShowModal(false);
   };
 
-  const getGuestPassStatusIcon = (support) => {
-    switch (support) {
-      case 'full':
-        return { name: 'checkmark-circle', color: '#34C759' };
-      case 'limited':
-        return { name: 'warning', color: '#FF9500' };
-      case 'host-only':
-        return { name: 'lock-closed', color: '#FF3B30' };
-      default:
-        return { name: 'help-circle', color: '#8E8E93' };
-    }
-  };
-
   return (
     <View style={[styles.container, style]}>
-      <Text style={styles.sectionTitle}>Privacy Level</Text>
-      <Text style={styles.sectionDescription}>
-        Controls who can see and join your event
-      </Text>
-
       <TouchableOpacity
         style={styles.privacySelector}
         onPress={() => setShowModal(true)}
         activeOpacity={0.8}
       >
         <View style={styles.privacySelectorContent}>
-          <View style={[styles.privacyIcon, { backgroundColor: selectedPrivacy.color }]}>
-            <Ionicons name={selectedPrivacy.icon} size={24} color="#FFFFFF" />
+          <View style={[styles.iconContainer, { backgroundColor: selectedPrivacy.color }]}>
+            <Ionicons name={selectedPrivacy.icon} size={20} color="#FFFFFF" />
           </View>
           <View style={styles.privacyInfo}>
             <Text style={styles.privacyLabel}>{selectedPrivacy.label}</Text>
@@ -138,26 +113,6 @@ export default function SimplifiedEventPrivacySettings({
           <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
         </View>
       </TouchableOpacity>
-
-      <View style={styles.privacyHint}>
-        <Ionicons name="information-circle-outline" size={16} color="#3797EF" />
-        <Text style={styles.privacyHintText}>{selectedPrivacy.details}</Text>
-      </View>
-
-      {/* PHASE 1: Guest Pass Information */}
-      {showGuestPassInfo && (
-        <View style={styles.guestPassInfo}>
-          <View style={styles.guestPassHeader}>
-            <Ionicons 
-              name={getGuestPassStatusIcon(selectedPrivacy.guestPassSupport).name} 
-              size={16} 
-              color={getGuestPassStatusIcon(selectedPrivacy.guestPassSupport).color} 
-            />
-            <Text style={styles.guestPassTitle}>Guest Pass Access</Text>
-          </View>
-          <Text style={styles.guestPassText}>{selectedPrivacy.guestPassInfo}</Text>
-        </View>
-      )}
 
       {/* Privacy Selection Modal */}
       <Modal
@@ -169,51 +124,48 @@ export default function SimplifiedEventPrivacySettings({
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowModal(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
+              <Text style={styles.cancelButton}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Privacy Level</Text>
+            <Text style={styles.modalTitle}>Event Privacy</Text>
             <View style={{ width: 60 }} />
           </View>
 
           <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-            {PRIVACY_LEVELS.map(privacy => (
+            <Text style={styles.modalDescription}>
+              Choose who can see and join your event
+            </Text>
+
+            {PRIVACY_LEVELS.map((level) => (
               <TouchableOpacity
-                key={privacy.key}
+                key={level.key}
                 style={[
                   styles.privacyOption,
-                  privacyLevel === privacy.key && styles.selectedPrivacyOption
+                  privacyLevel === level.key && styles.selectedPrivacyOption
                 ]}
-                onPress={() => handlePrivacySelect(privacy.key)}
+                onPress={() => handlePrivacySelect(level.key)}
                 activeOpacity={0.8}
               >
-                <View style={styles.privacyOptionContent}>
-                  <View style={[styles.privacyOptionIcon, { backgroundColor: privacy.color }]}>
-                    <Ionicons name={privacy.icon} size={28} color="#FFFFFF" />
+                <View style={styles.privacyOptionHeader}>
+                  <View style={[styles.privacyOptionIcon, { backgroundColor: level.color }]}>
+                    <Ionicons name={level.icon} size={24} color="#FFFFFF" />
                   </View>
                   <View style={styles.privacyOptionInfo}>
-                    <Text style={styles.privacyOptionLabel}>{privacy.label}</Text>
-                    <Text style={styles.privacyOptionDescription}>{privacy.description}</Text>
-                    <Text style={styles.privacyOptionDetails}>{privacy.details}</Text>
-                    
-                    {/* PHASE 1: Guest pass support indicator */}
-                    {showGuestPassInfo && (
-                      <View style={styles.guestPassSupport}>
-                        <Ionicons 
-                          name={getGuestPassStatusIcon(privacy.guestPassSupport).name} 
-                          size={14} 
-                          color={getGuestPassStatusIcon(privacy.guestPassSupport).color} 
-                        />
-                        <Text style={[
-                          styles.guestPassSupportText,
-                          { color: getGuestPassStatusIcon(privacy.guestPassSupport).color }
-                        ]}>
-                          {privacy.guestPassInfo}
-                        </Text>
-                      </View>
-                    )}
+                    <Text style={styles.privacyOptionLabel}>{level.label}</Text>
+                    <Text style={styles.privacyOptionDescription}>{level.description}</Text>
                   </View>
-                  {privacyLevel === privacy.key && (
-                    <Ionicons name="checkmark-circle" size={24} color={privacy.color} />
+                  {privacyLevel === level.key && (
+                    <Ionicons name="checkmark-circle" size={24} color={level.color} />
+                  )}
+                </View>
+
+                <View style={styles.privacyDetails}>
+                  <Text style={styles.privacyDetailsText}>{level.details}</Text>
+                  
+                  {showGuestPassInfo && (
+                    <View style={styles.guestPassInfo}>
+                      <Ionicons name="ticket-outline" size={16} color="#8E8E93" />
+                      <Text style={styles.guestPassText}>{level.guestPassInfo}</Text>
+                    </View>
                   )}
                 </View>
               </TouchableOpacity>
@@ -227,36 +179,29 @@ export default function SimplifiedEventPrivacySettings({
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 4,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 16,
+    marginVertical: 8,
   },
   privacySelector: {
-    backgroundColor: '#F8F8F8',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   privacySelectorContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  privacyIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+  iconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
+    marginRight: 12,
   },
   privacyInfo: {
     flex: 1,
@@ -271,64 +216,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
   },
-  privacyHint: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#F0F9FF',
-    padding: 12,
-    borderRadius: 8,
-    gap: 8,
-    marginBottom: 12,
-  },
-  privacyHintText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#3797EF',
-    lineHeight: 18,
-  },
 
-  // PHASE 1: Guest Pass Information Styles
-  guestPassInfo: {
-    backgroundColor: '#F8F9FA',
-    padding: 12,
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#34C759',
-  },
-  guestPassHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  guestPassTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginLeft: 6,
-  },
-  guestPassText: {
-    fontSize: 13,
-    color: '#666666',
-    lineHeight: 16,
-  },
-
-  // Modal styles
+  // Modal Styles
   modalContainer: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8F9FA',
   },
   modalHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    borderBottomColor: '#E5E5EA',
   },
-  modalCancelText: {
-    fontSize: 17,
+  cancelButton: {
+    fontSize: 16,
     color: '#3797EF',
+    fontWeight: '500',
   },
   modalTitle: {
     fontSize: 18,
@@ -337,28 +244,40 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     flex: 1,
-    padding: 20,
+    paddingHorizontal: 20,
   },
+  modalDescription: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginVertical: 20,
+  },
+
+  // Privacy Option Styles
   privacyOption: {
-    backgroundColor: '#F8F8F8',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 20,
     marginBottom: 12,
-    borderWidth: 2,
-    borderColor: 'transparent',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   selectedPrivacyOption: {
-    backgroundColor: '#F0F9FF',
+    borderWidth: 2,
     borderColor: '#3797EF',
   },
-  privacyOptionContent: {
+  privacyOptionHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    marginBottom: 12,
   },
   privacyOptionIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
@@ -373,28 +292,30 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   privacyOptionDescription: {
-    fontSize: 16,
-    color: '#666666',
-    marginBottom: 6,
-  },
-  privacyOptionDetails: {
     fontSize: 14,
     color: '#8E8E93',
     lineHeight: 20,
+  },
+  privacyDetails: {
+    paddingLeft: 64,
+  },
+  privacyDetailsText: {
+    fontSize: 13,
+    color: '#6D6D72',
+    lineHeight: 18,
     marginBottom: 8,
   },
-  
-  // PHASE 1: Guest pass support in modal
-  guestPassSupport: {
+  guestPassInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 8,
   },
-  guestPassSupportText: {
+  guestPassText: {
     fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 4,
-    lineHeight: 16,
+    color: '#8E8E93',
+    marginLeft: 6,
     flex: 1,
   },
 });

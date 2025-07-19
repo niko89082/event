@@ -49,20 +49,6 @@ const PRIVACY_LEVELS = [
       'Host controls initial invites',
       'Shareable with invites'
     ]
-  },
-  {
-    key: 'secret',
-    label: 'Secret Event',
-    description: 'Completely hidden, host controls everything',
-    icon: 'eye-off-outline',
-    color: '#FF3B30',
-    features: [
-      'Completely hidden from discovery',
-      'Host-only invitations',
-      'No public sharing allowed',
-      'Maximum privacy protection',
-      'Attendee list hidden'
-    ]
   }
 ];
 
@@ -90,15 +76,6 @@ const PERMISSION_PRESETS = {
     canJoin: 'invited',
     canShare: 'attendees',
     canInvite: 'attendees',
-    appearInFeed: false,
-    appearInSearch: false,
-    showAttendeesToPublic: false
-  },
-  secret: {
-    canView: 'invitees',
-    canJoin: 'invited',
-    canShare: 'host-only',
-    canInvite: 'host-only',
     appearInFeed: false,
     appearInSearch: false,
     showAttendeesToPublic: false
