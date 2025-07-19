@@ -34,6 +34,35 @@ const UP_DIR = path.join(__dirname, '..', 'uploads');
 const PHOTO_DIR = path.join(UP_DIR, 'photos');
 const COVER_DIR = path.join(UP_DIR, 'event-covers');
 const COVERS_DIR = path.join(UP_DIR, 'covers');
+const PRIVACY_PRESETS = {
+  public: {
+    canView: 'anyone',
+    canJoin: 'anyone',
+    canShare: 'attendees',
+    canInvite: 'attendees',
+    appearInFeed: true,
+    appearInSearch: true,
+    showAttendeesToPublic: true
+  },
+  friends: {
+    canView: 'followers',      // ✅ Matches your schema
+    canJoin: 'followers',      // ✅ Matches your schema
+    canShare: 'attendees',
+    canInvite: 'attendees',
+    appearInFeed: true,
+    appearInSearch: true,
+    showAttendeesToPublic: false
+  },
+  private: {
+    canView: 'invited-only',   // ✅ FIXED: Matches your schema enum
+    canJoin: 'invited-only',   // ✅ FIXED: Matches your schema enum
+    canShare: 'attendees',
+    canInvite: 'attendees',
+    appearInFeed: false,
+    appearInSearch: false,
+    showAttendeesToPublic: false
+  }
+};
 
 // Ensure all directories exist
 [PHOTO_DIR, COVER_DIR, COVERS_DIR].forEach((d) => { 
@@ -1245,104 +1274,273 @@ router.get('/user/:userId/calendar', protect, async (req, res) => {
 // ============================================
 // ENHANCED: CREATE EVENT WITH PAYMENT TOGGLE
 // ============================================
-
-router.post('/create', protect, 
-  skipValidation,              // TEMP: Skip validation to see what data we get
-  validatePrivacyLevel,        // Keep privacy validation
-  uploadCover.single('coverImage'), 
-  async (req, res) => {
+const checkPaymentStatus = async (userId) => {
   try {
-    console.log('📝 DEBUG: Creating event without validation...');
-    console.log('📥 Full request body:', JSON.stringify(req.body, null, 2));
+    const user = await User.findById(userId).select('paymentAccounts');
+    if (!user) throw new Error('User not found');
+
+    const paymentAccounts = user.paymentAccounts || {};
+    return {
+      success: true,
+      canReceivePayments: !!(paymentAccounts.primary?.canReceivePayments),
+      primaryProvider: paymentAccounts.primary?.type || null,
+      providers: {
+        paypal: {
+          connected: !!(paymentAccounts.paypal?.verified),
+          email: paymentAccounts.paypal?.email
+        },
+        stripe: {
+          connected: !!(paymentAccounts.stripe?.chargesEnabled),
+          onboardingComplete: !!(paymentAccounts.stripe?.onboardingComplete)
+        }
+      }
+    };
+  } catch (error) {
+    console.error('❌ Payment status check error:', error);
+    return { success: false, canReceivePayments: false };
+  }
+};
+
+
+router.post('/create', protect, uploadCover.single('coverImage'), async (req, res) => {
+  try {
+    console.log('📝 Creating new event...');
+    console.log('📝 Full request body:', JSON.stringify(req.body, null, 2));
 
     const {
       title, description, category = 'General',
       time, location, maxAttendees = 10,
-      isPaidEvent, eventPrice, price,
-      coHosts, tags, coordinates, groupId,
-      allowPhotos = true, privacyLevel = 'public'
+
+      // Enhanced pricing fields
+      isPaidEvent, eventPrice, priceDescription,
+      refundPolicy, earlyBirdEnabled, earlyBirdPrice, earlyBirdDeadline,
+
+      // Privacy and permissions - handle directly in route
+      privacyLevel, permissions,
+
+      // Co-hosts and invitations
+      coHosts, invitedUsers, tags, coordinates, groupId,
+
+      // Legacy fields
+      price, isPublic, openToPublic, allowPhotos, allowUploads, allowUploadsBeforeStart,
+      weatherDependent, interests, ageMin, ageMax,
+
+      // Check-in form integration
+      checkInFormId,
+      requiresFormForCheckIn = false,
+
     } = req.body;
 
-    // TEMP: Use default values if fields are missing
-    const eventData = {
-      title: title || 'Test Event',           // TEMP: Default title
-      description: description || '',
-      time: time ? new Date(time) : new Date(Date.now() + 86400000), // TEMP: Tomorrow if no time
-      location: location || 'Test Location',  // TEMP: Default location
-      category,
-      host: req.user._id,
-      maxAttendees: parseInt(maxAttendees) || 50,
+    // 🔧 DIRECT PRIVACY HANDLING - No middleware dependency
+    console.log('🔒 Direct privacy handling - received privacyLevel:', privacyLevel);
+    
+    const validPrivacyLevels = ['public', 'friends', 'private'];
+    let finalPrivacyLevel = 'public'; // default
+    
+    if (privacyLevel && typeof privacyLevel === 'string') {
+      const normalized = privacyLevel.toLowerCase().trim();
+      if (validPrivacyLevels.includes(normalized)) {
+        finalPrivacyLevel = normalized;
+        console.log(`✅ Using provided privacy level: "${finalPrivacyLevel}"`);
+      } else {
+        console.warn(`⚠️ Invalid privacy level "${privacyLevel}", using default: "public"`);
+      }
+    } else {
+      console.log('📝 No privacy level provided, using default: "public"');
+    }
+
+    // Apply privacy permissions based on level
+    const finalPermissions = PRIVACY_PRESETS[finalPrivacyLevel];
+    console.log('🔧 Applied privacy permissions:', finalPermissions);
+
+    // Enhanced validation
+    if (!title?.trim()) return res.status(400).json({ message: 'Event title is required' });
+    if (!time) return res.status(400).json({ message: 'Event time is required' });
+    if (!location?.trim()) return res.status(400).json({ message: 'Event location is required' });
+
+    // Validate event time
+    const eventDate = new Date(time);
+    if (isNaN(eventDate.getTime()) || eventDate <= new Date()) {
+      return res.status(400).json({ message: 'Event time must be in the future' });
+    }
+
+    // Handle pricing
+    const isPaid = isPaidEvent === 'true' || isPaidEvent === true;
+    const eventPriceNum = isPaid ? parseFloat(eventPrice) || 0 : 0;
+    const earlyBirdPriceNum = earlyBirdEnabled ? parseFloat(earlyBirdPrice) || 0 : 0;
+
+    // 🔧 CRITICAL: Check payment setup for paid events
+    if (isPaid && eventPriceNum > 0) {
+      const paymentStatus = await checkPaymentStatus(req.user._id);
+      console.log('💰 Payment status for paid event:', paymentStatus);
       
-      // PHASE 2: Apply privacy settings from middleware
-      privacyLevel: req.validatedPrivacy?.privacyLevel || 'public',
-      permissions: req.validatedPrivacy?.permissions || {
-        canView: 'anyone',
-        canJoin: 'anyone',
-        canShare: 'attendees',
-        canInvite: 'attendees',
-        appearInFeed: true,
-        appearInSearch: true,
-        showAttendeesToPublic: true
-      },
-      
-      // Basic pricing
-      pricing: {
-        isFree: !isPaidEvent,
-        amount: isPaidEvent ? Math.round((parseFloat(eventPrice || price) || 0) * 100) : 0,
-        currency: 'USD',
-        refundPolicy: 'no-refund'
-      },
-      
-      // Basic settings
-      allowPhotos: allowPhotos === 'true' || allowPhotos === true,
-      allowUploads: true,
-      allowUploadsBeforeStart: false,
-      allowGuestPasses: true,
-      coHosts: [],
-      invitedUsers: [],
-      tags: [],
-      interests: [],
-      weatherDependent: false,
-      ageRestrictions: {},
-      
-      // Group and cover
-      group: groupId || null,
-      coverImage: req.file ? `/uploads/event-covers/${req.file.filename}` : null
+      if (!paymentStatus.canReceivePayments) {
+        return res.status(400).json({ 
+          message: 'Payment setup required for paid events',
+          needsPaymentSetup: true,
+          paymentStatus: paymentStatus
+        });
+      }
+    }
+
+    // Get group if specified
+    let group = null;
+    if (groupId) {
+      group = await Group.findById(groupId);
+      if (!group) return res.status(404).json({ message: 'Group not found' });
+    }
+
+    // Parse co-hosts
+    let coHostsArray = [];
+    if (coHosts) {
+      try {
+        coHostsArray = typeof coHosts === 'string' ? JSON.parse(coHosts) : coHosts;
+      } catch (e) {
+        console.log('Invalid coHosts format:', coHosts);
+      }
+    }
+
+    // Helper functions
+    const bool = (val) => val === 'true' || val === true;
+    const parseIntSafe = (val) => {
+      const parsed = parseInt(val);
+      return isNaN(parsed) ? undefined : parsed;
     };
 
-    console.log('🔧 DEBUG: Final event data:', JSON.stringify(eventData, null, 2));
+    // Create event data
+    const eventData = {
+      title: title.trim(),
+      description: description?.trim() || '',
+      time: new Date(time),
+      location: location.trim(),
+      category,
+      host: req.user._id,
+      coHosts: coHostsArray,
+      maxAttendees: parseInt(maxAttendees) || 50,
+
+      // Enhanced pricing system
+      pricing: {
+        isFree: !isPaid,
+        amount: isPaid ? Math.round(eventPriceNum * 100) : 0,
+        currency: 'USD',
+        description: priceDescription?.trim(),
+        refundPolicy: refundPolicy || 'no-refund',
+        earlyBirdPricing: {
+          enabled: bool(earlyBirdEnabled),
+          amount: earlyBirdEnabled ? Math.round(earlyBirdPriceNum * 100) : 0,
+          deadline: earlyBirdEnabled && earlyBirdDeadline ? new Date(earlyBirdDeadline) : undefined,
+          description: earlyBirdEnabled ? `Early bird pricing until ${new Date(earlyBirdDeadline).toLocaleDateString()}` : undefined
+        }
+      },
+
+      // 🔧 PRIVACY: Use direct privacy handling instead of middleware
+      privacyLevel: finalPrivacyLevel,
+      permissions: finalPermissions,
+
+      // Legacy compatibility
+      price: eventPriceNum,
+      isPublic: bool(isPublic) ?? (finalPrivacyLevel === 'public'),
+      allowPhotos: bool(allowPhotos) ?? true,
+      openToPublic: bool(openToPublic) ?? (finalPermissions?.canJoin === 'anyone'),
+      allowUploads: bool(allowUploads) ?? true,
+      allowUploadsBeforeStart: bool(allowUploadsBeforeStart) ?? true,
+
+      group: group?._id,
+
+      // Discovery fields
+      tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : [],
+      weatherDependent: bool(weatherDependent),
+      interests: interests ? (Array.isArray(interests) ? interests : interests.split(',').map(i => i.trim())) : [],
+      ageRestriction: {
+        ...(ageMin && { min: parseIntSafe(ageMin) }),
+        ...(ageMax && { max: parseIntSafe(ageMax) })
+      },
+
+      // Initialize financial tracking
+      financials: {
+        totalRevenue: 0,
+        totalRefunded: 0,
+        netRevenue: 0,
+        totalPayments: 0,
+        stripeFeesTotal: 0,
+        hostEarnings: 0,
+        currency: 'USD'
+      }
+    };
+
+    // 🔧 FIX: Handle coordinates properly
+    if (coordinates) {
+      try {
+        const coords = typeof coordinates === 'string' 
+          ? JSON.parse(coordinates) 
+          : coordinates;
+
+        if (Array.isArray(coords) && coords.length === 2) {
+          eventData.geo = {
+            type: 'Point',
+            coordinates: [parseFloat(coords[0]), parseFloat(coords[1])]
+          };
+          console.log('✅ Geo coordinates set:', eventData.geo);
+        }
+      } catch (error) {
+        console.log('❌ Error parsing coordinates:', error);
+      }
+    }
+
+    // Handle check-in form assignment
+    if (checkInFormId && requiresFormForCheckIn) {
+      const form = await Form.findById(checkInFormId);
+      if (!form) {
+        return res.status(400).json({ message: 'Check-in form not found' });
+      }
+
+      if (String(form.createdBy) !== String(req.user._id)) {
+        return res.status(403).json({ message: 'You can only use forms you created' });
+      }
+
+      eventData.checkInForm = checkInFormId;
+      eventData.requiresFormForCheckIn = true;
+      console.log(`✅ Event assigned check-in form ${checkInFormId}`);
+    }
+
+    // Handle cover image
+    if (req.file) {
+      eventData.coverImage = `/uploads/covers/${req.file.filename}`;
+    }
 
     // Create the event
     const event = new Event(eventData);
     await event.save();
 
-    // Log privacy enforcement
-    logPrivacyEnforcement(event._id, event.privacyLevel, event.permissions);
+    // Add to group if specified
+    if (group) { 
+      group.events.push(event._id); 
+      await group.save(); 
+    }
 
-    console.log('✅ DEBUG: Event created successfully with ID:', event._id);
+    // Auto-invite for private/secret events created from groups
+    if ((finalPrivacyLevel === 'private' || finalPrivacyLevel === 'secret') && group) {
+      event.invitedUsers = group.members.filter(m => String(m) !== String(req.user._id));
+      await event.save();
+    }
 
-    // Return success response
+    console.log(`✅ Event created: ${event._id} (Paid: ${isPaid}, Privacy: ${finalPrivacyLevel})`);
+
     res.status(201).json({
-      message: 'Event created successfully (DEBUG MODE)',
+      message: 'Event created successfully',
       _id: event._id,
       event: event,
-      debug: {
-        receivedData: req.body,
-        processedData: eventData,
-        privacyApplied: req.validatedPrivacy
-      }
+      isPaidEvent: isPaid,
+      privacyLevel: finalPrivacyLevel,
+      hasCheckInForm: !!checkInFormId,
+      needsPaymentSetup: false
     });
 
   } catch (err) {
-    console.error('❌ DEBUG: Event creation error:', err);
-    
+    console.error('❌ Event creation error:', err);
     res.status(500).json({ 
       message: 'Failed to create event', 
-      error: err.message,
-      debug: {
-        receivedData: req.body,
-        errorDetails: err
-      }
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
     });
   }
 });
