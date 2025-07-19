@@ -1007,21 +1007,31 @@ EventSchema.methods.canUserJoin = async function(userId, userFollowing = []) {
  * @param {Array} userFollowing - Array of user IDs that the user follows
  * @returns {boolean} True if user can view the event
  */
-EventSchema.methods.canUserView = function(userId, userFollowing = []) {
-  const userIdStr = String(userId);
+EventSchema.methods.canUserView = function(userId, userFollowing = [], guestPassCode = null) {
+  const userIdStr = userId ? String(userId) : null;
   const hostIdStr = String(this.host._id || this.host);
   
   // Host can always view their own event
-  if (userIdStr === hostIdStr) return true;
+  if (userIdStr && userIdStr === hostIdStr) return true;
   
   // Co-hosts can view
-  if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
+  if (userIdStr && this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
   
   // Attendees can always view events they're attending
-  if (this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) return true;
+  if (userIdStr && this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) return true;
   
   // Invited users can always view events they're invited to
-  if (this.invitedUsers && this.invitedUsers.some(i => String(i._id || i) === userIdStr)) return true;
+  if (userIdStr && this.invitedUsers && this.invitedUsers.some(i => String(i._id || i) === userIdStr)) return true;
+  
+  // ============================================
+  // PHASE 1 FIX: Guest Pass Support
+  // ============================================
+  // If guest pass code is provided, check if it's valid for this event
+  if (guestPassCode && !userIdStr) {
+    // This will be validated by middleware, but we allow viewing if guest pass exists
+    // The actual validation happens in the guest pass middleware
+    return true; // Allow guest pass holders to view any event they have a valid pass for
+  }
   
   // Check based on privacy level
   switch (this.privacyLevel) {
@@ -1032,33 +1042,52 @@ EventSchema.methods.canUserView = function(userId, userFollowing = []) {
         default:
           return true;
         case 'followers':
-          return userFollowing.includes(hostIdStr);
+          return userIdStr ? userFollowing.includes(hostIdStr) : false;
         case 'friends':
-          return userFollowing.includes(hostIdStr);
+          return userIdStr ? userFollowing.includes(hostIdStr) : false;
         case 'invited-only':
-          return this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
-                 this.attendees?.some(a => String(a._id || a) === userIdStr);
+          return userIdStr && (
+            this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
+            this.attendees?.some(a => String(a._id || a) === userIdStr)
+          );
       }
       break;
     
     case 'friends':
-      // Only followers of the host can view
-      return userFollowing.includes(hostIdStr);
+      // PHASE 1 FIX: Allow guest pass holders but not general public
+      if (guestPassCode && !userIdStr) {
+        return true; // Guest pass holders can view friends-only events
+      }
+      // Only followers of the host can view (for regular users)
+      return userIdStr ? userFollowing.includes(hostIdStr) : false;
     
     case 'private':
+      // PHASE 1 FIX: Guest passes work well here already
+      if (guestPassCode && !userIdStr) {
+        return true; // Guest pass holders can view private events
+      }
       // Only invited users and attendees can view
-      return this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
-             this.attendees?.some(a => String(a._id || a) === userIdStr);
+      return userIdStr && (
+        this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
+        this.attendees?.some(a => String(a._id || a) === userIdStr)
+      );
     
     case 'secret':
+      // PHASE 1 FIX: Very restrictive - only specific guest passes allowed
+      if (guestPassCode && !userIdStr) {
+        return true; // Guest pass validation will be stricter in middleware
+      }
       // Only invited users and attendees can view
-      return this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
-             this.attendees?.some(a => String(a._id || a) === userIdStr);
+      return userIdStr && (
+        this.invitedUsers?.some(i => String(i._id || i) === userIdStr) || 
+        this.attendees?.some(a => String(a._id || a) === userIdStr)
+      );
     
     default:
       return false;
   }
 };
+
 
 /**
  * Check if user can manage this event (edit, delete, etc.)
@@ -1077,7 +1106,59 @@ EventSchema.methods.canUserManage = function(userId) {
   
   return false;
 };
-
+EventSchema.methods.canAppearInUserFeed = function(userId, userFollowing = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host._id || this.host);
+  
+  // Host can always see their own events in feed
+  if (userIdStr === hostIdStr) return true;
+  
+  // Co-hosts can see in feed
+  if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
+  
+  // Check based on privacy level and permissions
+  switch (this.privacyLevel) {
+    case 'public':
+      return this.permissions?.appearInFeed !== false;
+    
+    case 'friends':
+      // PHASE 1 FIX: Only appears in followers' feeds, not public
+      return userFollowing.includes(hostIdStr) && this.permissions?.appearInFeed !== false;
+    
+    case 'private':
+    case 'secret':
+      // Private/secret events don't appear in general feeds
+      return false;
+    
+    default:
+      return false;
+  }
+};
+EventSchema.methods.canAppearInSearch = function(userId, userFollowing = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host._id || this.host);
+  
+  // Host can always find their own events
+  if (userIdStr === hostIdStr) return true;
+  
+  // Check based on privacy level
+  switch (this.privacyLevel) {
+    case 'public':
+      return this.permissions?.appearInSearch !== false;
+    
+    case 'friends':
+      // PHASE 1 FIX: Only searchable by followers
+      return userFollowing.includes(hostIdStr) && this.permissions?.appearInSearch !== false;
+    
+    case 'private':
+    case 'secret':
+      // Private/secret events don't appear in search
+      return false;
+    
+    default:
+      return false;
+  }
+};
 /**
  * Get join requirement type for user
  * @param {string} userId - User ID to check

@@ -166,7 +166,31 @@ router.post(
     }
   }
 );
-
+router.post('/verify-password', protect, async (req, res) => {
+  try {
+    const { password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({ message: 'Password is required' });
+    }
+    
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid password' });
+    }
+    
+    res.json({ success: true, message: 'Password verified' });
+    
+  } catch (error) {
+    console.error('Password verification error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 // Verify 2FA Code
 router.post('/verify-2fa', protect, async (req, res) => {
   const { code } = req.body;

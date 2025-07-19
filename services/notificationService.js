@@ -44,13 +44,22 @@ class NotificationService {
   }
 
   getCategoryFromType(type) {
-    const socialTypes = ['friend_request', 'friend_request_accepted', 'new_follower', 'memory_photo_added', 'memory_invitation', 'memory_photo_batch', 'post_liked', 'post_commented', 'memory_photo_liked'];
-    const eventTypes = ['event_invitation', 'event_reminder', 'event_reminder_1_hour', 'event_update', 'event_cancelled', 'event_announcement', 'event_rsvp_batch'];
-    
-    if (socialTypes.includes(type)) return 'social';
-    if (eventTypes.includes(type)) return 'events';
-    return 'social'; // default
-  }
+  const socialTypes = [
+    'friend_request', 'friend_request_accepted', 'new_follower', 
+    'memory_photo_added', 'memory_invitation', 'memory_photo_batch', 
+    'post_liked', 'post_commented', 'memory_photo_liked'
+  ];
+  
+  const eventTypes = [
+    'event_invitation', 'event_reminder', 'event_reminder_1_hour', 
+    'event_update', 'event_cancelled', 'event_announcement', 'event_rsvp_batch',
+    'cohost_added', 'cohost_left', 'cohost_permission_denied'  // ✅ ADD THESE
+  ];
+  
+  if (socialTypes.includes(type)) return 'social';
+  if (eventTypes.includes(type)) return 'events';
+  return 'social'; // default
+}
 
   /* ═══════════════════════════════════════════════════════════════════
      SOCIAL NOTIFICATIONS
@@ -86,6 +95,95 @@ class NotificationService {
     });
   }
 
+async sendCoHostAdded(hostId, coHostId, event) {
+  try {
+    console.log('🔔 ===== SENDING COHOST NOTIFICATION =====');
+    console.log('🔔 Host ID:', hostId);
+    console.log('🔔 Co-host ID:', coHostId);
+    console.log('🔔 Event ID:', event._id);
+    console.log('🔔 Event title:', event.title);
+
+    const host = await User.findById(hostId).select('username');
+    if (!host) {
+      console.error('❌ Host not found:', hostId);
+      return null;
+    }
+
+    console.log('🔔 Host found:', host.username);
+
+    const notification = await this.createNotification({
+      userId: coHostId,
+      senderId: hostId,
+      category: 'events',
+      type: 'cohost_added',
+      title: 'You\'re now a co-host!',
+      message: `${host.username} added you as a co-host for "${event.title}"`,
+      data: { 
+        eventId: event._id,
+        eventTitle: event.title,
+        hostId: hostId,
+        hostUsername: host.username
+      },
+      actionType: 'VIEW_EVENT',
+      actionData: { eventId: event._id }
+    });
+
+    console.log('✅ Co-host notification created:', notification);
+    return notification;
+  } catch (error) {
+    console.error('❌ Error sending co-host notification:', error);
+    throw error;
+  }
+}
+
+  /**
+   * Send notification when co-host leaves the event
+   */
+  async sendCoHostLeft(coHostId, hostId, event) {
+  try {
+    const coHost = await User.findById(coHostId).select('username');
+    
+    return this.createNotification({
+      userId: hostId,
+      senderId: coHostId,
+      category: 'events',
+      type: 'cohost_left',
+      title: 'Co-host left event',
+      message: `${coHost.username} is no longer co-hosting "${event.title}"`,
+      data: { 
+        eventId: event._id,
+        eventTitle: event.title,
+        coHostId: coHostId,
+        coHostUsername: coHost.username
+      },
+      actionType: 'VIEW_EVENT',
+      actionData: { eventId: event._id }
+    });
+  } catch (error) {
+    console.error('❌ Error sending co-host left notification:', error);
+    throw error;
+  }
+}
+
+  /**
+   * Send notification when co-host tries to perform restricted action
+   */
+  async sendCoHostPermissionDenied(coHostId, eventId, action) {
+    return this.createNotification({
+      userId: coHostId,
+      senderId: null,
+      category: 'events',
+      type: 'cohost_permission_denied',
+      title: 'Action not allowed',
+      message: `As a co-host, you cannot ${action}. Contact the event host for these changes.`,
+      data: { 
+        eventId: eventId,
+        restrictedAction: action
+      },
+      actionType: 'VIEW_EVENT',
+      actionData: { eventId }
+    });
+  }
   async sendNewFollower(followerId, targetId) {
   const follower = await User.findById(followerId).select('username');
   return this.createNotification({

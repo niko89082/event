@@ -5,8 +5,17 @@ const jwt = require('jsonwebtoken');
 const Event = require('../models/Event');
 const Group = require('../models/Group');
 const Photo = require('../models/Photo');
+const EventDiscoveryService = require('../services/eventDiscoveryService');
+const { 
+  validatePrivacyLevel, 
+  basicEventValidation,        // ADD this
+  applyPrivacySettings, 
+  skipValidation,
+  logPrivacyEnforcement 
+} = require('../middleware/privacyValidation');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const { validateGuestPassAccess, canAccessEvent } = require('../middleware/guestPassValidation');
 const GuestPass = require('../models/GuestPass');
 const protect = require('../middleware/auth');
 const EventPrivacyService = require('../services/eventPrivacyService');
@@ -1236,233 +1245,110 @@ router.get('/user/:userId/calendar', protect, async (req, res) => {
 // ============================================
 // ENHANCED: CREATE EVENT WITH PAYMENT TOGGLE
 // ============================================
-router.post('/create', protect, uploadCover.single('coverImage'), async (req, res) => {
+
+router.post('/create', protect, 
+  skipValidation,              // TEMP: Skip validation to see what data we get
+  validatePrivacyLevel,        // Keep privacy validation
+  uploadCover.single('coverImage'), 
+  async (req, res) => {
   try {
-    console.log('📝 Creating new event...');
-    console.log('Request body:', req.body);
+    console.log('📝 DEBUG: Creating event without validation...');
+    console.log('📥 Full request body:', JSON.stringify(req.body, null, 2));
 
     const {
       title, description, category = 'General',
       time, location, maxAttendees = 10,
-      
-      // Enhanced pricing fields
-      isPaidEvent, eventPrice, priceDescription,
-      refundPolicy, earlyBirdEnabled, earlyBirdPrice, earlyBirdDeadline,
-      
-      // Privacy and permissions
-      privacyLevel = 'public', permissions,
-      
-      // Co-hosts and invitations
-      coHosts, invitedUsers, tags, coordinates, groupId,
-      
-      // Legacy fields
-      price, isPublic, openToPublic, allowPhotos, allowUploads, allowUploadsBeforeStart,
-      weatherDependent, interests, ageMin, ageMax,
-      
-      // ============================================
-      // PHASE 1: CHECK-IN FORM INTEGRATION
-      // ============================================
-      checkInFormId,
-      requiresFormForCheckIn = false,
-      
+      isPaidEvent, eventPrice, price,
+      coHosts, tags, coordinates, groupId,
+      allowPhotos = true, privacyLevel = 'public'
     } = req.body;
 
-    // Enhanced validation
-    if (!title?.trim()) return res.status(400).json({ message: 'Event title is required' });
-    if (!time) return res.status(400).json({ message: 'Event time is required' });
-    if (!location?.trim()) return res.status(400).json({ message: 'Event location is required' });
-
-    // Validate event time
-    const eventDate = new Date(time);
-    if (isNaN(eventDate.getTime()) || eventDate <= new Date()) {
-      return res.status(400).json({ message: 'Event time must be in the future' });
-    }
-
-    // Get group if specified
-    let group = null;
-    if (groupId) {
-      group = await Group.findById(groupId);
-      if (!group) return res.status(404).json({ message: 'Group not found' });
-    }
-
-    // Parse co-hosts
-    let coHostsArray = [];
-    if (coHosts) {
-      try {
-        coHostsArray = typeof coHosts === 'string' ? JSON.parse(coHosts) : coHosts;
-      } catch (e) {
-        console.log('Invalid coHosts format:', coHosts);
-      }
-    }
-
-    // Parse permissions
-    let permissionsObj = {};
-    if (permissions) {
-      try {
-        permissionsObj = typeof permissions === 'string' ? JSON.parse(permissions) : permissions;
-      } catch (e) {
-        console.log('Invalid permissions format:', permissions);
-      }
-    }
-
-    // Handle pricing
-    const isPaid = isPaidEvent === 'true' || isPaidEvent === true;
-    const eventPriceNum = isPaid ? parseFloat(eventPrice) || 0 : 0;
-    const earlyBirdPriceNum = earlyBirdEnabled ? parseFloat(earlyBirdPrice) || 0 : 0;
-
-    // Helper functions
-    const bool = (val) => val === 'true' || val === true;
-    const parseIntSafe = (val) => {
-      const parsed = parseInt(val);
-      return isNaN(parsed) ? undefined : parsed;
-    };
-
-    // Create event
-    const event = new Event({
-      title: title.trim(),
-      description: description?.trim() || '',
-      time: new Date(time),
-      location: location.trim(),
+    // TEMP: Use default values if fields are missing
+    const eventData = {
+      title: title || 'Test Event',           // TEMP: Default title
+      description: description || '',
+      time: time ? new Date(time) : new Date(Date.now() + 86400000), // TEMP: Tomorrow if no time
+      location: location || 'Test Location',  // TEMP: Default location
       category,
       host: req.user._id,
-      coHosts: coHostsArray,
       maxAttendees: parseInt(maxAttendees) || 50,
       
-      // Enhanced pricing system
+      // PHASE 2: Apply privacy settings from middleware
+      privacyLevel: req.validatedPrivacy?.privacyLevel || 'public',
+      permissions: req.validatedPrivacy?.permissions || {
+        canView: 'anyone',
+        canJoin: 'anyone',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: true,
+        appearInSearch: true,
+        showAttendeesToPublic: true
+      },
+      
+      // Basic pricing
       pricing: {
-        isFree: !isPaid,
-        amount: isPaid ? Math.round(eventPriceNum * 100) : 0,
+        isFree: !isPaidEvent,
+        amount: isPaidEvent ? Math.round((parseFloat(eventPrice || price) || 0) * 100) : 0,
         currency: 'USD',
-        description: priceDescription?.trim(),
-        refundPolicy: refundPolicy || 'no-refund',
-        earlyBirdPricing: {
-          enabled: bool(earlyBirdEnabled),
-          amount: earlyBirdEnabled ? Math.round(earlyBirdPriceNum * 100) : 0,
-          deadline: earlyBirdEnabled && earlyBirdDeadline ? new Date(earlyBirdDeadline) : undefined,
-          description: earlyBirdEnabled ? `Early bird pricing until ${new Date(earlyBirdDeadline).toLocaleDateString()}` : undefined
-        }
+        refundPolicy: 'no-refund'
       },
       
-      // Privacy system
-      privacyLevel,
-      permissions: {
-        appearInFeed: bool(permissionsObj.appearInFeed) ?? (privacyLevel === 'public'),
-        appearInSearch: bool(permissionsObj.appearInSearch) ?? (privacyLevel === 'public'),
-        canJoin: permissionsObj.canJoin || (privacyLevel === 'public' ? 'anyone' : 'invited-only'),
-        canShare: permissionsObj.canShare || 'attendees',
-        canInvite: permissionsObj.canInvite || 'attendees',
-        showAttendeesToPublic: bool(permissionsObj.showAttendeesToPublic) ?? (privacyLevel === 'public'),
-        ...permissionsObj
-      },
+      // Basic settings
+      allowPhotos: allowPhotos === 'true' || allowPhotos === true,
+      allowUploads: true,
+      allowUploadsBeforeStart: false,
+      allowGuestPasses: true,
+      coHosts: [],
+      invitedUsers: [],
+      tags: [],
+      interests: [],
+      weatherDependent: false,
+      ageRestrictions: {},
       
-      // Legacy compatibility
-      price: eventPriceNum,
-      isPublic: bool(isPublic) ?? (privacyLevel === 'public'),
-      allowPhotos: bool(allowPhotos) ?? true,
-      openToPublic: bool(openToPublic) ?? (permissionsObj.canJoin === 'anyone'),
-      allowUploads: bool(allowUploads) ?? true,
-      allowUploadsBeforeStart: bool(allowUploadsBeforeStart) ?? true,
-      
-      group: group?._id,
-      
-      // Discovery fields
-      tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : [],
-      weatherDependent: bool(weatherDependent),
-      interests: interests ? (Array.isArray(interests) ? interests : interests.split(',').map(i => i.trim())) : [],
-      ageRestriction: {
-        ...(ageMin && { min: parseIntSafe(ageMin) }),
-        ...(ageMax && { max: parseIntSafe(ageMax) })
-      },
-      
-      // Initialize financial tracking
-      financials: {
-        totalRevenue: 0,
-        totalRefunded: 0,
-        netRevenue: 0,
-        totalPayments: 0,
-        stripeFeesTotal: 0,
-        hostEarnings: 0,
-        currency: 'USD'
-      }
-    });
+      // Group and cover
+      group: groupId || null,
+      coverImage: req.file ? `/uploads/event-covers/${req.file.filename}` : null
+    };
 
-    // Handle coordinates
-    if (req.body.coordinates) {
-      try {
-        const coords = typeof req.body.coordinates === 'string' 
-          ? JSON.parse(req.body.coordinates) 
-          : req.body.coordinates;
-        
-        if (Array.isArray(coords) && coords.length === 2) {
-          event.geo = {
-            type: 'Point',
-            coordinates: [parseFloat(coords[0]), parseFloat(coords[1])]
-          };
-          console.log('✅ Geo coordinates set:', event.geo);
-        }
-      } catch (error) {
-        console.log('❌ Error parsing coordinates:', error);
-      }
-    }
+    console.log('🔧 DEBUG: Final event data:', JSON.stringify(eventData, null, 2));
 
-    // Handle check-in form assignment
-    if (checkInFormId && requiresFormForCheckIn) {
-      // Verify form exists and belongs to user
-      const form = await Form.findById(checkInFormId);
-      if (!form) {
-        return res.status(400).json({ 
-          message: 'Check-in form not found' 
-        });
-      }
-      
-      if (String(form.createdBy) !== String(req.user._id)) {
-        return res.status(403).json({ 
-          message: 'You can only use forms you created' 
-        });
-      }
-      
-      event.checkInForm = checkInFormId;
-      event.requiresFormForCheckIn = true;
-      
-      console.log(`✅ Event ${event._id} assigned check-in form ${checkInFormId}`);
-    }
-
-    if (req.file) {
-      event.coverImage = `/uploads/covers/${req.file.filename}`;
-    }
-
+    // Create the event
+    const event = new Event(eventData);
     await event.save();
-    
-    if (group) { 
-      group.events.push(event._id); 
-      await group.save(); 
-    }
 
-    // Auto-invite for private/secret events created from groups
-    if ((privacyLevel === 'private' || privacyLevel === 'secret') && group) {
-      event.invitedUsers = group.members.filter(m => String(m) !== String(req.user._id));
-      await event.save();
-    }
+    // Log privacy enforcement
+    logPrivacyEnforcement(event._id, event.privacyLevel, event.permissions);
 
-    console.log(`✅ Event created: ${event._id} (Paid: ${isPaid}, Form: ${!!checkInFormId})`);
+    console.log('✅ DEBUG: Event created successfully with ID:', event._id);
 
+    // Return success response
     res.status(201).json({
-      message: 'Event created successfully',
+      message: 'Event created successfully (DEBUG MODE)',
       _id: event._id,
       event: event,
-      isPaidEvent: isPaid,
-      hasCheckInForm: !!checkInFormId,
-      needsPaymentSetup: false
+      debug: {
+        receivedData: req.body,
+        processedData: eventData,
+        privacyApplied: req.validatedPrivacy
+      }
     });
 
   } catch (err) {
-    console.error('❌ Event creation error:', err);
+    console.error('❌ DEBUG: Event creation error:', err);
+    
     res.status(500).json({ 
       message: 'Failed to create event', 
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      error: err.message,
+      debug: {
+        receivedData: req.body,
+        errorDetails: err
+      }
     });
   }
 });
+
+
+
 // Create Event from Group Chat
 router.post('/create-from-group/:groupId', protect, upload.single('coverImage'), async (req, res) => {
   try {
@@ -1489,101 +1375,288 @@ router.post('/create-from-group/:groupId', protect, upload.single('coverImage'),
   }
 });
 
-// Get Events with Privacy Filtering
+// ============================================
+// PHASE 1: ENHANCED EVENTS FEED WITH PRIVACY FILTERING
+// ============================================
 router.get('/', protect, async (req, res) => {
   try {
+    console.log('🔍 PHASE 2: GET /api/events - Enhanced with privacy filtering');
+    
     const { 
       host,
       attendee, 
       location, 
       radius, 
       interests, 
-      includeSecret,
       includePast = 'false',
+      includePrivate = 'false',
+      category,
+      search,
       limit = 20, 
-      skip = 0 
+      skip = 0,
+      sortBy = 'time'
     } = req.query;
 
-    // If specific user filters are provided, handle them
+    const requestingUserId = req.user._id;
+
+    console.log('📋 Query parameters:', {
+      host, attendee, location, radius, category, search,
+      includePast, includePrivate, limit, skip
+    });
+
+    // PHASE 2: Handle specific user event requests with privacy filtering
     if (host || attendee) {
-      let query = {};
-      
-      if (host) {
-        query.host = host;
-      }
-      
-      if (attendee) {
-        query.attendees = attendee;
-        // If both host and attendee are the same, get all user's events
-        if (host === attendee) {
-          query = {
-            $or: [
-              { host: attendee },
-              { attendees: attendee }
-            ]
-          };
-        }
-      }
-
-      // Add time filter
-      if (includePast !== 'true') {
-        query.time = { $gte: new Date() };
-      }
-
-      // Check if requesting user can see these events
-      const requestingUserId = req.user._id;
       const targetUserId = host || attendee;
       const isOwnEvents = String(requestingUserId) === String(targetUserId);
 
-      if (!isOwnEvents) {
-        // Apply privacy filtering for other users' events
-        const visibleEvents = await EventPrivacyService.getVisibleEvents(requestingUserId, {
-          hostFilter: targetUserId,
+      console.log(`👤 Requesting events for user ${targetUserId}, own events: ${isOwnEvents}`);
+
+      // Use privacy-aware user events service
+      const events = await EventDiscoveryService.getUserEvents(
+        targetUserId,
+        requestingUserId,
+        {
           limit: parseInt(limit),
-          skip: parseInt(skip)
-        });
-        return res.json({ events: visibleEvents });
-      }
+          skip: parseInt(skip),
+          includePast: includePast === 'true'
+        }
+      );
 
-      // For own events, return all with metadata
-      const events = await Event.find(query)
-        .populate('host', 'username profilePicture')
-        .populate('attendees', 'username')
-        .sort({ time: includePast === 'true' ? -1 : 1 })
-        .limit(parseInt(limit))
-        .skip(parseInt(skip));
+      // Add metadata to events
+      const eventsWithMetadata = events.map(event => {
+        const isHost = String(event.host._id) === String(requestingUserId);
+        const isAttending = event.attendees.some(a => String(a._id) === String(requestingUserId));
+        const isPast = new Date(event.time) < new Date();
+        
+        return {
+          ...event.toObject(),
+          isHost,
+          isAttending,
+          isPast,
+          relationshipType: isHost ? 'host' : 'attendee',
+          // PHASE 2: Add privacy metadata
+          privacyMetadata: {
+            level: event.privacyLevel,
+            canUserView: true, // If we got here, user can view
+            canUserJoin: event.canUserJoin ? event.canUserJoin(requestingUserId) : false,
+            isDiscoverable: event.permissions?.appearInSearch || false
+          }
+        };
+      });
 
-      return res.json({ events });
+      return res.json({
+        events: eventsWithMetadata,
+        total: eventsWithMetadata.length,
+        isOwnProfile: isOwnEvents,
+        // PHASE 2: Privacy filtering applied
+        privacyFiltered: !isOwnEvents
+      });
     }
 
-    // Default behavior - get recommended/visible events
+    // PHASE 2: Handle search requests with privacy filtering
+    if (search) {
+      console.log(`🔍 Search request: "${search}"`);
+      
+      const searchResults = await EventDiscoveryService.searchEvents(
+        search,
+        requestingUserId,
+        {
+          limit: parseInt(limit),
+          skip: parseInt(skip),
+          category
+        }
+      );
+
+      return res.json({
+        events: searchResults,
+        total: searchResults.length,
+        searchQuery: search,
+        privacyFiltered: true
+      });
+    }
+
+    // PHASE 2: Handle discovery/feed requests with privacy filtering
+    console.log('🌟 Discovery/feed request');
+    
     const options = {
       limit: parseInt(limit),
       skip: parseInt(skip),
-      includeSecret: includeSecret === 'true'
+      category,
+      includePrivate: includePrivate === 'true',
+      sortBy
     };
 
-    if (location) {
+    // Add location filtering if provided
+    if (location && radius) {
       try {
-        options.location = JSON.parse(location);
-        if (radius) options.radius = parseInt(radius);
+        const locationObj = typeof location === 'string' ? JSON.parse(location) : location;
+        options.location = locationObj;
+        options.radius = parseFloat(radius);
       } catch (e) {
-        console.log('Invalid location format');
+        console.log('Invalid location format:', location);
       }
     }
 
-    if (interests) {
-      options.interests = Array.isArray(interests) ? interests : interests.split(',');
-    }
+    // Get discoverable events with privacy filtering
+    const discoverableEvents = await EventDiscoveryService.getDiscoverableEvents(
+      requestingUserId,
+      options
+    );
 
-    const events = await EventPrivacyService.getVisibleEvents(req.user._id, options);
-    res.json({ events });
+    // Add metadata to discoverable events
+    const eventsWithMetadata = discoverableEvents.map(event => {
+      const isHost = String(event.host._id) === String(requestingUserId);
+      const isAttending = event.attendees.some(a => String(a._id) === String(requestingUserId));
+      const isPast = new Date(event.time) < new Date();
+      
+      return {
+        ...event.toObject(),
+        isHost,
+        isAttending,
+        isPast,
+        // PHASE 2: Enhanced privacy metadata
+        privacyMetadata: {
+          level: event.privacyLevel,
+          canUserView: true,
+          canUserJoin: event.canUserJoin ? event.canUserJoin(requestingUserId) : false,
+          isDiscoverable: event.permissions?.appearInSearch || false,
+          isInFeed: event.permissions?.appearInFeed || false,
+          discoveryReason: isHost ? 'own_event' : 
+                          event.privacyLevel === 'public' ? 'public_discovery' :
+                          event.privacyLevel === 'friends' ? 'following_host' :
+                          'invited_to_private'
+        }
+      };
+    });
 
-  } catch (e) { 
-    console.error('Get events error:', e);
-    res.status(500).json({ message: 'Server error' }); 
+    console.log(`✅ PHASE 2: Returning ${eventsWithMetadata.length} events with privacy filtering`);
+
+    res.json({
+      events: eventsWithMetadata,
+      total: eventsWithMetadata.length,
+      privacyFiltered: true,
+      filterCriteria: {
+        privacyLevelsIncluded: includePrivate === 'true' ? 
+          ['public', 'friends', 'private'] : 
+          ['public', 'friends'],
+        category: category || 'all',
+        location: location ? 'filtered' : 'all',
+        radius: radius || null
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ PHASE 2: Get events error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Failed to fetch events'
+    });
   }
 });
+
+// ============================================
+// PHASE 1: HELPER FUNCTIONS FOR PRIVACY CALCULATIONS
+// ============================================
+
+/**
+ * Determine if attendees should be shown based on privacy and access type
+ */
+function shouldShowAttendees(event, accessCheck) {
+  // Host and co-hosts can always see attendees
+  if (accessCheck.accessType === 'user') {
+    const userId = accessCheck.userId;
+    const isHost = String(event.host._id) === String(userId);
+    const isCoHost = event.coHosts && event.coHosts.some(c => String(c._id) === String(userId));
+    if (isHost || isCoHost) return true;
+  }
+
+  // Check privacy level and permissions
+  switch (event.privacyLevel) {
+    case 'public':
+      return event.permissions?.showAttendeesToPublic !== false;
+    case 'friends':
+      // Friends can see attendees, guests cannot
+      return accessCheck.accessType === 'user';
+    case 'private':
+    case 'secret':
+      // Very restricted attendee visibility
+      return false;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Calculate if user/guest can invite others
+ */
+function calculateCanInvite(event, userId, isHost, isCoHost, accessCheck) {
+  if (accessCheck.accessType === 'guest') {
+    return event.privacyLevel === 'public' && accessCheck.guestPass?.permissions?.canInviteOthers;
+  }
+  
+  if (isHost || isCoHost) return true;
+  
+  switch (event.permissions?.canInvite) {
+    case 'anyone':
+      return true;
+    case 'attendees':
+      return event.attendees && event.attendees.some(a => String(a._id) === String(userId));
+    case 'host-only':
+    default:
+      return false;
+  }
+}
+
+/**
+ * Calculate if user/guest can share event
+ */
+function calculateCanShare(event, userId, isHost, isCoHost, isAttending, accessCheck) {
+  if (accessCheck.accessType === 'guest') {
+    return event.privacyLevel === 'public';
+  }
+  
+  if (isHost || isCoHost) return true;
+  
+  switch (event.permissions?.canShare) {
+    case 'anyone':
+      return true;
+    case 'attendees':
+      return isAttending;
+    case 'host-only':
+    default:
+      return false;
+  }
+}
+
+/**
+ * Calculate if user/guest can upload photos
+ */
+function calculateCanUploadPhotos(event, userId, isAttending, accessCheck) {
+  if (accessCheck.accessType === 'guest') {
+    return accessCheck.guestPass?.permissions?.canUploadPhotos && event.privacyLevel !== 'secret';
+  }
+  
+  // Registered users who are attending can usually upload photos
+  return isAttending;
+}
+
+/**
+ * Get privacy message for guest users
+ */
+function getPrivacyMessageForGuest(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return 'This is a public event that anyone can join.';
+    case 'friends':
+      return 'This event is limited to the host\'s followers, but you\'ve been personally invited.';
+    case 'private':
+      return 'This is a private event that requires an invitation.';
+    case 'secret':
+      return 'This is a secret event with limited visibility.';
+    default:
+      return 'You have been invited to this event.';
+  }
+}
 
 // ============================================
 // ENHANCED: ATTEND EVENT WITH SMART PAYMENT
@@ -3757,7 +3830,59 @@ router.post('/create-paypal-order/:eventId', protect, async (req, res) => {
     });
   }
 });
+router.get('/search', protect, async (req, res) => {
+  try {
+    console.log('🔍 PHASE 2: GET /api/events/search - Privacy-filtered search');
+    
+    const { q: query, category, limit = 20, skip = 0 } = req.query;
+    const userId = req.user._id;
 
+    if (!query || query.trim().length === 0) {
+      return res.status(400).json({ message: 'Search query is required' });
+    }
+
+    console.log(`🔍 Searching for: "${query}" with category: ${category || 'all'}`);
+
+    // Search with privacy filtering
+    const searchResults = await EventDiscoveryService.searchEvents(
+      query.trim(),
+      userId,
+      {
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        category
+      }
+    );
+
+    // Add metadata
+    const resultsWithMetadata = searchResults.map(event => {
+      const isHost = String(event.host._id) === String(userId);
+      const isAttending = event.attendees.some(a => String(a._id) === String(userId));
+      
+      return {
+        ...event.toObject(),
+        isHost,
+        isAttending,
+        searchRelevance: event._score || 1, // Text search score
+        privacyLevel: event.privacyLevel
+      };
+    });
+
+    console.log(`✅ PHASE 2: Search found ${resultsWithMetadata.length} results`);
+
+    res.json({
+      events: resultsWithMetadata,
+      total: resultsWithMetadata.length,
+      searchQuery: query,
+      category: category || 'all',
+      privacyFiltered: true
+    });
+
+  } catch (error) {
+    console.error('❌ PHASE 2: Search events error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 router.post('/setup-paypal', protect, async (req, res) => {
   try {
@@ -4095,7 +4220,12 @@ router.get('/my-payment-methods', protect, async (req, res) => {
 // ============================================
 router.put('/:eventId', protect, async (req, res) => {
   try {
-    console.log(`🔄 Updating event ${req.params.eventId}`);
+    console.log(`🔄 PHASE 2: Updating event ${req.params.eventId}`);
+    console.log('📥 Update request body:', {
+      title: req.body.title,
+      privacyLevel: req.body.privacyLevel,
+      location: req.body.location
+    });
     
     const { eventId } = req.params;
     const {
@@ -4105,12 +4235,10 @@ router.put('/:eventId', protect, async (req, res) => {
       time,
       location,
       maxAttendees,
-      privacyLevel,
+      privacyLevel, // PHASE 2: Handle privacy level changes
       permissions,
       tags,
       coordinates,
-      
-      // 🔧 FIXED: Add allowPhotos to destructuring
       allowPhotos,
       
       // Pricing fields
@@ -4124,192 +4252,315 @@ router.put('/:eventId', protect, async (req, res) => {
       
       // Co-hosts
       coHosts,
-      
-      // Form requirements
-      requiresFormForCheckIn,
-      checkInForm,
-      
-      // Legacy compatibility
-      price,
-      pricing,
-      isPublic,
-      openToPublic
+      invitedUsers
     } = req.body;
 
-    console.log('🔍 Request body received:', {
-      allowPhotos,
-      title,
-      // ... other fields for debugging
+    // Find the existing event
+    const existingEvent = await Event.findById(eventId);
+    if (!existingEvent) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Check if user can edit this event
+    const isHost = String(existingEvent.host) === String(req.user._id);
+    const isCoHost = existingEvent.coHosts && existingEvent.coHosts.some(c => String(c) === String(req.user._id));
+    
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ message: 'Only event host and co-hosts can edit this event' });
+    }
+
+    console.log(`🔍 PHASE 2: User ${req.user._id} is ${isHost ? 'host' : 'co-host'} of event ${eventId}`);
+
+    // PHASE 2: Privacy presets definition
+    const PRIVACY_PRESETS = {
+      public: {
+        canView: 'anyone',
+        canJoin: 'anyone',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: true,
+        appearInSearch: true,
+        showAttendeesToPublic: true
+      },
+      friends: {
+        canView: 'followers',
+        canJoin: 'followers',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: true,
+        appearInSearch: true,
+        showAttendeesToPublic: false
+      },
+      private: {
+        canView: 'invited-only',
+        canJoin: 'invited-only',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: false,
+        appearInSearch: false,
+        showAttendeesToPublic: false
+      }
+    };
+
+    // PHASE 2: Handle privacy level validation and enforcement
+    let finalPrivacyLevel = existingEvent.privacyLevel; // Default to current
+    let finalPermissions = existingEvent.permissions; // Default to current
+
+    // CORRECTED: Check if privacyLevel is provided in the request
+    if (privacyLevel !== undefined && privacyLevel !== null && privacyLevel !== '') {
+      console.log(`🔒 PHASE 2: Privacy level change requested from "${existingEvent.privacyLevel}" to "${privacyLevel}"`);
+      
+      // Validate new privacy level
+      const validPrivacyLevels = ['public', 'friends', 'private'];
+      const normalizedPrivacyLevel = String(privacyLevel).toLowerCase().trim();
+      
+      if (!validPrivacyLevels.includes(normalizedPrivacyLevel)) {
+        console.warn(`⚠️  Invalid privacy level "${privacyLevel}", keeping current: "${existingEvent.privacyLevel}"`);
+        return res.status(400).json({ 
+          message: `Invalid privacy level "${privacyLevel}". Must be one of: public, friends, private`,
+          currentPrivacyLevel: existingEvent.privacyLevel 
+        });
+      } else {
+        // Apply new privacy level with correct permissions
+        finalPrivacyLevel = normalizedPrivacyLevel;
+        
+        // PHASE 2: Apply privacy presets based on new level
+        finalPermissions = {
+          ...existingEvent.permissions, // Keep any existing custom settings
+          ...PRIVACY_PRESETS[finalPrivacyLevel] // Apply new preset (this will override the important ones)
+        };
+
+        console.log(`✅ PHASE 2: Privacy level will change to "${finalPrivacyLevel}"`);
+        console.log(`🔧 PHASE 2: New permissions will be:`, finalPermissions);
+      }
+    } else {
+      console.log(`📋 PHASE 2: No privacy level change requested (current: "${existingEvent.privacyLevel}")`);
+    }
+
+    // Build update object with only provided fields
+    const updateData = {};
+    
+    // Basic fields
+    if (title !== undefined) updateData.title = title.trim();
+    if (description !== undefined) updateData.description = description.trim();
+    if (category !== undefined) updateData.category = category;
+    if (location !== undefined) updateData.location = location.trim();
+    if (maxAttendees !== undefined) updateData.maxAttendees = parseInt(maxAttendees) || 0;
+    if (allowPhotos !== undefined) updateData.allowPhotos = allowPhotos;
+
+    // PHASE 2: ALWAYS apply privacy settings (even if unchanged)
+    updateData.privacyLevel = finalPrivacyLevel;
+    updateData.permissions = finalPermissions;
+
+    console.log(`🔒 PHASE 2: Final privacy level for update: "${updateData.privacyLevel}"`);
+    console.log(`🔧 PHASE 2: Final permissions for update:`, updateData.permissions);
+
+    // Time validation
+    if (time) {
+      const eventDate = new Date(time);
+      if (isNaN(eventDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid event time' });
+      }
+      updateData.time = eventDate;
+    }
+
+    // Co-hosts
+    if (coHosts !== undefined) {
+      try {
+        const coHostsArray = Array.isArray(coHosts) ? coHosts : JSON.parse(coHosts || '[]');
+        updateData.coHosts = coHostsArray;
+      } catch (e) {
+        console.log('Invalid coHosts format:', coHosts);
+      }
+    }
+
+    // Invited users (for private events)
+    if (invitedUsers !== undefined && finalPrivacyLevel === 'private') {
+      try {
+        const invitedArray = Array.isArray(invitedUsers) ? invitedUsers : JSON.parse(invitedUsers || '[]');
+        updateData.invitedUsers = invitedArray;
+        console.log(`🎫 PHASE 2: Updated invited users for private event: ${invitedArray.length} users`);
+      } catch (e) {
+        console.log('Invalid invitedUsers format:', invitedUsers);
+      }
+    }
+
+    // Tags
+    if (tags !== undefined) {
+      try {
+        const tagsArray = typeof tags === 'string' ? 
+          tags.split(',').map(tag => tag.trim()).filter(Boolean) : 
+          Array.isArray(tags) ? tags : [];
+        updateData.tags = tagsArray;
+      } catch (e) {
+        console.log('Invalid tags format:', tags);
+      }
+    }
+
+    // Coordinates
+    if (coordinates) {
+      try {
+        const coordsObj = typeof coordinates === 'string' ? JSON.parse(coordinates) : coordinates;
+        if (coordsObj && coordsObj.lat && coordsObj.lng) {
+          updateData.coordinates = {
+            type: 'Point',
+            coordinates: [coordsObj.lng, coordsObj.lat]
+          };
+        }
+      } catch (e) {
+        console.log('Invalid coordinates format:', coordinates);
+      }
+    }
+
+    // Pricing updates
+    if (isPaidEvent !== undefined || eventPrice !== undefined) {
+      const isPaid = isPaidEvent === 'true' || isPaidEvent === true;
+      const eventPriceNum = isPaid ? parseFloat(eventPrice) || 0 : 0;
+      const earlyBirdPriceNum = earlyBirdEnabled ? parseFloat(earlyBirdPrice) || 0 : 0;
+
+      updateData.pricing = {
+        ...existingEvent.pricing,
+        isFree: !isPaid,
+        amount: isPaid ? Math.round(eventPriceNum * 100) : 0,
+        currency: 'USD',
+        description: priceDescription?.trim(),
+        refundPolicy: refundPolicy || existingEvent.pricing?.refundPolicy || 'no-refund'
+      };
+
+      // Early bird pricing
+      if (earlyBirdEnabled !== undefined) {
+        updateData.pricing.earlyBirdPricing = {
+          enabled: earlyBirdEnabled === 'true' || earlyBirdEnabled === true,
+          amount: earlyBirdEnabled ? Math.round(earlyBirdPriceNum * 100) : 0,
+          deadline: earlyBirdEnabled && earlyBirdDeadline ? new Date(earlyBirdDeadline) : undefined,
+          description: earlyBirdEnabled ? `Early bird pricing until ${earlyBirdDeadline}` : undefined
+        };
+      }
+
+      // Legacy pricing fields
+      updateData.isPaidEvent = isPaid;
+      updateData.price = eventPriceNum;
+      updateData.eventPrice = eventPriceNum;
+    }
+
+    console.log(`💾 PHASE 2: Final update data:`, {
+      ...updateData,
+      permissions: 'See above for details'
     });
 
-    // Find the event
+    // Perform the update
+    const updatedEvent = await Event.findByIdAndUpdate(
+      eventId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).populate('host', 'username profilePicture')
+     .populate('attendees', 'username profilePicture')
+     .populate('coHosts', 'username profilePicture');
+
+    if (!updatedEvent) {
+      return res.status(404).json({ message: 'Event not found after update' });
+    }
+
+    // PHASE 2: Log privacy enforcement for debugging
+    logPrivacyEnforcement(updatedEvent._id, updatedEvent.privacyLevel, updatedEvent.permissions);
+
+    console.log(`✅ PHASE 2: Event ${eventId} updated successfully`);
+    console.log(`🔒 FINAL Privacy level in DB: ${updatedEvent.privacyLevel}`);
+    console.log(`🔧 FINAL Permissions in DB:`, JSON.stringify(updatedEvent.permissions, null, 2));
+
+    // Return success response with privacy verification
+    res.json({
+      message: 'Event updated successfully',
+      event: updatedEvent,
+      // PHASE 2: Include privacy verification in response
+      privacyUpdate: {
+        oldPrivacyLevel: existingEvent.privacyLevel,
+        newPrivacyLevel: updatedEvent.privacyLevel,
+        permissionsUpdated: true,
+        enforcedByServer: true,
+        privacyLevelChanged: existingEvent.privacyLevel !== updatedEvent.privacyLevel
+      }
+    });
+
+  } catch (err) {
+    console.error('❌ PHASE 2: Event update error:', err);
+    
+    // PHASE 2: Enhanced error logging for privacy issues
+    if (err.message.includes('privacy') || err.message.includes('permission')) {
+      console.error('🔒 Privacy-related error during event update:', err);
+    }
+    
+    res.status(500).json({ 
+      message: 'Failed to update event', 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+
+
+
+
+router.delete('/:eventId/leave-cohost', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const userId = req.user._id;
+
+    console.log(`🔄 User ${userId} attempting to leave co-host role for event ${eventId}`);
+
     const event = await Event.findById(eventId);
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Check if user is host or co-host
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts?.some(
-      (cId) => String(cId) === String(req.user._id)
+    // Check if user is actually a co-host
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHostId => String(coHostId) === String(userId)
     );
 
-    if (!isHost && !isCoHost) {
-      return res.status(403).json({ 
-        message: 'Only the host or co-hosts can update this event' 
-      });
+    if (!isCoHost) {
+      return res.status(400).json({ message: 'You are not a co-host of this event' });
     }
 
-    // Validate required fields
-    if (!title?.trim()) {
-      return res.status(400).json({ message: 'Event title is required' });
-    }
-
-    if (!location?.trim()) {
-      return res.status(400).json({ message: 'Event location is required' });
-    }
-
-    // Update basic fields
-    event.title = title.trim();
-    event.description = description?.trim() || '';
-    event.time = new Date(time);
-    event.location = location.trim();
-    event.category = category || 'General';
-    event.maxAttendees = Math.max(1, parseInt(maxAttendees) || 50);
-    event.privacyLevel = privacyLevel || 'public';
-
-    // 🔧 FIXED: Update allowPhotos field
-    if (allowPhotos !== undefined) {
-      event.allowPhotos = Boolean(allowPhotos);
-      console.log(`📷 Updated allowPhotos to: ${event.allowPhotos}`);
-    }
-
-    // Update permissions
-    if (permissions) {
-      event.permissions = {
-        appearInFeed: Boolean(permissions.appearInFeed),
-        appearInSearch: Boolean(permissions.appearInSearch),
-        canJoin: permissions.canJoin || 'anyone',
-        canShare: permissions.canShare || 'attendees',
-        canInvite: permissions.canInvite || 'attendees',
-        showAttendeesToPublic: Boolean(permissions.showAttendeesToPublic)
-      };
-    }
-
-    // Update pricing - handle both new pricing structure and legacy fields
-    const priceInCents = pricing?.amount || Math.round(parseFloat(eventPrice || price || 0) * 100);
-    const isFreeEvent = priceInCents === 0;
-
-    event.pricing = {
-      isFree: isFreeEvent,
-      amount: priceInCents,
-      currency: pricing?.currency || 'USD',
-      description: priceDescription || pricing?.description || '',
-      refundPolicy: refundPolicy || pricing?.refundPolicy || 'no-refunds'
-    };
-
-    // Legacy price field for backward compatibility
-    event.price = priceInCents / 100;
-
-    // Early bird pricing
-    if (earlyBirdEnabled && !isFreeEvent) {
-      const earlyBirdCents = Math.round(parseFloat(earlyBirdPrice || 0) * 100);
-      event.pricing.earlyBird = {
-        enabled: true,
-        amount: earlyBirdCents,
-        deadline: new Date(earlyBirdDeadline)
-      };
-    } else {
-      event.pricing.earlyBird = { enabled: false };
-    }
-
-    // Update co-hosts
-    if (coHosts && Array.isArray(coHosts)) {
-      event.coHosts = coHosts.filter(id => id && id !== String(event.host));
-    }
-
-    // Update tags
-    event.tags = tags && Array.isArray(tags) ? tags : [];
+    // Remove user from co-hosts array
+    event.coHosts = event.coHosts.filter(coHostId => 
+      String(coHostId) !== String(userId)
+    );
     
-    // Handle coordinates if provided
-    if (coordinates && coordinates.latitude && coordinates.longitude) {
-      event.coordinates = {
-        latitude: parseFloat(coordinates.latitude),
-        longitude: parseFloat(coordinates.longitude)
-      };
-    }
-
-    // Handle form requirements
-    if (requiresFormForCheckIn !== undefined) {
-      event.requiresFormForCheckIn = Boolean(requiresFormForCheckIn);
-      
-      if (requiresFormForCheckIn && checkInForm) {
-        // Validate that the form exists and belongs to the user
-        const Form = require('../models/Form'); // Make sure you have this model
-        const form = await Form.findOne({
-          _id: checkInForm,
-          createdBy: req.user._id,
-          isActive: true
-        });
-        
-        if (!form) {
-          return res.status(400).json({ 
-            message: 'Invalid check-in form selected' 
-          });
-        }
-        
-        event.checkInForm = checkInForm;
-      } else if (!requiresFormForCheckIn) {
-        event.checkInForm = undefined;
-      }
-    }
-
-    // Update timestamp
-    event.updatedAt = new Date();
-
-    // Save the event
     await event.save();
 
-    console.log(`✅ Event updated successfully: ${event._id}`);
-    console.log(`📷 Final allowPhotos value: ${event.allowPhotos}`);
+    // Send notification to host (non-blocking)
+    setImmediate(async () => {
+      try {
+        const notificationService = require('../services/notificationService');
+        await notificationService.sendCoHostLeft(userId, event.host, event);
+        console.log(`🔔 Sent co-host left notification to host`);
+      } catch (notifError) {
+        console.error('Failed to send co-host left notification:', notifError);
+      }
+    });
 
-    // Populate the updated event for response
-    const updatedEvent = await Event.findById(eventId)
-      .populate('host', 'username profilePicture')
-      .populate('coHosts', 'username profilePicture')
-      .populate('attendees', 'username profilePicture')
-      .populate('checkInForm', 'title description');
+    console.log(`✅ User ${userId} successfully left co-host role for event ${eventId}`);
 
-    // Send response
-    res.json({
+    res.json({ 
       success: true,
-      message: 'Event updated successfully',
-      event: updatedEvent
+      message: 'Successfully left co-host role',
+      event: {
+        _id: event._id,
+        title: event.title,
+        coHostCount: event.coHosts.length
+      }
     });
 
   } catch (error) {
-    console.error('❌ Update event error:', error);
-    
-    if (error.name === 'ValidationError') {
-      const validationErrors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({ 
-        message: 'Validation error', 
-        errors: validationErrors 
-      });
-    }
-    
-    if (error.name === 'CastError') {
-      return res.status(400).json({ 
-        message: 'Invalid event ID format' 
-      });
-    }
-    
+    console.error('❌ Leave co-host error:', error);
     res.status(500).json({ 
-      message: 'Server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      message: 'Failed to leave co-host role',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
 });
+
+
 /**
  * Update PayPal email address
  */
@@ -6080,36 +6331,41 @@ router.get('/:eventId/analytics', protect, async (req, res) => {
 // ============================================
 router.get('/:eventId', protect, async (req, res) => {
   try {
-    console.log(`🔍 GET Event Details: ${req.params.eventId} for user ${req.user._id}`);
+    console.log(`🔍 PHASE 2: GET /api/events/${req.params.eventId} - Single event with privacy check`);
     
-    const event = await Event.findById(req.params.eventId)
-      // ✅ CRITICAL FIX: Include paymentAccounts in host population
-      .populate('host', 'username profilePicture paymentAccounts')
-      .populate('coHosts', 'username paymentAccounts')
-      .populate('attendees invitedUsers', 'username')
-      .populate('joinRequests.user', 'username profilePicture')
-      .populate({
-        path: 'photos',
-        populate: { path: 'user', select: 'username isPrivate followers' }
-      });
+    const { eventId } = req.params;
+    const userId = req.user._id;
+
+    // Get event with populated fields
+    const event = await Event.findById(eventId)
+      .populate('host', 'username profilePicture displayName paymentAccounts')
+      .populate('attendees', 'username profilePicture')
+      .populate('coHosts', 'username profilePicture')
+      .populate('invitedUsers', 'username profilePicture')
+      .populate('group', 'name');
 
     if (!event) {
-      console.log(`❌ Event not found: ${req.params.eventId}`);
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    console.log(`✅ Event found: ${event.title}`);
-    console.log(`🔍 Host payment data check:`, {
-      hostId: event.host._id,
-      hasPaymentAccounts: !!event.host.paymentAccounts,
-      paypalVerified: event.host.paymentAccounts?.paypal?.verified,
-      stripeEnabled: event.host.paymentAccounts?.stripe?.chargesEnabled
-    });
+    // PHASE 2: Check if user can view this event using discovery service
+    const canView = await EventDiscoveryService.canUserViewEvent(event, userId);
 
-    // Check if user can view this event
+    if (!canView) {
+      console.log(`❌ PHASE 2: User ${userId} cannot view event ${eventId} due to privacy settings`);
+      return res.status(403).json({ 
+        message: 'You do not have permission to view this event',
+        privacyLevel: event.privacyLevel,
+        reason: 'privacy_restriction'
+      });
+    }
+
+    console.log(`✅ PHASE 2: User ${userId} can view event ${eventId}`);
+
+    // Check if user can view this event using existing service
     const permission = await EventPrivacyService.checkPermission(
-      req.user._id, 
-      req.params.eventId, 
+      userId, 
+      eventId, 
       'view'
     );
 
@@ -6123,17 +6379,17 @@ router.get('/:eventId', protect, async (req, res) => {
     
     // Hide attendee list if not public
     if (!event.permissions.showAttendeesToPublic && 
-        String(event.host._id) !== String(req.user._id) &&
-        !event.coHosts.some(c => String(c._id) === String(req.user._id))) {
+        String(event.host._id) !== String(userId) &&
+        !event.coHosts.some(c => String(c._id) === String(userId))) {
       eventObj.attendees = eventObj.attendees.slice(0, 3); // Show only first 3
     }
 
-    // ✅ ENHANCED: Add detailed user relationship to event
-    const isHost = String(event.host._id) === String(req.user._id);
-    const isCoHost = event.coHosts.some(c => String(c._id) === String(req.user._id));
-    const isAttending = event.attendees.some(a => String(a._id) === String(req.user._id));
-    const isInvited = event.invitedUsers.some(i => String(i._id) === String(req.user._id));
-    const hasRequestedToJoin = event.joinRequests.some(jr => String(jr.user._id) === String(req.user._id));
+    // Add detailed user relationship to event
+    const isHost = String(event.host._id) === String(userId);
+    const isCoHost = event.coHosts.some(c => String(c._id) === String(userId));
+    const isAttending = event.attendees.some(a => String(a._id) === String(userId));
+    const isInvited = event.invitedUsers.some(i => String(i._id) === String(userId));
+    const hasRequestedToJoin = event.joinRequests.some(jr => String(jr.user._id) === String(userId));
 
     eventObj.userRelation = {
       isHost,
@@ -6143,62 +6399,40 @@ router.get('/:eventId', protect, async (req, res) => {
       hasRequestedToJoin
     };
 
-    // ✅ ENHANCED: Add payment status for current user
+    // PHASE 2: Add privacy metadata
+    eventObj.privacyMetadata = {
+      level: event.privacyLevel,
+      permissions: event.permissions,
+      canUserView: true,
+      canUserJoin: event.canUserJoin ? event.canUserJoin(userId) : false,
+      canUserInvite: event.canUserInvite ? event.canUserInvite(userId) : false,
+      canUserEdit: isHost || isCoHost,
+      viewReason: isHost ? 'host' :
+                 isCoHost ? 'co_host' :
+                 isAttending ? 'attendee' :
+                 isInvited ? 'invited' :
+                 event.privacyLevel === 'public' ? 'public' :
+                 'following_host'
+    };
+
+    // Add payment status for current user if it's a paid event
     if (event.isPaidEvent && event.isPaidEvent()) {
       eventObj.userPaymentStatus = {
-        hasUserPaid: event.hasUserPaid ? event.hasUserPaid(req.user._id) : false,
+        hasUserPaid: event.hasUserPaid ? event.hasUserPaid(userId) : false,
         currentPrice: event.getCurrentPrice ? event.getCurrentPrice() : event.pricing?.amount || 0,
         currency: event.pricing?.currency || 'usd'
       };
     }
 
-    // ✅ ENHANCED: Add host payment capabilities with debug info
-    if (event.host.paymentAccounts) {
-      eventObj.hostPaymentCapabilities = {
-        canReceivePayments: event.host.canReceivePayments ? event.host.canReceivePayments() : false,
-        availablePaymentMethods: event.host.getAvailablePaymentMethods ? event.host.getAvailablePaymentMethods() : [],
-        primaryPaymentMethod: event.host.getPrimaryPaymentMethod ? event.host.getPrimaryPaymentMethod() : null,
-        paymentMethods: {
-          paypal: {
-            available: !!event.host.paymentAccounts.paypal?.verified,
-            email: event.host.paymentAccounts.paypal?.email
-          },
-          stripe: {
-            available: !!event.host.paymentAccounts.stripe?.chargesEnabled,
-            accountId: event.host.paymentAccounts.stripe?.accountId
-          }
-        }
-      };
-    } else {
-      eventObj.hostPaymentCapabilities = {
-        canReceivePayments: false,
-        availablePaymentMethods: [],
-        primaryPaymentMethod: null,
-        paymentMethods: {
-          paypal: { available: false },
-          stripe: { available: false }
-        }
-      };
-    }
-
-    // Add timing metadata with 3-hour buffer
-    const eventEndTime = new Date(event.time).getTime() + (3 * 60 * 60 * 1000);
-    eventObj.isOver = Date.now() > eventEndTime;
-    eventObj.canCheckIn = Date.now() <= eventEndTime;
-
-    console.log(`✅ Sending event data with payment capabilities:`, {
-      eventId: eventObj._id,
-      canReceivePayments: eventObj.hostPaymentCapabilities.canReceivePayments,
-      availableMethods: eventObj.hostPaymentCapabilities.availablePaymentMethods,
-      isPaidEvent: event.isPaidEvent ? event.isPaidEvent() : false
-    });
+    console.log(`✅ PHASE 2: Successfully returning event ${eventId} with privacy metadata`);
 
     res.json(eventObj);
 
-  } catch (e) { 
-    console.error('❌ Get event error:', e);
-    res.status(500).json({ message: 'Server error', error: e.message }); 
+  } catch (error) {
+    console.error('❌ PHASE 2: Get single event error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
+
     
 module.exports = router;

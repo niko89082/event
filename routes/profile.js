@@ -57,6 +57,7 @@ router.put('/visibility', protect, async (req, res) => {
     if (typeof isPublic !== 'undefined') {
       user.isPublic = !!isPublic;
     }
+    console.log(`set to ${isPublic}`)
     await user.save();
     return res.status(200).json({
       message: 'Profile visibility updated successfully',
@@ -403,13 +404,164 @@ router.put('/', protect, async (req, res) => {
 });
 
 // Delete profile
+// Delete profile - ENHANCED with anonymization strategy
 router.delete('/delete', protect, async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
-    await User.findByIdAndDelete(req.user._id);
-    return res.status(200).json({ message: 'Profile deleted successfully' });
+    const userId = req.user._id;
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log(`🗑️ Starting account deletion for user: ${userId}`);
+
+    await session.withTransaction(async () => {
+      
+      // 1. HANDLE HOSTED EVENTS - Transfer or cancel
+      const hostedEvents = await Event.find({ host: userId }).session(session);
+      
+      for (const event of hostedEvents) {
+        const eventDate = new Date(event.time);
+        const now = new Date();
+        
+        if (eventDate > now) { // Future events
+          if (event.coHosts && event.coHosts.length > 0) {
+            // Transfer to first co-host
+            const newHost = event.coHosts[0];
+            event.host = newHost;
+            event.coHosts = event.coHosts.filter(id => !id.equals(userId));
+            await event.save({ session });
+            
+            // Create notification for new host
+            await Notification.create([{
+              user: newHost,
+              category: 'events',
+              type: 'host_transferred',
+              title: 'You\'re now hosting an event',
+              message: `You've been made the host of "${event.title}"`,
+              data: { eventId: event._id }
+            }], { session });
+            
+            console.log(`✅ Transferred event "${event.title}" to new host`);
+          } else {
+            // Cancel event - no co-hosts available
+            event.status = 'cancelled';
+            await event.save({ session });
+            
+            // Notify all attendees
+            const attendeeNotifications = event.attendees.map(attendeeId => ({
+              user: attendeeId,
+              category: 'events', 
+              type: 'event_cancelled',
+              title: 'Event Cancelled',
+              message: `The event "${event.title}" has been cancelled`,
+              data: { eventId: event._id }
+            }));
+            
+            if (attendeeNotifications.length > 0) {
+              await Notification.insertMany(attendeeNotifications, { session });
+            }
+            
+            console.log(`❌ Cancelled event "${event.title}" - no co-hosts available`);
+          }
+        }
+        // Past events: leave as-is, will be anonymized by user deletion
+      }
+
+      // 2. REMOVE FROM MEMORIES
+      // Remove user from memory participants
+      await Memory.updateMany(
+        { participants: userId },
+        { $pull: { participants: userId } },
+        { session }
+      );
+      
+      // Transfer memory ownership to first participant if user was creator
+      const createdMemories = await Memory.find({ creator: userId }).session(session);
+      for (const memory of createdMemories) {
+        if (memory.participants.length > 0) {
+          memory.creator = memory.participants[0];
+          await memory.save({ session });
+        }
+      }
+
+      // 3. CLEAN UP SOCIAL CONNECTIONS
+      // Remove from other users' following/followers lists
+      await User.updateMany(
+        { followers: userId },
+        { $pull: { followers: userId } },
+        { session }
+      );
+      
+      await User.updateMany(
+        { following: userId },
+        { $pull: { following: userId } },
+        { session }
+      );
+
+      // 4. DELETE USER'S UPLOADED PHOTOS
+      const userPhotos = await Photo.find({ user: userId }).session(session);
+      const photoIds = userPhotos.map(p => p._id);
+      
+      // Remove photos from events and memories
+      if (photoIds.length > 0) {
+        await Event.updateMany(
+          { photos: { $in: photoIds } },
+          { $pull: { photos: { $in: photoIds } } },
+          { session }
+        );
+        
+        await Memory.updateMany(
+          { photos: { $in: photoIds } },
+          { $pull: { photos: { $in: photoIds } } },
+          { session }
+        );
+      }
+      
+      // Delete the actual photo documents
+      await Photo.deleteMany({ user: userId }, { session });
+
+      // 5. CLEAN UP NOTIFICATIONS
+      await Notification.deleteMany({
+        $or: [
+          { user: userId },
+          { sender: userId }
+        ]
+      }, { session });
+
+      // 6. DISCONNECT PAYMENT ACCOUNTS (if any Stripe/PayPal cleanup needed)
+      // Add payment cleanup logic here when needed
+
+      // 7. REMOVE FROM EVENT ATTENDEES (anonymize)
+      await Event.updateMany(
+        { attendees: userId },
+        { $pull: { attendees: userId } },
+        { session }
+      );
+
+      // 8. FINALLY DELETE USER ACCOUNT
+      await User.findByIdAndDelete(userId, { session });
+      
+      console.log(`✅ Account deletion completed for user: ${userId}`);
+    });
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Account deleted successfully' 
+    });
+    
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: 'Server error' });
+    console.error('❌ Account deletion failed:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to delete account',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
+  } finally {
+    await session.endSession();
   }
 });
 

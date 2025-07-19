@@ -184,12 +184,18 @@ router.get('/:userId/events', protect, async (req, res) => {
     
     const { 
       type = 'all', // 'hosted', 'attending', 'shared', 'all'
-      includePast = 'false',
-      limit = 50,
+      includePast = 'true', // PHASE 1 FIX: Default to true
+      limit = 100, // Increased default limit
       skip = 0 
     } = req.query;
 
-    console.log(`🟡 Fetching events for user ${userId}, type: ${type}, includePast: ${includePast}`);
+    console.log(`🔍 Fetching events for user ${userId}, type: ${type}, includePast: ${includePast}`);
+
+    // Get user for validation
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
     // Build query based on type
     let query = {};
@@ -203,10 +209,7 @@ router.get('/:userId/events', protect, async (req, res) => {
         query.host = { $ne: userId }; // Exclude hosted events
         break;
       case 'shared':
-        // For shared events, we need to get the user's shared event IDs first
-        const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        
+        // Get user's shared event IDs
         const sharedEventIds = user.sharedEvents || [];
         query._id = { $in: sharedEventIds };
         break;
@@ -217,50 +220,104 @@ router.get('/:userId/events', protect, async (req, res) => {
         ];
     }
 
-    // Add time filter
+    // PHASE 1 FIX: Always include past events unless explicitly excluded
     if (includePast !== 'true') {
       query.time = { $gte: new Date() };
     }
 
-    // FIXED: Proper sorting - most recent first for better UX
-    const sortOrder = includePast === 'true' ? { time: -1 } : { time: 1 };
+    // Privacy filtering for non-self profiles
+    if (!isOwnProfile) {
+      const currentUser = await User.findById(currentUserId).select('following');
+      const userFollowing = currentUser ? currentUser.following.map(f => String(f)) : [];
+      
+      // Add privacy filters
+      const privacyFilters = [];
+      
+      // Public events
+      privacyFilters.push({ privacyLevel: 'public' });
+      
+      // Friends-only events if current user follows this user
+      if (userFollowing.includes(String(userId))) {
+        privacyFilters.push({ 
+          privacyLevel: 'friends',
+          host: userId 
+        });
+      }
+      
+      // Events current user is invited to or attending
+      privacyFilters.push({ 
+        $or: [
+          { attendees: currentUserId },
+          { invitedUsers: currentUserId }
+        ]
+      });
+      
+      // Combine with existing query
+      if (query.$or) {
+        query = {
+          $and: [
+            { $or: query.$or },
+            { $or: privacyFilters }
+          ]
+        };
+      } else {
+        query.$or = privacyFilters;
+      }
+    }
 
+    // Execute query with proper sorting
     const events = await Event.find(query)
-      .populate('host', 'username profilePicture')
-      .populate('attendees', 'username profilePicture') // Added profilePicture
-      .sort(sortOrder) // FIXED: Proper sorting
+      .populate('host', 'username fullName profilePicture')
+      .populate('attendees', 'username profilePicture')
+      .sort({ time: -1 }) // PHASE 1: Most recent first (includes past events)
       .limit(parseInt(limit))
-      .skip(parseInt(skip))
-      .lean();
+      .skip(parseInt(skip));
 
-    // Add metadata about user's relationship to each event
-    const eventsWithMetadata = events.map(event => {
-      const isHost = String(event.host._id) === String(userId);
+    // Add user relationship flags to each event
+    const eventsWithFlags = events.map(event => {
+      const eventObj = event.toJSON();
+      const eventHostId = String(event.host._id);
+      const isHost = String(userId) === eventHostId;
       const isAttending = event.attendees.some(a => String(a._id) === String(userId));
-      const isPast = new Date(event.time) < new Date();
       
       return {
-        ...event,
+        ...eventObj,
         isHost,
         isAttending,
-        isPast,
-        relationshipType: isHost ? 'host' : 'attending'
+        userRelationship: isHost ? 'host' : isAttending ? 'attendee' : 'none'
       };
     });
 
-    console.log(`🟢 Found ${eventsWithMetadata.length} events for user ${userId}`);
+    // Get shared event IDs for own profile
+    let sharedEventIds = [];
+    if (isOwnProfile) {
+      sharedEventIds = user.sharedEvents || [];
+    }
 
-    return res.json({
-      events: eventsWithMetadata,
-      total: eventsWithMetadata.length,
-      isOwnProfile
+    console.log(`✅ Found ${eventsWithFlags.length} events for user ${userId}`);
+
+    res.json({
+      events: eventsWithFlags,
+      sharedEventIds,
+      total: eventsWithFlags.length,
+      hasMore: eventsWithFlags.length === parseInt(limit),
+      filters: {
+        type,
+        includePast,
+        userId,
+        isOwnProfile
+      }
     });
 
   } catch (error) {
-    console.error('Get user events error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Get user events error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
+
 
 // ✅ FIXED: User search route with correct middleware name
 router.get('/search', protect, async (req, res) => {
@@ -1059,5 +1116,6 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
     });
   }
 });
+
 
 module.exports = router;

@@ -1,4 +1,5 @@
-// routes/guestPasses.js - Enhanced with Host Payment Integration
+// routes/guestPasses.js - PHASE 1: Updated routes with privacy level support
+
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const QRCode = require('qrcode');
@@ -8,9 +9,8 @@ const crypto = require('crypto');
 const Event = require('../models/Event');
 const GuestPass = require('../models/GuestPass');
 const User = require('../models/User');
-const Notification = require('../models/Notification');
 const protect = require('../middleware/auth');
-const StripeConnectService = require('../services/stripeConnectService');
+const { validateGuestRSVPAccess, canAccessEvent } = require('../middleware/guestPassValidation');
 
 const router = express.Router();
 
@@ -28,7 +28,7 @@ const rsvpLimiter = rateLimit({
 });
 
 // ============================================
-// ENHANCED: CREATE GUEST PASS WITH PAYMENT INTEGRATION
+// PHASE 1: ENHANCED GUEST PASS CREATION WITH PRIVACY VALIDATION
 // ============================================
 router.post('/:eventId/guest-pass', protect, createGuestPassLimiter, async (req, res) => {
   try {
@@ -38,18 +38,28 @@ router.post('/:eventId/guest-pass', protect, createGuestPassLimiter, async (req,
       return res.status(400).json({ message: 'Guest name is required' });
     }
     
-    // Find event and populate host payment info
-    const event = await Event.findById(req.params.eventId).populate('host', 'paymentAccounts');
+    // Find event and populate host info
+    const event = await Event.findById(req.params.eventId).populate('host', 'paymentAccounts username');
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Verify user is host or co-host
+    // Verify user can create guest passes for this event
     const isHost = String(event.host._id) === String(req.user._id);
-    const isCoHost = event.coHosts.some(coHost => String(coHost) === String(req.user._id));
+    const isCoHost = event.coHosts && event.coHosts.some(coHost => String(coHost) === String(req.user._id));
     
     if (!isHost && !isCoHost) {
       return res.status(403).json({ message: 'Only hosts and co-hosts can create guest passes' });
+    }
+
+    // PHASE 1: Privacy level validation for guest pass creation
+    const privacyValidation = validatePrivacyForGuestPass(event.privacyLevel, event.permissions);
+    if (!privacyValidation.allowed) {
+      return res.status(400).json({ 
+        message: privacyValidation.message,
+        privacyLevel: event.privacyLevel,
+        suggestion: privacyValidation.suggestion
+      });
     }
 
     // Check if event is paid and validate host payment setup
@@ -61,73 +71,65 @@ router.post('/:eventId/guest-pass', protect, createGuestPassLimiter, async (req,
       });
     }
 
-    // Generate secure token
-    const tokenPayload = {
-      guestPassId: new Date().getTime(), // Temporary, will be replaced with actual ID
-      eventId: event._id,
-      nonce: crypto.randomBytes(16).toString('hex'),
-      iat: Math.floor(Date.now() / 1000)
-    };
-    
-    const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '7d' });
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-    // Calculate expiry (7 days from now or event time, whichever is earlier)
-    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const expiresAt = new Date(Math.min(sevenDaysFromNow.getTime(), event.time.getTime()));
-
-    // Create guest pass with enhanced payment information
-    const guestPassData = {
-      token: tokenHash,
-      nonce: tokenPayload.nonce,
+    // Create guest pass with privacy-appropriate settings
+    const guestPass = new GuestPass({
       event: event._id,
-      createdBy: req.user._id,
       guestName: guestName.trim(),
       guestEmail: guestEmail?.trim(),
       guestPhone: guestPhone?.trim(),
-      expiresAt: expiresAt,
+      status: 'pending',
       
-      // Enhanced payment configuration
+      // Payment configuration
       payment: {
         required: isEventPaid,
-        amount: isEventPaid ? event.getCurrentPrice() : 0,
-        currency: event.pricing.currency || 'USD',
-        status: 'pending'
-      }
-    };
+        amount: isEventPaid ? event.ticketPrice : 0,
+        currency: event.currency || 'USD',
+        status: isEventPaid ? 'pending' : 'not_required'
+      },
+      
+      // Set expiry based on privacy level
+      expiresAt: calculateGuestPassExpiry(event),
+      
+      // PHASE 1: Set permissions based on privacy level
+      permissions: getGuestPermissionsForPrivacyLevel(event.privacyLevel)
+    });
 
-    const guestPass = new GuestPass(guestPassData);
-    await guestPass.save();
-
-    // Update token with actual guest pass ID
-    const updatedTokenPayload = {
-      ...tokenPayload,
-      guestPassId: guestPass._id
+    // Generate secure token
+    const payload = {
+      guestPassId: guestPass._id,
+      eventId: event._id,
+      nonce: crypto.randomBytes(16).toString('hex')
     };
-    const updatedToken = jwt.sign(updatedTokenPayload, process.env.JWT_SECRET, { expiresIn: '7d' });
-    const updatedTokenHash = crypto.createHash('sha256').update(updatedToken).digest('hex');
     
-    guestPass.token = updatedTokenHash;
-    guestPass.nonce = updatedTokenPayload.nonce;
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    
+    guestPass.token = tokenHash;
+    guestPass.nonce = payload.nonce;
     await guestPass.save();
 
-    // Generate invitation link
-    const inviteUrl = `${process.env.API_URL}/api/guest-pass/rsvp/${updatedToken}`;
+    // Create invitation URL
+    const inviteUrl = `${process.env.FRONTEND_URL}/guest-pass/rsvp/${token}`;
 
-    console.log(`✅ Guest pass created: ${guestPass._id} for event ${event._id} (Paid: ${isEventPaid})`);
+    console.log(`✅ Guest pass created for ${guestName} (Privacy: ${event.privacyLevel})`);
 
     res.status(201).json({
       success: true,
+      message: 'Guest pass created successfully',
       guestPass: {
         id: guestPass._id,
         guestName: guestPass.guestName,
-        inviteUrl: inviteUrl,
+        status: guestPass.status,
         expiresAt: guestPass.expiresAt,
-        requiresPayment: isEventPaid,
+        privacyLevel: event.privacyLevel
+      },
+      payment: {
+        required: isEventPaid,
         amount: guestPass.payment.amount,
         currency: guestPass.payment.currency
       },
-      inviteUrl: inviteUrl
+      inviteUrl: inviteUrl,
+      privacyInfo: privacyValidation.info
     });
 
   } catch (error) {
@@ -140,76 +142,27 @@ router.post('/:eventId/guest-pass', protect, createGuestPassLimiter, async (req,
 });
 
 // ============================================
-// ENHANCED: GUEST RSVP PAGE WITH PAYMENT FLOW
+// PHASE 1: ENHANCED GUEST RSVP PAGE WITH PRIVACY SUPPORT
 // ============================================
-router.get('/rsvp/:token', async (req, res) => {
+router.get('/rsvp/:token', validateGuestRSVPAccess, async (req, res) => {
   try {
-    const { token } = req.params;
+    const guestPass = req.guestPass; // Set by middleware
     
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (jwtError) {
-      return res.status(400).render('guest-rsvp-error', { 
-        error: 'Invalid or expired invitation link' 
-      });
-    }
-    
-    // Find guest pass
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const guestPass = await GuestPass.findOne({ 
-      _id: decoded.guestPassId,
-      token: tokenHash,
-      nonce: decoded.nonce
-    }).populate({
-      path: 'event',
-      populate: {
-        path: 'host',
-        select: 'username paymentAccounts'
-      }
-    });
-    
-    if (!guestPass || !guestPass.event) {
-      return res.status(404).render('guest-rsvp-error', { 
-        error: 'Invitation not found' 
-      });
-    }
-    
-    // Check if expired
-    if (new Date() > guestPass.expiresAt) {
-      guestPass.status = 'expired';
-      await guestPass.save();
-      return res.status(400).render('guest-rsvp-error', { 
-        error: 'This invitation has expired' 
-      });
-    }
-
     // Check if already confirmed
     if (guestPass.status === 'confirmed') {
       return res.render('guest-rsvp-success', {
         guestPass,
         event: guestPass.event,
         alreadyConfirmed: true,
-        qrCode: guestPass.qrData.code
+        qrCode: guestPass.qrData.code,
+        privacyLevel: guestPass.event.privacyLevel
       });
     }
 
-    // Validate host payment setup for paid events
-    if (guestPass.payment.required && !guestPass.event.host.paymentAccounts?.stripe?.chargesEnabled) {
-      return res.status(400).render('guest-rsvp-error', { 
-        error: 'Event host payment setup is incomplete. Please contact the host.' 
-      });
-    }
-    
-    // Store metadata
-    guestPass.metadata = {
-      userAgent: req.get('User-Agent'),
-      ipAddress: req.ip,
-      referrer: req.get('Referrer')
-    };
-    await guestPass.save();
-    
-    // Render RSVP page with enhanced payment info
+    // PHASE 1: Privacy-specific messaging
+    const privacyInfo = getPrivacyInfoForGuest(guestPass.event.privacyLevel);
+
+    // Render RSVP page with privacy context
     res.render('guest-rsvp', {
       guestPass,
       event: guestPass.event,
@@ -220,7 +173,9 @@ router.get('/rsvp/:token', async (req, res) => {
       eventDate: guestPass.event.time.toLocaleDateString(),
       eventTime: guestPass.event.time.toLocaleTimeString(),
       stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
-      token: token
+      token: req.params.token,
+      privacyLevel: guestPass.event.privacyLevel,
+      privacyInfo: privacyInfo
     });
     
   } catch (error) {
@@ -232,340 +187,163 @@ router.get('/rsvp/:token', async (req, res) => {
 });
 
 // ============================================
-// ENHANCED: PROCESS GUEST RSVP WITH HOST PAYMENT
+// PHASE 1: HELPER FUNCTIONS FOR PRIVACY VALIDATION
 // ============================================
-router.post('/rsvp', rsvpLimiter, async (req, res) => {
-  try {
-    const { token, paymentMethodId } = req.body;
-    
-    // Verify token and find guest pass
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    
-    const guestPass = await GuestPass.findOne({
-      _id: decoded.guestPassId,
-      token: tokenHash,
-      nonce: decoded.nonce
-    }).populate({
-      path: 'event',
-      populate: {
-        path: 'host',
-        select: 'paymentAccounts'
-      }
-    });
-    
-    if (!guestPass) {
-      return res.status(404).json({ message: 'Invalid invitation' });
-    }
-    
-    if (guestPass.status !== 'pending') {
-      return res.status(400).json({ message: 'Invitation already processed' });
-    }
-    
-    // Check expiry
-    if (new Date() > guestPass.expiresAt) {
-      guestPass.status = 'expired';
-      await guestPass.save();
-      return res.status(400).json({ message: 'Invitation expired' });
-    }
-    
-    // ============================================
-    // ENHANCED PAYMENT PROCESSING TO HOST ACCOUNT
-    // ============================================
-    if (guestPass.payment.required && guestPass.payment.amount > 0) {
-      if (!paymentMethodId) {
-        return res.status(400).json({ message: 'Payment method required' });
-      }
 
-      // Verify host can receive payments
-      if (!guestPass.event.host.paymentAccounts?.stripe?.chargesEnabled) {
-        return res.status(400).json({ 
-          message: 'Host payment setup is incomplete. Cannot process payment.' 
-        });
-      }
+/**
+ * Validate if guest passes are allowed for this privacy level
+ */
+function validatePrivacyForGuestPass(privacyLevel, permissions) {
+  switch (privacyLevel) {
+    case 'public':
+      return {
+        allowed: true,
+        message: 'Guest passes allowed for public events',
+        info: 'Guests can join this public event'
+      };
       
-      try {
-        // Create payment intent directly to host account
-        const paymentResult = await StripeConnectService.createDirectPaymentIntent(
-          guestPass.payment.amount,
-          guestPass.payment.currency,
-          guestPass.event.host.paymentAccounts.stripe.accountId,
-          {
-            guestPassId: guestPass._id.toString(),
-            eventId: guestPass.event._id.toString(),
-            guestName: guestPass.guestName,
-            eventTitle: guestPass.event.title,
-            hostId: guestPass.event.host._id.toString()
-          }
-        );
-
-        // Confirm payment with provided payment method
-        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-        const confirmedPayment = await stripe.paymentIntents.confirm(
-          paymentResult.paymentIntent.id,
-          {
-            payment_method: paymentMethodId,
-            return_url: `${process.env.FRONTEND_URL}/guest-pass/success`
-          },
-          {
-            stripeAccount: guestPass.event.host.paymentAccounts.stripe.accountId
-          }
-        );
-        
-        if (confirmedPayment.status === 'succeeded') {
-          guestPass.payment.status = 'succeeded';
-          guestPass.payment.stripePaymentIntentId = confirmedPayment.id;
-          guestPass.payment.paidAt = new Date();
-
-          // Add payment to event history
-          const paymentData = {
-            guestPass: guestPass._id,
-            guestName: guestPass.guestName,
-            amount: guestPass.payment.amount,
-            currency: guestPass.payment.currency,
-            stripePaymentIntentId: confirmedPayment.id,
-            status: 'succeeded',
-            paidAt: new Date(),
-            type: 'guest',
-            metadata: {
-              userAgent: req.get('User-Agent'),
-              ipAddress: req.ip,
-              platform: 'guest-link'
-            }
-          };
-
-          await guestPass.event.addPayment(paymentData);
-          console.log(`✅ Guest payment processed: ${confirmedPayment.id} for event ${guestPass.event._id}`);
-        } else {
-          guestPass.payment.status = 'failed';
-          return res.status(400).json({ message: 'Payment failed' });
-        }
-        
-      } catch (stripeError) {
-        console.error('❌ Stripe payment error:', stripeError);
-        guestPass.payment.status = 'failed';
-        await guestPass.save();
-        return res.status(400).json({ 
-          message: 'Payment processing failed', 
-          error: stripeError.message 
-        });
+    case 'friends':
+      return {
+        allowed: true,
+        message: 'Guest passes allowed for friends-only events',
+        info: 'Guests can access this event via direct invitation, but it won\'t appear in their feeds',
+        warning: 'Event is limited to your followers, but guests can still join via invitation'
+      };
+      
+    case 'private':
+      return {
+        allowed: true,
+        message: 'Guest passes allowed for private events',
+        info: 'Only invited guests can access this private event'
+      };
+      
+    case 'secret':
+      // Secret events allow guest passes but with restrictions
+      if (permissions?.canInvite === 'host-only') {
+        return {
+          allowed: true,
+          message: 'Guest passes allowed but restricted for secret events',
+          info: 'Only you can create invitations for this secret event',
+          warning: 'Guest passes will not be shareable by attendees'
+        };
       }
-    }
-    
-    // Mark as confirmed and generate QR code
-    guestPass.status = 'confirmed';
-    guestPass.confirmedAt = new Date();
-    const qrCode = guestPass.generateQRCode();
-    await guestPass.save();
-    
-    // Generate QR code image
-    const qrCodeUrl = `${process.env.API_URL}/api/guest-pass/qr/${qrCode}`;
-    const qrCodeDataUrl = await QRCode.toDataURL(qrCodeUrl, {
-      width: 300,
-      margin: 2,
-      color: {
-        dark: '#000000',
-        light: '#FFFFFF'
-      }
-    });
-    
-    // Update event stats
-    await Event.findByIdAndUpdate(guestPass.event._id, {
-      $inc: { 'stats.totalAttendees': 1 }
-    });
-    
-    res.json({
-      success: true,
-      qrCode: qrCodeDataUrl,
-      qrCodeUrl,
-      guestPass: {
-        id: guestPass._id,
-        status: guestPass.status,
-        guestName: guestPass.guestName,
-        eventTitle: guestPass.event.title,
-        eventTime: guestPass.event.time,
-        paymentAmount: guestPass.payment.amount,
-        paymentStatus: guestPass.payment.status
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ RSVP processing error:', error);
-    res.status(500).json({ 
-      message: 'Failed to process RSVP', 
-      error: error.message 
-    });
+      return {
+        allowed: false,
+        message: 'Guest passes not allowed for this secret event configuration',
+        suggestion: 'Change privacy settings to allow host-only invitations'
+      };
+      
+    default:
+      return {
+        allowed: false,
+        message: 'Unknown privacy level'
+      };
   }
-});
+}
 
-// ============================================
-// QR CODE VERIFICATION FOR CHECK-IN
-// ============================================
-router.get('/qr/:qrCode', async (req, res) => {
-  try {
-    const { qrCode } = req.params;
-    
-    const guestPass = await GuestPass.findOne({ 
-      'qrData.code': qrCode 
-    }).populate('event', 'title time location host');
-    
-    if (!guestPass) {
-      return res.status(404).json({ message: 'Invalid QR code' });
-    }
-    
-    // Check if QR code is valid
-    if (!guestPass.isValid()) {
-      return res.status(400).json({ 
-        message: 'QR code is expired or already used',
-        status: guestPass.status,
-        usedAt: guestPass.usedAt
-      });
-    }
-    
-    // Increment view count
-    guestPass.qrData.viewCount += 1;
-    await guestPass.save();
-    
-    res.json({
-      valid: true,
-      guestPass: {
-        id: guestPass._id,
-        guestName: guestPass.guestName,
-        status: guestPass.status,
-        event: {
-          title: guestPass.event.title,
-          time: guestPass.event.time,
-          location: guestPass.event.location
-        },
-        paymentStatus: guestPass.payment.status,
-        viewCount: guestPass.qrData.viewCount
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ QR verification error:', error);
-    res.status(500).json({ 
-      message: 'Failed to verify QR code', 
-      error: error.message 
-    });
+/**
+ * Calculate guest pass expiry based on privacy level and event settings
+ */
+function calculateGuestPassExpiry(event) {
+  const eventTime = new Date(event.time);
+  const now = new Date();
+  
+  // For secret events, shorter expiry window
+  if (event.privacyLevel === 'secret') {
+    return new Date(eventTime.getTime() - (2 * 60 * 60 * 1000)); // 2 hours before
   }
-});
+  
+  // For friends/private events, moderate expiry
+  if (['friends', 'private'].includes(event.privacyLevel)) {
+    return new Date(eventTime.getTime() - (4 * 60 * 60 * 1000)); // 4 hours before
+  }
+  
+  // For public events, standard expiry
+  return new Date(eventTime.getTime() - (1 * 60 * 60 * 1000)); // 1 hour before
+}
 
-// ============================================
-// CHECK-IN GUEST WITH QR CODE
-// ============================================
-router.post('/checkin/:qrCode', protect, async (req, res) => {
-  try {
-    const { qrCode } = req.params;
-    
-    const guestPass = await GuestPass.findOne({ 
-      'qrData.code': qrCode 
-    }).populate('event');
-    
-    if (!guestPass) {
-      return res.status(404).json({ message: 'Invalid QR code' });
-    }
-    
-    // Verify user is host or co-host
-    const isHost = String(guestPass.event.host) === String(req.user._id);
-    const isCoHost = guestPass.event.coHosts.some(coHost => String(coHost) === String(req.user._id));
-    
-    if (!isHost && !isCoHost) {
-      return res.status(403).json({ message: 'Only hosts and co-hosts can check in guests' });
-    }
-    
-    // Check if guest pass is valid for check-in
-    if (!guestPass.isValid()) {
-      return res.status(400).json({ 
-        message: 'Guest pass is not valid for check-in',
-        status: guestPass.status,
-        reason: guestPass.status === 'used' ? 'Already checked in' : 'Expired or invalid'
-      });
-    }
-    
-    // Mark as used
-    await guestPass.markAsUsed(req.user._id);
-    
-    res.json({
-      success: true,
-      message: 'Guest checked in successfully',
-      guestPass: {
-        id: guestPass._id,
-        guestName: guestPass.guestName,
-        checkedInAt: guestPass.usedAt,
-        checkedInBy: req.user._id
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Guest check-in error:', error);
-    res.status(500).json({ 
-      message: 'Failed to check in guest', 
-      error: error.message 
-    });
+/**
+ * Get guest permissions based on privacy level
+ */
+function getGuestPermissionsForPrivacyLevel(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return {
+        canUploadPhotos: true,
+        canViewAttendees: true,
+        canInviteOthers: false
+      };
+      
+    case 'friends':
+      return {
+        canUploadPhotos: true,
+        canViewAttendees: false, // Don't show attendee list to guests
+        canInviteOthers: false
+      };
+      
+    case 'private':
+      return {
+        canUploadPhotos: true,
+        canViewAttendees: false,
+        canInviteOthers: false
+      };
+      
+    case 'secret':
+      return {
+        canUploadPhotos: false, // Very restricted
+        canViewAttendees: false,
+        canInviteOthers: false
+      };
+      
+    default:
+      return {
+        canUploadPhotos: false,
+        canViewAttendees: false,
+        canInviteOthers: false
+      };
   }
-});
+}
 
-// ============================================
-// GET EVENT GUEST PASSES (HOST ONLY)
-// ============================================
-router.get('/event/:eventId/guests', protect, async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.eventId);
-    if (!event) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
-    
-    // Verify user is host or co-host
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts.some(coHost => String(coHost) === String(req.user._id));
-    
-    if (!isHost && !isCoHost) {
-      return res.status(403).json({ message: 'Only hosts and co-hosts can view guest passes' });
-    }
-    
-    const guestPasses = await GuestPass.find({ event: req.params.eventId })
-      .sort({ createdAt: -1 });
-    
-    // Calculate stats
-    const stats = {
-      total: guestPasses.length,
-      confirmed: guestPasses.filter(gp => gp.status === 'confirmed').length,
-      used: guestPasses.filter(gp => gp.status === 'used').length,
-      expired: guestPasses.filter(gp => gp.status === 'expired').length,
-      pending: guestPasses.filter(gp => gp.status === 'pending').length,
-      totalRevenue: guestPasses
-        .filter(gp => gp.payment.status === 'succeeded')
-        .reduce((sum, gp) => sum + gp.payment.amount, 0)
-    };
-    
-    res.json({
-      guestPasses: guestPasses.map(gp => ({
-        id: gp._id,
-        guestName: gp.guestName,
-        guestEmail: gp.guestEmail,
-        status: gp.status,
-        createdAt: gp.createdAt,
-        confirmedAt: gp.confirmedAt,
-        usedAt: gp.usedAt,
-        expiresAt: gp.expiresAt,
-        payment: {
-          required: gp.payment.required,
-          amount: gp.payment.amount,
-          status: gp.payment.status,
-          paidAt: gp.payment.paidAt
-        }
-      })),
-      stats
-    });
-    
-  } catch (error) {
-    console.error('❌ Get guest passes error:', error);
-    res.status(500).json({ 
-      message: 'Failed to get guest passes', 
-      error: error.message 
-    });
+/**
+ * Get privacy information to display to guests
+ */
+function getPrivacyInfoForGuest(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return {
+        type: 'Public Event',
+        description: 'This is a public event that anyone can discover and join.',
+        icon: 'globe'
+      };
+      
+    case 'friends':
+      return {
+        type: 'Friends Only Event',
+        description: 'This event is limited to the host\'s followers, but you\'ve been personally invited.',
+        icon: 'people'
+      };
+      
+    case 'private':
+      return {
+        type: 'Private Event',
+        description: 'This is a private event that requires an invitation to attend.',
+        icon: 'lock'
+      };
+      
+    case 'secret':
+      return {
+        type: 'Secret Event',
+        description: 'This is a secret event with limited visibility and sharing.',
+        icon: 'eye-off'
+      };
+      
+    default:
+      return {
+        type: 'Event',
+        description: 'You\'ve been invited to this event.',
+        icon: 'calendar'
+      };
   }
-});
+}
 
 module.exports = router;
