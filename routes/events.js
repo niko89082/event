@@ -6,13 +6,6 @@ const Event = require('../models/Event');
 const Group = require('../models/Group');
 const Photo = require('../models/Photo');
 const EventDiscoveryService = require('../services/eventDiscoveryService');
-const { 
-  validatePrivacyLevel, 
-  basicEventValidation,        // ADD this
-  applyPrivacySettings, 
-  skipValidation,
-  logPrivacyEnforcement 
-} = require('../middleware/privacyValidation');
 const { PRIVACY_LEVELS, getPrivacyPreset } = require('../constants/privacyConstants');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
@@ -1303,15 +1296,16 @@ const checkPaymentStatus = async (userId) => {
 };
 
 
-router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uploadCover.single('coverImage'), async (req, res) => {
+router.post('/create', protect, uploadCover.single('coverImage'), async (req, res) => {
   try {
-    console.log('📝 PHASE 2: Creating new event with privacy validation...');
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
-    console.log('🔒 Validated privacy:', req.validatedPrivacy);
+    console.log('📝 PHASE 2: Creating new event with manual privacy validation...');
+    console.log('📥 Request body keys:', Object.keys(req.body));
+    console.log('📥 Privacy level received:', req.body.privacyLevel);
 
     const {
       title, description, category = 'General',
       time, location, maxAttendees = 10,
+      privacyLevel, // ✅ Handle privacy level directly
 
       // Enhanced pricing fields
       isPaidEvent, eventPrice, priceDescription,
@@ -1329,6 +1323,62 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
       requiresFormForCheckIn = false,
 
     } = req.body;
+
+    // ✅ MANUAL PRIVACY VALIDATION (same as edit route)
+    const PRIVACY_PRESETS = {
+      public: {
+        canView: 'anyone',
+        canJoin: 'anyone',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: true,
+        appearInSearch: true,
+        showAttendeesToPublic: true
+      },
+      friends: {
+        canView: 'followers',
+        canJoin: 'followers',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: true,
+        appearInSearch: true,
+        showAttendeesToPublic: false
+      },
+      private: {
+        canView: 'invited-only',
+        canJoin: 'invited-only',
+        canShare: 'attendees',
+        canInvite: 'attendees',
+        appearInFeed: false,
+        appearInSearch: false,
+        showAttendeesToPublic: false
+      }
+    };
+
+    // ✅ PRIVACY VALIDATION - Handle exactly like edit route
+    let finalPrivacyLevel = 'public'; // Default
+    let finalPermissions = PRIVACY_PRESETS.public; // Default
+
+    if (privacyLevel !== undefined && privacyLevel !== null && privacyLevel !== '') {
+      console.log(`🔒 Privacy level requested: "${privacyLevel}"`);
+      
+      // Validate new privacy level
+      const validPrivacyLevels = ['public', 'friends', 'private'];
+      const normalizedPrivacyLevel = String(privacyLevel).toLowerCase().trim();
+      
+      if (!validPrivacyLevels.includes(normalizedPrivacyLevel)) {
+        console.warn(`⚠️ Invalid privacy level "${privacyLevel}", using default: "public"`);
+        // Don't return error, just use default
+      } else {
+        // Apply privacy level with correct permissions
+        finalPrivacyLevel = normalizedPrivacyLevel;
+        finalPermissions = PRIVACY_PRESETS[finalPrivacyLevel];
+        console.log(`✅ Privacy level set to: "${finalPrivacyLevel}"`);
+        console.log(`🔧 Permissions applied:`, finalPermissions);
+      }
+    } else {
+      console.log(`📋 No privacy level provided, using default: "public"`);
+    }
 
     // Handle pricing
     const isPaid = isPaidEvent === 'true' || isPaidEvent === true;
@@ -1368,7 +1418,7 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
 
     // Parse invited users for private events
     let invitedUsersArray = [];
-    if (invitedUsers && req.validatedPrivacy.privacyLevel === PRIVACY_LEVELS.PRIVATE) {
+    if (invitedUsers && finalPrivacyLevel === 'private') {
       try {
         invitedUsersArray = typeof invitedUsers === 'string' ? JSON.parse(invitedUsers) : invitedUsers;
       } catch (e) {
@@ -1383,7 +1433,7 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
       return isNaN(parsed) ? undefined : parsed;
     };
 
-    // ✅ PHASE 2: Create event data with validated privacy
+    // ✅ Create event data with manually validated privacy
     const eventData = {
       title: title.trim(),
       description: description?.trim() || '',
@@ -1409,18 +1459,18 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
         }
       },
 
-      // ✅ PHASE 2: Use validated privacy from middleware
-      privacyLevel: req.validatedPrivacy.privacyLevel,
-      permissions: req.validatedPrivacy.permissions,
+      // ✅ Use manually validated privacy settings
+      privacyLevel: finalPrivacyLevel,
+      permissions: finalPermissions,
 
       // Invited users for private events
-      invitedUsers: req.validatedPrivacy.privacyLevel === PRIVACY_LEVELS.PRIVATE ? invitedUsersArray : [],
+      invitedUsers: finalPrivacyLevel === 'private' ? invitedUsersArray : [],
 
       // Legacy compatibility
       price: eventPriceNum,
-      isPublic: bool(isPublic) ?? (req.validatedPrivacy.privacyLevel === PRIVACY_LEVELS.PUBLIC),
+      isPublic: bool(isPublic) ?? (finalPrivacyLevel === 'public'),
       allowPhotos: bool(allowPhotos) ?? true,
-      openToPublic: bool(openToPublic) ?? (req.validatedPrivacy.permissions?.canJoin === 'anyone'),
+      openToPublic: bool(openToPublic) ?? (finalPermissions?.canJoin === 'anyone'),
       allowUploads: bool(allowUploads) ?? true,
       allowUploadsBeforeStart: bool(allowUploadsBeforeStart) ?? true,
 
@@ -1487,10 +1537,10 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
       eventData.coverImage = `/uploads/covers/${req.file.filename}`;
     }
 
-    console.log('🔧 PHASE 2: Final event data:', JSON.stringify({
-      ...eventData,
+    console.log('🔧 Final event data privacy settings:', {
+      privacyLevel: eventData.privacyLevel,
       permissions: eventData.permissions
-    }, null, 2));
+    });
 
     // Create the event
     const event = new Event(eventData);
@@ -1502,8 +1552,8 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
       await group.save(); 
     }
 
-    // ✅ PHASE 2: Auto-invite for private events created from groups
-    if (eventData.privacyLevel === PRIVACY_LEVELS.PRIVATE && group && invitedUsersArray.length === 0) {
+    // ✅ Auto-invite for private events created from groups
+    if (eventData.privacyLevel === 'private' && group && invitedUsersArray.length === 0) {
       // Auto-invite group members if no specific invites provided
       const autoInvites = group.members.filter(m => String(m) !== String(req.user._id));
       event.invitedUsers = autoInvites;
@@ -1511,12 +1561,9 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
       console.log(`🎫 Auto-invited ${autoInvites.length} group members to private event`);
     }
 
-    // ✅ PHASE 2: Log privacy enforcement
-    logPrivacyEnforcement(event._id, event.privacyLevel, event.permissions);
-
-    console.log(`✅ PHASE 2: Event created successfully: ${event._id}`);
-    console.log(`🔒 Privacy Level: ${event.privacyLevel}`);
-    console.log(`🔧 Permissions Applied:`, event.permissions);
+    console.log(`✅ Event created successfully: ${event._id}`);
+    console.log(`🔒 Final Privacy Level: ${event.privacyLevel}`);
+    console.log(`🔧 Final Permissions Applied:`, event.permissions);
 
     res.status(201).json({
       message: 'Event created successfully',
@@ -1530,18 +1577,19 @@ router.post('/create', protect, validatePrivacyLevel, basicEventValidation, uplo
       privacyValidation: {
         applied: true,
         level: event.privacyLevel,
-        validatedByMiddleware: true
+        validatedManually: true // ✅ Indicates we handled it manually
       }
     });
 
   } catch (err) {
-    console.error('❌ PHASE 2: Event creation error:', err);
+    console.error('❌ Event creation error:', err);
     res.status(500).json({ 
       message: 'Failed to create event', 
       error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
     });
   }
 });
+
 
 
 
