@@ -56,7 +56,7 @@ export default function AttendeeListScreen() {
   const [showFormResponses, setShowFormResponses] = useState(false);
   const [selectedUserResponses, setSelectedUserResponses] = useState(null);
   const [formResponsesLoading, setFormResponsesLoading] = useState(false);
-
+  const [allowNonRegistered, setAllowNonRegistered] = useState(true);  
   // Export & Analytics State
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
@@ -426,41 +426,56 @@ export default function AttendeeListScreen() {
   };
 
   const handleShowQR = async () => {
-    try {
-      setQrLoading(true);
-      setShowQRModal(true);
-      
-      const response = await api.post(`/api/events/${eventId}/generate-checkin-qr`, {
-        validityHours: 24
-      });
-      
+  try {
+    setQrLoading(true);
+    setShowQRModal(true);
+    
+    const response = await api.post(`/api/events/${eventId}/generate-mass-checkin-qr`, {
+      validityHours: 24,
+      allowNonRegistered: true  // ✅ Always true - anyone can check in
+    });
+    
+    if (response.data.success) {
       setQrData(response.data.qrData);
       setQrExpiry(new Date(response.data.expiresAt));
-    } catch (error) {
-      console.error('Error generating QR code:', error);
-      setShowQRModal(false);
-      Alert.alert('Error', 'Failed to generate check-in QR code');
-    } finally {
-      setQrLoading(false);
+      console.log('✅ Mass check-in QR generated (open to everyone)');
+    } else {
+      throw new Error(response.data.message);
     }
-  };
+  } catch (error) {
+    console.error('Error generating mass check-in QR code:', error);
+    setShowQRModal(false);
+    Alert.alert('Error', 'Failed to generate mass check-in QR code');
+  } finally {
+    setQrLoading(false);
+  }
+};
+
+
 
   const handleRefreshQR = async () => {
-    try {
-      setQrLoading(true);
-      const response = await api.post(`/api/events/${eventId}/generate-checkin-qr`, {
-        validityHours: 24
-      });
-      
+  try {
+    setQrLoading(true);
+    const response = await api.post(`/api/events/${eventId}/generate-mass-checkin-qr`, {
+      validityHours: 24,
+      allowNonRegistered: true  // ✅ Always true - anyone can check in
+    });
+    
+    if (response.data.success) {
       setQrData(response.data.qrData);
       setQrExpiry(new Date(response.data.expiresAt));
-    } catch (error) {
-      console.error('Error refreshing QR code:', error);
-      Alert.alert('Error', 'Failed to refresh QR code');
-    } finally {
-      setQrLoading(false);
+      console.log('✅ Mass check-in QR refreshed (open to everyone)');
+    } else {
+      throw new Error(response.data.message);
     }
-  };
+  } catch (error) {
+    console.error('Error refreshing QR code:', error);
+    Alert.alert('Error', 'Failed to refresh QR code');
+  } finally {
+    setQrLoading(false);
+  }
+};
+
 
   const checkQRExpiry = () => {
     if (qrExpiry && new Date() > qrExpiry) {
@@ -476,16 +491,40 @@ export default function AttendeeListScreen() {
   };
 
   const handleShareQR = async () => {
-    try {
-      const shareUrl = `${API_BASE_URL}/events/${eventId}/join`;
-      await Share.share({
-        message: `Join the event: ${event?.title}\n${shareUrl}`,
-        title: 'Event Check-in',
-      });
-    } catch (error) {
-      console.error('Error sharing:', error);
-    }
-  };
+  try {
+    const instructions = `🎉 Join ${event?.title}!\n\n📱 Just scan this QR code when you arrive to check in instantly - no registration needed!\n\n⏰ Check-in available until: ${qrExpiry?.toLocaleString()}\n\nSee you there! 🎊`;
+
+    await Share.share({
+      message: instructions,
+      title: `${event?.title} - Instant Check-in QR`
+    });
+  } catch (error) {
+    console.error('Error sharing:', error);
+  }
+};
+
+const handleDeactivateQR = async () => {
+  Alert.alert(
+    'Deactivate QR Code',
+    'This will stop mass check-in. People will no longer be able to check themselves in using this QR code.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Deactivate',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.post(`/api/events/${eventId}/deactivate-mass-checkin-qr`);
+            setShowQRModal(false);
+            Alert.alert('Success', 'Mass check-in QR code has been deactivated');
+          } catch (error) {
+            Alert.alert('Error', 'Failed to deactivate QR code');
+          }
+        }
+      }
+    ]
+  );
+};
 
   const handleOpenScanner = () => {
     navigation.navigate('QrScanScreen', { 
@@ -1010,86 +1049,121 @@ export default function AttendeeListScreen() {
 
       {/* QR Modal */}
       <Modal
-        visible={showQRModal}
-        transparent={false}
-        animationType="slide"
-        onRequestClose={() => setShowQRModal(false)}
+  visible={showQRModal}
+  transparent={false}
+  animationType="slide"
+  onRequestClose={() => setShowQRModal(false)}
+>
+  <SafeAreaView style={styles.qrModalContainer}>
+    <View style={styles.qrModalHeader}>
+      <TouchableOpacity
+        style={styles.qrCloseButton}
+        onPress={() => setShowQRModal(false)}
       >
-        <SafeAreaView style={styles.qrModalContainer}>
-          <View style={styles.qrModalHeader}>
-            <TouchableOpacity
-              style={styles.qrCloseButton}
-              onPress={() => setShowQRModal(false)}
-            >
-              <Ionicons name="close" size={28} color="#000000" />
-            </TouchableOpacity>
-            <Text style={styles.qrModalTitle}>Check-in QR Code</Text>
-            <TouchableOpacity
-              style={styles.qrShareButton}
-              onPress={handleShareQR}
-            >
-              <Ionicons name="share" size={24} color="#3797EF" />
-            </TouchableOpacity>
-          </View>
+        <Ionicons name="close" size={28} color="#000000" />
+      </TouchableOpacity>
+      <Text style={styles.qrModalTitle}>Mass Check-in QR</Text>
+      <TouchableOpacity
+        style={styles.qrShareButton}
+        onPress={handleShareQR}
+      >
+        <Ionicons name="share" size={24} color="#3797EF" />
+      </TouchableOpacity>
+    </View>
 
-          <View style={styles.qrContentContainer}>
-            {qrLoading ? (
-              <View style={styles.qrLoadingContainer}>
-                <ActivityIndicator size="large" color="#3797EF" />
-                <Text style={styles.qrLoadingText}>Generating QR Code...</Text>
-              </View>
-            ) : qrData ? (
-              <>
-                <View style={styles.qrCodeContainer}>
-                  <QRCode
-                    value={JSON.stringify(qrData)}
-                    size={SCREEN_WIDTH * 0.6}
-                    backgroundColor="#FFFFFF"
-                    color="#000000"
-                    logoSize={40}
-                    logoBackgroundColor="transparent"
-                  />
-                </View>
-                
-                <View style={styles.qrInfo}>
-                  <Text style={styles.qrEventTitle}>{event?.title}</Text>
-                  <Text style={styles.qrInstructions}>
-                    Point your camera at this QR code to check in
-                  </Text>
-                  <Text style={styles.qrExpiry}>
-                    {getTimeRemaining()}
-                  </Text>
-                  
-                  {event?.requiresFormForCheckIn && (
-                    <View style={styles.qrFormNotice}>
-                      <Ionicons name="document-text" size={16} color="#FF9500" />
-                      <Text style={styles.qrFormNoticeText}>
-                        Form required for check-in
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </>
-            ) : (
-              <View style={styles.qrErrorContainer}>
-                <Ionicons name="alert-circle" size={48} color="#FF3B30" />
-                <Text style={styles.qrErrorText}>Failed to generate QR code</Text>
+    <View style={styles.qrContentContainer}>
+      {qrLoading ? (
+        <View style={styles.qrLoadingContainer}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.qrLoadingText}>Generating QR Code...</Text>
+        </View>
+      ) : qrData ? (
+        <>
+          <View style={styles.qrCodeContainer}>
+            <QRCode
+              value={JSON.stringify(qrData)} // Convert object to JSON string
+              size={Math.min(SCREEN_WIDTH * 0.7, 280)}
+              backgroundColor="white"
+              color="black"
+            />
+          </View>
+          
+          <View style={styles.qrInfo}>
+            <Text style={styles.qrEventTitle}>{event?.title}</Text>
+            <Text style={styles.qrInstructions}>
+              📱 Attendees: Point your camera at this QR code to check in automatically
+            </Text>
+            <Text style={styles.qrExpiry}>
+              ⏰ {getTimeRemaining()}
+            </Text>
+            
+            {event?.requiresFormForCheckIn && (
+              <View style={styles.qrFormNotice}>
+                <Ionicons name="document-text" size={16} color="#FF9500" />
+                <Text style={styles.qrFormNoticeText}>Form required for check-in</Text>
               </View>
             )}
           </View>
 
-          <View style={styles.qrModalFooter}>
+          {/* QR Action Buttons */}
+          <View style={styles.qrActionButtons}>
             <TouchableOpacity
-              style={styles.qrRefreshButton}
+              style={[styles.qrActionButton, styles.refreshButton]}
               onPress={handleRefreshQR}
-              disabled={qrLoading}
             >
               <Ionicons name="refresh" size={20} color="#3797EF" />
-              <Text style={styles.qrRefreshButtonText}>Refresh QR Code</Text>
+              <Text style={styles.qrActionButtonText}>Refresh</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.qrActionButton, styles.fullscreenButton]}
+              onPress={() => {
+                setShowQRModal(false);
+                navigation.navigate('EventQRDisplayScreen', {
+                  eventId: eventId,
+                  eventTitle: event?.title
+                });
+              }}
+            >
+              <Ionicons name="expand" size={20} color="#FFFFFF" />
+              <Text style={[styles.qrActionButtonText, { color: '#FFFFFF' }]}>Full Screen</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.qrActionButton, styles.deactivateButton]}
+              onPress={handleDeactivateQR}
+            >
+              <Ionicons name="stop-circle" size={20} color="#FFFFFF" />
+              <Text style={[styles.qrActionButtonText, { color: '#FFFFFF' }]}>Stop</Text>
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
-      </Modal>
+
+          {/* Instructions for Camera App Usage */}
+          <View style={styles.cameraInstructions}>
+            <Text style={styles.cameraInstructionsTitle}>📷 Works with Camera App</Text>
+            <Text style={styles.cameraInstructionsText}>
+              This QR code works with any camera app! Attendees can:
+              {'\n'}• Use their phone's camera app
+              {'\n'}• Use this app's QR scanner
+              {'\n'}• Scan from screenshots or printed copies
+            </Text>
+          </View>
+        </>
+      ) : (
+        <View style={styles.qrErrorContainer}>
+          <Ionicons name="alert-circle" size={60} color="#FF6B6B" />
+          <Text style={styles.qrErrorText}>Failed to generate QR code</Text>
+          <TouchableOpacity
+            style={styles.qrRetryButton}
+            onPress={() => handleShowQR()}
+          >
+            <Text style={styles.qrRetryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  </SafeAreaView>
+</Modal>
 
       {/* Form Response Modal */}
       <Modal
@@ -1831,4 +1905,75 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#8E8E93',
   },
+  qrActionButtons: {
+  flexDirection: 'row',
+  gap: 12,
+  marginTop: 20,
+  marginBottom: 20,
+},
+qrActionButton: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 12,
+  paddingHorizontal: 16,
+  borderRadius: 12,
+  gap: 6,
+},
+refreshButton: {
+  backgroundColor: 'transparent',
+  borderWidth: 2,
+  borderColor: '#3797EF',
+},
+fullscreenButton: {
+  backgroundColor: '#3797EF',
+},
+deactivateButton: {
+  backgroundColor: '#FF6B6B',
+},
+qrActionButtonText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#3797EF',
+},
+cameraInstructions: {
+  backgroundColor: '#F8F9FA',
+  borderRadius: 12,
+  padding: 16,
+  marginTop: 10,
+  maxWidth: SCREEN_WIDTH * 0.85,
+},
+cameraInstructionsTitle: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: '#333',
+  marginBottom: 8,
+},
+cameraInstructionsText: {
+  fontSize: 14,
+  color: '#666',
+  lineHeight: 20,
+},
+qrErrorContainer: {
+  alignItems: 'center',
+  paddingVertical: 40,
+},
+qrErrorText: {
+  fontSize: 18,
+  color: '#333',
+  marginTop: 15,
+  marginBottom: 20,
+},
+qrRetryButton: {
+  backgroundColor: '#3797EF',
+  paddingHorizontal: 25,
+  paddingVertical: 12,
+  borderRadius: 25,
+},
+qrRetryButtonText: {
+  color: '#FFFFFF',
+  fontSize: 16,
+  fontWeight: '600',
+},
 });

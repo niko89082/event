@@ -5,7 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthContext, AuthProvider } from './services/AuthContext';
-
+import EventQRDisplayScreen from './screens/EventQrDisplayScreen';
 import LoginScreen from './screens/Auth/LoginScreen';
 import RegisterScreen from './screens/Auth/RegisterScreen';
 
@@ -181,6 +181,14 @@ function AppNavigator({ onLogout }) {
                   fontSize: 18,
                 },
                 headerBackTitleVisible: false,
+              }}
+            />
+            <RootStack.Screen 
+              name="EventQRDisplayScreen" 
+              component={EventQRDisplayScreen}
+              options={{
+                title: 'Event QR Code',
+                headerShown: false
               }}
             />
             <RootStack.Screen 
@@ -386,6 +394,7 @@ function AppNavigator({ onLogout }) {
                 headerBackTitleVisible: false,
               }}
             />
+            
             <RootStack.Screen 
               name="QrScanScreen" 
               component={QrScanScreen}

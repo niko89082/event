@@ -1,4 +1,4 @@
-// screens/QrScanScreen.js - Phase 4: Complete Enhanced QR Scanner
+// screens/QrScanScreen.js - Phase 1: Fixed Individual QR Scanning
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, Modal,
@@ -33,6 +33,7 @@ export default function QrScanScreen() {
   // Event check-in state
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [pendingUser, setPendingUser] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   // Form status
   const [requiresForm, setRequiresForm] = useState(false);
@@ -42,32 +43,38 @@ export default function QrScanScreen() {
   const scanLineAnimation = useState(new Animated.Value(0))[0];
 
   useEffect(() => {
-    // Set up navigation header
-    navigation.setOptions({
-      headerShown: false,
-    });
+    navigation.setOptions({ headerShown: false });
 
-    // Fetch event data if this is event check-in
     if (isEventCheckin) {
       fetchEventData();
     }
 
-    // Start scan line animation
     startScanLineAnimation();
-
-    return () => {
-      scanLineAnimation.stopAnimation();
-    };
+    return () => scanLineAnimation.stopAnimation();
   }, []);
 
   const fetchEventData = async () => {
     try {
       const response = await api.get(`/api/events/${eventId}`);
-      const event = response.data.event;
-      setEventData(event);
-      setRequiresForm(event.requiresFormForCheckIn && !!event.checkInForm);
+      console.log('✅ Event data response:', response.data);
+      
+      // ✅ FIXED: Handle different response formats
+      const event = response.data.event || response.data;
+      
+      if (event) {
+        setEventData(event);
+        setRequiresForm(event.requiresFormForCheckIn && !!event.checkInForm);
+        console.log('✅ Event data loaded:', {
+          eventId: event._id,
+          requiresForm: event.requiresFormForCheckIn,
+          hasForm: !!event.checkInForm
+        });
+      } else {
+        console.error('❌ No event data in response');
+      }
     } catch (error) {
-      console.error('Error fetching event data:', error);
+      console.error('❌ Error fetching event data:', error);
+      // Continue anyway - the app can still function for basic check-in
     }
   };
 
@@ -88,6 +95,13 @@ export default function QrScanScreen() {
     ).start();
   };
 
+  const resetScanner = () => {
+    setScanned(false);
+    setProcessing(false);
+    setShowConfirmation(false);
+    setPendingUser(null);
+  };
+
   const toggleCameraFacing = () => {
     setFacing(current => (current === 'back' ? 'front' : 'back'));
   };
@@ -96,178 +110,277 @@ export default function QrScanScreen() {
     setFlash(current => (current === 'off' ? 'on' : 'off'));
   };
 
-  const resetScanner = () => {
-    setScanned(false);
-    setShowConfirmation(false);
-    setPendingUser(null);
-  };
-
-  // Enhanced event check-in handler with form support
-  const handleEventCheckIn = async (qrData) => {
-    try {
-      console.log('🎯 Processing event check-in:', qrData);
-
-      const response = await api.post(`/api/events/${eventId}/checkin`, {
-        qrData: qrData
-      });
-
-      console.log('✅ Check-in response:', response.data);
-
-      if (response.data.success) {
-        if (response.data.status === 'checked_in') {
-          showSuccessAlert(response.data);
-        } else if (response.data.status === 'guest_checked_in') {
-          showSuccessAlert(response.data);
-        } else {
-          showErrorAlert(response.data.message);
-        }
-      } else if (response.data.requiresForm) {
-        // Event requires form submission - navigate to form
-        Alert.alert(
-          'Form Required',
-          'This event requires a check-in form to be completed.',
-          [
-            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
-            {
-              text: 'Complete Form',
-              onPress: () => {
-                navigation.navigate('FormSubmissionScreen', {
-                  formId: response.data.formId,
-                  eventId: eventId,
-                  isCheckIn: true,
-                  onSubmissionComplete: () => {
-                    // After form completion, attempt check-in again
-                    navigation.goBack();
-                    setTimeout(() => {
-                      handleEventCheckIn(qrData);
-                    }, 500);
-                  }
-                });
-              }
-            }
-          ]
-        );
-      } else {
-        showErrorAlert(response.data.message || 'Check-in failed');
+  // ✅ FIXED: Unified QR parsing function
+  const parseQRData = (rawData) => {
+  console.log('🔍 Parsing QR data:', rawData);
+  
+  try {
+    // Try to parse as JSON first
+    const parsed = JSON.parse(rawData);
+    console.log('✅ Successfully parsed JSON:', parsed);
+    
+    // Validate QR code type
+    if (parsed.type === 'event_mass_checkin') {
+      // This is a mass check-in QR code
+      if (!parsed.eventId || !parsed.token) {
+        throw new Error('Invalid event check-in QR code format');
       }
-    } catch (error) {
-      console.error('❌ Event check-in error:', error);
-      
-      if (error.response?.data?.requiresForm) {
-        // Handle form requirement from error response
-        Alert.alert(
-          'Form Required',
-          'Please complete the check-in form first.',
-          [
-            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
-            {
-              text: 'Open Form',
-              onPress: () => {
-                navigation.navigate('FormSubmissionScreen', {
-                  formId: error.response.data.formId,
-                  eventId: eventId,
-                  isCheckIn: true,
-                  onSubmissionComplete: () => {
-                    navigation.goBack();
-                    showSuccessAlert({ 
-                      user: { username: 'User' },
-                      message: 'Check-in completed successfully'
-                    });
-                  }
-                });
-              }
-            }
-          ]
-        );
-      } else {
-        const errorMessage = error.response?.data?.message || 
-          'Check-in failed. Please try again.';
-        showErrorAlert(errorMessage);
+    } else if (parsed.type === 'user_profile') {
+      // This is a user profile QR code
+      if (!parsed.shareCode && !parsed.userId) {
+        throw new Error('Invalid user profile QR code format');
       }
     }
-  };
+    
+    return parsed;
+  } catch (parseError) {
+    console.log('📝 QR data is not JSON, treating as string');
+    // Not JSON, treat as direct shareCode (legacy format)
+    return {
+      type: 'legacy_shareCode',
+      shareCode: rawData,
+      raw: rawData
+    };
+  }
+};
 
-  const handleHostCheckInWithForm = async (attendeeId) => {
+
+  // ✅ FIXED: Unified user resolution function
+  const resolveUserFromQR = async (qrData) => {
+    console.log('🎯 Resolving user from QR data:', qrData);
+    
     try {
-      // First check if the attendee needs to complete a form
-      const eventResponse = await api.get(`/api/events/${eventId}`);
-      const event = eventResponse.data.event;
-      
-      if (event.requiresFormForCheckIn && event.checkInForm) {
-        // Navigate to form for this specific attendee
-        navigation.navigate('FormSubmissionScreen', {
-          formId: event.checkInForm._id || event.checkInForm,
-          eventId: eventId,
-          userId: attendeeId, // Host is filling out form for this user
-          isCheckIn: true,
-          onSubmissionComplete: () => {
-            navigation.goBack();
-            Alert.alert(
-              'Check-in Complete!',
-              'Attendee has been successfully checked in.',
-              [
-                { text: 'Scan Another', onPress: resetScanner },
-                { text: 'Done', onPress: () => navigation.goBack() }
-              ]
-            );
-          }
-        });
-      }
-    } catch (error) {
-      console.error('❌ Host check-in with form error:', error);
-      showErrorAlert('Failed to load check-in form');
-    }
-  };
-
-  const handleUserProfileScan = async (qrData) => {
-    try {
-      console.log('📱 Raw QR data scanned:', qrData);
-      console.log('📱 QR data type:', typeof qrData);
-      console.log('📱 QR data length:', qrData.length);
-
-      // Try to parse if it looks like JSON
-      let parsedData = null;
-      try {
-        parsedData = JSON.parse(qrData);
-        console.log('✅ Successfully parsed QR JSON:', parsedData);
-      } catch (parseError) {
-        console.log('📝 QR data is not JSON, treating as direct share code');
-      }
-
+      // Use the enhanced /api/qr/scan endpoint
       const response = await api.post('/api/qr/scan', {
-        qrData: qrData // Send raw data, let backend handle parsing
+        qrData: typeof qrData === 'string' ? qrData : JSON.stringify(qrData)
       });
 
-      console.log('🔍 QR scan response:', response.data);
-
       if (response.data.success) {
-        const user = response.data.user;
-        Alert.alert(
-          '👤 User Found',
-          `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
-            {
-              text: user.isFollowing ? 'View Profile' : 'Follow',
-              onPress: user.isFollowing ? 
-                () => navigation.navigate('ProfileScreen', { userId: user._id }) :
-                () => handleQuickFollow(parsedData?.shareCode || qrData),
-              style: user.isFollowing ? 'default' : 'default'
-            }
-          ]
-        );
+        console.log('✅ User resolved:', response.data.user.username);
+        return response.data.user;
       } else {
-        showErrorAlert(response.data.message || 'Invalid QR code');
+        throw new Error(response.data.message || 'Failed to resolve user');
       }
     } catch (error) {
-      console.error('❌ User profile scan error:', error);
+      console.error('❌ User resolution error:', error);
       
       if (error.response?.status === 404) {
-        showErrorAlert('User not found or QR code is invalid');
+        throw new Error('User not found or QR code is invalid');
+      } else if (error.response?.data?.errorCode === 'SCANNING_OWN_CODE') {
+        throw new Error('You cannot scan your own QR code');
       } else {
-        showErrorAlert('Failed to scan QR code. Please try again.');
+        throw new Error(error.response?.data?.message || 'Failed to scan QR code');
       }
     }
+  };
+
+  // ✅ FIXED: Simplified scan handler
+  const handleBarCodeScanned = ({ type, data }) => {
+  if (scanned || processing) return;
+
+  setScanned(true);
+  setProcessing(true);
+  Vibration.vibrate(100);
+
+  console.log('📊 QR Code Scanned:', { type, data });
+
+  const processQR = async () => {
+    try {
+      // Step 1: Parse QR data
+      const qrData = parseQRData(data);
+      
+      // Step 2: Handle different QR types
+      if (qrData.type === 'event_mass_checkin') {
+        // This is a mass check-in QR code - user is checking themselves in
+        await handleEventCheckInQR(qrData);
+      } else if (qrData.type === 'user_profile' || qrData.type === 'legacy_shareCode') {
+        // This is a user profile QR code
+        if (isEventCheckin) {
+          // Host is scanning user for event check-in
+          await handleUserCheckIn(qrData);
+        } else {
+          // General user profile scanning (follow/view profile)
+          await handleUserProfileScan(qrData);
+        }
+      } else {
+        throw new Error('Unsupported QR code format');
+      }
+    } catch (error) {
+      console.error('❌ QR processing error:', error);
+      showErrorAlert(error.message || 'Failed to process QR code');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  processQR();
+};
+
+
+  // ✅ FIXED: Handle user check-in for events
+  const handleUserCheckIn = async (qrData) => {
+    console.log('👥 Processing user check-in for event:', eventId);
+    
+    try {
+      // Step 1: Resolve user from QR
+      const user = await resolveUserFromQR(qrData);
+      
+      // Step 2: Attempt check-in
+      const response = await api.post(`/api/events/${eventId}/checkin`, {
+        qrCode: JSON.stringify({
+          type: 'user_profile',
+          userId: user._id,
+          shareCode: user.shareCode,
+          username: user.username
+        })
+      });
+
+      if (response.data.success) {
+        showSuccessAlert(response.data);
+      } else {
+        // Handle specific error cases
+        if (response.data.errorCode === 'USER_NOT_REGISTERED') {
+          // User is not registered for event - show confirmation
+          showNonAttendeeConfirmation(user);
+        } else if (response.data.errorCode === 'FORM_REQUIRED') {
+          // Form is required for check-in
+          showFormRequiredAlert(user, response.data.formId);
+        } else {
+          throw new Error(response.data.message);
+        }
+      }
+    } catch (error) {
+      console.error('❌ User check-in error:', error);
+      
+      // ✅ FIXED: Handle API error responses properly
+      if (error.response && error.response.data) {
+        const errorData = error.response.data;
+        
+        if (errorData.errorCode === 'USER_NOT_REGISTERED' && errorData.requiresConfirmation) {
+          // User is not registered - show confirmation modal
+          console.log('🎯 Showing non-attendee confirmation for:', errorData.user.username);
+          showNonAttendeeConfirmation(errorData.user);
+        } else if (errorData.errorCode === 'FORM_REQUIRED') {
+          // Form is required for check-in
+          showFormRequiredAlert(errorData.user, errorData.formId);
+        } else if (errorData.errorCode === 'ALREADY_CHECKED_IN') {
+          // User is already checked in
+          Alert.alert(
+            '⚠️ Already Checked In',
+            `${errorData.user.username} is already checked in to this event.`,
+            [
+              { text: 'Scan Another', onPress: resetScanner },
+              { text: 'Done', onPress: () => navigation.goBack() }
+            ]
+          );
+        } else {
+          showErrorAlert(errorData.message || 'Check-in failed');
+        }
+      } else {
+        showErrorAlert(error.message || 'Check-in failed');
+      }
+    }
+  };
+
+  // ✅ FIXED: Handle general user profile scanning
+  const handleUserProfileScan = async (qrData) => {
+    console.log('👤 Processing user profile scan');
+    
+    try {
+      const user = await resolveUserFromQR(qrData);
+      
+      Alert.alert(
+        '👤 User Found',
+        `${user.username}${user.bio ? `\n"${user.bio}"` : ''}`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+          {
+            text: user.isFollowing ? 'View Profile' : 'Follow',
+            onPress: user.isFollowing ? 
+              () => navigation.navigate('ProfileScreen', { userId: user._id }) :
+              () => handleQuickFollow(user.shareCode),
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('❌ User profile scan error:', error);
+      showErrorAlert(error.message || 'Failed to scan user profile');
+    }
+  };
+
+  // ✅ NEW: Show confirmation for non-registered users
+  const showNonAttendeeConfirmation = (user) => {
+    setPendingUser(user);
+    setShowConfirmation(true);
+  };
+
+  // ✅ NEW: Handle form requirement
+  const showFormRequiredAlert = (user, formId) => {
+    Alert.alert(
+      '📋 Form Required',
+      `${user.username} needs to complete a form before checking in.`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+        {
+          text: 'Open Form',
+          onPress: () => {
+            navigation.navigate('FormSubmissionScreen', {
+              formId: formId,
+              eventId: eventId,
+              userId: user._id,
+              isCheckIn: true,
+              onSubmissionComplete: () => {
+                navigation.goBack();
+                showSuccessAlert({ 
+                  user: { username: user.username },
+                  message: 'Form completed and user checked in successfully'
+                });
+              }
+            });
+          }
+        }
+      ]
+    );
+  };
+
+  // ✅ NEW: Handle non-attendee entry confirmation
+  const confirmNonAttendeeEntry = async () => {
+    try {
+      const response = await api.post(`/api/events/${eventId}/checkin`, {
+        qrCode: JSON.stringify({
+          type: 'user_profile',
+          userId: pendingUser._id,
+          shareCode: pendingUser.shareCode,
+          username: pendingUser.username
+        }),
+        confirmEntry: true // ✅ Tell backend to allow non-registered user
+      });
+
+      setShowConfirmation(false);
+      setPendingUser(null);
+
+      if (response.data.success) {
+        showSuccessAlert({
+          ...response.data,
+          wasAdded: true // Indicate user was added to attendees
+        });
+      } else {
+        showErrorAlert(response.data.message);
+      }
+    } catch (error) {
+      console.error('❌ Confirm entry error:', error);
+      showErrorAlert('Failed to confirm entry. Please try again.');
+    }
+  };
+
+  const rejectNonAttendeeEntry = () => {
+    setShowConfirmation(false);
+    setPendingUser(null);
+    Alert.alert(
+      '❌ Entry Rejected',
+      `${pendingUser?.username || 'User'} was not allowed to enter.`,
+      [{ text: 'Scan Another', onPress: resetScanner }]
+    );
   };
 
   const handleQuickFollow = async (shareCode) => {
@@ -293,77 +406,95 @@ export default function QrScanScreen() {
       showErrorAlert('Failed to follow user');
     }
   };
+const handleEventCheckInQR = async (qrData) => {
+  console.log('📅 Processing event check-in QR:', qrData);
+  
+  try {
+    // This is an event mass check-in QR code that the user scanned
+    const response = await api.post(`/api/events/${qrData.eventId}/self-checkin`, {
+      qrToken: qrData.token
+    });
 
-  const handleBarCodeScanned = ({ type, data }) => {
-    if (scanned) return;
-
-    setScanned(true);
-    Vibration.vibrate(100);
-
-    console.log('📊 QR Code Scanned:', { type, data });
-
-    try {
-      // Try to parse the QR data
-      let qrData;
-      try {
-        qrData = JSON.parse(data);
-        console.log('📋 Parsed QR Data:', qrData);
-      } catch (e) {
-        // Not JSON, treat as string
-        qrData = data;
-        console.log('📋 Raw QR Data:', qrData);
-      }
-
-      if (isEventCheckin) {
-        // Event check-in mode
-        if (typeof qrData === 'object' && qrData.type === 'event_checkin') {
-          // This is an event check-in QR code
-          handleEventCheckIn(qrData);
-        } else if (typeof qrData === 'object' && qrData.type === 'user_profile') {
-          // This is a user profile QR - check them in manually
-          handleHostCheckInWithForm(qrData.userId);
-        } else if (typeof qrData === 'string') {
-          // Could be a user share code
-          handleUserProfileScan(qrData);
-        } else {
-          showErrorAlert('Invalid QR code for event check-in');
-        }
-      } else {
-        // General QR scanning mode
-        if (typeof qrData === 'object' && qrData.type === 'user_profile') {
-          handleUserProfileScan(JSON.stringify(qrData));
-        } else if (typeof qrData === 'string') {
-          handleUserProfileScan(qrData);
-        } else {
-          showErrorAlert('Unsupported QR code format');
-        }
-      }
-    } catch (error) {
-      console.error('❌ QR scanning error:', error);
-      showErrorAlert('Failed to process QR code');
+    if (response.data.success) {
+      // Show success message with stats
+      Alert.alert(
+        '✅ Welcome!',
+        `You've been checked in to ${qrData.eventTitle}!${response.data.wasAdded ? '\n(Added to attendees)' : ''}`,
+        [
+          { 
+            text: 'View Event', 
+            onPress: () => navigation.navigate('EventDetailsScreen', { eventId: qrData.eventId })
+          },
+          { text: 'Done', onPress: resetScanner }
+        ]
+      );
+    } else {
+      throw new Error(response.data.message);
     }
-  };
-
-  const confirmNonAttendeeEntry = async () => {
-    try {
-      const response = await api.post(`/api/events/${eventId}/checkin`, {
-        qrCode: pendingUser.shareCode || 'unknown',
-        confirmEntry: true
-      });
-
-      setShowConfirmation(false);
-      setPendingUser(null);
-
-      if (response.data.success) {
-        showSuccessAlert(response.data);
+  } catch (error) {
+    console.error('❌ Event check-in error:', error);
+    
+    if (error.response && error.response.data) {
+      const errorData = error.response.data;
+      
+      if (errorData.errorCode === 'FORM_REQUIRED') {
+        // User needs to complete form first
+        Alert.alert(
+          '📋 Form Required',
+          'You need to complete a form before checking in to this event.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: resetScanner },
+            {
+              text: 'Complete Form',
+              onPress: () => {
+                navigation.navigate('FormSubmissionScreen', {
+                  formId: errorData.formId,
+                  eventId: qrData.eventId,
+                  isCheckIn: true,
+                  onSubmissionComplete: () => {
+                    navigation.goBack();
+                    // Try check-in again after form completion
+                    setTimeout(() => {
+                      handleEventCheckInQR(qrData);
+                    }, 500);
+                  }
+                });
+              }
+            }
+          ]
+        );
+      } else if (errorData.errorCode === 'ALREADY_CHECKED_IN') {
+        Alert.alert(
+          '⚠️ Already Checked In',
+          'You are already checked in to this event!',
+          [
+            { 
+              text: 'View Event', 
+              onPress: () => navigation.navigate('EventDetailsScreen', { eventId: qrData.eventId })
+            },
+            { text: 'Done', onPress: resetScanner }
+          ]
+        );
+      } else if (errorData.errorCode === 'NOT_REGISTERED') {
+        Alert.alert(
+          '❌ Not Registered',
+          'You must be registered for this event to check in. Please contact the event organizer.',
+          [{ text: 'OK', onPress: resetScanner }]
+        );
+      } else if (errorData.errorCode === 'INVALID_TOKEN') {
+        Alert.alert(
+          '❌ Invalid Code',
+          'This check-in code is invalid or has expired. Please ask the event organizer for a new one.',
+          [{ text: 'OK', onPress: resetScanner }]
+        );
       } else {
-        showErrorAlert(response.data.message);
+        showErrorAlert(errorData.message || 'Check-in failed');
       }
-    } catch (error) {
-      console.error('❌ Confirm entry error:', error);
-      showErrorAlert('Failed to confirm entry. Please try again.');
+    } else {
+      showErrorAlert(error.message || 'Check-in failed');
     }
-  };
+  }
+};
 
   const showSuccessAlert = (data) => {
     const isGuest = data.status === 'guest_checked_in';
@@ -381,20 +512,9 @@ export default function QrScanScreen() {
     );
   };
 
-  const showAlreadyCheckedInAlert = (user) => {
-    Alert.alert(
-      '⚠️ Already Checked In',
-      `${user.username} is already checked in to this event.`,
-      [
-        { text: 'Scan Another', onPress: resetScanner },
-        { text: 'Done', onPress: () => navigation.goBack() }
-      ]
-    );
-  };
-
   const showErrorAlert = (message) => {
     Alert.alert(
-      '❌ Check-in Error',
+      '❌ Error',
       message,
       [
         { text: 'Try Again', onPress: resetScanner },
@@ -403,40 +523,7 @@ export default function QrScanScreen() {
     );
   };
 
-  const renderFormStatusIndicator = () => {
-    if (!requiresForm) return null;
-
-    return (
-      <View style={styles.formStatusIndicator}>
-        <Ionicons name="document-text" size={16} color="#FFFFFF" />
-        <Text style={styles.formStatusText}>Form required for check-in</Text>
-      </View>
-    );
-  };
-
-  const renderPermissionScreen = () => (
-    <View style={styles.permissionContainer}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={StyleSheet.absoluteFillObject}
-      />
-      <View style={styles.permissionContent}>
-        <Ionicons name="camera-outline" size={80} color="#FFFFFF" />
-        <Text style={styles.permissionTitle}>Camera Access Required</Text>
-        <Text style={styles.permissionSubtitle}>
-          To scan QR codes, we need access to your camera. This allows you to check in to events and connect with other users.
-        </Text>
-        <TouchableOpacity
-          style={styles.permissionButton}
-          onPress={requestPermission}
-        >
-          <Text style={styles.permissionButtonText}>Grant Camera Access</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  // Check camera permissions
+  // Permission handling
   if (!permission) {
     return <View style={styles.container} />;
   }
@@ -445,7 +532,25 @@ export default function QrScanScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#667eea" />
-        {renderPermissionScreen()}
+        <View style={styles.permissionContainer}>
+          <LinearGradient
+            colors={['#667eea', '#764ba2']}
+            style={StyleSheet.absoluteFillObject}
+          />
+          <View style={styles.permissionContent}>
+            <Ionicons name="camera-outline" size={80} color="#FFFFFF" />
+            <Text style={styles.permissionTitle}>Camera Access Required</Text>
+            <Text style={styles.permissionSubtitle}>
+              To scan QR codes, we need access to your camera. This allows you to check in to events and connect with other users.
+            </Text>
+            <TouchableOpacity
+              style={styles.permissionButton}
+              onPress={requestPermission}
+            >
+              <Text style={styles.permissionButtonText}>Grant Camera Access</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </SafeAreaView>
     );
   }
@@ -499,34 +604,40 @@ export default function QrScanScreen() {
           barcodeScannerSettings={{
             barcodeTypes: ['qr', 'pdf417'],
           }}
-        >
-          <View style={styles.scanOverlay}>
-            <View style={styles.scanFrame}>
-              <Animated.View
-                style={[
-                  styles.scanLine,
-                  {
-                    transform: [{ translateY: scanLineTranslateY }],
-                  },
-                ]}
-              />
-            </View>
-            
-            <View style={styles.instructionsContainer}>
-              <Text style={styles.instructionsText}>
-                {isEventCheckin
+        />
+        {/* ✅ FIXED: Overlay moved outside CameraView to fix warning */}
+        <View style={styles.scanOverlay}>
+          <View style={styles.scanFrame}>
+            <Animated.View
+              style={[
+                styles.scanLine,
+                {
+                  transform: [{ translateY: scanLineTranslateY }],
+                },
+              ]}
+            />
+          </View>
+          
+          <View style={styles.instructionsContainer}>
+            <Text style={styles.instructionsText}>
+              {processing ? 'Processing...' :
+                isEventCheckin
                   ? requiresForm
                     ? 'Scan attendee QR codes to check them in\nForm will be required after scanning'
                     : 'Scan attendee QR codes to check them in'
                   : 'Point your camera at a QR code to scan'
-                }
-              </Text>
-            </View>
-
-            {/* Form Status Indicator */}
-            {renderFormStatusIndicator()}
+              }
+            </Text>
           </View>
-        </CameraView>
+
+          {/* Form Status Indicator */}
+          {requiresForm && (
+            <View style={styles.formStatusIndicator}>
+              <Ionicons name="document-text" size={16} color="#FFFFFF" />
+              <Text style={styles.formStatusText}>Form required for check-in</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Bottom Controls */}
@@ -542,7 +653,6 @@ export default function QrScanScreen() {
           <TouchableOpacity
             style={styles.manualButton}
             onPress={() => {
-              // Navigate to attendee list for manual check-in
               navigation.replace('AttendeeListScreen', { eventId });
             }}
           >
@@ -552,7 +662,7 @@ export default function QrScanScreen() {
         )}
       </View>
 
-      {/* Confirmation Modal */}
+      {/* ✅ NEW: Non-Attendee Confirmation Modal */}
       <Modal
         visible={showConfirmation}
         transparent={true}
@@ -590,15 +700,10 @@ export default function QrScanScreen() {
             <View style={styles.confirmationButtons}>
               <TouchableOpacity
                 style={[styles.confirmButton, styles.rejectButton]}
-                onPress={() => {
-                  setShowConfirmation(false);
-                  setPendingUser(null);
-                  resetScanner();
-                }}
+                onPress={rejectNonAttendeeEntry}
               >
                 <Text style={styles.rejectButtonText}>Reject</Text>
               </TouchableOpacity>
-              
               <TouchableOpacity
                 style={[styles.confirmButton, styles.allowButton]}
                 onPress={confirmNonAttendeeEntry}
@@ -618,57 +723,74 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  
+  // Header styles
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: 20,
+    paddingBottom: 15,
     backgroundColor: 'rgba(0,0,0,0.8)',
   },
   backButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerContent: {
     flex: 1,
     alignItems: 'center',
+    marginHorizontal: 20,
   },
   headerTitle: {
-    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
+    color: '#FFFFFF',
   },
   headerSubtitle: {
-    color: '#CCCCCC',
     fontSize: 14,
+    color: 'rgba(255,255,255,0.7)',
     marginTop: 2,
   },
   flashButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  
+  // Camera styles
   cameraContainer: {
     flex: 1,
+    position: 'relative',
   },
   camera: {
     flex: 1,
   },
   scanOverlay: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'transparent',
+    pointerEvents: 'none', // Allow camera interactions to pass through
   },
   scanFrame: {
     width: 250,
     height: 250,
     borderWidth: 2,
-    borderColor: '#FFFFFF',
-    borderRadius: 20,
+    borderColor: '#00FF00',
+    borderRadius: 12,
     backgroundColor: 'transparent',
     position: 'relative',
     overflow: 'hidden',
@@ -716,6 +838,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  
+  // Bottom controls
   bottomControls: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -742,6 +866,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
+  
+  // Permission screen
   permissionContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -777,6 +903,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  
+  // Confirmation modal
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
