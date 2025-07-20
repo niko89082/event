@@ -1021,11 +1021,15 @@ router.get('/event-photos/:eventId', protect, async (req, res) => {
     
     console.log(`🔍 Access check - isHost: ${isHost}, isAttendee: ${isAttendee}`);
     
-    if (!isHost && !isAttendee) {
-      console.log(`❌ Access denied for user ${userId} to event ${eventId}`);
-      return res.status(403).json({ 
-        message: 'Access denied - you must be attending this event to view photos' 
-      });
+    if (event.privacyLevel === 'public') {
+  // Allow access for public events
+    } else {
+      // For non-public events, check attendee status
+      if (!isHost && !isAttendee) {
+        return res.status(403).json({ 
+          message: 'Access denied - you must be attending this event to view photos' 
+        });
+      }
     }
 
     // ✅ FIXED: Query both event and taggedEvent fields for consistency
