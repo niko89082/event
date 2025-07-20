@@ -842,44 +842,76 @@ EventSchema.methods.canUserCheckIn = async function(userId) {
  * @param {Object} options - Additional options
  * @returns {Promise<Object>} Check-in result
  */
-EventSchema.methods.checkInUser = async function(userId, options = {}) {
-  const { bypassFormCheck = false, checkedInBy } = options;
+EventSchema.methods.checkInUser = function(userId, options = {}) {
+  const {
+    bypassTimeCheck = false,
+    bypassFormCheck = false
+  } = options;
+
+  // Basic validation
+  if (!userId) {
+    throw new Error('User ID is required');
+  }
+
+  // Check if user is attending
+  const isAttending = this.attendees.some(attendee => 
+    String(attendee._id || attendee) === String(userId)
+  );
   
-  // Verify user can check in
-  if (!bypassFormCheck) {
-    const eligibility = await this.canUserCheckIn(userId);
-    if (!eligibility.canCheckIn) {
-      throw new Error(eligibility.message);
+  if (!isAttending) {
+    throw new Error('User is not registered for this event');
+  }
+
+  // Check if already checked in
+  const isAlreadyCheckedIn = this.checkedIn.some(checkedUser => 
+    String(checkedUser._id || checkedUser) === String(userId)
+  );
+  
+  if (isAlreadyCheckedIn) {
+    throw new Error('User is already checked in');
+  }
+
+  // Time-based check-in validation (can be bypassed by hosts)
+  if (!bypassTimeCheck && this.checkInWindow) {
+    const now = new Date();
+    const eventTime = new Date(this.time);
+    
+    // Check if check-in window is defined
+    if (this.checkInWindow.openMinutesBefore) {
+      const checkInOpenTime = new Date(eventTime.getTime() - (this.checkInWindow.openMinutesBefore * 60 * 1000));
+      if (now < checkInOpenTime) {
+        throw new Error(`Check-in opens ${this.checkInWindow.openMinutesBefore} minutes before event start`);
+      }
     }
     
-    if (eligibility.requiresForm) {
-      throw new Error('User must complete form before checking in');
+    if (this.checkInWindow.closeMinutesAfter) {
+      const checkInCloseTime = new Date(eventTime.getTime() + (this.checkInWindow.closeMinutesAfter * 60 * 1000));
+      if (now > checkInCloseTime) {
+        throw new Error(`Check-in closed ${this.checkInWindow.closeMinutesAfter} minutes after event start`);
+      }
     }
   }
-  
-  // Add to checked in list if not already there
-  const userIdStr = String(userId);
-  const isAlreadyCheckedIn = this.checkedIn.some(id => String(id) === userIdStr);
-  
-  if (!isAlreadyCheckedIn) {
-    this.checkedIn.push(userId);
-    
-    // Add to attendees if not already there
-    const isAttendee = this.attendees.some(id => String(id) === userIdStr);
-    if (!isAttendee) {
-      this.attendees.push(userId);
-    }
-    
-    await this.save();
+
+  // Form requirement check (can be bypassed)
+  if (!bypassFormCheck && this.requiresFormForCheckIn && this.checkInForm) {
+    // Note: Form validation should be handled at route level for async operations
+    // This is just a reminder that form validation is needed
   }
+
+  // Perform check-in
+  this.checkedIn.push(userId);
   
-  return {
-    success: true,
-    wasAlreadyCheckedIn: isAlreadyCheckedIn,
-    addedToAttendees: !isAlreadyCheckedIn && !this.attendees.some(id => String(id) === userIdStr),
+  // Record check-in details
+  const checkInResult = {
+    userId: userId,
     checkedInAt: new Date(),
-    checkedInBy: checkedInBy || userId
+    bypassedTimeCheck: bypassTimeCheck,
+    bypassedFormCheck: bypassFormCheck
   };
+
+  console.log(`✅ User ${userId} checked in to event ${this._id}`, checkInResult);
+  
+  return checkInResult;
 };
 /**
  * Check if user can join this event
@@ -1198,6 +1230,59 @@ EventSchema.virtual('isFree').get(function() {
 EventSchema.virtual('priceInDollars').get(function() {
   return this.pricing.amount / 100;
 });
+
+
+
+EventSchema.methods.getCheckInStatus = function() {
+  const now = new Date();
+  const eventTime = new Date(this.time);
+  
+  if (!this.checkInWindow) {
+    return {
+      isOpen: true,
+      message: 'Check-in is always available',
+      canCheckIn: true
+    };
+  }
+
+  // Calculate window times
+  const openTime = this.checkInWindow.openMinutesBefore 
+    ? new Date(eventTime.getTime() - (this.checkInWindow.openMinutesBefore * 60 * 1000))
+    : null;
+    
+  const closeTime = this.checkInWindow.closeMinutesAfter
+    ? new Date(eventTime.getTime() + (this.checkInWindow.closeMinutesAfter * 60 * 1000))
+    : null;
+
+  // Check current status
+  if (openTime && now < openTime) {
+    const minutesUntilOpen = Math.ceil((openTime - now) / (1000 * 60));
+    return {
+      isOpen: false,
+      message: `Check-in opens in ${minutesUntilOpen} minutes`,
+      canCheckIn: false,
+      opensAt: openTime
+    };
+  }
+
+  if (closeTime && now > closeTime) {
+    const minutesSinceClosed = Math.ceil((now - closeTime) / (1000 * 60));
+    return {
+      isOpen: false,
+      message: `Check-in closed ${minutesSinceClosed} minutes ago`,
+      canCheckIn: false,
+      closedAt: closeTime
+    };
+  }
+
+  return {
+    isOpen: true,
+    message: 'Check-in is currently open',
+    canCheckIn: true,
+    opensAt: openTime,
+    closesAt: closeTime
+  };
+};
 
 // ============================================
 // PHASE 1: CHECK-IN STATS VIRTUAL

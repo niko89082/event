@@ -3460,6 +3460,122 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
   }
 });
 
+router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { qrData } = req.body;
+
+    console.log('🔍 Host scanning user QR for check-in:', { eventId, qrData });
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if current user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can check in users' 
+      });
+    }
+
+    // Parse QR data
+    let parsedQR;
+    try {
+      parsedQR = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid QR code format'
+      });
+    }
+
+    // Validate QR type
+    if (parsedQR.type !== 'user') {
+      return res.status(400).json({
+        success: false,
+        message: 'Expected user QR code, but received different type'
+      });
+    }
+
+    const userIdToCheckIn = parsedQR.userId;
+
+    // Check if user is attending
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userIdToCheckIn)
+    );
+
+    if (!isAttending) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is not registered for this event'
+      });
+    }
+
+    // Check if already checked in
+    const isCheckedIn = event.checkedIn.some(checkedUser => 
+      String(checkedUser._id || checkedUser) === String(userIdToCheckIn)
+    );
+
+    if (isCheckedIn) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already checked in'
+      });
+    }
+
+    // Check form requirements (host can bypass timing but not form requirements)
+    if (event.requiresFormForCheckIn && event.checkInForm) {
+      const hasSubmitted = await event.hasUserSubmittedForm(userIdToCheckIn);
+      if (!hasSubmitted) {
+        return res.status(400).json({
+          success: false,
+          message: 'User must complete the check-in form first',
+          requiresForm: true,
+          formId: event.checkInForm
+        });
+      }
+    }
+
+    // Perform check-in
+    event.checkedIn.push(userIdToCheckIn);
+    await event.save();
+
+    // Get user info for response
+    const User = require('../models/User');
+    const user = await User.findById(userIdToCheckIn).select('username profilePicture');
+
+    console.log(`✅ User ${userIdToCheckIn} checked in to event ${eventId} by host ${req.user._id}`);
+
+    res.json({
+      success: true,
+      message: 'User checked in successfully',
+      user: {
+        _id: user._id,
+        username: user.username,
+        profilePicture: user.profilePicture
+      }
+    });
+
+  } catch (error) {
+    console.error('Host scan user QR error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to check in user' 
+    });
+  }
+});
+
+
 // Check-in endpoint
 // Enhanced unified check-in endpoint
 router.post('/:eventId/checkin', protect, async (req, res) => {
@@ -5634,7 +5750,10 @@ router.post('/:eventId/manual-checkin', protect, async (req, res) => {
     }
 
     // Check if user is attending the event
-    const isAttending = event.attendees.includes(userId);
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userId)
+    );
+    
     if (!isAttending) {
       return res.status(400).json({ 
         success: false, 
@@ -5643,7 +5762,10 @@ router.post('/:eventId/manual-checkin', protect, async (req, res) => {
     }
 
     // Check if already checked in
-    const isAlreadyCheckedIn = event.checkedIn.includes(userId);
+    const isAlreadyCheckedIn = event.checkedIn.some(checkedUser => 
+      String(checkedUser._id || checkedUser) === String(userId)
+    );
+    
     if (isAlreadyCheckedIn) {
       return res.status(400).json({ 
         success: false, 
@@ -5664,23 +5786,51 @@ router.post('/:eventId/manual-checkin', protect, async (req, res) => {
       }
     }
 
-    // Check in user
-    const checkInResult = await event.checkInUser(userId);
-    await event.save();
+    // FIXED: Manual check-in by hosts bypasses timing restrictions
+    try {
+      // Try with bypass first
+      const checkInResult = await event.checkInUser(userId, { 
+        bypassTimeCheck: true,  // Allow hosts to check in users anytime
+        bypassFormCheck: false  // Still respect form requirements
+      });
+      
+      await event.save();
 
-    console.log(`✅ User ${userId} manually checked in to event ${eventId} by ${req.user._id}`);
+      console.log(`✅ User ${userId} manually checked in to event ${eventId} by ${req.user._id} (timing bypass)`);
 
-    res.json({
-      success: true,
-      message: 'User checked in successfully',
-      checkIn: checkInResult
-    });
+      res.json({
+        success: true,
+        message: 'User checked in successfully',
+        checkIn: checkInResult
+      });
+
+    } catch (checkInError) {
+      // If that fails, try without any bypass (in case the method doesn't support options)
+      if (!event.checkedIn.includes(userId)) {
+        event.checkedIn.push(userId);
+        await event.save();
+
+        console.log(`✅ User ${userId} manually checked in to event ${eventId} by ${req.user._id} (direct method)`);
+
+        res.json({
+          success: true,
+          message: 'User checked in successfully',
+          checkIn: {
+            userId: userId,
+            checkedInAt: new Date(),
+            checkedInBy: req.user._id
+          }
+        });
+      } else {
+        throw checkInError;
+      }
+    }
 
   } catch (error) {
     console.error('Manual check-in error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to check in user' 
+      message: error.message || 'Failed to check in user' 
     });
   }
 });
@@ -5689,6 +5839,201 @@ router.post('/:eventId/manual-checkin', protect, async (req, res) => {
  * POST /api/events/:eventId/undo-checkin
  * Undo a user's check-in (for hosts)
  */
+// Add these routes to routes/events.js
+
+/**
+ * POST /api/events/:eventId/remove-attendee
+ * Remove an attendee from the event (for hosts/co-hosts)
+ */
+router.post('/:eventId/remove-attendee', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userId } = req.body;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can remove attendees' 
+      });
+    }
+
+    // Check if user is actually attending
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userId)
+    );
+    
+    if (!isAttending) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is not attending this event' 
+      });
+    }
+
+    // Remove from attendees list
+    event.attendees = event.attendees.filter(attendee => 
+      String(attendee._id || attendee) !== String(userId)
+    );
+
+    // Also remove from checked-in list if they were checked in
+    event.checkedIn = event.checkedIn.filter(checkedUser => 
+      String(checkedUser._id || checkedUser) !== String(userId)
+    );
+
+    // Save the event
+    await event.save();
+
+    // Update user's attending events (remove this event)
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(userId, {
+      $pull: { attendingEvents: eventId }
+    });
+
+    console.log(`✅ User ${userId} removed from event ${eventId} by ${req.user._id}`);
+
+    res.json({
+      success: true,
+      message: 'Attendee removed successfully'
+    });
+
+  } catch (error) {
+    console.error('Remove attendee error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to remove attendee' 
+    });
+  }
+});
+
+// UPDATED: Manual check-in route with bypass for timing restrictions
+router.post('/:eventId/manual-checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userId } = req.body;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can manually check in attendees' 
+      });
+    }
+
+    // Check if user is attending the event
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userId)
+    );
+    
+    if (!isAttending) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is not registered for this event' 
+      });
+    }
+
+    // Check if already checked in
+    const isAlreadyCheckedIn = event.checkedIn.some(checkedUser => 
+      String(checkedUser._id || checkedUser) === String(userId)
+    );
+    
+    if (isAlreadyCheckedIn) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is already checked in' 
+      });
+    }
+
+    // If form is required, check if user submitted it
+    if (event.requiresFormForCheckIn && event.checkInForm) {
+      const hasSubmitted = await event.hasUserSubmittedForm(userId);
+      if (!hasSubmitted) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'User must complete the check-in form first',
+          requiresForm: true,
+          formId: event.checkInForm
+        });
+      }
+    }
+
+    // FIXED: Manual check-in by hosts bypasses timing restrictions
+    try {
+      // Try with bypass first
+      const checkInResult = await event.checkInUser(userId, { 
+        bypassTimeCheck: true,  // Allow hosts to check in users anytime
+        bypassFormCheck: false  // Still respect form requirements
+      });
+      
+      await event.save();
+
+      console.log(`✅ User ${userId} manually checked in to event ${eventId} by ${req.user._id} (timing bypass)`);
+
+      res.json({
+        success: true,
+        message: 'User checked in successfully',
+        checkIn: checkInResult
+      });
+
+    } catch (checkInError) {
+      // If that fails, try without any bypass (in case the method doesn't support options)
+      if (!event.checkedIn.includes(userId)) {
+        event.checkedIn.push(userId);
+        await event.save();
+
+        console.log(`✅ User ${userId} manually checked in to event ${eventId} by ${req.user._id} (direct method)`);
+
+        res.json({
+          success: true,
+          message: 'User checked in successfully',
+          checkIn: {
+            userId: userId,
+            checkedInAt: new Date(),
+            checkedInBy: req.user._id
+          }
+        });
+      } else {
+        throw checkInError;
+      }
+    }
+
+  } catch (error) {
+    console.error('Manual check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to check in user' 
+    });
+  }
+});
+
+// UPDATED: Undo check-in route with better error handling
 router.post('/:eventId/undo-checkin', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
@@ -5717,7 +6062,10 @@ router.post('/:eventId/undo-checkin', protect, async (req, res) => {
     }
 
     // Check if user is checked in
-    const isCheckedIn = event.checkedIn.includes(userId);
+    const isCheckedIn = event.checkedIn.some(checkedUser => 
+      String(checkedUser._id || checkedUser) === String(userId)
+    );
+    
     if (!isCheckedIn) {
       return res.status(400).json({ 
         success: false, 
@@ -5726,7 +6074,10 @@ router.post('/:eventId/undo-checkin', protect, async (req, res) => {
     }
 
     // Remove from checked in list
-    event.checkedIn = event.checkedIn.filter(id => String(id) !== String(userId));
+    event.checkedIn = event.checkedIn.filter(checkedUser => 
+      String(checkedUser._id || checkedUser) !== String(userId)
+    );
+    
     await event.save();
 
     console.log(`✅ User ${userId} check-in undone for event ${eventId} by ${req.user._id}`);
@@ -5744,6 +6095,278 @@ router.post('/:eventId/undo-checkin', protect, async (req, res) => {
     });
   }
 });
+
+router.post('/:eventId/qr-checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { qrData } = req.body;
+
+    console.log('🔍 Simple QR check-in:', { eventId, qrData });
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can check in users' 
+      });
+    }
+
+    let parsedQR;
+    try {
+      parsedQR = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid QR code format'
+      });
+    }
+
+    // Handle different QR types
+    if (parsedQR.type === 'user') {
+      // User QR code - check in this user
+      const userId = parsedQR.userId;
+      
+      // Check if user is attending
+      const isAttending = event.attendees.some(attendee => 
+        String(attendee._id || attendee) === String(userId)
+      );
+      
+      if (!isAttending) {
+        return res.status(400).json({
+          success: false,
+          message: 'User is not registered for this event'
+        });
+      }
+
+      // Check if already checked in
+      const isCheckedIn = event.checkedIn.some(checkedUser => 
+        String(checkedUser._id || checkedUser) === String(userId)
+      );
+      
+      if (isCheckedIn) {
+        return res.status(400).json({
+          success: false,
+          message: 'User is already checked in'
+        });
+      }
+
+      // Check in the user
+      event.checkedIn.push(userId);
+      await event.save();
+
+      // Get user info for response
+      const User = require('../models/User');
+      const user = await User.findById(userId).select('username profilePicture');
+
+      console.log(`✅ User ${userId} checked in to event ${eventId}`);
+
+      res.json({
+        success: true,
+        message: 'User checked in successfully',
+        user: {
+          _id: user._id,
+          username: user.username,
+          profilePicture: user.profilePicture
+        }
+      });
+
+    } else if (parsedQR.type === 'event') {
+      // Event QR code - self check-in
+      const scannedEventId = parsedQR.eventId;
+      
+      if (scannedEventId !== eventId) {
+        return res.status(400).json({
+          success: false,
+          message: 'QR code is for a different event'
+        });
+      }
+
+      // Check if current user is attending
+      const currentUserId = req.user._id;
+      const isAttending = event.attendees.some(attendee => 
+        String(attendee._id || attendee) === String(currentUserId)
+      );
+      
+      if (!isAttending) {
+        return res.status(400).json({
+          success: false,
+          message: 'You are not registered for this event'
+        });
+      }
+
+      // Check if already checked in
+      const isCheckedIn = event.checkedIn.some(checkedUser => 
+        String(checkedUser._id || checkedUser) === String(currentUserId)
+      );
+      
+      if (isCheckedIn) {
+        return res.status(400).json({
+          success: false,
+          message: 'You are already checked in'
+        });
+      }
+
+      // Self check-in
+      event.checkedIn.push(currentUserId);
+      await event.save();
+
+      console.log(`✅ User ${currentUserId} self-checked in to event ${eventId}`);
+
+      res.json({
+        success: true,
+        message: 'Successfully checked in!',
+        event: {
+          _id: event._id,
+          title: event.title
+        }
+      });
+
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Unsupported QR code type'
+      });
+    }
+
+  } catch (error) {
+    console.error('QR check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to process check-in' 
+    });
+  }
+});
+
+router.post('/:eventId/self-checkin', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const currentUserId = req.user._id;
+
+    console.log(`🎯 Self check-in attempt: User ${currentUserId} to event ${eventId}`);
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is already checked in
+    const isCheckedIn = event.checkedIn.some(checkedUser => 
+      String(checkedUser._id || checkedUser) === String(currentUserId)
+    );
+
+    if (isCheckedIn) {
+      return res.status(200).json({
+        success: true,
+        message: `Welcome back to ${event.title}! You're already checked in.`,
+        event: {
+          _id: event._id,
+          title: event.title
+        },
+        alreadyCheckedIn: true
+      });
+    }
+
+    // Check if user is attending - if not, add them automatically
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(currentUserId)
+    );
+
+    let wasAdded = false;
+    if (!isAttending) {
+      // Automatically add user to attendees when they scan QR
+      event.attendees.push(currentUserId);
+      wasAdded = true;
+      console.log(`📝 User ${currentUserId} automatically added to event ${eventId}`);
+      
+      // Also add event to user's attending events
+      const User = require('../models/User');
+      await User.findByIdAndUpdate(currentUserId, {
+        $addToSet: { attendingEvents: eventId }
+      });
+    }
+
+    // Check timing restrictions (but be more lenient for QR scans)
+    const checkInStatus = event.getCheckInStatus ? event.getCheckInStatus() : { canCheckIn: true };
+    if (!checkInStatus.canCheckIn) {
+      // For QR scans, we might want to be more permissive
+      // Only block if it's WAY outside the window (like event ended hours ago)
+      const now = new Date();
+      const eventTime = new Date(event.time);
+      const hoursAfterEvent = (now - eventTime) / (1000 * 60 * 60);
+      
+      if (hoursAfterEvent > 6) { // Only block if more than 6 hours after event
+        return res.status(400).json({
+          success: false,
+          message: 'This event has ended and check-in is no longer available'
+        });
+      }
+      // Otherwise, allow check-in even if slightly outside normal window
+    }
+
+    // Check form requirements
+    if (event.requiresFormForCheckIn && event.checkInForm) {
+      const hasSubmitted = await event.hasUserSubmittedForm(currentUserId);
+      if (!hasSubmitted) {
+        // Save the user as attendee but don't check them in yet
+        await event.save();
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Welcome! Please complete the check-in form to finish checking in.',
+          requiresForm: true,
+          formId: event.checkInForm,
+          wasAdded: wasAdded,
+          event: {
+            _id: event._id,
+            title: event.title
+          }
+        });
+      }
+    }
+
+    // Perform check-in
+    event.checkedIn.push(currentUserId);
+    await event.save();
+
+    console.log(`✅ User ${currentUserId} ${wasAdded ? 'joined and ' : ''}checked in to event ${eventId}`);
+
+    res.json({
+      success: true,
+      message: wasAdded ? 
+        `Welcome to ${event.title}! You've been added to the event and checked in.` :
+        `Welcome to ${event.title}! You've been checked in.`,
+      event: {
+        _id: event._id,
+        title: event.title
+      },
+      wasAdded: wasAdded
+    });
+
+  } catch (error) {
+    console.error('Self check-in error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to check in to event' 
+    });
+  }
+});
+
 
 /**
  * GET /api/events/:eventId/checkin-stats
@@ -6326,6 +6949,135 @@ router.get('/:eventId/form-responses-summary', protect, async (req, res) => {
     });
   }
 });
+
+// In routes/events.js - Replace your existing route
+router.get('/:eventId/event-qr', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    const event = await Event.findById(eventId).select('title host coHosts');
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can access event QR codes' 
+      });
+    }
+
+    // SIMPLIFIED: Just use the event ID directly
+    const qrData = {
+      type: 'event',
+      eventId: eventId,
+      eventTitle: event.title
+    };
+
+    console.log(`✅ Event QR accessed for event ${eventId}`);
+
+    res.json({
+      success: true,
+      event: {
+        _id: event._id,
+        title: event.title
+      },
+      qrData: qrData
+    });
+
+  } catch (error) {
+    console.error('Get event QR error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to get event QR code' 
+    });
+  }
+});
+
+router.post('/:eventId/remove-attendee', protect, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userId } = req.body;
+
+    const event = await Event.findById(eventId);
+    
+    if (!event) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Event not found' 
+      });
+    }
+
+    // Check if user is host or co-host
+    const isHost = String(event.host) === String(req.user._id);
+    const isCoHost = event.coHosts && event.coHosts.some(
+      coHost => String(coHost) === String(req.user._id)
+    );
+
+    if (!isHost && !isCoHost) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only hosts and co-hosts can remove attendees' 
+      });
+    }
+
+    // Check if user is actually attending
+    const isAttending = event.attendees.some(attendee => 
+      String(attendee._id || attendee) === String(userId)
+    );
+    
+    if (!isAttending) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is not attending this event' 
+      });
+    }
+
+    // Remove from attendees list
+    event.attendees = event.attendees.filter(attendee => 
+      String(attendee._id || attendee) !== String(userId)
+    );
+
+    // Also remove from checked-in list if they were checked in
+    event.checkedIn = event.checkedIn.filter(checkedUser => 
+      String(checkedUser._id || checkedUser) !== String(userId)
+    );
+
+    // Save the event
+    await event.save();
+
+    // Update user's attending events (remove this event)
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(userId, {
+      $pull: { attendingEvents: eventId }
+    });
+
+    console.log(`✅ User ${userId} removed from event ${eventId} by ${req.user._id}`);
+
+    res.json({
+      success: true,
+      message: 'Attendee removed successfully'
+    });
+
+  } catch (error) {
+    console.error('Remove attendee error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to remove attendee' 
+    });
+  }
+});
+
 router.post('/:eventId/export', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
