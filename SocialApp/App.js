@@ -15,7 +15,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 // Global Screens (accessible from anywhere)
 import CreateMemoryScreen from './screens/CreateMemoryScreen';
 import ProfileScreen from './screens/ProfileScreen';
-import FollowListScreen from './screens/FollowListScreen';
+import FriendsListScreen from './screens/FriendsListScreen';
+import FriendRequestsScreen from './screens/FriendRequestsScreen';
 import UserSettingsScreen from './screens/UserSettingsScreen';
 import EditProfileScreen from './screens/EditProfileScreen';
 import SearchScreen from './screens/SearchScreen';
@@ -201,8 +202,25 @@ function AppNavigator({ onLogout }) {
               }}
             />
             <RootStack.Screen 
-              name="FollowListScreen" 
-              component={FollowListScreen}
+              name="FriendRequestsScreen" 
+              component={FriendRequestsScreen}
+              options={{ 
+                headerShown: true,
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
+            />
+            <RootStack.Screen 
+              name="FriendsListScreen" 
+              component={FriendsListScreen}
               options={{ 
                 headerShown: true,
                 headerStyle: {

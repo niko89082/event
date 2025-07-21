@@ -399,8 +399,9 @@ UserSchema.methods.sendFriendRequest = async function(userId, message = '') {
     throw new Error('This user is not accepting friend requests');
   }
   
+  // 🔧 FIXED: Use new mongoose.Types.ObjectId() instead of mongoose.Types.ObjectId()
   const friendshipData = {
-    user: mongoose.Types.ObjectId(userId),
+    user: new mongoose.Types.ObjectId(userId),
     status: 'pending',
     initiatedBy: this._id,
     createdAt: new Date(),

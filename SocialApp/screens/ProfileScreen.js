@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js - UPDATED WITH SWIPE TABS + CENTERED HEADER + 2-COLUMN GRID
+// screens/ProfileScreen.js - FIXED: Updated with correct API endpoints
 import React, { useEffect, useState, useContext, useRef, useCallback } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -45,8 +45,13 @@ export default function ProfileScreen() {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [memoriesLoading, setMemoriesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [hasRequested, setHasRequested] = useState(false);
+  
+  // NEW: Friends system state
+  const [friendshipStatus, setFriendshipStatus] = useState('not-friends');
+  const [friendshipData, setFriendshipData] = useState(null);
+  const [mutualFriends, setMutualFriends] = useState([]);
+  const [friendsCount, setFriendsCount] = useState(0);
+  
   const [eventFilter, setEventFilter] = useState('all');
   const [showManageModal, setShowManageModal] = useState(false);
   const [showMemoriesTab, setShowMemoriesTab] = useState(true);
@@ -73,7 +78,7 @@ export default function ProfileScreen() {
     currentTabIndex.current = activeTabIndex;
   }, [activeTabIndex]);
 
-  // FIXED: Clean PanResponder without debug logging
+  // PanResponder for swipe functionality (same as before)
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (evt, gestureState) => {
@@ -81,7 +86,7 @@ export default function ProfileScreen() {
         return Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2 && !isAnimating.current;
       },
       onStartShouldSetPanResponder: () => {
-        return false; // Don't capture on start, wait for movement
+        return false;
       },
       onPanResponderGrant: () => {
         scrollX.stopAnimation();
@@ -95,7 +100,6 @@ export default function ProfileScreen() {
         const baseOffset = -currentTab * SCREEN_WIDTH;
         let newOffset = baseOffset + dx;
         
-        // Add resistance at boundaries
         const minOffset = -(tabs.length - 1) * SCREEN_WIDTH;
         const maxOffset = 0;
         const RESISTANCE_FACTOR = 0.25;
@@ -124,10 +128,8 @@ export default function ProfileScreen() {
         
         if (shouldSwipe) {
           if (dx > 0 && currentTab > 0) {
-            // Swiping RIGHT -> previous tab
             targetIndex = currentTab - 1;
           } else if (dx < 0 && currentTab < tabs.length - 1) {
-            // Swiping LEFT -> next tab
             targetIndex = currentTab + 1;
           }
         }
@@ -135,19 +137,17 @@ export default function ProfileScreen() {
         switchToTab(targetIndex);
       },
       onPanResponderTerminationRequest: (evt, gestureState) => {
-        // Be more protective of LTR swipes since they're getting terminated more
         const { dx } = gestureState;
         const isLTRSwipe = dx < 0;
         
         return isLTRSwipe 
-          ? Math.abs(dx) < 10  // Very protective of LTR
-          : Math.abs(dx) < 25; // Less protective of RTL
+          ? Math.abs(dx) < 10
+          : Math.abs(dx) < 25;
       },
       onPanResponderTerminate: (evt, gestureState) => {
         const { dx } = gestureState;
         const isLTRSwipe = dx < 0;
         
-        // Enhanced recovery logic: More aggressive for LTR swipes
         const recoveryThreshold = isLTRSwipe ? 40 : 60;
         
         if (Math.abs(dx) > recoveryThreshold) {
@@ -170,7 +170,7 @@ export default function ProfileScreen() {
     })
   ).current;
 
-  // Switch to tab function
+  // Switch to tab function (same as before)
   const switchToTab = useCallback((index) => {
     const targetIndex = Math.max(0, Math.min(tabs.length - 1, index));
     
@@ -180,10 +180,8 @@ export default function ProfileScreen() {
     
     const targetContentOffset = -targetIndex * SCREEN_WIDTH;
     
-    // Update state first
     setActiveTabIndex(targetIndex);
     
-    // Then animate horizontal movement
     Animated.timing(scrollX, {
       toValue: targetContentOffset,
       duration: ANIMATION_DURATION,
@@ -191,7 +189,6 @@ export default function ProfileScreen() {
     }).start((finished) => {
       if (finished) {
         isAnimating.current = false;
-        // Load data for the new tab if needed
         if (targetIndex === 1 && events.length === 0) {
           fetchUserEvents();
         } else if (targetIndex === 2 && memories.length === 0) {
@@ -206,7 +203,63 @@ export default function ProfileScreen() {
     switchToTab(index);
   }, [switchToTab]);
 
-  // Fetch user profile data
+  // FIXED: Fetch friendship status with correct endpoint
+  const fetchFriendshipStatus = async () => {
+    if (isSelf) {
+      setFriendshipStatus('self');
+      return;
+    }
+
+    try {
+      const { data } = await api.get(`/api/friends/status/${userId}`);
+      setFriendshipStatus(data.status);
+      setFriendshipData(data.friendship);
+      
+      // Fetch mutual friends if not friends yet
+      if (data.status === 'not-friends') {
+        try {
+          const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
+          setMutualFriends(mutualRes.data.mutualFriends || []);
+        } catch (mutualError) {
+          console.log('Could not fetch mutual friends:', mutualError);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching friendship status:', error);
+      setFriendshipStatus('not-friends');
+    }
+  };
+
+  // FIXED: Fetch friends count using correct endpoint
+  const fetchFriendsCount = async () => {
+  try {
+    // For yourself, use /api/friends/list
+    if (isSelf) {
+      const { data } = await api.get('/api/friends/list?limit=1');
+      setFriendsCount(data.total || 0);
+    } else {
+      // For other users, use /api/friends/:userId
+      try {
+        const { data } = await api.get(`/api/friends/${userId}?limit=1`);
+        setFriendsCount(data.friendsCount || 0);
+      } catch (error) {
+        // If 403 (permission denied), we can still show the count from the error response
+        if (error.response?.status === 403 && error.response?.data?.friendsCount !== undefined) {
+          setFriendsCount(error.response.data.friendsCount);
+          console.log('Friends list is private, but got count:', error.response.data.friendsCount);
+        } else {
+          console.log('Could not fetch friends count:', error);
+          setFriendsCount(0);
+        }
+      }
+    }
+  } catch (error) {
+    console.log('Could not fetch friends count:', error);
+    setFriendsCount(0);
+  }
+};
+
+  // Fetch user profile data (UPDATED for friends system)
   const fetchUserProfile = async (isRefresh = false) => {
     try {
       if (isRefresh) {
@@ -220,21 +273,27 @@ export default function ProfileScreen() {
       console.log('✅ Profile data received:', { 
         username: data.username, 
         isPublic: data.isPublic,
-        followersCount: data.followersCount,
-        followingCount: data.followingCount,
+        friendsCount: data.friendsCount,
         postsCount: data.photos?.length || 0
       });
       
       setUser(data);
       
-      // FIXED: Sort posts by creation date (newest first)
+      // Sort posts by creation date (newest first)
       const sortedPosts = (data.photos || []).sort((a, b) => 
         new Date(b.createdAt) - new Date(a.createdAt)
       );
       setPosts(sortedPosts);
       
-      setIsFollowing(data.isFollowing || false);
-      setHasRequested(data.hasRequested || false);
+      // Set friends count from profile data or fetch separately
+      if (data.friendsCount !== undefined) {
+        setFriendsCount(data.friendsCount);
+      } else {
+        await fetchFriendsCount();
+      }
+
+      // Fetch friendship status
+      await fetchFriendshipStatus();
 
       // Fetch events if on Events tab
       if (activeTabIndex === 1) {
@@ -267,44 +326,39 @@ export default function ProfileScreen() {
     }
   };
 
-  // Fetch user events
+  // Fetch user events (same as before)
   const fetchUserEvents = async () => {
-  try {
-    setEventsLoading(true);
-    
-    // PHASE 1 FIX: Always include past events
-    const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
-    
-    // Sort events by date (newest first for better UX)
-    const sortedEvents = (data.events || []).sort((a, b) => 
-      new Date(b.time) - new Date(a.time)
-    );
-    
-    setEvents(sortedEvents);
-    
-    // Set shared event IDs if available
-    if (isSelf && data.sharedEventIds) {
-      setSharedEventIds(new Set(data.sharedEventIds));
+    try {
+      setEventsLoading(true);
+      
+      const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
+      
+      const sortedEvents = (data.events || []).sort((a, b) => 
+        new Date(b.time) - new Date(a.time)
+      );
+      
+      setEvents(sortedEvents);
+      
+      if (isSelf && data.sharedEventIds) {
+        setSharedEventIds(new Set(data.sharedEventIds));
+      }
+      
+      console.log(`✅ Loaded ${sortedEvents.length} events for user ${userId}`);
+      
+    } catch (error) {
+      console.error('❌ Error fetching events:', error);
+      Alert.alert('Error', 'Failed to load events. Please try again.');
+    } finally {
+      setEventsLoading(false);
     }
-    
-    console.log(`✅ Loaded ${sortedEvents.length} events for user ${userId}`);
-    
-  } catch (error) {
-    console.error('❌ Error fetching events:', error);
-    // Show user-friendly error
-    Alert.alert('Error', 'Failed to load events. Please try again.');
-  } finally {
-    setEventsLoading(false);
-  }
-};
+  };
 
-  // Fetch user memories
+  // Fetch user memories (same as before)
   const fetchUserMemories = async () => {
     try {
       setMemoriesLoading(true);
       const { data } = await api.get(`/api/memories/user/${userId}`);
       
-      // Sort memories by creation date (newest first)
       const sortedMemories = (data.memories || []).sort((a, b) => 
         new Date(b.createdAt) - new Date(a.createdAt)
       );
@@ -317,7 +371,7 @@ export default function ProfileScreen() {
     }
   };
 
-  // Check if memories tab should be shown for other users
+  // Check shared memories (same as before)
   const checkSharedMemories = async () => {
     try {
       const { data } = await api.get(`/api/memories/user/${userId}`, {
@@ -332,73 +386,130 @@ export default function ProfileScreen() {
     }
   };
 
-  // Apply event filters
+  // Apply event filters (same as before)
   useEffect(() => {
-  if (!Array.isArray(events)) {
-    setFilteredEvents([]);
-    return;
-  }
+    if (!Array.isArray(events)) {
+      setFilteredEvents([]);
+      return;
+    }
 
-  let filtered = [...events];
-  const now = new Date();
+    let filtered = [...events];
+    const now = new Date();
 
-  switch (eventFilter) {
-    case 'upcoming':
-      filtered = events.filter(e => new Date(e.time) > now);
-      filtered.sort((a, b) => new Date(a.time) - new Date(b.time)); // Upcoming: earliest first
-      break;
-    case 'past':
-      filtered = events.filter(e => new Date(e.time) <= now);
-      filtered.sort((a, b) => new Date(b.time) - new Date(a.time)); // Past: most recent first
-      break;
-    case 'hosted':
-      filtered = events.filter(e => e.isHost || e.userRelationship === 'host');
-      break;
-    case 'attending':
-      filtered = events.filter(e => (e.isAttending || e.userRelationship === 'attendee') && !e.isHost);
-      break;
-    case 'shared':
-      filtered = events.filter(e => sharedEventIds.has(e._id));
-      break;
-    default: // 'all'
-      // Keep all events, sorted by date (most recent first)
-      filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
-      break;
-  }
+    switch (eventFilter) {
+      case 'upcoming':
+        filtered = events.filter(e => new Date(e.time) > now);
+        filtered.sort((a, b) => new Date(a.time) - new Date(b.time));
+        break;
+      case 'past':
+        filtered = events.filter(e => new Date(e.time) <= now);
+        filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
+        break;
+      case 'hosted':
+        filtered = events.filter(e => e.isHost || e.userRelationship === 'host');
+        break;
+      case 'attending':
+        filtered = events.filter(e => (e.isAttending || e.userRelationship === 'attendee') && !e.isHost);
+        break;
+      case 'shared':
+        filtered = events.filter(e => sharedEventIds.has(e._id));
+        break;
+      default:
+        filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
+        break;
+    }
 
-  setFilteredEvents(filtered);
-  console.log(`📊 Filtered events: ${filtered.length} (filter: ${eventFilter})`);
-}, [events, eventFilter, sharedEventIds]);
+    setFilteredEvents(filtered);
+  }, [events, eventFilter, sharedEventIds]);
 
   // Load profile on mount and when userId changes
   useEffect(() => {
     fetchUserProfile();
   }, [userId]);
 
-  // Handle follow/unfollow
-  const handleFollow = async () => {
+  // NEW: Handle friend actions
+  const handleFriendAction = async () => {
     try {
-      if (isFollowing) {
-        await api.delete(`/api/follow/unfollow/${userId}`);
-        setIsFollowing(false);
-      } else if (hasRequested) {
-        await api.delete(`/api/follow/cancel/${userId}`);
-        setHasRequested(false);
-      } else {
-        const response = await api.post(`/api/follow/follow/${userId}`);
-        if (response.data.requested) {
-          setHasRequested(true);
-        } else {
-          setIsFollowing(true);
-        }
+      let response;
+      
+      switch (friendshipStatus) {
+        case 'not-friends':
+          response = await api.post(`/api/friends/request/${userId}`);
+          setFriendshipStatus('request-sent');
+          Alert.alert('Success', 'Friend request sent!');
+          break;
+          
+        case 'request-sent':
+          response = await api.delete(`/api/friends/cancel/${userId}`);
+          setFriendshipStatus('not-friends');
+          Alert.alert('Success', 'Friend request cancelled');
+          break;
+          
+        case 'request-received':
+          Alert.alert(
+            'Friend Request',
+            `${user?.username} wants to be friends with you`,
+            [
+              {
+                text: 'Decline',
+                style: 'cancel',
+                onPress: async () => {
+                  try {
+                    await api.delete(`/api/friends/reject/${userId}`);
+                    setFriendshipStatus('not-friends');
+                  } catch (error) {
+                    Alert.alert('Error', 'Failed to decline request');
+                  }
+                }
+              },
+              {
+                text: 'Accept',
+                onPress: async () => {
+                  try {
+                    await api.post(`/api/friends/accept/${userId}`);
+                    setFriendshipStatus('friends');
+                    setFriendsCount(prev => prev + 1);
+                    Alert.alert('Success', 'Friend request accepted!');
+                  } catch (error) {
+                    Alert.alert('Error', 'Failed to accept request');
+                  }
+                }
+              }
+            ]
+          );
+          return;
+          
+        case 'friends':
+          Alert.alert(
+            'Remove Friend',
+            `Are you sure you want to remove ${user?.username} from your friends?`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Remove',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await api.delete(`/api/friends/remove/${userId}`);
+                    setFriendshipStatus('not-friends');
+                    setFriendsCount(prev => Math.max(0, prev - 1));
+                    Alert.alert('Success', 'Friend removed');
+                  } catch (error) {
+                    Alert.alert('Error', 'Failed to remove friend');
+                  }
+                }
+              }
+            ]
+          );
+          return;
       }
     } catch (error) {
-      console.error('Follow error:', error);
-      Alert.alert('Error', 'Failed to update follow status');
+      console.error('Friend action error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to perform action');
     }
   };
 
-  // Toggle event sharing
+  // Toggle event sharing (same as before)
   const toggleEventShare = async (eventId) => {
     try {
       const isCurrentlyShared = sharedEventIds.has(eventId);
@@ -421,7 +532,7 @@ export default function ProfileScreen() {
     }
   };
 
-  // UPDATED: Centered profile header
+  // UPDATED: Profile header with friends system
   const renderProfileHeader = () => (
     <View style={styles.profileHeader}>
       {/* Centered Avatar */}
@@ -444,7 +555,7 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* Stats Container - FIXED: Added clickable followers/following */}
+      {/* UPDATED: Stats Container with Friends */}
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
           <Text style={styles.statNumber}>{posts.length}</Text>
@@ -452,29 +563,32 @@ export default function ProfileScreen() {
         </View>
         <TouchableOpacity
           style={styles.statItem}
-          onPress={() => navigation.navigate('FollowListScreen', { 
+          onPress={() => navigation.navigate('FriendsListScreen', { 
             userId, 
-            mode: 'followers'
+            mode: 'friends'
           })}
           activeOpacity={0.7}
         >
-          <Text style={styles.statNumber}>{user?.followersCount || 0}</Text>
-          <Text style={styles.statLabel}>Followers</Text>
+          <Text style={styles.statNumber}>{friendsCount}</Text>
+          <Text style={styles.statLabel}>Friends</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.statItem}
-          onPress={() => navigation.navigate('FollowListScreen', { 
-            userId, 
-            mode: 'following'
-          })}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.statNumber}>{user?.followingCount || 0}</Text>
-          <Text style={styles.statLabel}>Following</Text>
-        </TouchableOpacity>
+        {/* Show mutual friends for non-friends */}
+        {!isSelf && friendshipStatus === 'not-friends' && mutualFriends.length > 0 && (
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={() => navigation.navigate('FriendsListScreen', { 
+              userId, 
+              mode: 'mutual'
+            })}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.statNumber}>{mutualFriends.length}</Text>
+            <Text style={styles.statLabel}>Mutual</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Action Buttons */}
+      {/* UPDATED: Action Buttons with Friends System */}
       <View style={styles.actionButtons}>
         {isSelf ? (
           <View style={styles.selfActionButtons}>
@@ -505,25 +619,49 @@ export default function ProfileScreen() {
         ) : (
           <TouchableOpacity
             style={[
-              styles.followButton,
-              (isFollowing || hasRequested) && styles.followingButton
+              styles.friendButton,
+              friendshipStatus === 'friends' && styles.friendsButton,
+              friendshipStatus === 'request-received' && styles.requestReceivedButton,
+              friendshipStatus === 'request-sent' && styles.requestSentButton
             ]}
-            onPress={handleFollow}
+            onPress={handleFriendAction}
             activeOpacity={0.8}
           >
-            <Text style={[
-              styles.followButtonText,
-              (isFollowing || hasRequested) && styles.followingButtonText
-            ]}>
-              {hasRequested ? 'Requested' : isFollowing ? 'Following' : 'Follow'}
-            </Text>
+            <View style={styles.friendButtonContent}>
+              <Ionicons 
+                name={
+                  friendshipStatus === 'friends' ? 'checkmark-circle' :
+                  friendshipStatus === 'request-received' ? 'mail' :
+                  friendshipStatus === 'request-sent' ? 'time' :
+                  'person-add'
+                } 
+                size={16} 
+                color={
+                  friendshipStatus === 'friends' ? '#34C759' :
+                  friendshipStatus === 'request-received' ? '#FFFFFF' :
+                  friendshipStatus === 'request-sent' ? '#8E8E93' :
+                  '#FFFFFF'
+                } 
+                style={styles.friendButtonIcon}
+              />
+              <Text style={[
+                styles.friendButtonText,
+                friendshipStatus === 'friends' && styles.friendsButtonText,
+                friendshipStatus === 'request-sent' && styles.requestSentButtonText
+              ]}>
+                {friendshipStatus === 'friends' ? 'Friends' :
+                 friendshipStatus === 'request-received' ? 'Respond' :
+                 friendshipStatus === 'request-sent' ? 'Requested' :
+                 'Add Friend'}
+              </Text>
+            </View>
           </TouchableOpacity>
         )}
       </View>
     </View>
   );
 
-  // UPDATED: Swipeable tab bar
+  // Tab bar (same as before)
   const renderTabBar = () => (
     <View style={styles.tabBar}>
       {tabs.map((tab, index) => (
@@ -553,7 +691,7 @@ export default function ProfileScreen() {
     </View>
   );
 
-  // Event filter bar (only for Events tab)
+  // Event filter bar (same as before)
   const renderEventFilterBar = () => {
     if (activeTabIndex !== 1 || !isSelf) return null;
 
@@ -592,7 +730,7 @@ export default function ProfileScreen() {
     );
   };
 
-  // UPDATED: 2-column post grid with curved corners
+  // Post grid renderer (same as before)
   const renderPostGrid = ({ item }) => (
     <TouchableOpacity
       style={styles.postGridItem}
@@ -606,7 +744,7 @@ export default function ProfileScreen() {
     </TouchableOpacity>
   );
 
-  // Event card renderer
+  // Event card renderer (same as before)
   const renderEventCard = ({ item: event }) => {
     const isShared = sharedEventIds.has(event._id);
     const isPast = new Date(event.time) <= new Date();
@@ -684,7 +822,7 @@ export default function ProfileScreen() {
     );
   };
 
-  // Memory card renderer
+  // Memory card renderer (same as before)
   const renderMemoryCard = ({ item: memory }) => {
     const getCoverPhotoUrl = () => {
       if (memory.photos && memory.photos.length > 0) {
@@ -741,10 +879,10 @@ export default function ProfileScreen() {
     );
   };
 
-  // Get content data for current tab
+  // Get content data for current tab (UPDATED for friends system)
   const getContentData = () => {
     if (activeTabIndex === 0) { // Posts
-      if (!user?.isPublic && !isSelf && !isFollowing) {
+      if (!user?.isPublic && !isSelf && friendshipStatus !== 'friends') {
         return 'private';
       }
       return posts;
@@ -762,12 +900,11 @@ export default function ProfileScreen() {
     return [];
   };
 
-  // Render content for each tab - FIXED: Always render all tabs for smooth swiping
+  // Render content for each tab
   const renderTabContent = (tabIndex) => {
-    // Always get content data regardless of active tab for smooth swiping
     let contentData;
     if (tabIndex === 0) { // Posts
-      if (!user?.isPublic && !isSelf && !isFollowing) {
+      if (!user?.isPublic && !isSelf && friendshipStatus !== 'friends') {
         contentData = 'private';
       } else {
         contentData = posts;
@@ -794,7 +931,12 @@ export default function ProfileScreen() {
           <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
           <Text style={styles.emptyTitle}>This account is private</Text>
           <Text style={styles.emptySubtitle}>
-            Follow this account to see their content
+            {friendshipStatus === 'request-sent' 
+              ? 'Your friend request is pending'
+              : friendshipStatus === 'request-received'
+              ? 'Accept their friend request to see their content'
+              : 'Send a friend request to see their content'
+            }
           </Text>
         </View>
       );
@@ -969,7 +1111,7 @@ export default function ProfileScreen() {
         {/* Event Filter Bar */}
         {renderEventFilterBar()}
         
-        {/* Swipeable Content - FIXED: Proper implementation */}
+        {/* Swipeable Content */}
         <View 
           style={styles.swipeableContainer}
           {...panResponder.panHandlers}
@@ -1038,23 +1180,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // UPDATED: Centered Profile Header
+  // Profile Header (same as before)
   profileHeader: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,
     paddingVertical: 24,
-    alignItems: 'center', // Center everything
+    alignItems: 'center',
   },
   centeredAvatarSection: {
     alignItems: 'center',
     marginBottom: 16,
   },
   profileImage: {
-    width: 100, // INCREASED: Made larger (was 88)
+    width: 100,
     height: 100,
-    borderRadius: 25, // ADJUSTED: Proportional to new size
+    borderRadius: 25,
     backgroundColor: '#F6F6F6',
-    borderWidth: 1, // ADDED: Subtle border
+    borderWidth: 1,
     borderColor: '#E1E1E1',
   },
   centeredProfileInfo: {
@@ -1076,7 +1218,7 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
 
-  // UPDATED: Redesigned Stats Container - Extra spacing between numbers
+  // Stats Container
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -1087,7 +1229,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     width: '90%',
     alignSelf: 'center',
-    // ADDED: Subtle shadow for depth
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -1100,19 +1241,19 @@ const styles = StyleSheet.create({
   statItem: {
     alignItems: 'center',
     flex: 1,
-    paddingHorizontal: 8, // ADDED: More spacing between stats
+    paddingHorizontal: 8,
   },
   statNumber: {
     fontSize: 22,
     fontWeight: '700',
     color: '#000000',
-    marginBottom: 8, // INCREASED: More space between number and label (was 6)
+    marginBottom: 8,
   },
   statLabel: {
     fontSize: 13,
     color: '#8E8E93',
     fontWeight: '500',
-    textAlign: 'center', // ADDED: Center alignment
+    textAlign: 'center',
   },
 
   // Action Buttons
@@ -1124,7 +1265,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     width: '100%',
-    gap: 8, // ADDED: Consistent spacing
+    gap: 8,
   },
   editProfileButton: {
     flex: 1,
@@ -1147,7 +1288,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // ADDED: QR Code button
   qrCodeButton: {
     width: 48,
     height: 48,
@@ -1156,35 +1296,56 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  followButton: {
+
+  // NEW: Friend Button Styles
+  friendButton: {
     width: '100%',
     backgroundColor: '#3797EF',
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
   },
-  followingButton: {
+  friendsButton: {
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#34C759',
+  },
+  requestReceivedButton: {
+    backgroundColor: '#FF9500',
+  },
+  requestSentButton: {
     backgroundColor: '#F0F0F0',
     borderWidth: 1,
     borderColor: '#E1E1E1',
   },
-  followButtonText: {
+  friendButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  friendButtonIcon: {
+    marginRight: 6,
+  },
+  friendButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  followingButtonText: {
-    color: '#000000',
+  friendsButtonText: {
+    color: '#34C759',
+  },
+  requestSentButtonText: {
+    color: '#8E8E93',
   },
 
-  // ENHANCED: Tab Bar with better spacing
+  // Tab Bar
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
     paddingVertical: 8,
-    paddingTop: 16, // ADDED: Padding between tabs and content above
+    paddingTop: 16,
   },
   tab: {
     flex: 1,
@@ -1208,11 +1369,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Event Filter Bar with padding
+  // Event Filter Bar
   eventFilterBar: {
     backgroundColor: '#FFFFFF',
     paddingVertical: 12,
-    paddingBottom: 16, // ADDED: Extra padding before first event
+    paddingBottom: 16,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
@@ -1244,21 +1405,20 @@ const styles = StyleSheet.create({
   // Swipeable Content Container
   swipeableContainer: {
     minHeight: 400,
-    overflow: 'hidden', // FIXED: Prevent content overflow during swipe
+    overflow: 'hidden',
   },
   swipeableContent: {
     flexDirection: 'row',
-    // Width is now set dynamically in render
   },
   tabContentWrapper: {
     width: SCREEN_WIDTH,
     minHeight: 400,
   },
 
-  // UPDATED: 2-Column Posts Grid with padding
+  // Posts Grid
   postsGrid: {
     paddingHorizontal: 10,
-    paddingTop: 12, // ADDED: Padding between tabs and first row
+    paddingTop: 12,
     paddingBottom: 20,
   },
   postGridRow: {
@@ -1269,10 +1429,9 @@ const styles = StyleSheet.create({
     width: (SCREEN_WIDTH - 40) / 2 - 5,
     height: (SCREEN_WIDTH - 40) / 2 - 5,
     marginBottom: 10,
-    borderRadius: 16, // Curved corners
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#F6F6F6',
-    // Add subtle shadow
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -1286,14 +1445,14 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 16,
-    borderWidth: 0.5, // ADDED: Very subtle border
+    borderWidth: 0.5,
     borderColor: '#E1E1E1',
   },
 
-  // Events Grid with padding
+  // Events Grid
   eventsGrid: {
     paddingHorizontal: 20,
-    paddingTop: 12, // ADDED: Padding between filter bar and first event
+    paddingTop: 12,
     paddingBottom: 20,
   },
   eventCard: {
