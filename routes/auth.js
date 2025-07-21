@@ -67,7 +67,7 @@ router.post(
         _id: user._id,
         username: user.username,
         email: user.email,
-        shareCode: user.shareCode,
+        // ❌ REMOVE: shareCode: user.shareCode,
         isPublic: user.isPublic,
         profilePicture: user.profilePicture,
         bio: user.bio
@@ -153,7 +153,7 @@ router.post(
           _id: user._id,
           username: user.username,
           email: user.email,
-          shareCode: user.shareCode,
+          // ❌ REMOVE: shareCode: user.shareCode,
           isPublic: user.isPublic,
           profilePicture: user.profilePicture,
           bio: user.bio
@@ -214,7 +214,6 @@ router.post('/verify-2fa', protect, async (req, res) => {
       _id: user._id,
       username: user.username,
       email: user.email,
-      shareCode: user.shareCode,
       isPublic: user.isPublic,
       profilePicture: user.profilePicture,
       bio: user.bio

@@ -3460,14 +3460,20 @@ router.post('/:eventId/banUser', protect, async (req, res) => {
   }
 });
 
+// SIMPLIFIED routes/events.js - Event check-in using userId
+
 router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
     const { qrData } = req.body;
 
-    console.log('🔍 Host scanning user QR for check-in:', { eventId, qrData });
+    // Get event
+    const event = await Event.findById(eventId)
+      .populate('host', 'username profilePicture')
+      .populate('coHosts', 'username profilePicture')
+      .populate('attendees', '_id username profilePicture')
+      .populate('checkedIn', '_id username profilePicture');
 
-    const event = await Event.findById(eventId);
     if (!event) {
       return res.status(404).json({ 
         success: false, 
@@ -3475,20 +3481,20 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
       });
     }
 
-    // Check if current user is host or co-host
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts && event.coHosts.some(
-      coHost => String(coHost) === String(req.user._id)
+    // Verify host permissions
+    const isHost = String(event.host._id) === String(req.user._id);
+    const isCoHost = event.coHosts.some(coHost => 
+      String(coHost._id) === String(req.user._id)
     );
-
+    
     if (!isHost && !isCoHost) {
       return res.status(403).json({ 
         success: false, 
-        message: 'Only hosts and co-hosts can check in users' 
+        message: 'Only hosts and co-hosts can check in attendees' 
       });
     }
 
-    // Parse QR data
+    // ✅ SIMPLIFIED: Parse QR data for userId
     let parsedQR;
     try {
       parsedQR = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
@@ -3499,78 +3505,85 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
       });
     }
 
-    // Validate QR type
     if (parsedQR.type !== 'user') {
       return res.status(400).json({
         success: false,
-        message: 'Expected user QR code, but received different type'
+        message: 'Invalid QR code - expected user QR code'
       });
     }
 
-    const userIdToCheckIn = parsedQR.userId;
-
-    // Check if user is attending
-    const isAttending = event.attendees.some(attendee => 
-      String(attendee._id || attendee) === String(userIdToCheckIn)
-    );
-
-    if (!isAttending) {
-      return res.status(400).json({
+    // ✅ SIMPLIFIED: Direct userId lookup
+    const targetUserId = parsedQR.userId;
+    const targetUser = await User.findById(targetUserId)
+      .select('_id username profilePicture bio');
+    
+    if (!targetUser) {
+      return res.status(404).json({
         success: false,
-        message: 'User is not registered for this event'
+        message: 'User not found'
       });
     }
 
-    // Check if already checked in
-    const isCheckedIn = event.checkedIn.some(checkedUser => 
-      String(checkedUser._id || checkedUser) === String(userIdToCheckIn)
+    // Check if user is already checked in
+    const isAlreadyCheckedIn = event.checkedIn.some(id => 
+      String(id) === String(targetUserId)
     );
-
-    if (isCheckedIn) {
-      return res.status(400).json({
+    
+    if (isAlreadyCheckedIn) {
+      return res.json({
         success: false,
-        message: 'User is already checked in'
+        status: 'already_checked_in',
+        message: 'User is already checked in',
+        user: {
+          _id: targetUser._id,
+          username: targetUser.username,
+          profilePicture: targetUser.profilePicture
+        }
+      });
+    }
+    
+    // Check if user is attendee
+    const isAttendee = event.attendees.some(id => 
+      String(id) === String(targetUserId)
+    );
+    
+    if (!isAttendee) {
+      return res.json({
+        success: false,
+        status: 'not_registered',
+        message: 'User is not registered for this event',
+        user: {
+          _id: targetUser._id,
+          username: targetUser.username,
+          profilePicture: targetUser.profilePicture
+        }
       });
     }
 
-    // Check form requirements (host can bypass timing but not form requirements)
-    if (event.requiresFormForCheckIn && event.checkInForm) {
-      const hasSubmitted = await event.hasUserSubmittedForm(userIdToCheckIn);
-      if (!hasSubmitted) {
-        return res.status(400).json({
-          success: false,
-          message: 'User must complete the check-in form first',
-          requiresForm: true,
-          formId: event.checkInForm
-        });
-      }
-    }
-
-    // Perform check-in
-    event.checkedIn.push(userIdToCheckIn);
+    // ✅ Check them in
+    event.checkedIn.push(targetUserId);
     await event.save();
-
-    // Get user info for response
-    const User = require('../models/User');
-    const user = await User.findById(userIdToCheckIn).select('username profilePicture');
-
-    console.log(`✅ User ${userIdToCheckIn} checked in to event ${eventId} by host ${req.user._id}`);
 
     res.json({
       success: true,
-      message: 'User checked in successfully',
+      message: `${targetUser.username} has been checked in successfully`,
       user: {
-        _id: user._id,
-        username: user.username,
-        profilePicture: user.profilePicture
+        _id: targetUser._id,
+        username: targetUser.username,
+        profilePicture: targetUser.profilePicture
+      },
+      event: {
+        _id: event._id,
+        title: event.title,
+        checkedInCount: event.checkedIn.length
       }
     });
 
   } catch (error) {
-    console.error('Host scan user QR error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to check in user' 
+    console.error('Event check-in error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
     });
   }
 });

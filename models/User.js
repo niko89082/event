@@ -32,11 +32,6 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     required: false,
   },
-  shareCode: {
-    type: String,
-    unique: true,
-    required: true,
-  },
   isPublic: {
     type: Boolean,
     default: true,
@@ -753,21 +748,6 @@ UserSchema.pre('save', async function(next) {
     } catch (error) {
       return next(error);
     }
-  }
-
-  if (this.isNew && !this.shareCode) {
-    let shareCode;
-    let isUnique = false;
-    
-    while (!isUnique) {
-      shareCode = crypto.randomBytes(4).toString('hex').toUpperCase();
-      const existingUser = await this.constructor.findOne({ shareCode });
-      if (!existingUser) {
-        isUnique = true;
-      }
-    }
-    
-    this.shareCode = shareCode;
   }
   
   if (this.isModified('paymentAccounts') && this.paymentAccounts?.primary) {

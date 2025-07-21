@@ -974,6 +974,37 @@ EventSchema.methods.canUserJoin = function(userId, userFollowing = []) {
   }
 };
 
+EventSchema.methods.canUserViewEventPhotos = function(userId, userFriends = [], userEventAttendance = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host._id || this.host);
+  const eventIdStr = String(this._id);
+  
+  // Host can always see photos from their events
+  if (userIdStr === hostIdStr) return true;
+  
+  // ✅ CRITICAL: If user attended this event, they can see ALL photos from this event
+  if (userEventAttendance.includes(eventIdStr)) {
+    return true;
+  }
+  
+  // Check based on event privacy level
+  switch (this.privacyLevel) {
+    case 'public':
+      return true; // Public event photos are visible to everyone
+    
+    case 'friends':
+      // Friends-only event photos visible to friends only
+      return userFriends.includes(hostIdStr);
+    
+    case 'private':
+      // Private event photos only visible to attendees (covered above)
+      return false;
+    
+    default:
+      return false;
+  }
+};
+
 
 /**
  * FIXED: Check if user can view this event (remove duplicate)
@@ -1052,7 +1083,7 @@ EventSchema.methods.canUserManage = function(userId) {
   
   return false;
 };
-EventSchema.methods.canAppearInUserFeed = function(userId, userFollowing = []) {
+EventSchema.methods.canAppearInUserFeed = function(userId, userFriends = []) {
   const userIdStr = String(userId);
   const hostIdStr = String(this.host._id || this.host);
   
@@ -1062,14 +1093,14 @@ EventSchema.methods.canAppearInUserFeed = function(userId, userFollowing = []) {
   // Co-hosts can see in feed
   if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
   
-  // ✅ PHASE 1: Fixed privacy level checks (removed secret)
+  // ✅ PHASE 3: Updated for friends system
   switch (this.privacyLevel) {
     case 'public':
       return this.permissions?.appearInFeed !== false;
     
     case 'friends':
-      // Only appears in followers' feeds
-      return userFollowing.includes(hostIdStr) && this.permissions?.appearInFeed !== false;
+      // ✅ FIXED: Only appears in FRIENDS' feeds (not followers)
+      return userFriends.includes(hostIdStr) && this.permissions?.appearInFeed !== false;
     
     case 'private':
       // Private events don't appear in general feeds
@@ -1080,21 +1111,50 @@ EventSchema.methods.canAppearInUserFeed = function(userId, userFollowing = []) {
   }
 };
 
-EventSchema.methods.canAppearInSearch = function(userId, userFollowing = []) {
+EventSchema.methods.getUserPermissions = function(userId, userFriends = [], userEventAttendance = []) {
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host._id || this.host);
+  const eventIdStr = String(this._id);
+  
+  const isHost = userIdStr === hostIdStr;
+  const isCoHost = this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr);
+  const isAttendee = this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr);
+  const isFriend = userFriends.includes(hostIdStr);
+  const hasAttendedEvent = userEventAttendance.includes(eventIdStr);
+  
+  return {
+    canView: this.canUserView(userId, userFriends),
+    canJoin: this.canUserJoin(userId, userFriends),
+    canManage: isHost || isCoHost,
+    canInvite: this.canUserInvite(userId),
+    canViewPhotos: this.canUserViewEventPhotos(userId, userFriends, userEventAttendance),
+    canSeeAttendees: isHost || isAttendee || (this.permissions?.showAttendeesToPublic && this.privacyLevel === 'public'),
+    context: {
+      isHost,
+      isCoHost, 
+      isAttendee,
+      isFriend,
+      hasAttendedEvent,
+      privacyLevel: this.privacyLevel
+    }
+  };
+};
+
+EventSchema.methods.canAppearInSearch = function(userId, userFriends = []) {
   const userIdStr = String(userId);
   const hostIdStr = String(this.host._id || this.host);
   
   // Host can always find their own events
   if (userIdStr === hostIdStr) return true;
   
-  // ✅ PHASE 1: Fixed privacy level checks (removed secret)
+  // ✅ PHASE 3: Updated for friends system
   switch (this.privacyLevel) {
     case 'public':
       return this.permissions?.appearInSearch !== false;
     
     case 'friends':
-      // Only searchable by followers
-      return userFollowing.includes(hostIdStr) && this.permissions?.appearInSearch !== false;
+      // ✅ FIXED: Only searchable by FRIENDS (not followers)
+      return userFriends.includes(hostIdStr) && this.permissions?.appearInSearch !== false;
     
     case 'private':
       // Private events don't appear in search
