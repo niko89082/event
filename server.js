@@ -1,5 +1,5 @@
 /*************************************************
- * server.js (main server file) - UPDATED WITH MEMORY PHOTO SUPPORT
+ * server.js (main server file) - PHASE 1: UPDATED WITH FRIENDS SYSTEM + MEMORY PHOTOS
  *************************************************/
 require('dotenv').config(); 
 const express = require('express');
@@ -11,7 +11,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const fs = require('fs');
-const multer = require('multer'); // ✅ ADD: Required for memory photo uploads
+const multer = require('multer');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -23,40 +23,57 @@ const searchRoutes = require('./routes/search');
 const checkinRoutes = require('./routes/checkin');
 const feedRoutes = require('./routes/feed');
 const profileRoutes = require('./routes/profile');
-const followRoutes = require('./routes/follow');
 const usersRoutes = require('./routes/users');
 const memoryRoutes = require('./routes/memories');
 const qrRoutes = require('./routes/qr');
 const formsRoutes = require('./routes/forms');
 
+// ✅ NEW: Friends System Routes (Phase 1)
+const friendsRoutes = require('./routes/friends');
+
+// 🔄 DEPRECATED: Keep follower routes during migration (will be removed in Phase 5)
+const followRoutes = require('./routes/follow');
+
 // Import middleware and models
 const protect = require('./middleware/auth');
 const Notification = require('./models/Notification');
 
-// Import the new EventPrivacyService
+// Import services
 const EventPrivacyService = require('./services/eventPrivacyService');
+
 // ✅ UPDATED: Ensure ALL uploads directories exist (including memory photos)
 const uploadsDir = path.join(__dirname, 'uploads');
 const photosDir = path.join(__dirname, 'uploads', 'photos');
 const eventCoversDir = path.join(__dirname, 'uploads', 'event-covers');
-const memoryPhotosDir = path.join(__dirname, 'uploads', 'memory-photos'); // ✅ ADD: Memory photos directory
+const memoryPhotosDir = path.join(__dirname, 'uploads', 'memory-photos');
+const profilePicturesDir = path.join(__dirname, 'uploads', 'profile-pictures');
 
-[uploadsDir, photosDir, eventCoversDir, memoryPhotosDir].forEach(dir => {
+[uploadsDir, photosDir, eventCoversDir, memoryPhotosDir, profilePicturesDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     console.log(`✅ Created upload directory: ${dir}`);
   }
 });
 
-// Example CRON job: delete old notifications every night at midnight
+// Cleanup CRON job: delete old notifications every night at midnight
 cron.schedule('0 0 * * *', async () => {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - 28); // 4 weeks
-    await Notification.deleteMany({ createdAt: { $lt: cutoffDate } });
-    console.log('Old notifications deleted successfully.');
+    const result = await Notification.deleteMany({ createdAt: { $lt: cutoffDate } });
+    console.log(`🧹 Deleted ${result.deletedCount} old notifications`);
   } catch (error) {
-    console.error('Error deleting old notifications:', error);
+    console.error('❌ Error deleting old notifications:', error);
+  }
+});
+
+// ✅ NEW: Daily friend suggestions refresh (if implemented)
+cron.schedule('0 6 * * *', async () => {
+  try {
+    // TODO: Implement friend suggestions refresh logic
+    console.log('🔄 Friend suggestions refresh scheduled for future implementation');
+  } catch (error) {
+    console.error('❌ Error refreshing friend suggestions:', error);
   }
 });
 
@@ -101,7 +118,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   }
 }));
 
-// ✅ ADD: Global multer error handling (must be early in middleware stack)
+// ✅ ENHANCED: Global multer error handling (must be early in middleware stack)
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     console.error('❌ Multer error:', error);
@@ -155,17 +172,25 @@ mongoose.connect(process.env.MONGO_URI, {
   process.exit(1);
 });
 
-// Enhanced index creation for privacy system
+// ✅ ENHANCED: Index creation for friends system + privacy system
 async function ensureIndexes() {
   try {
     const User = mongoose.model('User');
     const Event = mongoose.model('Event');
+    const Photo = mongoose.model('Photo');
 
     await Promise.all([
+      // ✅ NEW: Friends system indexes
+      User.collection.createIndex({ 'friends.user': 1, 'friends.status': 1 }),
+      User.collection.createIndex({ 'friends.initiatedBy': 1 }),
+      User.collection.createIndex({ 'friends.createdAt': -1 }),
+      User.collection.createIndex({ 'privacy.friendRequests': 1 }),
+      User.collection.createIndex({ migratedToFriendsAt: 1 }),
+
       // Full-text search for users
       User.collection.createIndex(
-        { username: 'text', displayName: 'text', bio: 'text' },
-        { name: 'UserFullText', weights: { username: 10, displayName: 5, bio: 2 } }
+        { username: 'text', bio: 'text' },
+        { name: 'UserFullText', weights: { username: 10, bio: 2 } }
       ),
 
       // Full-text search for events with privacy tags
@@ -200,9 +225,19 @@ async function ensureIndexes() {
       // Time-based queries
       Event.collection.createIndex({ time: 1 }),
       Event.collection.createIndex({ createdAt: -1 }),
+
+      // ✅ NEW: Photo privacy indexes for friends system
+      Photo.collection.createIndex({ user: 1, 'visibility.level': 1 }),
+      Photo.collection.createIndex({ event: 1, user: 1 }),
+      Photo.collection.createIndex({ taggedEvent: 1, user: 1 }),
+      Photo.collection.createIndex({ uploadDate: -1 }),
+
+      // Notification indexes
+      Notification.collection.createIndex({ user: 1, read: 1, createdAt: -1 }),
+      Notification.collection.createIndex({ user: 1, category: 1, read: 1 }),
     ]);
 
-    console.log('✅ Database indexes ensured for privacy system');
+    console.log('✅ Database indexes ensured for friends + privacy system');
   } catch (error) {
     console.error('❌ Error creating indexes:', error);
   }
@@ -211,7 +246,7 @@ async function ensureIndexes() {
 mongoose.connection.once('open', ensureIndexes);
 
 // ********************************
-// 4) Socket.io setup with enhanced event handling
+// 4) Socket.io setup with enhanced event handling for friends system
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   // Add authentication if needed
@@ -236,6 +271,12 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} joined event room: ${eventId}`);
   });
 
+  // ✅ NEW: Handle friend request real-time updates
+  socket.on('joinUserRoom', ({ userId }) => {
+    socket.join(`user_${userId}`);
+    console.log(`Socket ${socket.id} joined user room: ${userId}`);
+  });
+
   // Handle messages
   socket.on('sendMessage', async ({ conversationId, message }) => {
     io.to(conversationId).emit('message', message);
@@ -244,6 +285,15 @@ io.on('connection', (socket) => {
   // Handle event updates (for live event changes)
   socket.on('eventUpdate', ({ eventId, update }) => {
     socket.to(`event_${eventId}`).emit('eventUpdated', update);
+  });
+
+  // ✅ NEW: Handle friend request updates
+  socket.on('friendRequestSent', ({ targetUserId, requesterData }) => {
+    socket.to(`user_${targetUserId}`).emit('friendRequestReceived', requesterData);
+  });
+
+  socket.on('friendRequestAccepted', ({ requesterUserId, accepterData }) => {
+    socket.to(`user_${requesterUserId}`).emit('friendRequestAccepted', accepterData);
   });
 
   // Handle typing indicators
@@ -266,10 +316,10 @@ io.on('connection', (socket) => {
   });
 });
 
-// Rate limiting
+// Rate limiting with increased limits for friends system
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // Increased limit for privacy system
+  max: 1000, // Increased limit for friends system operations
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -280,24 +330,67 @@ app.use(limiter);
 // 5) ROUTES WITH /api PREFIX FOR CONSISTENCY
 // ********************************
 
-// ✅ UPDATED: Health check endpoint with memory support indication
+// ✅ ENHANCED: Health check endpoint with friends system support indication
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
     timestamp: new Date().toISOString(),
     features: {
+      friendsSystem: true,         // ✅ NEW: Friends system enabled
       eventPrivacy: true,
       recommendations: true,
       realTimeUpdates: true,
-      memoryPhotos: true, // ✅ ADD: Indicate memory photo support
-      fileUploads: true
+      memoryPhotos: true,
+      fileUploads: true,
+      migration: {
+        phase: 1,
+        description: 'Friends system active, follower system deprecated'
+      }
     },
     uploadDirs: {
       photos: fs.existsSync(photosDir),
       eventCovers: fs.existsSync(eventCoversDir),
-      memoryPhotos: fs.existsSync(memoryPhotosDir)
+      memoryPhotos: fs.existsSync(memoryPhotosDir),
+      profilePictures: fs.existsSync(profilePicturesDir)
     }
   });
+});
+
+// ✅ NEW: Migration status endpoint
+app.get('/api/migration/status', protect, async (req, res) => {
+  try {
+    const User = require('./models/User');
+    
+    const totalUsers = await User.countDocuments();
+    const migratedUsers = await User.countDocuments({ migratedToFriendsAt: { $exists: true } });
+    const usersWithFriends = await User.countDocuments({ friends: { $exists: true, $not: { $size: 0 } } });
+    const usersWithFollowers = await User.countDocuments({ followers: { $exists: true, $not: { $size: 0 } } });
+    
+    res.status(200).json({
+      migration: {
+        phase: 1,
+        status: migratedUsers > 0 ? 'in-progress' : 'pending',
+        totalUsers,
+        migratedUsers,
+        migrationProgress: totalUsers > 0 ? Math.round((migratedUsers / totalUsers) * 100) : 0,
+        usersWithFriends,
+        usersWithFollowers,
+        isComplete: migratedUsers === totalUsers,
+        canCleanup: migratedUsers === totalUsers && usersWithFollowers === 0
+      },
+      features: {
+        friendsSystemEnabled: true,
+        followerSystemDeprecated: true,
+        bothSystemsRunning: migratedUsers > 0 && usersWithFollowers > 0
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to get migration status',
+      message: error.message 
+    });
+  }
 });
 
 // API Routes
@@ -310,9 +403,15 @@ app.use('/api/search', searchRoutes);
 app.use('/api/checkin', checkinRoutes);
 app.use('/api/forms', formsRoutes); 
 app.use('/api/profile', profileRoutes);
+
+// ✅ NEW: Friends system routes (Phase 1)
+app.use('/api/friends', friendsRoutes);
+
+// 🔄 DEPRECATED: Follower routes (keep during migration)
 app.use('/api/follow', followRoutes);
+
 app.use('/api', feedRoutes);
-app.use('/api/memories', memoryRoutes); // ✅ ENSURE: Memory routes are properly registered
+app.use('/api/memories', memoryRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/qr', qrRoutes);
 
@@ -322,14 +421,103 @@ app.use('/events', eventRoutes);
 app.use('/photos', photoRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/profile', profileRoutes);
-app.use('/follow', followRoutes);
+app.use('/follow', followRoutes); // Keep legacy follow routes during migration
 app.use('/users', usersRoutes);
-// ✅ REMOVE: Duplicate memory route registrations
-// app.use('/api/memories', memoryRoutes); // This was duplicated
-// app.use('/api/notifications', notificationRoutes); // This was duplicated
 
 // ********************************
-// 6) EVENT PRIVACY SYSTEM API ENDPOINTS
+// 6) FRIENDS SYSTEM API ENDPOINTS
+// ********************************
+
+// ✅ NEW: Get mutual friends between two users
+app.get('/api/friends/mutual/:userId', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id;
+    
+    const User = require('./models/User');
+    const currentUser = await User.findById(currentUserId);
+    const targetUser = await User.findById(userId);
+    
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const currentFriends = currentUser.getAcceptedFriends().map(id => String(id));
+    const targetFriends = targetUser.getAcceptedFriends().map(id => String(id));
+    
+    const mutualFriendIds = currentFriends.filter(id => targetFriends.includes(id));
+    
+    const mutualFriends = await User.find({ _id: { $in: mutualFriendIds } })
+      .select('username profilePicture displayName')
+      .limit(10);
+    
+    res.json({
+      mutualFriends,
+      count: mutualFriendIds.length,
+      totalMutual: mutualFriendIds.length
+    });
+    
+  } catch (error) {
+    console.error('Get mutual friends error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ✅ NEW: Get friend activity feed
+app.get('/api/friends/activity', protect, async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    const User = require('./models/User');
+    const Photo = require('./models/Photo');
+    const Event = require('./models/Event');
+    
+    const currentUser = await User.findById(req.user._id);
+    const friendIds = currentUser.getAcceptedFriends();
+    
+    // Get recent activity from friends
+    const [friendPosts, friendEvents] = await Promise.all([
+      Photo.find({ user: { $in: friendIds } })
+        .populate('user', 'username profilePicture')
+        .populate('event', 'title time')
+        .sort({ uploadDate: -1 })
+        .limit(parseInt(limit) / 2),
+        
+      Event.find({ 
+        host: { $in: friendIds },
+        time: { $gte: new Date() }
+      })
+        .populate('host', 'username profilePicture')
+        .sort({ createdAt: -1 })
+        .limit(parseInt(limit) / 2)
+    ]);
+    
+    // Combine and sort by recency
+    const activity = [
+      ...friendPosts.map(post => ({
+        type: 'photo',
+        data: post,
+        timestamp: post.uploadDate,
+        user: post.user
+      })),
+      ...friendEvents.map(event => ({
+        type: 'event',
+        data: event,
+        timestamp: event.createdAt,
+        user: event.host
+      }))
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+     .slice(0, parseInt(limit));
+    
+    res.json({ activity });
+    
+  } catch (error) {
+    console.error('Get friend activity error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ********************************
+// 7) EVENT PRIVACY SYSTEM API ENDPOINTS
 // ********************************
 
 // Get event recommendations
@@ -363,7 +551,7 @@ app.get('/api/events/recommendations', protect, async (req, res) => {
   }
 });
 
-// Get friends activity
+// Get friends activity (enhanced for friends system)
 app.get('/api/events/friends-activity', protect, async (req, res) => {
   try {
     const { limit = 10 } = req.query;
@@ -394,10 +582,10 @@ app.get('/api/events/:eventId/permissions/:action', protect, async (req, res) =>
 });
 
 // ********************************
-// 7) ERROR HANDLING MIDDLEWARE
+// 8) ERROR HANDLING MIDDLEWARE
 // ********************************
 
-// ✅ UPDATED: Handle 404 with better logging
+// ✅ UPDATED: Handle 404 with better logging and friends system routes
 app.use('*', (req, res) => {
   console.log('🟡 Route not found:', req.method, req.originalUrl);
   res.status(404).json({ 
@@ -408,11 +596,12 @@ app.use('*', (req, res) => {
       '/api/auth',
       '/api/events',
       '/api/photos',
+      '/api/friends',      // ✅ NEW
+      '/api/follow',       // 🔄 DEPRECATED
       '/api/messages',
       '/api/notifications',
       '/api/search',
       '/api/profile',
-      '/api/follow',
       '/api/users',
       '/api/memories'
     ]
@@ -454,23 +643,46 @@ app.use((err, req, res, next) => {
 });
 
 // ********************************
-// 8) START SERVER
+// 9) START SERVER
 // ********************************
 
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log('\n🚀 Social App Server Started - Phase 1: Friends System');
+  console.log('=====================================');
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔌 Server: http://localhost:${PORT}`);
   console.log(`📡 WebSocket: Enabled`);
   console.log(`🔗 API Base: http://localhost:${PORT}/api`);
   console.log(`📁 Static files: http://localhost:${PORT}/uploads`);
-  console.log(`📸 Memory photos directory: ${memoryPhotosDir}`);
-  
-  // ✅ ADD: Verify upload directories on startup
-  console.log('📂 Upload directories:');
+  console.log('=====================================');
+  console.log('✅ Friends System: ENABLED (Phase 1)');
+  console.log('🔄 Follower System: DEPRECATED (Migration Period)');
+  console.log('📸 Memory Photos: ENABLED');
+  console.log('🔒 Event Privacy: ENABLED');
+  console.log('\n📂 Upload directories:');
   console.log(`   Photos: ${fs.existsSync(photosDir) ? '✅' : '❌'} ${photosDir}`);
   console.log(`   Event covers: ${fs.existsSync(eventCoversDir) ? '✅' : '❌'} ${eventCoversDir}`);
   console.log(`   Memory photos: ${fs.existsSync(memoryPhotosDir) ? '✅' : '❌'} ${memoryPhotosDir}`);
+  console.log(`   Profile pictures: ${fs.existsSync(profilePicturesDir) ? '✅' : '❌'} ${profilePicturesDir}`);
+  console.log('\n🎯 Available API Routes:');
+  console.log('   • /api/friends/* (NEW - Friends System)');
+  console.log('   • /api/follow/* (DEPRECATED - Will be removed)');
+  console.log('   • /api/auth/*');
+  console.log('   • /api/profile/*');
+  console.log('   • /api/events/*');
+  console.log('   • /api/photos/*');
+  console.log('   • /api/memories/*');
+  console.log('   • /api/notifications/*');
+  console.log('   • /api/messages/*');
+  console.log('   • /api/search/*');
+  console.log('   • /api/users/*');
+  console.log('\n💡 Migration Commands:');
+  console.log('   Run migration: node scripts/migrateToFriendsSystem.js');
+  console.log('   Check status: GET /api/migration/status');
+  console.log('   Generate report: node scripts/migrateToFriendsSystem.js --report');
+  console.log('\n🎉 Ready for Phase 1 Testing!');
 });
 
 // Graceful shutdown

@@ -1,4 +1,4 @@
-// models/User.js - Enhanced with Payment Accounts
+// models/User.js - PHASE 1: Enhanced with Friends System + Payment Accounts
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -8,15 +8,20 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
+    trim: true,
+    minlength: 3,
+    maxlength: 30,
   },
   email: {
     type: String,
     required: true,
     unique: true,
+    lowercase: true,
   },
   password: {
     type: String,
     required: true,
+    minlength: 6,
   },
   gender: {
     type: String,
@@ -55,6 +60,7 @@ const UserSchema = new mongoose.Schema({
   bio: {
     type: String,
     required: false,
+    maxlength: 200,
   },
   socialMediaLinks: {
     type: Map,
@@ -62,11 +68,78 @@ const UserSchema = new mongoose.Schema({
     required: false,
   },
 
+  // ✅ NEW: Friends System (replaces followers/following)
+  friends: [{
+    user: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'User',
+      required: true 
+    },
+    status: { 
+      type: String, 
+      enum: ['pending', 'accepted', 'blocked'], 
+      default: 'pending' 
+    },
+    initiatedBy: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'User',
+      required: true 
+    },
+    createdAt: { 
+      type: Date, 
+      default: Date.now 
+    },
+    acceptedAt: Date,
+    requestMessage: String,
+    mutualFriends: Number
+  }],
+
+  // ✅ DEPRECATED: Keep temporarily for migration - will be removed in Phase 5
+  followers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  following: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  followRequests: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+
+  // ✅ NEW: Enhanced Privacy Settings for Friends System
+  privacy: {
+    friendRequests: {
+      type: String,
+      enum: ['everyone', 'friends-of-friends', 'no-one'],
+      default: 'everyone'
+    },
+    friendsList: {
+      type: String,
+      enum: ['everyone', 'friends', 'only-me'],
+      default: 'friends'
+    },
+    posts: {
+      type: String,
+      enum: ['public', 'friends', 'only-me'],
+      default: 'public'
+    },
+    eventAttendance: {
+      type: String,
+      enum: ['public', 'friends', 'only-me'],
+      default: 'friends'
+    },
+    allowSuggestions: {
+      type: Boolean,
+      default: true
+    }
+  },
+
   // ============================================
   // ENHANCED: PAYMENT ACCOUNTS FOR HOST EARNINGS
   // ============================================
   paymentAccounts: {
-    // Primary payment method configuration
     primary: {
       type: { 
         type: String, 
@@ -87,9 +160,8 @@ const UserSchema = new mongoose.Schema({
       }
     },
 
-    // Stripe Connect configuration
     stripe: {
-      accountId: String,                    // Stripe Connect Express account ID
+      accountId: String,
       onboardingComplete: { 
         type: Boolean, 
         default: false 
@@ -106,9 +178,9 @@ const UserSchema = new mongoose.Schema({
         type: Boolean, 
         default: false 
       },
-      accountLink: String,                  // Temporary onboarding link
+      accountLink: String,
       accountLinkExpiresAt: Date,
-      requirements: {                       // Stripe requirements for completion
+      requirements: {
         currentlyDue: [String],
         eventuallyDue: [String],
         pastDue: [String],
@@ -122,14 +194,13 @@ const UserSchema = new mongoose.Schema({
       }
     },
 
-    // PayPal configuration (simplified)
     paypal: {
-      email: String,                        // PayPal email for payments
+      email: String,
       verified: { 
         type: Boolean, 
         default: false 
       },
-      merchantId: String,                   // PayPal merchant ID (optional)
+      merchantId: String,
       connectedAt: Date,
       lastUsed: Date,
       country: {
@@ -138,13 +209,12 @@ const UserSchema = new mongoose.Schema({
       }
     },
 
-    // Manual payment methods (Venmo, CashApp, etc.)
     manual: {
       venmoHandle: String,
       cashappHandle: String,
       zelleInfo: String,
       paypalMe: String,
-      instructions: String,                 // Custom payment instructions
+      instructions: String,
       enabled: {
         type: Boolean,
         default: false
@@ -152,27 +222,24 @@ const UserSchema = new mongoose.Schema({
     }
   },
 
-  // Payment history and earnings tracking
   earnings: {
     totalEarned: { 
       type: Number, 
       default: 0 
-    },        // Lifetime earnings across all providers
+    },
     availableBalance: { 
       type: Number, 
       default: 0 
-    },    // Available for payout
+    },
     pendingBalance: { 
       type: Number, 
       default: 0 
-    },      // Pending settlements
+    },
     lastPayoutAt: Date,
     currency: { 
       type: String, 
       default: 'USD' 
     },
-    
-    // Provider-specific earnings breakdown
     byProvider: {
       stripe: {
         totalEarned: { type: Number, default: 0 },
@@ -186,19 +253,9 @@ const UserSchema = new mongoose.Schema({
   },
 
   // Social connections
-  photos: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Photo',
-    },
-  ],
-  followers: [{
+  photos: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  }],
-  following: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Photo',
   }],
   attendingEvents: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -215,6 +272,10 @@ const UserSchema = new mongoose.Schema({
   groups: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Group',
+  }],
+  sharedEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
   }],
 
   // Security and preferences
@@ -234,21 +295,204 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false,
   }],
-  sharedEvents: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Event',
-  }],
-  followRequests: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  }],
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+
+  // ✅ NEW: Migration tracking
+  migratedToFriendsAt: Date,
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
+
+// ============================================
+// ✅ NEW: FRIENDS SYSTEM METHODS
+// ============================================
+
+/**
+ * Get all accepted friends for this user
+ * @returns {Array} Array of friend user IDs
+ */
+UserSchema.methods.getAcceptedFriends = function() {
+  return this.friends
+    .filter(f => f.status === 'accepted')
+    .map(f => f.user);
+};
+
+/**
+ * Get pending friend requests sent TO this user
+ * @returns {Array} Array of friend request objects
+ */
+UserSchema.methods.getPendingRequests = function() {
+  return this.friends.filter(f => 
+    f.status === 'pending' && 
+    String(f.initiatedBy) !== String(this._id)
+  );
+};
+
+/**
+ * Get pending friend requests sent BY this user
+ * @returns {Array} Array of friend request objects  
+ */
+UserSchema.methods.getSentRequests = function() {
+  return this.friends.filter(f => 
+    f.status === 'pending' && 
+    String(f.initiatedBy) === String(this._id)
+  );
+};
+
+/**
+ * Check if two users are friends
+ * @param {string} userId - User ID to check friendship with
+ * @returns {Object} Friendship status and details
+ */
+UserSchema.methods.getFriendshipStatus = function(userId) {
+  const userIdStr = String(userId);
+  const friendship = this.friends.find(f => 
+    String(f.user) === userIdStr
+  );
+  
+  if (!friendship) {
+    return { status: 'not-friends', friendship: null };
+  }
+  
+  if (friendship.status === 'accepted') {
+    return { status: 'friends', friendship };
+  }
+  
+  if (friendship.status === 'pending') {
+    const initiatedByMe = String(friendship.initiatedBy) === String(this._id);
+    return { 
+      status: initiatedByMe ? 'request-sent' : 'request-received', 
+      friendship 
+    };
+  }
+  
+  if (friendship.status === 'blocked') {
+    return { status: 'blocked', friendship };
+  }
+  
+  return { status: 'not-friends', friendship: null };
+};
+
+/**
+ * Send friend request to another user
+ * @param {string} userId - User ID to send request to
+ * @param {string} message - Optional message with request
+ * @returns {Promise<Object>} Result of friend request
+ */
+UserSchema.methods.sendFriendRequest = async function(userId, message = '') {
+  const userIdStr = String(userId);
+  const currentIdStr = String(this._id);
+  
+  if (userIdStr === currentIdStr) {
+    throw new Error('Cannot send friend request to yourself');
+  }
+  
+  const existingFriendship = this.getFriendshipStatus(userId);
+  if (existingFriendship.status !== 'not-friends') {
+    throw new Error(`Friendship already exists with status: ${existingFriendship.status}`);
+  }
+  
+  const targetUser = await this.constructor.findById(userId);
+  if (!targetUser) {
+    throw new Error('User not found');
+  }
+  
+  if (targetUser.privacy?.friendRequests === 'no-one') {
+    throw new Error('This user is not accepting friend requests');
+  }
+  
+  const friendshipData = {
+    user: mongoose.Types.ObjectId(userId),
+    status: 'pending',
+    initiatedBy: this._id,
+    createdAt: new Date(),
+    requestMessage: message
+  };
+  
+  this.friends.push(friendshipData);
+  targetUser.friends.push({
+    ...friendshipData,
+    user: this._id
+  });
+  
+  await Promise.all([this.save(), targetUser.save()]);
+  
+  return { success: true, message: 'Friend request sent' };
+};
+
+/**
+ * Accept friend request
+ * @param {string} userId - User ID who sent the request
+ * @returns {Promise<Object>} Result of accepting request
+ */
+UserSchema.methods.acceptFriendRequest = async function(userId) {
+  const friendship = this.friends.find(f => 
+    String(f.user) === String(userId) && 
+    f.status === 'pending' &&
+    String(f.initiatedBy) !== String(this._id)
+  );
+  
+  if (!friendship) {
+    throw new Error('Friend request not found');
+  }
+  
+  const otherUser = await this.constructor.findById(userId);
+  if (!otherUser) {
+    throw new Error('User not found');
+  }
+  
+  const otherFriendship = otherUser.friends.find(f => 
+    String(f.user) === String(this._id)
+  );
+  
+  const acceptedAt = new Date();
+  friendship.status = 'accepted';
+  friendship.acceptedAt = acceptedAt;
+  
+  if (otherFriendship) {
+    otherFriendship.status = 'accepted';
+    otherFriendship.acceptedAt = acceptedAt;
+  }
+  
+  await Promise.all([this.save(), otherUser.save()]);
+  
+  return { success: true, message: 'Friend request accepted' };
+};
+
+/**
+ * Remove friendship or reject/cancel request
+ * @param {string} userId - User ID to remove friendship with
+ * @returns {Promise<Object>} Result of removal
+ */
+UserSchema.methods.removeFriendship = async function(userId) {
+  const friendshipIndex = this.friends.findIndex(f => 
+    String(f.user) === String(userId)
+  );
+  
+  if (friendshipIndex === -1) {
+    throw new Error('Friendship not found');
+  }
+  
+  const otherUser = await this.constructor.findById(userId);
+  if (otherUser) {
+    const otherFriendshipIndex = otherUser.friends.findIndex(f => 
+      String(f.user) === String(this._id)
+    );
+    
+    if (otherFriendshipIndex !== -1) {
+      otherUser.friends.splice(otherFriendshipIndex, 1);
+      await otherUser.save();
+    }
+  }
+  
+  this.friends.splice(friendshipIndex, 1);
+  await this.save();
+  
+  return { success: true, message: 'Friendship removed' };
+};
 
 // ============================================
 // ENHANCED: PAYMENT ACCOUNT METHODS
@@ -270,19 +514,16 @@ UserSchema.methods.canReceivePayments = function() {
     stripeChargesEnabled: accounts.stripe?.chargesEnabled
   });
   
-  // Check PayPal
   if (accounts.paypal?.verified && accounts.paypal?.email) {
     console.log(`✅ PayPal payments enabled for ${accounts.paypal.email}`);
     return true;
   }
   
-  // Check Stripe
   if (accounts.stripe?.chargesEnabled && accounts.stripe?.onboardingComplete) {
     console.log(`✅ Stripe payments enabled for account ${accounts.stripe.accountId}`);
     return true;
   }
   
-  // Check manual methods
   if (accounts.manual?.enabled && (
     accounts.manual?.venmoHandle || 
     accounts.manual?.cashappHandle || 
@@ -303,12 +544,10 @@ UserSchema.methods.canReceivePayments = function() {
 UserSchema.methods.getPrimaryPaymentMethod = function() {
   const accounts = this.paymentAccounts || {};
   
-  // Return explicitly set primary method if valid
   if (accounts.primary?.type && accounts.primary?.canReceivePayments) {
     return accounts.primary.type;
   }
   
-  // Auto-detect primary method based on what's available
   if (accounts.paypal?.verified && accounts.paypal?.email) {
     return 'paypal';
   }
@@ -348,54 +587,7 @@ UserSchema.methods.getAvailablePaymentMethods = function() {
 };
 
 /**
- * Get payment account details for a specific provider
- * @param {string} provider - Provider type ('paypal', 'stripe', 'manual')
- * @returns {object|null} Account details or null if not configured
- */
-UserSchema.methods.getPaymentAccount = function(provider) {
-  const accounts = this.paymentAccounts || {};
-  
-  switch (provider) {
-    case 'paypal':
-      if (accounts.paypal?.verified && accounts.paypal?.email) {
-        return {
-          type: 'paypal',
-          email: accounts.paypal.email,
-          verified: accounts.paypal.verified,
-          connectedAt: accounts.paypal.connectedAt
-        };
-      }
-      break;
-      
-    case 'stripe':
-      if (accounts.stripe?.chargesEnabled) {
-        return {
-          type: 'stripe',
-          accountId: accounts.stripe.accountId,
-          chargesEnabled: accounts.stripe.chargesEnabled,
-          payoutsEnabled: accounts.stripe.payoutsEnabled,
-          onboardingComplete: accounts.stripe.onboardingComplete
-        };
-      }
-      break;
-      
-    case 'manual':
-      if (accounts.manual?.enabled) {
-        return {
-          type: 'manual',
-          venmoHandle: accounts.manual.venmoHandle,
-          cashappHandle: accounts.manual.cashappHandle,
-          instructions: accounts.manual.instructions
-        };
-      }
-      break;
-  }
-  
-  return null;
-};
-
-/**
- * Set up PayPal payment account
+ * Setup PayPal payment account
  * @param {string} email - PayPal email address
  * @returns {Promise<boolean>} Success status
  */
@@ -412,12 +604,11 @@ UserSchema.methods.setupPayPalAccount = function(email) {
   
   this.paymentAccounts.paypal = {
     email: email.toLowerCase().trim(),
-    verified: true, // Simplified verification for now
+    verified: true,
     connectedAt: new Date(),
     country: 'US'
   };
   
-  // Set as primary if no primary method exists
   if (!this.paymentAccounts.primary?.type) {
     console.log(`🎯 Setting PayPal as primary payment method`);
     this.paymentAccounts.primary = {
@@ -455,7 +646,6 @@ UserSchema.methods.setupStripeAccount = function(accountId, accountData = {}) {
     country: accountData.country || 'US'
   };
   
-  // Set as primary if no primary method exists and charges are enabled
   if (!this.paymentAccounts.primary?.type && accountData.chargesEnabled) {
     console.log(`🎯 Setting Stripe as primary payment method`);
     this.paymentAccounts.primary = {
@@ -490,11 +680,9 @@ UserSchema.methods.addEarnings = function(amount, provider = 'stripe', currency 
     };
   }
   
-  // Update total earnings
   this.earnings.totalEarned += amount;
-  this.earnings.pendingBalance += amount; // Will move to available after settlement
+  this.earnings.pendingBalance += amount;
   
-  // Update provider-specific earnings
   if (!this.earnings.byProvider) {
     this.earnings.byProvider = {
       stripe: { totalEarned: 0 },
@@ -513,30 +701,6 @@ UserSchema.methods.addEarnings = function(amount, provider = 'stripe', currency 
 };
 
 /**
- * Get payment status summary
- * @returns {object} Payment status information
- */
-UserSchema.methods.getPaymentStatus = function() {
-  const accounts = this.paymentAccounts || {};
-  
-  return {
-    canReceivePayments: this.canReceivePayments(),
-    primaryMethod: this.getPrimaryPaymentMethod(),
-    availableMethods: {
-      paypal: !!(accounts.paypal?.verified && accounts.paypal?.email),
-      stripe: !!(accounts.stripe?.chargesEnabled && accounts.stripe?.onboardingComplete),
-      manual: !!(accounts.manual?.enabled)
-    },
-    earnings: {
-      total: this.earnings?.totalEarned || 0,
-      available: this.earnings?.availableBalance || 0,
-      pending: this.earnings?.pendingBalance || 0,
-      currency: this.earnings?.currency || 'USD'
-    }
-  };
-};
-
-/**
  * Check if user needs to complete payment setup
  * @returns {boolean} True if setup is needed
  */
@@ -550,10 +714,8 @@ UserSchema.methods.needsPaymentSetup = function() {
  */
 UserSchema.methods.getPaymentSetupRecommendations = function() {
   const recommendations = [];
-  
   const accounts = this.paymentAccounts || {};
   
-  // Recommend PayPal if not set up
   if (!accounts.paypal?.verified) {
     recommendations.push({
       type: 'paypal',
@@ -565,7 +727,6 @@ UserSchema.methods.getPaymentSetupRecommendations = function() {
     });
   }
   
-  // Recommend Stripe for advanced users
   if (!accounts.stripe?.chargesEnabled) {
     recommendations.push({
       type: 'stripe',
@@ -584,9 +745,7 @@ UserSchema.methods.getPaymentSetupRecommendations = function() {
 // SCHEMA MIDDLEWARE AND VALIDATION
 // ============================================
 
-// Generate unique share code before saving
 UserSchema.pre('save', async function(next) {
-  // Hash password if modified
   if (this.isModified('password')) {
     try {
       const salt = await bcrypt.genSalt(10);
@@ -596,7 +755,6 @@ UserSchema.pre('save', async function(next) {
     }
   }
 
-  // Generate share code if new user
   if (this.isNew && !this.shareCode) {
     let shareCode;
     let isUnique = false;
@@ -612,7 +770,6 @@ UserSchema.pre('save', async function(next) {
     this.shareCode = shareCode;
   }
   
-  // Update payment accounts timestamp
   if (this.isModified('paymentAccounts') && this.paymentAccounts?.primary) {
     this.paymentAccounts.primary.lastUpdated = new Date();
   }
@@ -620,12 +777,21 @@ UserSchema.pre('save', async function(next) {
   next();
 });
 
-// Password comparison method
 UserSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Virtual for full name (if you add firstName/lastName later)
+// Virtual for friends count
+UserSchema.virtual('friendsCount').get(function() {
+  return this.friends ? this.friends.filter(f => f.status === 'accepted').length : 0;
+});
+
+// Virtual for pending requests count
+UserSchema.virtual('pendingRequestsCount').get(function() {
+  return this.friends ? this.getPendingRequests().length : 0;
+});
+
+// Virtual for full name
 UserSchema.virtual('fullName').get(function() {
   return this.firstName && this.lastName ? `${this.firstName} ${this.lastName}` : this.username;
 });
@@ -633,9 +799,9 @@ UserSchema.virtual('fullName').get(function() {
 // ============================================
 // INDEXES FOR PERFORMANCE
 // ============================================
-UserSchema.index({ email: 1 });
-UserSchema.index({ username: 1 });
-UserSchema.index({ shareCode: 1 });
+// ✅ FIXED: Remove individual indexes to avoid duplicates (handled in server.js)
+UserSchema.index({ 'friends.user': 1, 'friends.status': 1 });
+UserSchema.index({ 'friends.initiatedBy': 1 });
 UserSchema.index({ 'paymentAccounts.paypal.email': 1 });
 UserSchema.index({ 'paymentAccounts.stripe.accountId': 1 });
 
