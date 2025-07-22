@@ -3,6 +3,7 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Event = require('../models/Event');
 const Memory = require('../models/Memory');
+const mongoose = require('mongoose');
 
 class NotificationService {
   
@@ -672,7 +673,7 @@ class NotificationService {
    */
   async getUnreadCountsByCategory(userId) {
     return await Notification.aggregate([
-      { $match: { user: mongoose.Types.ObjectId(userId), read: false } },
+      { $match: { user: new mongoose.Types.ObjectId(userId), isRead: false } },
       { $group: { _id: '$category', count: { $sum: 1 } } },
       { $project: { category: '$_id', count: 1, _id: 0 } }
     ]);

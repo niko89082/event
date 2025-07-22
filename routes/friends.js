@@ -4,6 +4,9 @@ const router = express.Router();
 const User = require('../models/User');
 const protect = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
+const Notification = require('../models/Notification');
+
+/**
 
 // ============================================
 // FRIEND REQUEST MANAGEMENT
@@ -13,6 +16,93 @@ const notificationService = require('../services/notificationService');
  * POST /friends/request/:userId
  * Send a friend request to another user
  */
+router.post('/quick-accept/:requesterId', protect, async (req, res) => {
+  try {
+    const requesterUserId = req.params.requesterId;
+    const currentUserId = req.user._id;
+
+    console.log(`🤝 Quick accept friend request: ${requesterUserId} -> ${currentUserId}`);
+
+    const currentUser = await User.findById(currentUserId);
+    const requesterUser = await User.findById(requesterUserId);
+    
+    if (!requesterUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Check if there's a pending request from this user
+    const friendshipStatus = currentUser.getFriendshipStatus(requesterUserId);
+    
+    if (friendshipStatus.status !== 'request-received') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No pending friend request from this user',
+        currentStatus: friendshipStatus.status
+      });
+    }
+
+    try {
+      // Accept the friend request using your existing model method
+      await currentUser.acceptFriendRequest(requesterUserId);
+      
+      // Mark the friend request notification as read and handled
+      const updatedNotification = await Notification.findOneAndUpdate(
+        { 
+          user: currentUserId, 
+          sender: requesterUserId, 
+          type: 'friend_request',
+          isRead: false 
+        },
+        { 
+          isRead: true, 
+          readAt: new Date(),
+          $set: { 'data.actionTaken': 'accepted' }
+        },
+        { new: true }
+      );
+
+      console.log(`✅ Marked notification as accepted:`, updatedNotification?._id);
+
+      // Send notification to requester (non-blocking)
+      setImmediate(async () => {
+        try {
+          await notificationService.sendFriendRequestAccepted(currentUserId, requesterUserId);
+          console.log('🔔 Friend request accepted notification sent');
+        } catch (notifError) {
+          console.error('Failed to send friend request accepted notification:', notifError);
+        }
+      });
+
+      res.status(200).json({ 
+        success: true,
+        message: `You are now friends with ${requesterUser.username}!`,
+        status: 'friends',
+        data: {
+          friendUsername: requesterUser.username,
+          friendId: requesterUserId,
+          actionTaken: 'accepted'
+        }
+      });
+
+    } catch (error) {
+      console.error('Error accepting friend request:', error);
+      res.status(400).json({ 
+        success: false,
+        message: error.message || 'Failed to accept friend request'
+      });
+    }
+
+  } catch (error) {
+    console.error('Quick accept friend request error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
 router.post('/request/:userId', protect, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
@@ -108,7 +198,28 @@ router.post('/request/:userId', protect, async (req, res) => {
     });
   }
 });
+router.get('/request-status/:userId', protect, async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const currentUserId = req.user._id;
 
+    const currentUser = await User.findById(currentUserId);
+    const friendshipStatus = currentUser.getFriendshipStatus(targetUserId);
+
+    res.json({
+      success: true,
+      status: friendshipStatus.status,
+      data: friendshipStatus
+    });
+
+  } catch (error) {
+    console.error('Error getting request status:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
 /**
  * POST /friends/accept/:userId
  * Accept a friend request from another user
@@ -118,21 +229,50 @@ router.post('/accept/:userId', protect, async (req, res) => {
     const requesterUserId = req.params.userId;
     const currentUserId = req.user._id;
 
+    console.log(`🤝 Accept friend request: ${requesterUserId} -> ${currentUserId}`);
+
     const currentUser = await User.findById(currentUserId);
+    const requesterUser = await User.findById(requesterUserId);
     
+    if (!requesterUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
     // Check if there's a pending request from this user
     const friendshipStatus = currentUser.getFriendshipStatus(requesterUserId);
     
     if (friendshipStatus.status !== 'request-received') {
       return res.status(400).json({ 
         success: false,
-        message: 'No pending friend request from this user' 
+        message: 'No pending friend request from this user',
+        currentStatus: friendshipStatus.status
       });
     }
 
     try {
       await currentUser.acceptFriendRequest(requesterUserId);
       
+      // ✅ ENHANCED: Mark the friend request notification as read and handled
+      const updatedNotification = await Notification.findOneAndUpdate(
+        { 
+          user: currentUserId, 
+          sender: requesterUserId, 
+          type: 'friend_request',
+          isRead: false 
+        },
+        { 
+          isRead: true, 
+          readAt: new Date(),
+          $set: { 'data.actionTaken': 'accepted' }
+        },
+        { new: true }
+      );
+
+      console.log(`✅ Marked notification as accepted:`, updatedNotification?._id);
+
       // Send notification (non-blocking)
       setImmediate(async () => {
         try {
@@ -143,16 +283,23 @@ router.post('/accept/:userId', protect, async (req, res) => {
         }
       });
 
+      // ✅ ENHANCED: Return more data for frontend UI updates
       res.status(200).json({ 
         success: true,
-        message: 'Friend request accepted',
-        status: 'friends'
+        message: `You are now friends with ${requesterUser.username}!`,
+        status: 'friends',
+        data: {
+          friendUsername: requesterUser.username,
+          friendId: requesterUserId,
+          actionTaken: 'accepted'
+        }
       });
 
     } catch (error) {
+      console.error('Error accepting friend request:', error);
       res.status(400).json({ 
         success: false,
-        message: error.message 
+        message: error.message || 'Failed to accept friend request'
       });
     }
 
@@ -174,31 +321,67 @@ router.delete('/reject/:userId', protect, async (req, res) => {
     const requesterUserId = req.params.userId;
     const currentUserId = req.user._id;
 
+    console.log(`❌ Reject friend request: ${requesterUserId} -> ${currentUserId}`);
+
     const currentUser = await User.findById(currentUserId);
+    const requesterUser = await User.findById(requesterUserId);
     
+    if (!requesterUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
     // Check if there's a pending request from this user
     const friendshipStatus = currentUser.getFriendshipStatus(requesterUserId);
     
     if (friendshipStatus.status !== 'request-received') {
       return res.status(400).json({ 
         success: false,
-        message: 'No pending friend request from this user' 
+        message: 'No pending friend request from this user',
+        currentStatus: friendshipStatus.status
       });
     }
 
     try {
       await currentUser.removeFriendship(requesterUserId);
 
+      // ✅ ENHANCED: Mark the friend request notification as read and handled
+      const updatedNotification = await Notification.findOneAndUpdate(
+        { 
+          user: currentUserId, 
+          sender: requesterUserId, 
+          type: 'friend_request',
+          isRead: false 
+        },
+        { 
+          isRead: true, 
+          readAt: new Date(),
+          $set: { 'data.actionTaken': 'rejected' }
+        },
+        { new: true }
+      );
+
+      console.log(`❌ Marked notification as rejected:`, updatedNotification?._id);
+
+      // ✅ ENHANCED: Return more data for frontend UI updates
       res.status(200).json({ 
         success: true,
         message: 'Friend request rejected',
-        status: 'not-friends'
+        status: 'rejected',
+        data: {
+          friendUsername: requesterUser.username,
+          friendId: requesterUserId,
+          actionTaken: 'rejected'
+        }
       });
 
     } catch (error) {
+      console.error('Error rejecting friend request:', error);
       res.status(400).json({ 
         success: false,
-        message: error.message 
+        message: error.message || 'Failed to reject friend request'
       });
     }
 
@@ -220,31 +403,67 @@ router.delete('/cancel/:userId', protect, async (req, res) => {
     const targetUserId = req.params.userId;
     const currentUserId = req.user._id;
 
+    console.log(`🚫 Cancel friend request: ${currentUserId} -> ${targetUserId}`);
+
     const currentUser = await User.findById(currentUserId);
+    const targetUser = await User.findById(targetUserId);
     
+    if (!targetUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
     // Check if you sent a request to this user
     const friendshipStatus = currentUser.getFriendshipStatus(targetUserId);
     
     if (friendshipStatus.status !== 'request-sent') {
       return res.status(400).json({ 
         success: false,
-        message: 'No pending friend request to this user' 
+        message: 'No pending friend request to this user',
+        currentStatus: friendshipStatus.status
       });
     }
 
     try {
       await currentUser.removeFriendship(targetUserId);
 
+      // ✅ ENHANCED: Remove/mark the friend request notification for the target user
+      const updatedNotification = await Notification.findOneAndUpdate(
+        { 
+          user: targetUserId, 
+          sender: currentUserId, 
+          type: 'friend_request',
+          isRead: false 
+        },
+        { 
+          isRead: true, 
+          readAt: new Date(),
+          $set: { 'data.actionTaken': 'cancelled' }
+        },
+        { new: true }
+      );
+
+      console.log(`🚫 Marked notification as cancelled:`, updatedNotification?._id);
+
+      // ✅ ENHANCED: Return more data for frontend UI updates
       res.status(200).json({ 
         success: true,
         message: 'Friend request cancelled',
-        status: 'not-friends'
+        status: 'not-friends',
+        data: {
+          targetUsername: targetUser.username,
+          targetId: targetUserId,
+          actionTaken: 'cancelled'
+        }
       });
 
     } catch (error) {
+      console.error('Error cancelling friend request:', error);
       res.status(400).json({ 
         success: false,
-        message: error.message 
+        message: error.message || 'Failed to cancel friend request'
       });
     }
 
@@ -256,7 +475,6 @@ router.delete('/cancel/:userId', protect, async (req, res) => {
     });
   }
 });
-
 /**
  * DELETE /friends/remove/:userId
  * Remove an existing friend
@@ -557,6 +775,85 @@ router.get('/suggestions', protect, async (req, res) => {
     });
   }
 });
+
+router.post('/quick-reject/:requesterId', protect, async (req, res) => {
+  try {
+    const requesterUserId = req.params.requesterId;
+    const currentUserId = req.user._id;
+
+    console.log(`❌ Quick reject friend request: ${requesterUserId} -> ${currentUserId}`);
+
+    const currentUser = await User.findById(currentUserId);
+    const requesterUser = await User.findById(requesterUserId);
+    
+    if (!requesterUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Check if there's a pending request from this user
+    const friendshipStatus = currentUser.getFriendshipStatus(requesterUserId);
+    
+    if (friendshipStatus.status !== 'request-received') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No pending friend request from this user',
+        currentStatus: friendshipStatus.status
+      });
+    }
+
+    try {
+      // Reject the friend request using your existing model method
+      await currentUser.rejectFriendRequest(requesterUserId);
+      
+      // Mark the friend request notification as read and handled
+      const updatedNotification = await Notification.findOneAndUpdate(
+        { 
+          user: currentUserId, 
+          sender: requesterUserId, 
+          type: 'friend_request',
+          isRead: false 
+        },
+        { 
+          isRead: true, 
+          readAt: new Date(),
+          $set: { 'data.actionTaken': 'rejected' }
+        },
+        { new: true }
+      );
+
+      console.log(`❌ Marked notification as rejected:`, updatedNotification?._id);
+
+      res.status(200).json({ 
+        success: true,
+        message: 'Friend request rejected',
+        status: 'rejected',
+        data: {
+          friendUsername: requesterUser.username,
+          friendId: requesterUserId,
+          actionTaken: 'rejected'
+        }
+      });
+
+    } catch (error) {
+      console.error('Error rejecting friend request:', error);
+      res.status(400).json({ 
+        success: false,
+        message: error.message || 'Failed to reject friend request'
+      });
+    }
+
+  } catch (error) {
+    console.error('Quick reject friend request error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
 
 // ============================================
 // PRIVACY SETTINGS
