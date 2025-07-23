@@ -1135,5 +1135,49 @@ router.get('/user/:userId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+router.post('/create', protect, upload.single('photo'), async (req, res) => {
+  try {
+    const { caption } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'No photo uploaded' });
+    }
+
+    console.log(`📸 General post creation - User: ${req.user._id}`);
+
+    // Create photo document (NO event association)
+    const photo = new Photo({
+      user: req.user._id,
+      // event: null,              // ✅ No event for general posts
+      // taggedEvent: null,        // ✅ No event for general posts  
+      paths: [`/uploads/photos/${req.file.filename}`],
+      visibleInEvent: false,      // ✅ This is a general post
+      caption: caption || '',
+      likes: [],                  // Initialize empty likes array
+      comments: []                // Initialize empty comments array
+    });
+    await photo.save();
+
+    // Add to user's photos
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { $addToSet: { photos: photo._id } }
+    );
+
+    console.log(`✅ Successfully created general post: ${photo._id}`);
+    
+    res.status(201).json({
+      success: true,
+      photo: photo,
+      _id: photo._id,
+      message: 'Post created successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ General post creation error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 module.exports = router;

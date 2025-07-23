@@ -1,4 +1,4 @@
-// SocialApp/screens/FeedScreen.js - FINAL FIX: Proper sizing and positioning
+// SocialApp/screens/FeedScreen.js - UPDATED: Activity Feed with All Original Features
 import React, { useLayoutEffect, useState, useRef, useCallback, useEffect } from 'react';
 import { 
   View, 
@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import PostsFeed from '../components/PostsFeed';
+import ActivityFeed from '../components/ActivityFeed'; // ✅ CHANGED: Import ActivityFeed instead of PostsFeed
 import EventsHub from '../components/EventsHub';
 import { useDynamicType } from '../hooks/useDynamicType';
 import ResponsiveText from '../components/ResponsiveText';
@@ -30,7 +30,7 @@ TextInput.defaultProps = TextInput.defaultProps || {};
 TextInput.defaultProps.allowFontScaling = false;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const TABS = ['Posts', 'Events'];
+const TABS = ['Activity', 'Events']; // ✅ CHANGED: Updated tab names from ['Posts', 'Events'] to ['Activity', 'Events']
 const ANIMATION_DURATION = 250;
 
 // Calculate constants outside component
@@ -48,7 +48,7 @@ export default function FeedScreen({ navigation }) {
   const { getScaledSpacing, getScaledLineHeight, fontScale } = useDynamicType();
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const postsRef = useRef(null);
+  const activityRef = useRef(null); // ✅ CHANGED: Renamed from postsRef to activityRef
   const eventsRef = useRef(null);
   const isAnimating = useRef(false);
 
@@ -78,7 +78,12 @@ export default function FeedScreen({ navigation }) {
   const SUB_TAB_MOVE_DISTANCE = SUB_TAB_ORIGINAL_POSITION - MAIN_TAB_POSITION;
 
   // COMPREHENSIVE POSITION DEBUGGING
-  console.log('🔍 COMPREHENSIVE POSITION DEBUG:', {
+  console.log('🔍 ACTIVITY FEED SCREEN DEBUG:', {
+    '=== UPDATED INFO ===': {
+      tabNames: TABS,
+      activityFeedUsed: true,
+      originalFeatures: 'All preserved',
+    },
     '=== DEVICE INFO ===': {
       fontScale: fontScale,
       safeAreaTop: SAFE_AREA_TOP,
@@ -199,7 +204,7 @@ export default function FeedScreen({ navigation }) {
     
     if (isAnimating.current) return;
     
-    console.log('📱 SWITCHING TAB:', { from: activeTabIndex, to: targetIndex });
+    console.log('📱 SWITCHING TAB:', { from: activeTabIndex, to: targetIndex, tabName: TABS[targetIndex] });
     
     isAnimating.current = true;
     
@@ -274,7 +279,7 @@ export default function FeedScreen({ navigation }) {
       },
     });
 
-    console.log('🎨 DYNAMIC STYLES COMPREHENSIVE DEBUG:', {
+    console.log('🎨 ACTIVITY FEED DYNAMIC STYLES DEBUG:', {
       '=== FONT SCALING ===': {
         originalFontScale: fontScale,
         conservativeFontScale,
@@ -293,10 +298,9 @@ export default function FeedScreen({ navigation }) {
         clearance: SUB_TAB_ORIGINAL_POSITION - (MAIN_TAB_POSITION + 34),
       },
       '=== ADJUSTMENTS MADE ===': {
-        socialFontSize: 'Reduced to 26',
-        socialLineHeight: 'Increased to 1.5',
-        mainTabPosition: 'Moved to -2px from header',
-        mainTabFontSize: 'Increased back to 15',
+        tabUpdate: 'Posts -> Activity',
+        componentUpdate: 'PostsFeed -> ActivityFeed',
+        refUpdate: 'postsRef -> activityRef',
       }
     });
 
@@ -397,9 +401,11 @@ export default function FeedScreen({ navigation }) {
     resetTabBar();
     
     try {
-      if (activeTabIndex === 0 && postsRef.current?.refresh) {
-        await postsRef.current.refresh();
+      if (activeTabIndex === 0 && activityRef.current?.refresh) { // ✅ CHANGED: Updated from postsRef to activityRef
+        console.log('🔄 Refreshing Activity Feed');
+        await activityRef.current.refresh();
       } else if (activeTabIndex === 1 && eventsRef.current?.refresh) {
+        console.log('🔄 Refreshing Events Hub');
         await eventsRef.current.refresh();
       }
     } catch (error) {
@@ -441,29 +447,14 @@ export default function FeedScreen({ navigation }) {
               style={[
                 styles.headerTitleContainer, 
                 dynamicStyles.headerTitleContainer,
-                {
-                  backgroundColor: 'rgba(255,0,0,0.1)', // TEMP DEBUG: Red background to see container
-                  borderWidth: 2,
-                  borderColor: 'red',
-                }
               ]}
               onLayout={(event) => {
                 const { height, width } = event.nativeEvent.layout;
-                console.log('🔍 SOCIAL CONTAINER DETAILED DEBUG:', {
+                console.log('🔍 SOCIAL CONTAINER (Activity Feed):', {
                   containerHeight: height,
                   containerWidth: width,
-                  containerMinHeight: Math.ceil(getScaledLineHeight(28, 1.15)),
-                  dynamicMinHeight: dynamicStyles.headerTitleContainer.minHeight,
-                  paddingVertical: dynamicStyles.headerTitleContainer.paddingVertical,
-                  fontScale: fontScale,
-                  deviceModel: Platform.constants?.systemName + ' ' + Platform.Version,
-                  safeAreaTop: SAFE_AREA_TOP,
-                  'DEBUGGING VARIABLES': {
-                    'lineHeightMultiplier': 1.15,
-                    'fontSize': 28,
-                    'containerPaddingMultiplier': 'Math.min(conservativeFontScale, 1.1)',
-                    'conservativeFontScale': Math.min(fontScale, 1.2),
-                  }
+                  activeTab: TABS[activeTabIndex],
+                  feedType: activeTabIndex === 0 ? 'ActivityFeed' : 'EventsHub'
                 });
               }}
             >
@@ -471,34 +462,20 @@ export default function FeedScreen({ navigation }) {
                 style={[
                   styles.headerTitle,
                   {
-                    backgroundColor: 'rgba(0,255,0,0.1)', // TEMP DEBUG: Green background to see text
-                    borderWidth: 1,
-                    borderColor: 'green',
-                    // CRITICAL FIX: Ensure proper text alignment and spacing
                     textAlign: 'center',
                     textAlignVertical: 'center',
-                    includeFontPadding: true, // CHANGED: Enable font padding to prevent clipping
+                    includeFontPadding: true,
                   }
                 ]}
-                fontSize={27} // REDUCED from 28 to 27 to help with clipping
-                lineHeightMultiplier={1.4} // INCREASED from 1.3 to 1.4 for more space
+                fontSize={27}
+                lineHeightMultiplier={1.4}
                 onLayout={(event) => {
                   const { height, width } = event.nativeEvent.layout;
-                  console.log('🔍 SOCIAL TEXT DETAILED DEBUG:', {
+                  console.log('🔍 SOCIAL TEXT (Activity Feed):', {
                     textHeight: height,
                     textWidth: width,
-                    containerHeight: 'see container debug above',
-                    expectedTextHeight: Math.ceil(getScaledLineHeight(28, 1.2)),
-                    fontScale: fontScale,
-                    scaledFontSize: Math.ceil(28 * fontScale),
-                    deviceModel: Platform.constants?.systemName + ' ' + Platform.Version,
-                    isTextClipping: height < Math.ceil(getScaledLineHeight(28, 1.2)),
-                    'VARIABLES_TO_ADJUST': {
-                      'lineHeightMultiplier': 'Currently 1.2 - increase to 1.25 or 1.3 if clipping',
-                      'fontSize': 'Currently 28 - decrease to 26 or 27 if still clipping',
-                      'containerPadding': 'See dynamicStyles.headerTitleContainer.paddingVertical',
-                      'containerMinHeight': 'See dynamicStyles.headerTitleContainer.minHeight',
-                    }
+                    currentTab: TABS[activeTabIndex],
+                    feedComponent: activeTabIndex === 0 ? 'ActivityFeed' : 'EventsHub'
                   });
                 }}
               >
@@ -522,22 +499,15 @@ export default function FeedScreen({ navigation }) {
         styles.animatedTabBarContainer,
         dynamicStyles.animatedTabBarContainer,
         { 
-          top: MAIN_TAB_POSITION, // Moved up positioning
+          top: MAIN_TAB_POSITION,
           opacity: tabBarOpacity,
-          backgroundColor: 'rgba(255,0,255,0.1)', // Debug: Magenta background
-          borderWidth: 1,
-          borderColor: 'magenta',
         }
       ]}>
         <View style={[styles.transparentTabBar, dynamicStyles.transparentTabBar]}>
           {TABS.map((tab, index) => (
             <TouchableOpacity
               key={tab}
-              style={[styles.tabButton, dynamicStyles.tabButton, {
-                backgroundColor: 'rgba(255,255,0,0.1)', // Debug: Yellow background
-                borderWidth: 1,
-                borderColor: 'orange',
-              }]}
+              style={[styles.tabButton, dynamicStyles.tabButton]}
               onPress={() => handleTabPress(index)}
               activeOpacity={0.8}
             >
@@ -546,19 +516,16 @@ export default function FeedScreen({ navigation }) {
                   styles.tabButtonText,
                   activeTabIndex === index && styles.activeTabButtonText
                 ]}
-                fontSize={14} // Further reduced font size
-                lineHeightMultiplier={1.1} // Tighter line height
+                fontSize={14}
+                lineHeightMultiplier={1.1}
                 onLayout={(event) => {
                   const { height, width } = event.nativeEvent.layout;
-                  console.log(`🔍 COMPACT TAB LAYOUT (${tab}):`, {
+                  console.log(`🔍 TAB LAYOUT (${tab}):`, {
                     textHeight: height,
                     textWidth: width,
-                    containerHeight: dynamicStyles.tabButton.minHeight,
-                    containerMaxHeight: dynamicStyles.tabButton.maxHeight,
-                    buttonActualHeight: event.nativeEvent.layout.height,
                     isActive: activeTabIndex === index,
-                    tabPosition: MAIN_TAB_POSITION,
-                    tabBottomPosition: MAIN_TAB_POSITION + 38,
+                    tabIndex: index,
+                    tabName: tab,
                   });
                 }}
               >
@@ -578,11 +545,11 @@ export default function FeedScreen({ navigation }) {
           styles.swipeableContent,
           { transform: [{ translateX: scrollX }] }
         ]}>
-          {/* Posts Tab */}
+          {/* Activity Tab - ✅ CHANGED: Using ActivityFeed instead of PostsFeed */}
           <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
-            <PostsFeed 
+            <ActivityFeed 
               navigation={navigation}
-              ref={postsRef}
+              ref={activityRef} // ✅ CHANGED: Updated ref name
               refreshing={refreshing}
               onRefresh={handleGlobalRefresh}
               onScroll={handleScroll}
@@ -590,7 +557,7 @@ export default function FeedScreen({ navigation }) {
             />
           </View>
           
-          {/* Events Tab */}
+          {/* Events Tab - UNCHANGED */}
           <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
             <EventsHub 
               navigation={navigation}
@@ -601,15 +568,14 @@ export default function FeedScreen({ navigation }) {
               scrollEventThrottle={16}
               getSubTabStyle={getSubTabStyle}
               subTabTranslateY={subTabTranslateY}
-              subTabMoveDistance={SUB_TAB_MOVE_DISTANCE} // Pass the exact distance
-                debugInfo={{
+              subTabMoveDistance={SUB_TAB_MOVE_DISTANCE}
+              debugInfo={{
                 mainTabPosition: MAIN_TAB_POSITION,
-                mainTabHeight: 34, // UPDATED from 38
-                mainTabBottomPosition: MAIN_TAB_POSITION + 34, // UPDATED calculation
+                mainTabHeight: 34,
+                mainTabBottomPosition: MAIN_TAB_POSITION + 34,
                 subTabOriginal: SUB_TAB_ORIGINAL_POSITION,
-                clearanceBetweenTabs: SUB_TAB_ORIGINAL_POSITION - (MAIN_TAB_POSITION + 34), // UPDATED calculation
+                clearanceBetweenTabs: SUB_TAB_ORIGINAL_POSITION - (MAIN_TAB_POSITION + 34),
                 fontScale: fontScale,
-                // Pass ResponsiveText component for sub-tabs
                 ResponsiveTextComponent: ResponsiveText,
               }}
             />

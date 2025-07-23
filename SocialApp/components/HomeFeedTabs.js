@@ -1,13 +1,13 @@
-// components/HomeFeedTabs.js
+// components/HomeFeedTabs.js - CORRECTED: Updated with ActivityFeed
 import React from 'react';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
-import PostsFeed   from './PostsFeed';
+import ActivityFeed from './ActivityFeed'; // ✅ CHANGED: Import ActivityFeed instead of PostsFeed
 import EventsFeed  from './EventsFeed';
 
 const Tab = createMaterialTopTabNavigator();
 
 export default function HomeFeedTabs() {
-  console.log('🟡 HomeFeedTabs: Rendering');
+  console.log('🟡 HomeFeedTabs: Rendering with ActivityFeed');
   
   return (
     <Tab.Navigator
@@ -30,8 +30,20 @@ export default function HomeFeedTabs() {
         },
       }}
     >
-      <Tab.Screen name="Posts" component={PostsFeed} />
-      <Tab.Screen name="Events" component={EventsFeed} />
+      <Tab.Screen 
+        name="Activity" 
+        component={ActivityFeed} // ✅ CHANGED: Use ActivityFeed component
+        options={{
+          tabBarLabel: 'Activity', // ✅ CHANGED: Changed label from "Posts" to "Activity"
+        }}
+      />
+      <Tab.Screen 
+        name="Events" 
+        component={EventsFeed}
+        options={{
+          tabBarLabel: 'Events',
+        }}
+      />
     </Tab.Navigator>
   );
 }

@@ -93,10 +93,7 @@ export default function CreatePostScreen({ navigation }) {
     return;
   }
 
-  if (!selectedEventId) {
-    Alert.alert('No Event', 'Please select an event for this photo.');
-    return;
-  }
+  // ✅ Event selection is now optional
 
   try {
     setPublishing(true);
@@ -107,14 +104,22 @@ export default function CreatePostScreen({ navigation }) {
       type: 'image/jpeg',
       name: 'photo.jpg',
     });
-    formData.append('eventId', selectedEventId);
+    
+    // ✅ Only include eventId if one is selected
+    if (selectedEventId) {
+      formData.append('eventId', selectedEventId);
+    }
+    
     if (caption.trim()) {
       formData.append('caption', caption.trim());
     }
 
-    console.log('📤 Uploading photo to event:', selectedEventId);
+    console.log('📤 Uploading photo:', selectedEventId ? `to event: ${selectedEventId}` : 'as general post');
 
-    const response = await api.post('/photos/upload', formData, {
+    // ✅ Use different endpoints based on post type
+    const endpoint = selectedEventId ? '/photos/upload' : '/photos/create';
+    
+    const response = await api.post(endpoint, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -122,31 +127,30 @@ export default function CreatePostScreen({ navigation }) {
 
     console.log('✅ Photo upload successful:', response.data);
 
-    // ✅ FIXED: Try multiple navigation approaches
+    // Navigation logic (same as before)
     try {
-      // First try navigating within the current stack
       navigation.replace('PostPublished', {
         photoId: response.data._id,
-        eventId: selectedEventId,
+        eventId: selectedEventId || null,
         imageUri: selectedImage.uri,
+        isGeneralPost: !selectedEventId // ✅ Flag for general posts
       });
     } catch (navError) {
       console.warn('❌ Stack navigation failed, trying root navigation:', navError);
       
-      // If that fails, try navigating to the root stack
       try {
         navigation.navigate('PostPublishedScreen', {
           photoId: response.data._id,
-          eventId: selectedEventId,
+          eventId: selectedEventId || null,
           imageUri: selectedImage.uri,
+          isGeneralPost: !selectedEventId
         });
       } catch (rootNavError) {
         console.warn('❌ Root navigation failed, going back with success:', rootNavError);
         
-        // If all navigation fails, just go back and show success
         Alert.alert(
           'Success!',
-          'Your photo has been shared successfully!',
+          selectedEventId ? 'Your photo has been shared to the event!' : 'Your post has been shared to your feed!',
           [
             {
               text: 'OK',
@@ -160,7 +164,6 @@ export default function CreatePostScreen({ navigation }) {
   } catch (error) {
     console.error('❌ Post creation error:', error);
     
-    // Better error handling
     let errorMessage = 'Failed to share photo. Please try again.';
     
     if (error.response?.data?.message) {
@@ -174,6 +177,7 @@ export default function CreatePostScreen({ navigation }) {
     setPublishing(false);
   }
 };
+
 
   const selectEvent = (event) => {
     setSelectedEventId(selectedEventId === event._id ? '' : event._id);
@@ -350,29 +354,29 @@ export default function CreatePostScreen({ navigation }) {
           Link this post to an event you're attending
         </Text>
         
-        <TouchableOpacity 
-          style={styles.eventSelector}
-          onPress={() => setShowEventModal(true)}
-          activeOpacity={0.8}
-        >
-          <View style={styles.eventSelectorContent}>
-            <Ionicons 
-              name={selectedEventId ? "calendar" : "calendar-outline"} 
-              size={20} 
-              color={selectedEventId ? "#34C759" : "#8E8E93"} 
-            />
-            <Text style={[
-              styles.eventSelectorText,
-              selectedEventId && styles.eventSelectorTextSelected
-            ]}>
-              {selectedEventId 
-                ? myEvents.find(e => e._id === selectedEventId)?.title || 'Selected Event'
-                : 'Select an event (optional)'
-              }
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-        </TouchableOpacity>
+        <TouchableOpacity
+  style={styles.eventSelector}
+  onPress={() => setShowEventModal(true)}
+  activeOpacity={0.7}
+>
+  <View style={styles.eventSelectorLeft}>
+    <Ionicons 
+      name={selectedEventId ? "calendar" : "calendar-outline"} 
+      size={20} 
+      color={selectedEventId ? "#34C759" : "#8E8E93"} 
+    />
+    <Text style={[
+        styles.eventSelectorText,
+        selectedEventId && styles.eventSelectorTextSelected
+      ]}>
+        {selectedEventId 
+          ? myEvents.find(e => e._id === selectedEventId)?.title || 'Selected Event'
+          : 'Link to event (optional)' // ✅ Make it clear it's optional
+        }
+      </Text>
+  </View>
+  <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+</TouchableOpacity>
       </View>
 
       <View style={styles.stepActions}>
