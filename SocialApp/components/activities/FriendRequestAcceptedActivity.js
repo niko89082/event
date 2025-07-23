@@ -1,4 +1,4 @@
-// components/activities/FriendRequestAcceptedActivity.js - Friend Request Accepted
+// components/activities/FriendRequestAcceptedActivity.js - Friend Request Accepted (No Messaging)
 import React from 'react';
 import {
   View,
@@ -22,13 +22,6 @@ const FriendRequestAcceptedActivity = ({
 
   const handleViewProfile = () => {
     navigation.navigate('ProfileScreen', { userId: accepter._id });
-  };
-
-  const handleStartConversation = () => {
-    navigation.navigate('ChatTab', { 
-      screen: 'ChatScreen',
-      params: { userId: accepter._id }
-    });
   };
 
   return (
@@ -92,24 +85,15 @@ const FriendRequestAcceptedActivity = ({
         </View>
       </View>
 
-      {/* Action Buttons */}
+      {/* Action Button - Only View Profile */}
       <View style={styles.actionsContainer}>
         <ActivityActionButton
           title="View Profile"
           onPress={handleViewProfile}
-          variant="outline"
+          variant="primary"
           icon="person-outline"
           style={styles.viewProfileButton}
-          fullWidth={false}
-        />
-        
-        <ActivityActionButton
-          title="Message"
-          onPress={handleStartConversation}
-          variant="primary"
-          icon="chatbubble-outline"
-          style={styles.messageButton}
-          fullWidth={false}
+          fullWidth={true}
         />
       </View>
     </View>
@@ -208,16 +192,9 @@ const styles = StyleSheet.create({
 
   // Actions
   actionsContainer: {
-    flexDirection: 'row',
     paddingHorizontal: 16,
-    gap: 12,
   },
   viewProfileButton: {
-    flex: 1,
-    borderColor: '#34C759',
-  },
-  messageButton: {
-    flex: 1,
     backgroundColor: '#34C759',
   },
 });

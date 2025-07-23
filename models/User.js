@@ -310,8 +310,13 @@ const UserSchema = new mongoose.Schema({
  * @returns {Array} Array of friend user IDs
  */
 UserSchema.methods.getAcceptedFriends = function() {
+  // ✅ Add null/undefined check
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return [];
+  }
+  
   return this.friends
-    .filter(f => f.status === 'accepted')
+    .filter(f => f && f.status === 'accepted')  // ✅ Also check if f exists
     .map(f => f.user);
 };
 
@@ -320,8 +325,12 @@ UserSchema.methods.getAcceptedFriends = function() {
  * @returns {Array} Array of friend request objects
  */
 UserSchema.methods.getPendingRequests = function() {
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return [];
+  }
+  
   return this.friends.filter(f => 
-    f.status === 'pending' && 
+    f && f.status === 'pending' && 
     String(f.initiatedBy) !== String(this._id)
   );
 };
@@ -331,8 +340,12 @@ UserSchema.methods.getPendingRequests = function() {
  * @returns {Array} Array of friend request objects  
  */
 UserSchema.methods.getSentRequests = function() {
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return [];
+  }
+  
   return this.friends.filter(f => 
-    f.status === 'pending' && 
+    f && f.status === 'pending' && 
     String(f.initiatedBy) === String(this._id)
   );
 };
@@ -343,9 +356,13 @@ UserSchema.methods.getSentRequests = function() {
  * @returns {Object} Friendship status and details
  */
 UserSchema.methods.getFriendshipStatus = function(userId) {
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return { status: 'not-friends', friendship: null };
+  }
+  
   const userIdStr = String(userId);
   const friendship = this.friends.find(f => 
-    String(f.user) === userIdStr
+    f && String(f.user) === userIdStr
   );
   
   if (!friendship) {
@@ -754,7 +771,10 @@ UserSchema.pre('save', async function(next) {
   if (this.isModified('paymentAccounts') && this.paymentAccounts?.primary) {
     this.paymentAccounts.primary.lastUpdated = new Date();
   }
-
+  
+   if (!this.friends) {
+    this.friends = [];
+  }
   next();
 });
 

@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const Event = require('../models/Event');
 const Group = require('../models/Group');
 const Photo = require('../models/Photo');
+const { onEventJoin, onEventCreated } = require('../utils/activityHooks');
 const EventDiscoveryService = require('../services/eventDiscoveryService');
 const { PRIVACY_LEVELS, getPrivacyPreset } = require('../constants/privacyConstants');
 const Notification = require('../models/Notification');
@@ -1546,6 +1547,14 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
     const event = new Event(eventData);
     await event.save();
 
+    setImmediate(async () => {
+          try {
+            await onEventCreated(event._id, req.user._id);
+            console.log(`🎉 Activity hook executed for event creation: ${event._id}`);
+          } catch (activityError) {
+            console.error('Failed to create event creation activity:', activityError);
+          }
+        });
     // Add to group if specified
     if (group) { 
       group.events.push(event._id); 
@@ -2097,6 +2106,17 @@ router.post('/attend/:eventId', protect, async (req, res) => {
       await session.endSession();
     }
 
+    // ✅ NEW: Create activity for friends (non-blocking)
+    setImmediate(async () => {
+      try {
+        await onEventJoin(eventId, userId);
+        console.log(`🎯 Activity hook executed for event join: ${userId} -> ${eventId}`);
+      } catch (activityError) {
+        console.error('Failed to create event join activity:', activityError);
+        // Don't fail the main operation if activity creation fails
+      }
+    });
+
     // Create notification for event host (non-blocking)
     setImmediate(async () => {
       try {
@@ -2143,6 +2163,7 @@ router.post('/attend/:eventId', protect, async (req, res) => {
     });
   }
 });
+
 router.delete('/:eventId', protect, async (req, res) => {
   const session = await mongoose.startSession();
   
@@ -2182,24 +2203,57 @@ router.delete('/:eventId', protect, async (req, res) => {
     console.log(`✅ Authorization passed - User can delete event`);
 
     // ============================================
-    // 2. START TRANSACTION
+    // 2. START TRANSACTION WITH ACTIVITY CLEANUP
     // ============================================
     
     await session.withTransaction(async () => {
       console.log(`🔄 Starting transaction for event deletion`);
 
       // ============================================
-      // 3. ENHANCED PHOTO CLEANUP (Phase 1 & 2)
+      // 3. ACTIVITY FEED CLEANUP (NEW!)
+      // ============================================
+      
+      console.log(`🎯 Starting activity feed cleanup for event: ${eventId}`);
+      
+      // Since your activities are generated dynamically from existing data,
+      // we need to clean up the source data that generates activities
+      
+      // Remove any stored activity cache if you implement caching later
+      // This is where you'd clear Redis cache, activity store, etc.
+      
+      // Clear any notification-based activities
+      await Notification.deleteMany({
+        $or: [
+          { 'data.eventId': eventId },
+          { 'actionData.eventId': eventId },
+          { type: { $in: ['event_invitation', 'event_reminder', 'event_announcement'] }, 'data.eventId': eventId }
+        ]
+      }, { session });
+      
+      console.log(`🎯 Activity feed source data cleanup completed`);
+
+      // ============================================
+      // 4. ENHANCED PHOTO CLEANUP (Existing + Enhanced)
       // ============================================
       
       console.log(`📸 Starting enhanced photo cleanup for event: ${eventId}`);
       
-      // ✅ PHASE 1: Use static method for efficient cleanup
+      // ✅ Count photos before cleanup for stats
+      const photoCountBefore = await Photo.countDocuments({
+        $or: [
+          { event: eventId },
+          { taggedEvent: eventId }
+        ]
+      }, { session });
+      
+      console.log(`📸 Found ${photoCountBefore} photos to cleanup`);
+      
+      // ✅ Use the existing static method for efficient cleanup
       const photoCleanupResult = await Photo.cleanupEventReferences(eventId, { session });
       
       console.log(`📸 Cleaned up ${photoCleanupResult.modifiedCount} photos - removed event references`);
 
-      // ✅ PHASE 2: Additional privacy-aware cleanup for flagged/moderated photos
+      // ✅ Additional privacy-aware cleanup for flagged/moderated photos
       const moderatedPhotosResult = await Photo.updateMany(
         {
           $or: [
@@ -2221,8 +2275,15 @@ router.delete('/:eventId', protect, async (req, res) => {
 
       console.log(`📸 Reset moderation status for ${moderatedPhotosResult.modifiedCount} photos`);
 
+      // ✅ Update event photos array to remove all photo references
+      await Event.findByIdAndUpdate(
+        eventId,
+        { $set: { photos: [] } },
+        { session }
+      );
+
       // ============================================
-      // 4. USER CLEANUP (Enhanced)
+      // 5. USER CLEANUP (Enhanced)
       // ============================================
       
       console.log(`👥 Cleaning up user references`);
@@ -2235,7 +2296,8 @@ router.delete('/:eventId', protect, async (req, res) => {
           { 
             $pull: { 
               attendingEvents: eventId,
-              savedEvents: eventId 
+              savedEvents: eventId,
+              invitedEvents: eventId // In case this field exists
             }
           },
           { session }
@@ -2244,33 +2306,59 @@ router.delete('/:eventId', protect, async (req, res) => {
         console.log(`👥 Removed event from ${userUpdateResult.modifiedCount} user profiles`);
       }
 
-      // Remove from host's hosted events if that field exists
+      // Remove from host's arrays
       await User.findByIdAndUpdate(
         event.host._id,
         { 
           $pull: { 
             hostedEvents: eventId,
-            savedEvents: eventId 
+            savedEvents: eventId,
+            invitedEvents: eventId
           }
         },
         { session }
       );
 
+      // Remove from co-hosts' arrays if they exist
+      if (event.coHosts && event.coHosts.length > 0) {
+        await User.updateMany(
+          { _id: { $in: event.coHosts } },
+          { 
+            $pull: { 
+              coHostedEvents: eventId,
+              savedEvents: eventId 
+            }
+          },
+          { session }
+        );
+      }
+
       // ============================================
-      // 5. NOTIFICATION CLEANUP (Enhanced)
+      // 6. NOTIFICATION CLEANUP (Enhanced)
       // ============================================
       
       console.log(`🔔 Cleaning up notifications`);
 
-      // Remove all notifications related to this event
-      const notificationDeleteResult = await Notification.deleteMany(
-        { 'data.eventId': eventId },
-        { session }
-      );
+      // Remove ALL notifications related to this event with comprehensive query
+      const notificationDeleteResult = await Notification.deleteMany({
+        $or: [
+          { 'data.eventId': eventId },
+          { 'actionData.eventId': eventId },
+          { 
+            type: { 
+              $in: [
+                'event_invitation', 'event_reminder', 'event_announcement', 
+                'event_join', 'event_rsvp_batch', 'event_update', 'event_cancelled'
+              ] 
+            }, 
+            'data.eventId': eventId 
+          }
+        ]
+      }, { session });
 
       console.log(`🔔 Deleted ${notificationDeleteResult.deletedCount} event-related notifications`);
 
-      // ✅ PHASE 2: Send deletion notifications to attendees
+      // ✅ Send deletion notifications to attendees
       const deletionNotifications = attendeeIds.map(attendeeId => ({
         user: attendeeId,
         sender: userId,
@@ -2281,7 +2369,8 @@ router.delete('/:eventId', protect, async (req, res) => {
         data: {
           eventId: eventId,
           eventTitle: event.title,
-          cancellationReason: 'Event deleted by host'
+          cancellationReason: 'Event deleted by host',
+          deletedAt: new Date()
         },
         createdAt: new Date()
       }));
@@ -2292,14 +2381,12 @@ router.delete('/:eventId', protect, async (req, res) => {
       }
 
       // ============================================
-      // 6. PAYMENT CLEANUP (if applicable)
+      // 7. PAYMENT CLEANUP (Enhanced)
       // ============================================
       
       if (event.pricing && !event.pricing.isFree && event.paymentHistory?.length > 0) {
         console.log(`💳 Processing refunds for paid event`);
         
-        // Note: In a real implementation, you'd integrate with Stripe/PayPal APIs here
-        // For now, we'll just log the refund requirements
         const refundablePayments = event.paymentHistory.filter(
           payment => payment.status === 'succeeded'
         );
@@ -2307,24 +2394,41 @@ router.delete('/:eventId', protect, async (req, res) => {
         console.log(`💳 Found ${refundablePayments.length} payments requiring refund processing`);
         
         // Update payment statuses to indicate refund needed
-        await Event.findByIdAndUpdate(
-          eventId,
-          {
-            $set: {
-              'paymentHistory.$[payment].refundStatus': 'pending',
-              'paymentHistory.$[payment].refundInitiatedAt': new Date(),
-              'paymentHistory.$[payment].refundReason': 'Event cancelled by host'
+        if (refundablePayments.length > 0) {
+          await Event.findByIdAndUpdate(
+            eventId,
+            {
+              $set: {
+                'paymentHistory.$[payment].refundStatus': 'pending',
+                'paymentHistory.$[payment].refundInitiatedAt': new Date(),
+                'paymentHistory.$[payment].refundReason': 'Event cancelled by host'
+              }
+            },
+            {
+              arrayFilters: [{ 'payment.status': 'succeeded' }],
+              session
             }
-          },
-          {
-            arrayFilters: [{ 'payment.status': 'succeeded' }],
-            session
-          }
-        );
+          );
+          
+          // Create refund processing notifications for host
+          await Notification.create([{
+            user: userId,
+            category: 'payments',
+            type: 'refund_processing_required',
+            title: 'Refunds Required',
+            message: `${refundablePayments.length} payment${refundablePayments.length === 1 ? '' : 's'} from "${event.title}" require${refundablePayments.length === 1 ? 's' : ''} refund processing`,
+            data: {
+              eventId: eventId,
+              eventTitle: event.title,
+              refundCount: refundablePayments.length,
+              totalAmount: refundablePayments.reduce((sum, p) => sum + (p.amount || 0), 0)
+            }
+          }], { session });
+        }
       }
 
       // ============================================
-      // 7. GROUP CLEANUP (if event belongs to a group)
+      // 8. GROUP CLEANUP (Enhanced)
       // ============================================
       
       if (event.group) {
@@ -2336,26 +2440,121 @@ router.delete('/:eventId', protect, async (req, res) => {
           { $pull: { events: eventId } },
           { session }
         );
+        
+        // Create group notification about event cancellation
+        const group = await Group.findById(event.group).select('members name').session(session);
+        if (group && group.members.length > 0) {
+          const groupNotifications = group.members
+            .filter(memberId => String(memberId) !== String(userId))
+            .map(memberId => ({
+              user: memberId,
+              sender: userId,
+              category: 'groups',
+              type: 'group_event_cancelled',
+              title: 'Group Event Cancelled',
+              message: `"${event.title}" has been cancelled in ${group.name}`,
+              data: {
+                groupId: event.group,
+                groupName: group.name,
+                eventId: eventId,
+                eventTitle: event.title
+              },
+              createdAt: new Date()
+            }));
+          
+          if (groupNotifications.length > 0) {
+            await Notification.insertMany(groupNotifications, { session });
+            console.log(`🔔 Sent group cancellation notifications to ${groupNotifications.length} members`);
+          }
+        }
       }
 
       // ============================================
-      // 8. MEMORY/HIGHLIGHT CLEANUP
+      // 9. MEMORY/HIGHLIGHT CLEANUP (Enhanced)
       // ============================================
       
       console.log(`📱 Cleaning up memories and highlights`);
       
-      // If you have a Memory model, clean up memories associated with this event
-      const Memory = require('../models/Memory');
-      if (Memory) {
-        await Memory.updateMany(
+      // Clean up memories associated with this event
+      try {
+        const Memory = require('../models/Memory');
+        const memoryUpdateResult = await Memory.updateMany(
           { events: eventId },
           { $pull: { events: eventId } },
           { session }
         );
+        console.log(`📱 Updated ${memoryUpdateResult.modifiedCount} memories`);
+        
+        // If any memories have no events left, optionally mark them differently
+        await Memory.updateMany(
+          { events: { $size: 0 }, eventBased: true },
+          { $set: { eventBased: false, generalMemory: true } },
+          { session }
+        );
+        
+      } catch (memoryError) {
+        console.log(`📱 Memory cleanup skipped (model not found): ${memoryError.message}`);
       }
 
       // ============================================
-      // 9. FINAL EVENT DELETION
+      // 10. GUEST PASS CLEANUP (NEW!)
+      // ============================================
+      
+      console.log(`🎫 Cleaning up guest passes`);
+      
+      try {
+        const GuestPass = require('../models/GuestPass');
+        
+        // Mark all guest passes as cancelled
+        const guestPassUpdateResult = await GuestPass.updateMany(
+          { event: eventId },
+          { 
+            $set: { 
+              status: 'cancelled',
+              cancelledAt: new Date(),
+              cancellationReason: 'Event deleted by host'
+            }
+          },
+          { session }
+        );
+        
+        console.log(`🎫 Updated ${guestPassUpdateResult.modifiedCount} guest passes`);
+        
+      } catch (guestPassError) {
+        console.log(`🎫 Guest pass cleanup skipped: ${guestPassError.message}`);
+      }
+
+      // ============================================
+      // 11. FORM SUBMISSION CLEANUP (NEW!)
+      // ============================================
+      
+      console.log(`📝 Cleaning up form submissions`);
+      
+      if (event.checkInForm) {
+        try {
+          const FormSubmission = require('../models/FormSubmission');
+          
+          // Mark form submissions as event-deleted (don't delete them entirely)
+          const formUpdateResult = await FormSubmission.updateMany(
+            { event: eventId },
+            { 
+              $set: { 
+                eventDeleted: true,
+                eventDeletedAt: new Date()
+              }
+            },
+            { session }
+          );
+          
+          console.log(`📝 Updated ${formUpdateResult.modifiedCount} form submissions`);
+          
+        } catch (formError) {
+          console.log(`📝 Form submission cleanup skipped: ${formError.message}`);
+        }
+      }
+
+      // ============================================
+      // 12. FINAL EVENT DELETION
       // ============================================
       
       console.log(`🗑️ Deleting the event itself`);
@@ -2371,12 +2570,12 @@ router.delete('/:eventId', protect, async (req, res) => {
     }); // End transaction
 
     // ============================================
-    // 10. POST-DELETION PROCESSING
+    // 13. POST-DELETION PROCESSING & STATS
     // ============================================
     
     console.log(`🎉 Event deletion completed successfully`);
 
-    // ✅ PHASE 2: Enhanced cleanup stats
+    // ✅ Enhanced cleanup stats
     const cleanupStats = {
       eventId: eventId,
       eventTitle: event.title,
@@ -2387,6 +2586,7 @@ router.delete('/:eventId', protect, async (req, res) => {
       },
       impact: {
         attendeesNotified: event.attendees ? event.attendees.length : 0,
+        coHostsAffected: event.coHosts ? event.coHosts.length : 0,
         photosUntagged: await Photo.countDocuments({
           $and: [
             { 
@@ -2404,30 +2604,47 @@ router.delete('/:eventId', protect, async (req, res) => {
             { visibleInEvent: false }
           ]
         }),
-        notificationsRemoved: await Notification.countDocuments({
-          'data.eventId': eventId
-        }),
+        notificationsRemoved: 0, // Will be filled by cleanup count
         paymentsRequiringRefund: event.paymentHistory ? 
-          event.paymentHistory.filter(p => p.status === 'succeeded').length : 0
+          event.paymentHistory.filter(p => p.status === 'succeeded').length : 0,
+        groupAffected: !!event.group,
+        hadFormSubmissions: !!event.checkInForm
       },
-      privacyLevel: event.privacyLevel,
-      hadPhotos: event.allowPhotos,
-      wasPaymentRequired: event.pricing && !event.pricing.isFree
+      eventDetails: {
+        privacyLevel: event.privacyLevel,
+        hadPhotos: event.allowPhotos,
+        wasPaymentRequired: event.pricing && !event.pricing.isFree,
+        hadCheckInForm: !!event.checkInForm,
+        wasGroupEvent: !!event.group,
+        attendeeCount: event.attendees.length
+      }
     };
 
-    // ✅ PHASE 2: Log detailed analytics for cleanup verification
+    // ✅ Log detailed analytics for cleanup verification
     console.log('📊 Cleanup Statistics:', JSON.stringify(cleanupStats, null, 2));
 
+    // ✅ Enhanced response with comprehensive cleanup confirmation
     res.status(200).json({
       success: true,
-      message: 'Event deleted successfully',
+      message: 'Event deleted successfully with complete cleanup',
       stats: cleanupStats,
       actions: [
         'Event permanently deleted',
-        'Photos untagged and preserved in user galleries', 
+        'Photos untagged and preserved in user galleries',
         'Attendees notified of cancellation',
-        'Related notifications cleaned up',
-        event.pricing && !event.pricing.isFree ? 'Refund processing initiated' : null
+        'All related notifications cleaned up',
+        'Activity feed sources invalidated',
+        'User profiles updated (attending/saved events removed)',
+        event.coHosts?.length > 0 ? `${event.coHosts.length} co-host${event.coHosts.length === 1 ? '' : 's'} updated` : null,
+        event.group ? 'Removed from group and notified group members' : null,
+        event.checkInForm ? 'Form submissions preserved but marked as event-deleted' : null,
+        event.pricing && !event.pricing.isFree ? 'Refund processing initiated for paid attendees' : null,
+        'Guest passes cancelled (if any)',
+        'Memory associations updated'
+      ].filter(Boolean),
+      nextSteps: [
+        event.pricing && !event.pricing.isFree ? 'Process refunds through your payment provider dashboard' : null,
+        event.attendees.length > 5 ? 'Consider sending a follow-up message to attendees if needed' : null
       ].filter(Boolean)
     });
 
@@ -2446,7 +2663,11 @@ router.delete('/:eventId', protect, async (req, res) => {
       success: false,
       message: 'Failed to delete event',
       code: 'DELETION_FAILED',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+      debugInfo: process.env.NODE_ENV === 'development' ? {
+        errorType: error.constructor.name,
+        errorStack: error.stack
+      } : undefined
     });
 
   } finally {

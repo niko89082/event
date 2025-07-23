@@ -475,6 +475,78 @@ router.delete('/cancel/:userId', protect, async (req, res) => {
     });
   }
 });
+
+
+
+router.delete('/request/:targetUserId', protect, async (req, res) => {
+  try {
+    const { targetUserId } = req.params;
+    const currentUserId = req.user._id;
+
+    console.log(`❌ Canceling friend request: ${currentUserId} -> ${targetUserId}`);
+
+    const currentUser = await User.findById(currentUserId);
+    const targetUser = await User.findById(targetUserId);
+    
+    if (!targetUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Check if there's a pending request
+    const friendshipStatus = currentUser.getFriendshipStatus(targetUserId);
+    
+    if (friendshipStatus.status !== 'request-sent') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No pending friend request to cancel' 
+      });
+    }
+
+    // Remove from both users' friends arrays
+    currentUser.friends = currentUser.friends.filter(f => 
+      String(f.user) !== String(targetUserId)
+    );
+    
+    targetUser.friends = targetUser.friends.filter(f => 
+      String(f.user) !== String(currentUserId)
+    );
+
+    await Promise.all([
+      currentUser.save(),
+      targetUser.save()
+    ]);
+
+    // ✅ ACTIVITY CLEANUP: Remove any related friend request activities
+    // Since activities are generated dynamically in your system, this might involve
+    // clearing cache or removing notifications
+
+    // Remove the friend request notification
+    await Notification.deleteMany({
+      user: targetUserId,
+      sender: currentUserId,
+      type: 'friend_request'
+    });
+
+    console.log(`✅ Friend request canceled and notifications cleaned up`);
+
+    res.json({
+      success: true,
+      message: 'Friend request canceled successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Cancel friend request error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+
 /**
  * DELETE /friends/remove/:userId
  * Remove an existing friend

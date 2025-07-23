@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import EventQuickCreate from './EventQuickCreate';
+import EventQuickCreate from '../components/EventQuickCreate';
 
 export default function GroupChatEventIntegration({ 
   groupId, 

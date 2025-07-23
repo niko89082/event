@@ -239,11 +239,28 @@ router.post('/upload/:eventId', protect, upload.array('photos'), async (req, res
       { $addToSet: { photos: { $each: savedPhotos.map(p => p._id) } } }
     );
 
+    // ✅ NEW: Create activity for event photo upload (non-blocking)
+    savedPhotos.forEach(photo => {
+      setImmediate(async () => {
+        try {
+          await onEventPhotoUpload(photo._id, req.user._id, eventId);
+          console.log(`📸 Activity hook executed for event photo: ${photo._id} -> ${eventId}`);
+        } catch (activityError) {
+          console.error('Failed to create event photo activity:', activityError);
+        }
+      });
+    });
+
     console.log(`✅ Successfully uploaded ${savedPhotos.length} photos to event`);
     
-    res.status(200).json(user.photos);
+    res.status(200).json({
+      success: true,
+      message: `Successfully uploaded ${savedPhotos.length} photos`,
+      photos: savedPhotos
+    });
+
   } catch (error) {
-    console.error('Error fetching user posts:', error);
+    console.error('❌ Event photo upload error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1164,6 +1181,16 @@ router.post('/create', protect, upload.single('photo'), async (req, res) => {
       req.user._id,
       { $addToSet: { photos: photo._id } }
     );
+
+    // ✅ NEW: Create activity for general photo upload (non-blocking)
+    setImmediate(async () => {
+      try {
+        await onGeneralPhotoUpload(photo._id, req.user._id);
+        console.log(`📸 Activity hook executed for general photo: ${photo._id}`);
+      } catch (activityError) {
+        console.error('Failed to create general photo activity:', activityError);
+      }
+    });
 
     console.log(`✅ Successfully created general post: ${photo._id}`);
     
