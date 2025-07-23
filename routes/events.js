@@ -2684,6 +2684,131 @@ router.delete('/:eventId', protect, async (req, res) => {
  * Enhanced helper function for cleaning up large numbers of photos efficiently
  * Uses cursor-based processing with privacy context updates
  */
+async function handlePrivacyChangeEffects(eventId, oldPrivacy, newPrivacy, hostId) {
+  console.log(`🔒 PRIVACY CHANGE: Handling effects for event ${eventId}`);
+  console.log(`🔄 Change: "${oldPrivacy}" -> "${newPrivacy}"`);
+  
+  // If changing TO private, we need to clean up feeds
+  if (newPrivacy === 'private' && oldPrivacy !== 'private') {
+    await cleanupFeedsForPrivateEvent(eventId, hostId);
+  }
+  
+  // If changing FROM private, we may need to repopulate feeds
+  if (oldPrivacy === 'private' && newPrivacy !== 'private') {
+    await repopulateFeedsForPublicEvent(eventId, hostId);
+  }
+}
+
+async function cleanupFeedsForPrivateEvent(eventId, hostId) {
+  console.log(`🧹 CLEANUP: Removing private event ${eventId} from public feeds`);
+  
+  try {
+    // Get list of friends to determine who should keep seeing activities
+    const host = await User.findById(hostId).select('friends');
+    const friendIds = host.friends
+      .filter(f => f.status === 'accepted')
+      .map(f => String(f.user));
+    
+    // 1. Remove event creation activities from non-friends' feeds
+    const eventCreationCleanup = await mongoose.connection.db.collection('activities').deleteMany({
+      eventId: new mongoose.Types.ObjectId(eventId),
+      type: 'event_created',
+      userId: { 
+        $nin: [
+          new mongoose.Types.ObjectId(hostId), // Keep host's own activities
+          ...friendIds.map(id => new mongoose.Types.ObjectId(id)) // Keep friends' activities
+        ]
+      }
+    });
+    
+    // 2. Remove event photo upload activities from non-attendees
+    const photoCleanup = await mongoose.connection.db.collection('activities').deleteMany({
+      eventId: new mongoose.Types.ObjectId(eventId),
+      type: 'event_photo_upload',
+      userId: { 
+        $nin: [
+          new mongoose.Types.ObjectId(hostId),
+          ...friendIds.map(id => new mongoose.Types.ObjectId(id))
+        ]
+      }
+    });
+    
+    // 3. Remove event join activities from non-attendees  
+    const joinCleanup = await mongoose.connection.db.collection('activities').deleteMany({
+      eventId: new mongoose.Types.ObjectId(eventId),
+      type: 'friend_event_join',
+      userId: { 
+        $nin: [
+          new mongoose.Types.ObjectId(hostId),
+          ...friendIds.map(id => new mongoose.Types.ObjectId(id))
+        ]
+      }
+    });
+    
+    // 4. Remove memory creation activities for this event from public feeds
+    const memoryCleanup = await mongoose.connection.db.collection('activities').deleteMany({
+      eventId: new mongoose.Types.ObjectId(eventId),
+      type: 'memory_created',
+      userId: { 
+        $nin: [
+          new mongoose.Types.ObjectId(hostId),
+          ...friendIds.map(id => new mongoose.Types.ObjectId(id))
+        ]
+      }
+    });
+    
+    const totalDeleted = (eventCreationCleanup.deletedCount || 0) + 
+                        (photoCleanup.deletedCount || 0) + 
+                        (joinCleanup.deletedCount || 0) + 
+                        (memoryCleanup.deletedCount || 0);
+    
+    console.log(`✅ CLEANUP COMPLETE: Removed ${totalDeleted} activities`);
+    console.log(`   - Event creation: ${eventCreationCleanup.deletedCount || 0}`);
+    console.log(`   - Photo uploads: ${photoCleanup.deletedCount || 0}`);
+    console.log(`   - Event joins: ${joinCleanup.deletedCount || 0}`);
+    console.log(`   - Memory creation: ${memoryCleanup.deletedCount || 0}`);
+    
+    // 5. Invalidate any cached feeds (if you're using caching)
+    await invalidateFeedCaches(eventId);
+    
+  } catch (error) {
+    console.error(`❌ CLEANUP ERROR: Failed to clean feeds for private event ${eventId}:`, error);
+    throw error;
+  }
+}
+
+async function repopulateFeedsForPublicEvent(eventId, hostId) {
+  console.log(`📈 REPOPULATE: Making event ${eventId} visible in appropriate feeds`);
+  
+  // This is more complex - you'd need to recreate the activities
+  // that should now be visible based on the new privacy level
+  // For now, we'll just log it as a placeholder
+  console.log(`⚠️ REPOPULATE: Not implemented yet - manual feed refresh may be needed`);
+}
+
+// Helper function to invalidate feed caches
+async function invalidateFeedCaches(eventId) {
+  // If you're using Redis or another cache
+  // Clear any cached feed data that might contain this event
+  console.log(`🗑️ CACHE: Invalidating feed caches for event ${eventId}`);
+  // TODO: Add your cache invalidation logic here
+}
+
+// Alternative more detailed version:
+function logPrivacyEnforcement(details) {
+  console.log(`🔒 PRIVACY ENFORCEMENT: ${details.action}`);
+  console.log(`📋 Event: ${details.eventId}`);
+  console.log(`👤 User: ${details.userId}`);
+  if (details.oldPrivacy && details.newPrivacy) {
+    console.log(`🔄 Privacy change: "${details.oldPrivacy}" -> "${details.newPrivacy}"`);
+  }
+  if (details.affectedUsers) {
+    console.log(`👥 Affected users: ${details.affectedUsers.length}`);
+  }
+  if (details.feedCleanup) {
+    console.log(`🧹 Feed cleanup required: ${details.feedCleanup}`);
+  }
+}
 async function enhancedCleanupPhotosInBatches(eventId, session, batchSize = 100) {
   console.log(`📸 Starting enhanced batch photo cleanup for event: ${eventId}`);
   
@@ -5204,7 +5329,21 @@ router.put('/:eventId', protect, async (req, res) => {
 
     // PHASE 2: Log privacy enforcement for debugging
     logPrivacyEnforcement(updatedEvent._id, updatedEvent.privacyLevel, updatedEvent.permissions);
-
+     if (req.body.privacyLevel && req.body.privacyLevel !== existingEvent.privacyLevel) {
+      console.log(`🔄 PRIVACY CHANGE DETECTED: Handling feed cleanup/population`);
+      try {
+        await handlePrivacyChangeEffects(
+          eventId, 
+          existingEvent.privacyLevel, 
+          updatedEvent.privacyLevel, 
+          existingEvent.host
+        );
+        console.log(`✅ PRIVACY CHANGE: Successfully handled effects`);
+      } catch (cleanupError) {
+        console.error(`❌ PRIVACY CHANGE: Failed to handle effects:`, cleanupError);
+        // Don't fail the entire update, but log the error
+      }
+    }
     console.log(`✅ PHASE 2: Event ${eventId} updated successfully`);
     console.log(`🔒 FINAL Privacy level in DB: ${updatedEvent.privacyLevel}`);
     console.log(`🔧 FINAL Permissions in DB:`, JSON.stringify(updatedEvent.permissions, null, 2));

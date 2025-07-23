@@ -1,4 +1,4 @@
-// screens/UnifiedDetailsScreen.js - Unified screen for both posts and memory photos with centralized state
+// screens/UnifiedDetailsScreen.js - Fixed with proper image dimensions
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
@@ -8,7 +8,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../services/AuthContext';
-import usePostsStore from '../stores/postsStore'; // ADD CENTRALIZED STORE
+import usePostsStore from '../stores/postsStore';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
@@ -64,12 +64,11 @@ export default function UnifiedDetailsScreen() {
   const { postId, postType, post: initialPost, openKeyboard = false } = params;
   const isMemoryPost = postType === 'memory';
 
-  // CENTRALIZED STATE MANAGEMENT - Get post data and actions from store
+  // CENTRALIZED STATE MANAGEMENT
   const storePost = usePostsStore(state => state.getPost(postId));
   const toggleLikeInStore = usePostsStore(state => state.toggleLike);
   const addCommentInStore = usePostsStore(state => state.addComment);
 
-  // Use store data if available, otherwise fall back to initial post
   const currentPost = storePost || initialPost;
 
   // Initialize store with this post if not already there
@@ -79,10 +78,9 @@ export default function UnifiedDetailsScreen() {
     }
   }, [postId, storePost, initialPost]);
 
-  // Get current user ID
   const currentUserId = currentUser?._id;
 
-  // CENTRALIZED STATE - Get state from store (always up to date)
+  // CENTRALIZED STATE - Get state from store
   const isLiked = currentPost?.userLiked || false;
   const likeCount = currentPost?.likeCount || 0;
   const commentCount = currentPost?.commentCount || 0;
@@ -94,8 +92,49 @@ export default function UnifiedDetailsScreen() {
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
 
+  // ADD: Image dimensions state for proper aspect ratio
+  const [imageDimensions, setImageDimensions] = useState({
+    width: SCREEN_WIDTH,
+    height: SCREEN_WIDTH, // Default to square
+    loading: true
+  });
+
   // Animation for like button
   const heartScale = useRef(new Animated.Value(1)).current;
+
+  // ADD: Calculate image dimensions
+  useEffect(() => {
+    if (!currentPost) return;
+
+    const imgURL = isMemoryPost 
+      ? (currentPost.url ? `http://${API_BASE_URL}:3000${currentPost.url}` : null)
+      : (currentPost.paths?.[0] ? `http://${API_BASE_URL}:3000/${currentPost.paths[0].replace(/^\/?/, '')}` : null);
+
+    if (!imgURL) {
+      setImageDimensions(prev => ({ ...prev, loading: false }));
+      return;
+    }
+
+    Image.getSize(
+      imgURL,
+      (width, height) => {
+        const aspectRatio = height / width;
+        const maxHeight = 600; // Adjust this as needed
+        const calculatedHeight = Math.min(SCREEN_WIDTH * aspectRatio, maxHeight);
+
+        setImageDimensions({
+          width: SCREEN_WIDTH,
+          height: calculatedHeight,
+          loading: false,
+          aspectRatio
+        });
+      },
+      (error) => {
+        console.warn('Failed to get image dimensions:', error);
+        setImageDimensions(prev => ({ ...prev, loading: false }));
+      }
+    );
+  }, [currentPost, isMemoryPost]);
 
   // Set custom header with back button only
   useEffect(() => {
@@ -158,7 +197,6 @@ export default function UnifiedDetailsScreen() {
     }
   }, [postId]);
 
-  // Auto-focus comment input if requested
   useEffect(() => {
     if (openKeyboard && textInputRef.current) {
       setTimeout(() => {
@@ -174,7 +212,6 @@ export default function UnifiedDetailsScreen() {
       
       if (isMemoryPost) {
         response = await api.get(`/api/memories/photos/${postId}`);
-        // Transform memory photo data to match post structure
         const memoryPhoto = response.data;
         const transformedPost = {
           ...memoryPhoto,
@@ -184,12 +221,10 @@ export default function UnifiedDetailsScreen() {
           paths: [memoryPhoto.url],
         };
         setPost(transformedPost);
-        // Add to store
         usePostsStore.getState().addPost(transformedPost);
       } else {
         response = await api.get(`/api/photos/${postId}`);
         setPost(response.data);
-        // Add to store
         usePostsStore.getState().addPost(response.data);
       }
       
@@ -211,17 +246,14 @@ export default function UnifiedDetailsScreen() {
         response = await api.get(`/api/memories/photos/${postId}/comments`);
         setComments(response.data.comments || []);
       } else {
-        // For regular posts, get full post data which includes comments
         response = await api.get(`/api/photos/${postId}`);
         setComments(response.data.comments || []);
-        // Update store with fresh comment count
         usePostsStore.getState().updatePost(postId, {
           commentCount: response.data.commentCount || response.data.comments?.length || 0
         });
       }
     } catch (error) {
       console.error('Error fetching comments:', error);
-      // Use existing post data as fallback
       if (currentPost?.comments) {
         setComments(currentPost.comments);
       }
@@ -230,11 +262,9 @@ export default function UnifiedDetailsScreen() {
     }
   };
 
-  // CENTRALIZED LIKE HANDLING
   const toggleLike = async () => {
     if (!currentPost?._id || !currentUser?._id) return;
 
-    // Animate heart
     Animated.sequence([
       Animated.timing(heartScale, {
         toValue: 1.2,
@@ -256,7 +286,6 @@ export default function UnifiedDetailsScreen() {
     }
   };
 
-  // CENTRALIZED COMMENT HANDLING
   const postComment = async () => {
     if (!newComment.trim() || commentsLoading) return;
 
@@ -267,21 +296,19 @@ export default function UnifiedDetailsScreen() {
 
       const response = await addCommentInStore(currentPost._id, commentText, isMemoryPost);
       
-      // Add to local comments list for immediate display
       if (isMemoryPost) {
         setComments(prev => [...prev, response.comment]);
       } else {
         setComments(response.comments || []);
       }
 
-      // Scroll to bottom to show new comment
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
 
     } catch (error) {
       console.error('Error posting comment:', error);
-      setNewComment(commentText); // Restore text
+      setNewComment(commentText);
       Alert.alert('Error', 'Failed to post comment');
     } finally {
       setCommentsLoading(false);
@@ -396,7 +423,6 @@ export default function UnifiedDetailsScreen() {
                 )}
               </View>
               
-              {/* Time below username like MemoryPhotoItem */}
               <Text style={styles.postTime}>
                 {formatDate(currentPost.createdAt || currentPost.uploadedAt)}
               </Text>
@@ -404,8 +430,14 @@ export default function UnifiedDetailsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Image */}
-        <View style={styles.imageContainer}>
+        {/* FIXED: Image with dynamic dimensions */}
+        <View style={[
+          styles.imageContainer,
+          {
+            width: imageDimensions.width,
+            height: imageDimensions.height
+          }
+        ]}>
           {imgURL ? (
             <Image
               source={{ uri: imgURL }}
@@ -590,6 +622,7 @@ const getMoodColor = (mood) => {
   }
 };
 
+// FIXED: Styles with proper imageContainer definition
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -732,12 +765,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // Image
+  // FIXED: Image container without static dimensions
   imageContainer: {
-    width: '100%',
-    aspectRatio: 1,
     backgroundColor: '#F6F6F6',
     position: 'relative',
+    alignSelf: 'center',
+    // Width and height will be set dynamically in JSX
   },
   postImage: {
     width: '100%',

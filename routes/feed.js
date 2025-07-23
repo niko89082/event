@@ -66,7 +66,12 @@ const ACTIVITY_TYPES = {
     priority: 'medium', 
     weight: 1.4,
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-  }
+  },
+  'event_created': { 
+    priority: 'medium', 
+    weight: 1.3,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  },
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -217,6 +222,78 @@ const fetchRegularPosts = async (userId, friendIds, timeRange) => {
     activityType: 'regular_post',
     timestamp: post.uploadDate,
     score: calculateActivityScore(post, 'regular_post', userId)
+  }));
+};
+const fetchEventCreations = async (userId, friendIds, timeRange) => {
+  console.log('🎉 Fetching event creations...');
+  
+  // Get user's accepted friends for privacy checking
+  const user = await User.findById(userId);
+  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
+  
+  const events = await Event.aggregate([
+    {
+      $match: {
+        host: { $in: friendIds.map(id => new mongoose.Types.ObjectId(id)) },
+        createdAt: { $gte: timeRange.start },
+        // ✅ CRITICAL PRIVACY FILTER: Only show events friends can see
+        $or: [
+          // Public events from friends
+          { privacyLevel: 'public' },
+          // Friends-only events from friends (user is friends with host)
+          { 
+            privacyLevel: 'friends',
+            host: { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+          }
+          // Private events completely excluded from activity feed
+        ]
+      }
+    },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'host',
+        foreignField: '_id',
+        as: 'host'
+      }
+    },
+    {
+      $unwind: { path: '$host', preserveNullAndEmptyArrays: false }
+    },
+    {
+      $sort: { createdAt: -1 }
+    },
+    {
+      $limit: 50 // Reasonable limit
+    }
+  ]);
+
+  console.log(`📅 Found ${events.length} event creations from friends`);
+
+  return events.map(event => ({
+    _id: `event_created_${event._id}`,
+    activityType: 'event_created',
+    timestamp: event.createdAt,
+    user: event.host,
+    data: {
+      event: {
+        _id: event._id,
+        title: event.title,
+        description: event.description,
+        time: event.time,
+        location: event.location,
+        coverImage: event.coverImage,
+        privacyLevel: event.privacyLevel,
+        category: event.category,
+        attendeeCount: event.attendees?.length || 0
+      }
+    },
+    metadata: {
+      actionable: true, // Users can view/join the event
+      grouped: false,
+      priority: 'medium'
+    },
+    score: calculateActivityScore(event, 'event_created', userId)
   }));
 };
 
@@ -841,7 +918,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       friendRequests,
       friendRequestsAccepted,
       eventReminders,
-      memoriesCreated
+      memoriesCreated,
+      eventCreations 
     ] = await Promise.all([
       fetchRegularPosts(userId, friendIds, timeRange),
       fetchMemoryPosts(userId, friendIds, timeRange),
@@ -851,7 +929,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       fetchFriendRequests(userId, timeRange),
       fetchFriendRequestsAccepted(userId, friendIds, timeRange),
       fetchEventReminders(userId, timeRange),
-      fetchMemoriesCreated(userId, friendIds, timeRange)
+      fetchMemoriesCreated(userId, friendIds, timeRange),
+      fetchEventCreations(userId, friendIds, timeRange) 
     ]);
 
     // Combine all activities
@@ -864,7 +943,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       ...friendRequests,
       ...friendRequestsAccepted,
       ...eventReminders,
-      ...memoriesCreated
+      ...memoriesCreated,
+      ...eventCreations
     ];
 
     // Sort by score (highest first)
@@ -1299,6 +1379,50 @@ router.get('/feed/posts', protect, async (req, res) => {
       error: err.message,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
+  }
+});
+const debugFriendship = async (userAId, userBId) => {
+  try {
+    const userA = await User.findById(userAId).select('friends username');
+    const userB = await User.findById(userBId).select('friends username');
+    
+    const aFriends = userA.getAcceptedFriends().map(id => String(id));
+    const bFriends = userB.getAcceptedFriends().map(id => String(id));
+    
+    console.log('🔍 Friendship Debug:', {
+      userA: { id: userAId, username: userA.username, friendCount: aFriends.length },
+      userB: { id: userBId, username: userB.username, friendCount: bFriends.length },
+      aIsFriendsWithB: aFriends.includes(String(userBId)),
+      bIsFriendsWithA: bFriends.includes(String(userAId)),
+      mutualFriendship: aFriends.includes(String(userBId)) && bFriends.includes(String(userAId))
+    });
+    
+    return {
+      areFriends: aFriends.includes(String(userBId)) && bFriends.includes(String(userAId)),
+      aFriends,
+      bFriends
+    };
+  } catch (error) {
+    console.error('Error debugging friendship:', error);
+    return { areFriends: false };
+  }
+};
+
+router.get('/debug/friendship/:otherUserId', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const otherUserId = req.params.otherUserId;
+    
+    const debug = await debugFriendship(userId, otherUserId);
+    
+    res.json({
+      success: true,
+      friendship: debug,
+      note: 'Both users should show as friends of each other'
+    });
+  } catch (error) {
+    console.error('Debug friendship error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

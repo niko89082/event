@@ -24,6 +24,7 @@ import FriendRequestActivity from './activities/FriendRequestActivity';
 import FriendRequestAcceptedActivity from './activities/FriendRequestAcceptedActivity';
 import EventReminderActivity from './activities/EventReminderActivity';
 import MemoryCreatedActivity from './activities/MemoryCreatedActivity';
+import EventCreatedActivity from './activities/EventCreatedActivity';
 
 const ActivityFeed = forwardRef(({
   navigation,
@@ -191,79 +192,86 @@ const ActivityFeed = forwardRef(({
     };
 
     switch (item.activityType) {
-      case 'regular_post':
-      case 'memory_post':
-        // Use existing PostItem component for posts
-        return (
-          <View style={styles.activityWrapper}>
-            <CompletePostItem 
-              post={item} 
-              currentUserId={currentUserId}
-              navigation={navigation}
-            />
-          </View>
-        );
+    case 'regular_post':
+    case 'memory_post':
+      // Use existing PostItem component for posts
+      return (
+        <View style={styles.activityWrapper}>
+          <CompletePostItem 
+            post={item} 
+            currentUserId={currentUserId}
+            navigation={navigation}
+          />
+        </View>
+      );
 
-      case 'event_invitation':
-        return (
-          <View style={styles.activityWrapper}>
-            <EventInvitationActivity {...commonProps} />
-          </View>
-        );
+    case 'event_invitation':
+      return (
+        <View style={styles.activityWrapper}>
+          <EventInvitationActivity {...commonProps} />
+        </View>
+      );
 
-      case 'event_photo_upload':
-        return (
-          <View style={styles.activityWrapper}>
-            <EventPhotoActivity {...commonProps} />
-          </View>
-        );
+    case 'event_created':  // ✅ ADD THIS CASE
+      return (
+        <View style={styles.activityWrapper}>
+          <EventCreatedActivity {...commonProps} />
+        </View>
+      );
 
-      case 'friend_event_join':
-        return (
-          <View style={styles.activityWrapper}>
-            <FriendEventActivity {...commonProps} />
-          </View>
-        );
+    case 'event_photo_upload':
+      return (
+        <View style={styles.activityWrapper}>
+          <EventPhotoActivity {...commonProps} />
+        </View>
+      );
 
-      case 'friend_request':
-        return (
-          <View style={styles.activityWrapper}>
-            <FriendRequestActivity {...commonProps} />
-          </View>
-        );
+    case 'friend_event_join':
+      return (
+        <View style={styles.activityWrapper}>
+          <FriendEventActivity {...commonProps} />
+        </View>
+      );
 
-      case 'friend_request_accepted':
-        return (
-          <View style={styles.activityWrapper}>
-            <FriendRequestAcceptedActivity {...commonProps} />
-          </View>
-        );
+    case 'friend_request':
+      return (
+        <View style={styles.activityWrapper}>
+          <FriendRequestActivity {...commonProps} />
+        </View>
+      );
 
-      case 'event_reminder':
-        return (
-          <View style={styles.activityWrapper}>
-            <EventReminderActivity {...commonProps} />
-          </View>
-        );
+    case 'friend_request_accepted':
+      return (
+        <View style={styles.activityWrapper}>
+          <FriendRequestAcceptedActivity {...commonProps} />
+        </View>
+      );
 
-      case 'memory_created':
-        return (
-          <View style={styles.activityWrapper}>
-            <MemoryCreatedActivity {...commonProps} />
-          </View>
-        );
+    case 'event_reminder':
+      return (
+        <View style={styles.activityWrapper}>
+          <EventReminderActivity {...commonProps} />
+        </View>
+      );
 
-      default:
-        console.warn('⚠️ Unknown activity type:', item.activityType);
-        return (
-          <View style={styles.unknownActivityWrapper}>
-            <Text style={styles.unknownActivityText}>
-              Unknown activity type: {item.activityType}
-            </Text>
-          </View>
-        );
-    }
-  }, [navigation, currentUserId, handleActivityActionPress]);
+    case 'memory_created':
+      return (
+        <View style={styles.activityWrapper}>
+          <MemoryCreatedActivity {...commonProps} />
+        </View>
+      );
+
+    default:
+      console.warn('⚠️ Unknown activity type:', item.activityType);
+      return (
+        <View style={styles.unknownActivityWrapper}>
+          <Text style={styles.unknownActivityText}>
+            Unknown activity type: {item.activityType}
+          </Text>
+        </View>
+      );
+  }
+}, [navigation, currentUserId, handleActivityActionPress]);
 
   const renderFooter = () => {
     if (!loading || data.length === 0) return null;
