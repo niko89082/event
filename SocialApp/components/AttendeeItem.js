@@ -1,4 +1,4 @@
-// components/AttendeeItem.js - Enhanced attendee item with swipe-to-delete and toggle
+// components/AttendeeItem.js - Enhanced attendee item with swipe-to-delete and check-in
 import React, { useState } from 'react';
 import {
   View,
@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import SwipeableRow from './SwipeableRow';
-import { API_BASE_URL } from '@env';
 
 export default function AttendeeItem({
   attendee,
@@ -23,10 +22,9 @@ export default function AttendeeItem({
   onRemove,
   onCheckInToggle,
   onViewProfile,
-  onViewFormResponses,
   style = {},
 }) {
-  const [isToggling, setIsToggling] = useState(false);
+  const [isCheckInLoading, setIsCheckInLoading] = useState(false);
   
   // Check if attendee is checked in
   const isCheckedIn = canManage && event?.checkedIn?.includes(attendee._id);
@@ -34,138 +32,173 @@ export default function AttendeeItem({
 
   // Handle check-in toggle with loading state
   const handleCheckInToggle = async () => {
-    if (isToggling) return;
+    if (isCheckInLoading) return;
     
-    setIsToggling(true);
+    setIsCheckInLoading(true);
     try {
       await onCheckInToggle(attendee._id, isCheckedIn);
     } catch (error) {
       console.error('Check-in toggle error:', error);
       Alert.alert('Error', 'Failed to update check-in status');
     } finally {
-      setIsToggling(false);
+      setIsCheckInLoading(false);
     }
   };
 
   // Handle removal with confirmation
-  const handleRemove = () => {
-    Alert.alert(
-      'Remove Attendee',
-      `Remove ${attendee.username} from the event?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => onRemove(attendee._id),
-        },
-      ]
-    );
+  const handleRemove = async () => {
+    return new Promise((resolve, reject) => {
+      Alert.alert(
+        'Remove Attendee',
+        `Remove ${attendee.username || attendee.firstName} from the event?`,
+        [
+          { 
+            text: 'Cancel', 
+            style: 'cancel',
+            onPress: () => reject(new Error('Cancelled'))
+          },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await onRemove(attendee._id);
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            },
+          },
+        ]
+      );
+    });
   };
 
   const renderContent = () => (
     <View style={[styles.attendeeItem, style]}>
-      {/* Main Attendee Info */}
+      {/* Bulk Selection Checkbox */}
+      {bulkMode && canManage && (
+        <TouchableOpacity
+          style={styles.checkboxContainer}
+          onPress={() => onToggleSelection(attendee._id)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+            {isSelected && (
+              <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+            )}
+          </View>
+        </TouchableOpacity>
+      )}
+
+      {/* Main Attendee Content */}
       <TouchableOpacity
         style={styles.attendeeContent}
         onPress={() => onViewProfile(attendee._id)}
         activeOpacity={0.8}
       >
+        {/* Profile Picture */}
         <Image
           source={{
             uri: attendee.profilePicture
-              ? `http://${API_BASE_URL}:3000${attendee.profilePicture}`
-              : 'https://placehold.co/50x50.png?text=👤'
+              ? `${attendee.profilePicture}?t=${Date.now()}`
+              : 'https://via.placeholder.com/40x40/CCCCCC/FFFFFF?text=?'
           }}
           style={styles.profilePicture}
+          defaultSource={{ uri: 'https://via.placeholder.com/40x40/CCCCCC/FFFFFF?text=?' }}
         />
-        
+
+        {/* Attendee Info */}
         <View style={styles.attendeeInfo}>
-          <View style={styles.attendeeNameRow}>
-            <Text style={styles.username}>{attendee.username}</Text>
-            {/* Payment Badge (only for managers) */}
-            {canManage && attendee.hasPaid && (
-              <View style={styles.paidBadge}>
-                <Ionicons name="card" size={12} color="#34C759" />
-                <Text style={styles.paidText}>Paid</Text>
+          <Text style={styles.attendeeName} numberOfLines={1}>
+            {attendee.username || `${attendee.firstName} ${attendee.lastName}`.trim() || 'Unknown User'}
+          </Text>
+          
+          {attendee.email && (
+            <Text style={styles.attendeeEmail} numberOfLines={1}>
+              {attendee.email}
+            </Text>
+          )}
+          
+          {/* Status Indicators */}
+          <View style={styles.statusContainer}>
+            {isCheckedIn && (
+              <View style={styles.statusBadge}>
+                <Ionicons name="checkmark-circle" size={12} color="#34C759" />
+                <Text style={styles.statusText}>Checked In</Text>
+              </View>
+            )}
+            
+            {hasFormResponse && (
+              <View style={[styles.statusBadge, styles.formBadge]}>
+                <Ionicons name="document-text" size={12} color="#007AFF" />
+                <Text style={[styles.statusText, styles.formText]}>Form Submitted</Text>
               </View>
             )}
           </View>
-          
-          {attendee.bio && <Text style={styles.bio}>{attendee.bio}</Text>}
-          
-          {/* Status Indicators (only for managers) */}
-          {canManage && (
-            <View style={styles.statusRow}>
-              {isCheckedIn && (
-                <View style={styles.checkedInBadge}>
-                  <Ionicons name="checkmark-circle" size={14} color="#34C759" />
-                  <Text style={styles.checkedInText}>Checked In</Text>
-                </View>
-              )}
-              {hasFormResponse && (
-                <View style={styles.formBadge}>
-                  <Ionicons name="document-text" size={14} color="#3797EF" />
-                  <Text style={styles.formText}>Form Done</Text>
-                </View>
-              )}
-            </View>
-          )}
         </View>
       </TouchableOpacity>
 
-      {/* Host Actions (only in manage mode) */}
-      {canManage && (
-        <View style={styles.hostActions}>
-          {/* Form Response Button */}
-          {hasFormResponse && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => onViewFormResponses(attendee)}
-            >
-              <Ionicons name="document-text" size={20} color="#3797EF" />
-            </TouchableOpacity>
-          )}
-          
-          {/* Enhanced Check-in Toggle */}
+      {/* Host Actions */}
+      {canManage && !bulkMode && (
+        <View style={styles.actionsContainer}>
+          {/* Check-in Toggle Button */}
           <TouchableOpacity
             style={[
-              styles.checkInToggle,
-              isCheckedIn ? styles.checkedInToggle : styles.notCheckedInToggle
+              styles.checkInButton,
+              isCheckedIn ? styles.checkInButtonActive : styles.checkInButtonInactive
             ]}
             onPress={handleCheckInToggle}
-            disabled={isToggling}
+            disabled={isCheckInLoading}
+            activeOpacity={0.8}
           >
-            {isToggling ? (
-              <ActivityIndicator size="small" color={isCheckedIn ? "#FFFFFF" : "#8E8E93"} />
+            {isCheckInLoading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Ionicons 
-                name={isCheckedIn ? "checkmark" : "checkmark"} 
-                size={20} 
-                color={isCheckedIn ? "#FFFFFF" : "#8E8E93"}
-              />
+              <>
+                <Ionicons 
+                  name={isCheckedIn ? "checkmark-circle" : "radio-button-off"} 
+                  size={16} 
+                  color="#FFFFFF" 
+                />
+                <Text style={styles.checkInButtonText}>
+                  {isCheckedIn ? 'Undo' : 'Check In'}
+                </Text>
+              </>
             )}
           </TouchableOpacity>
+
+          {/* Form Response Button (if applicable) */}
+          {hasFormResponse && (
+            <TouchableOpacity
+              style={styles.formButton}
+              onPress={() => onViewFormResponses?.(attendee._id)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="document-text-outline" size={16} color="#007AFF" />
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>
   );
 
-  // Wrap with swipeable row if user can manage
-  if (canManage) {
-    console.log('🔄 [ATTENDEE-ITEM] Rendering with SwipeableRow for:', attendee.username);
+  // Wrap with SwipeableRow only if user can manage and not in bulk mode
+  if (canManage && !bulkMode) {
     return (
       <SwipeableRow
         onDelete={handleRemove}
         deleteText="Remove"
+        deleteColor="#FF3B30"
+        disabled={bulkMode}
+        style={style}
       >
         {renderContent()}
       </SwipeableRow>
     );
   }
 
-  // Return regular content if no swipe functionality needed
-  console.log('📱 [ATTENDEE-ITEM] Rendering without SwipeableRow for:', attendee.username);
+  // Return plain content for non-managers or bulk mode
   return renderContent();
 }
 
@@ -177,131 +210,109 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    borderBottomColor: '#E5E5E7',
+    minHeight: 72,
   },
-
+  checkboxContainer: {
+    marginRight: 12,
+    padding: 4,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#C7C7CC',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
   attendeeContent: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
-
   profilePicture: {
-    width: 50,
-    height: 50,
-    borderRadius: 12, // Square with curved corners (50/4 ≈ 12)
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#F2F2F7',
     marginRight: 12,
   },
-
   attendeeInfo: {
     flex: 1,
+    justifyContent: 'center',
   },
-
-  attendeeNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-
-  username: {
+  attendeeName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
-    marginRight: 8,
+    marginBottom: 2,
   },
-
-  paidBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E8F5E8',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-
-  paidText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#34C759',
-    marginLeft: 3,
-  },
-
-  bio: {
+  attendeeEmail: {
     fontSize: 14,
     color: '#8E8E93',
     marginBottom: 4,
   },
-
-  statusRow: {
+  statusContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
   },
-
-  checkedInBadge: {
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     backgroundColor: '#E8F5E8',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    marginRight: 8,
+    borderRadius: 4,
+    gap: 3,
   },
-
-  checkedInText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#34C759',
-    marginLeft: 3,
-  },
-
   formBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
+    backgroundColor: '#E8F4FD',
   },
-
-  formText: {
+  statusText: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#3797EF',
-    marginLeft: 3,
+    fontWeight: '500',
+    color: '#34C759',
   },
-
-  hostActions: {
+  formText: {
+    color: '#007AFF',
+  },
+  actionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 8,
+    gap: 8,
+    marginLeft: 12,
   },
-
-  actionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F2F2F7',
-    justifyContent: 'center',
+  checkInButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 8,
-  },
-
-  checkInToggle: {
-    width: 32,
-    height: 32,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 16,
+    gap: 4,
+    minWidth: 80,
     justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
   },
-
-  checkedInToggle: {
+  checkInButtonActive: {
     backgroundColor: '#34C759',
-    borderColor: '#34C759',
   },
-
-  notCheckedInToggle: {
-    backgroundColor: 'transparent',
-    borderColor: '#E1E1E1',
+  checkInButtonInactive: {
+    backgroundColor: '#007AFF',
+  },
+  checkInButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  formButton: {
+    padding: 8,
+    borderRadius: 16,
+    backgroundColor: '#F2F2F7',
   },
 });

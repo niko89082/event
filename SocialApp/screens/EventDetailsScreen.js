@@ -356,116 +356,142 @@ export default function EventDetailsScreen() {
     return event?.pricing && !event.pricing.isFree && event.pricing.amount > 0;
   };
     const renderShareInviteModal = () => (
-    <Modal
-      visible={showShareInviteModal}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={() => setShowShareInviteModal(false)}
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
+  <Modal
+    visible={showShareInviteModal}
+    animationType="slide"
+    presentationStyle="pageSheet"
+    onRequestClose={() => setShowShareInviteModal(false)}
+  >
+    <SafeAreaView style={styles.modalContainer}>
+      <View style={styles.modalHeader}>
+        <TouchableOpacity
+          onPress={() => setShowShareInviteModal(false)}
+          style={styles.modalCloseButton}
+        >
+          <Text style={styles.modalCloseText}>Cancel</Text>
+        </TouchableOpacity>
+        <Text style={styles.modalTitle}>
+          {shareInviteMode === 'share' ? 'Share Event' : 'Invite Friends'}
+        </Text>
+        <View style={styles.modalHeaderSpacer} />
+      </View>
+
+      {shareInviteMode === 'share' ? (
+        <View style={styles.shareOptionsContainer}>
           <TouchableOpacity
-            onPress={() => setShowShareInviteModal(false)}
-            style={styles.modalCloseButton}
+            style={styles.shareOption}
+            onPress={handleShare}
+            activeOpacity={0.7}
           >
-            <Text style={styles.modalCloseText}>Cancel</Text>
+            <Ionicons name="share" size={24} color="#3797EF" />
+            <Text style={styles.shareOptionText}>Share Link</Text>
           </TouchableOpacity>
-          <Text style={styles.modalTitle}>
-            {shareInviteMode === 'share' ? 'Share Event' : 'Invite Friends'}
-          </Text>
-          <View style={styles.modalHeaderSpacer} />
+          
+          <TouchableOpacity
+            style={styles.shareOption}
+            onPress={() => setShareInviteMode('invite')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="person-add" size={24} color="#3797EF" />
+            <Text style={styles.shareOptionText}>Invite Friends</Text>
+          </TouchableOpacity>
         </View>
-
-        {shareInviteMode === 'share' ? (
-          <View style={styles.shareOptionsContainer}>
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={handleShare}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="share" size={24} color="#3797EF" />
-              <Text style={styles.shareOptionText}>Share Link</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.shareOption}
-              onPress={() => setShareInviteMode('invite')}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="person-add" size={24} color="#3797EF" />
-              <Text style={styles.shareOptionText}>Invite Friends</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.inviteContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search friends..."
-              value={searchQuery}
-              onChangeText={(text) => {
-                setSearchQuery(text);
-                searchUsers(text);
-              }}
-              autoCapitalize="none"
-            />
-
-            {searching && (
-              <View style={styles.searchingContainer}>
-                <ActivityIndicator size="small" color="#3797EF" />
-                <Text style={styles.searchingText}>Searching...</Text>
+      ) : (
+        <View style={styles.inviteContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder={getSearchPlaceholder()}
+            value={searchQuery}
+            onChangeText={(text) => {
+              setSearchQuery(text);
+              // ✅ FIXED: Trigger search when text changes (was missing in your code)
+              searchUsers(text);
+            }}
+            placeholderTextColor="#8E8E93"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          
+          {/* ✅ PHASE 2: Added privacy info section */}
+          {event?.privacyLevel && (
+            <View style={styles.privacyInfoSection}>
+              <View style={styles.privacyInfo}>
+                <Ionicons 
+                  name={event.privacyLevel === 'private' ? 'lock-closed' : event.privacyLevel === 'friends' ? 'people' : 'globe'} 
+                  size={16} 
+                  color="#8E8E93" 
+                />
+                <Text style={styles.privacyText}>
+                  {event.privacyLevel === 'friends' 
+                    ? 'You can only invite friends to this event'
+                    : event.privacyLevel === 'private'
+                    ? 'Private event - only friends can be invited'
+                    : 'Invite any of your friends to this event'
+                  }
+                </Text>
               </View>
-            )}
+            </View>
+          )}
 
-            <FlatList
-              data={searchResults}
-              keyExtractor={(item) => item._id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.userItem,
-                    selectedUsers.some(u => u._id === item._id) && styles.userItemSelected
-                  ]}
-                  onPress={() => toggleUserSelection(item)}
-                  activeOpacity={0.7}
-                >
-                  <Image
-                    source={{
-                      uri: item.profilePicture
-                        ? `http://${API_BASE_URL}:3000${item.profilePicture}`
-                        : 'https://placehold.co/40x40.png?text=👤'
-                    }}
-                    style={styles.userAvatar}
-                  />
-                  <Text style={styles.userUsername}>{item.username}</Text>
-                  {selectedUsers.some(u => u._id === item._id) && (
-                    <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
-                  )}
-                </TouchableOpacity>
-              )}
-              style={styles.usersList}
-            />
+          {searching && (
+            <View style={styles.searchingContainer}>
+              <ActivityIndicator size="small" color="#3797EF" />
+              <Text style={styles.searchingText}>Searching...</Text>
+            </View>
+          )}
 
-            {selectedUsers.length > 0 && (
+          <FlatList
+            data={searchResults}
+            keyExtractor={(item) => item._id}
+            renderItem={({ item }) => (
               <TouchableOpacity
-                style={styles.sendInvitesButton}
-                onPress={handleSendInvites}
-                disabled={inviting}
+                style={[
+                  styles.userItem,
+                  selectedUsers.some(u => u._id === item._id) && styles.userItemSelected
+                ]}
+                onPress={() => toggleUserSelection(item)}
                 activeOpacity={0.7}
               >
-                {inviting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.sendInvitesButtonText}>
-                    Send Invites ({selectedUsers.length})
-                  </Text>
+                <Image
+                  source={{
+                    uri: item.profilePicture
+                      ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+                      : 'https://placehold.co/40x40.png?text=👤'
+                  }}
+                  style={styles.userAvatar}
+                />
+                <Text style={styles.userUsername}>
+                  {item.displayName || item.username}
+                </Text>
+                {selectedUsers.some(u => u._id === item._id) && (
+                  <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
                 )}
               </TouchableOpacity>
             )}
-          </View>
-        )}
-      </SafeAreaView>
-    </Modal>
-  );
+            style={styles.usersList}
+          />
+
+          {selectedUsers.length > 0 && (
+            <TouchableOpacity
+              style={styles.sendInvitesButton}
+              onPress={handleSendInvites}
+              disabled={inviting}
+              activeOpacity={0.7}
+            >
+              {inviting ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.sendInvitesButtonText}>
+                  Send Invites ({selectedUsers.length})
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+    </SafeAreaView>
+  </Modal>
+);
   const getCurrentPrice = () => {
     if (!isPaidEvent()) return 0;
     
@@ -1085,24 +1111,55 @@ export default function EventDetailsScreen() {
     setSearchResults([]);
     setSelectedUsers([]);
   };
-
+  const getInviteButtonText = () => {
+  switch (event?.privacyLevel) {
+    case 'private':
+      return isHost || isCoHost ? 'Invite Friends' : 'Share Event';
+    case 'friends':
+      return 'Invite Friends';
+    case 'public':
+      return 'Invite & Share';
+    default:
+      return 'Invite';
+  }
+};
   const searchUsers = async (query) => {
-    if (query.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
+  if (query.trim().length < 2) {
+    setSearchResults([]);
+    return;
+  }
 
-    try {
-      setSearching(true);
-      const response = await api.get(`/api/users/search?q=${encodeURIComponent(query)}`);
-      setSearchResults(response.data);
-    } catch (error) {
-      console.error('Search error:', error);
+  try {
+    setSearching(true);
+    console.log(`🔍 PHASE 2: EventDetails searching friends for query: "${query}"`);
+    
+    // Use friends-only search endpoint
+    const response = await api.get(`/api/users/friends/search`, {
+      params: { 
+        q: encodeURIComponent(query),
+        eventId: eventId,
+        limit: 20
+      }
+    });
+    
+    console.log(`✅ PHASE 2: EventDetails found ${response.data.length} friends`);
+    setSearchResults(response.data);
+    
+  } catch (error) {
+    console.error('Search error:', error);
+    
+    // Handle error appropriately based on event privacy level
+    if (error.response?.status === 404) {
+      // No friends found - this is normal, just show empty results
       setSearchResults([]);
-    } finally {
-      setSearching(false);
+    } else {
+      console.warn('Failed to search friends:', error.response?.data?.message || error.message);
+      setSearchResults([]);
     }
-  };
+  } finally {
+    setSearching(false);
+  }
+};
 
   const toggleUserSelection = (user) => {
     setSelectedUsers(prev => {
@@ -1116,28 +1173,74 @@ export default function EventDetailsScreen() {
   };
 
   const handleSendInvites = async () => {
-    if (selectedUsers.length === 0) return;
+  if (selectedUsers.length === 0) return;
 
-    try {
-      setInviting(true);
-      await api.post(`/api/events/invite/${eventId}`, {
-        userIds: selectedUsers.map(u => u._id)
-      });
+  try {
+    setInviting(true);
+    console.log(`📨 PHASE 2: Sending invites to ${selectedUsers.length} friends`);
+    
+    await api.post(`/api/events/${eventId}/invite`, {
+      userIds: selectedUsers.map(u => u._id)
+    });
 
+    // Success message with privacy context
+    const getSuccessMessage = () => {
+      if (event?.privacyLevel === 'friends') {
+        return `Successfully invited ${selectedUsers.length} friend${selectedUsers.length === 1 ? '' : 's'} to the event. They will be notified and can join directly.`;
+      } else if (event?.privacyLevel === 'private') {
+        return `Successfully sent ${selectedUsers.length} private invitation${selectedUsers.length === 1 ? '' : 's'}. Invited users will receive exclusive access to the event.`;
+      } else {
+        return `Successfully invited ${selectedUsers.length} friend${selectedUsers.length === 1 ? '' : 's'} to the event.`;
+      }
+    };
+
+    Alert.alert('Invites Sent!', getSuccessMessage());
+    setShowShareInviteModal(false);
+    setSelectedUsers([]);
+    setSearchQuery('');
+    setSearchResults([]);
+    
+  } catch (error) {
+    console.error('Invite error:', error);
+    
+    // Handle specific error cases with user-friendly messages
+    if (error.response?.status === 400 && error.response?.data?.message?.includes('friends')) {
       Alert.alert(
-        'Invites Sent!', 
-        `Successfully invited ${selectedUsers.length} ${selectedUsers.length === 1 ? 'person' : 'people'} to the event.`
+        'Friends Only Event',
+        'You can only invite friends to this event. Some selected users may not be in your friends list.'
       );
-      setShowShareInviteModal(false);
-      setSelectedUsers([]);
-    } catch (error) {
-      console.error('Invite error:', error);
-      Alert.alert('Error', 'Failed to send invites. Please try again.');
-    } finally {
-      setInviting(false);
+    } else if (error.response?.status === 403) {
+      const message = error.response?.data?.message;
+      if (message?.includes('private')) {
+        Alert.alert(
+          'Permission Denied',
+          'Only the event host can send invitations to private events.'
+        );
+      } else {
+        Alert.alert(
+          'Permission Denied',
+          message || 'You do not have permission to invite users to this event.'
+        );
+      }
+    } else {
+      Alert.alert(
+        'Error', 
+        'Failed to send invites. Please check your connection and try again.'
+      );
     }
-  };
-
+  } finally {
+    setInviting(false);
+  }
+};
+const getSearchPlaceholder = () => {
+  if (event?.privacyLevel === 'friends') {
+    return 'Search your friends...';
+  } else if (event?.privacyLevel === 'private') {
+    return 'Search friends to invite...';
+  } else {
+    return 'Search your friends...';
+  }
+};
   // NEW: Enhanced share functionality
   const handleShare = async () => {
     try {
@@ -2457,5 +2560,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  privacyInfoSection: {
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  privacyInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  privacyText: {
+    fontSize: 13,
+    color: '#8E8E93',
+    flex: 1,
   },
 });

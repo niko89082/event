@@ -3623,6 +3623,13 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     const isHost = String(event.host) === String(req.user._id);
     const isCoHost = event.coHosts?.some(c => String(c) === String(req.user._id));
     
+    // ✅ NEW: For private events, only host/co-hosts can invite
+    if (event.privacyLevel === 'private' && !isHost && !isCoHost) {
+      return res.status(403).json({ 
+        message: 'Only hosts can invite users to private events' 
+      });
+    }
+    
     if (!isHost && !isCoHost) {
       if (event.permissions?.canInvite !== 'attendees' && event.permissions?.canInvite !== 'anyone') {
         return res.status(403).json({ message: 'You do not have permission to invite users to this event' });
@@ -3633,6 +3640,20 @@ router.post('/:eventId/invite', protect, async (req, res) => {
         if (!isAttending) {
           return res.status(403).json({ message: 'Only attendees can invite others to this event' });
         }
+      }
+    }
+
+    // ✅ NEW: For friends-only events, validate that invited users are friends with host
+    if (event.privacyLevel === 'friends') {
+      const host = await User.findById(event.host);
+      const hostFriends = host ? host.getAcceptedFriends().map(f => String(f)) : [];
+      
+      const nonFriendInvites = userIds.filter(userId => !hostFriends.includes(String(userId)));
+      if (nonFriendInvites.length > 0) {
+        return res.status(400).json({ 
+          message: 'Can only invite friends to friends-only events',
+          invalidUsers: nonFriendInvites
+        });
       }
     }
 
@@ -3673,7 +3694,7 @@ router.post('/:eventId/invite', protect, async (req, res) => {
 
     await event.save();
 
-    // ✅ NEW: Send invitation notifications (non-blocking)
+    // ✅ FIXED: Send invitation notifications (non-blocking)
     if (newInvites.length > 0) {
       setImmediate(async () => {
         try {
@@ -6213,84 +6234,6 @@ router.post('/:eventId/manual-checkin', protect, async (req, res) => {
  * Undo a user's check-in (for hosts)
  */
 // Add these routes to routes/events.js
-
-/**
- * POST /api/events/:eventId/remove-attendee
- * Remove an attendee from the event (for hosts/co-hosts)
- */
-router.post('/:eventId/remove-attendee', protect, async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    const { userId } = req.body;
-
-    const event = await Event.findById(eventId);
-    
-    if (!event) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Event not found' 
-      });
-    }
-
-    // Check if user is host or co-host
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts && event.coHosts.some(
-      coHost => String(coHost) === String(req.user._id)
-    );
-
-    if (!isHost && !isCoHost) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only hosts and co-hosts can remove attendees' 
-      });
-    }
-
-    // Check if user is actually attending
-    const isAttending = event.attendees.some(attendee => 
-      String(attendee._id || attendee) === String(userId)
-    );
-    
-    if (!isAttending) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User is not attending this event' 
-      });
-    }
-
-    // Remove from attendees list
-    event.attendees = event.attendees.filter(attendee => 
-      String(attendee._id || attendee) !== String(userId)
-    );
-
-    // Also remove from checked-in list if they were checked in
-    event.checkedIn = event.checkedIn.filter(checkedUser => 
-      String(checkedUser._id || checkedUser) !== String(userId)
-    );
-
-    // Save the event
-    await event.save();
-
-    // Update user's attending events (remove this event)
-    const User = require('../models/User');
-    await User.findByIdAndUpdate(userId, {
-      $pull: { attendingEvents: eventId }
-    });
-
-    console.log(`✅ User ${userId} removed from event ${eventId} by ${req.user._id}`);
-
-    res.json({
-      success: true,
-      message: 'Attendee removed successfully'
-    });
-
-  } catch (error) {
-    console.error('Remove attendee error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove attendee' 
-    });
-  }
-});
 
 // UPDATED: Manual check-in route with bypass for timing restrictions
 router.post('/:eventId/manual-checkin', protect, async (req, res) => {

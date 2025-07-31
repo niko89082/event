@@ -1,17 +1,9 @@
-// screens/InviteUsersScreen.js - Simplified invite users to events
+// SocialApp/screens/InviteUsersScreen.js - Updated to use friends-only search
+
 import React, { useState, useEffect, useContext } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  FlatList,
-  SafeAreaView,
-  StatusBar,
-  ActivityIndicator,
-  Alert,
-  Image,
+  View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity,
+  Image, Alert, ActivityIndicator, SafeAreaView, StatusBar
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -24,33 +16,33 @@ export default function InviteUsersScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
-  const { eventId, eventTitle } = route.params;
-
+  
+  const { eventId, eventTitle, eventPrivacyLevel } = route.params;
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [searching, setSearching] = useState(false);
   const [inviting, setInviting] = useState(false);
 
+  // Set up navigation header with invite button
   useEffect(() => {
     navigation.setOptions({
-      title: 'Invite Friends',
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#E1E1E1',
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 18,
-        color: '#000000',
-      },
+      title: `Invite to ${eventTitle}`,
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.headerButtonText}>Cancel</Text>
+        </TouchableOpacity>
+      ),
       headerRight: () => (
         <TouchableOpacity
           onPress={handleSendInvites}
           style={[styles.headerButton, (selectedUsers.length === 0 || inviting) && styles.headerButtonDisabled]}
+          activeOpacity={0.7}
           disabled={selectedUsers.length === 0 || inviting}
         >
           {inviting ? (
@@ -65,11 +57,11 @@ export default function InviteUsersScreen() {
     });
   }, [selectedUsers, inviting]);
 
-  // Search for users with debouncing
+  // Search for friends with debouncing
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       if (searchQuery.trim()) {
-        searchUsers(searchQuery);
+        searchFriends(searchQuery);
       } else {
         setSearchResults([]);
       }
@@ -78,22 +70,34 @@ export default function InviteUsersScreen() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
-  const searchUsers = async (query) => {
+  // ✅ PHASE 2: Updated to use friends-only search
+  const searchFriends = async (query) => {
     try {
       setSearching(true);
-      const response = await api.get(`/api/users/search`, {
-        params: { q: query, limit: 20 }
+      console.log(`🔍 PHASE 2: Searching friends for query: "${query}"`);
+      
+      // Use the new friends-only search endpoint
+      const response = await api.get(`/api/users/friends/search`, {
+        params: { 
+          q: query, 
+          eventId: eventId,
+          limit: 20 
+        }
       });
       
-      // Filter out current user
-      const results = response.data.filter(user => 
-        user._id !== currentUser._id
-      );
+      console.log(`✅ PHASE 2: Found ${response.data.length} friends`);
+      setSearchResults(response.data);
       
-      setSearchResults(results);
     } catch (error) {
-      console.error('Error searching users:', error);
-      Alert.alert('Error', 'Failed to search users');
+      console.error('Error searching friends:', error);
+      
+      // Show appropriate error message based on privacy level
+      if (error.response?.status === 404) {
+        Alert.alert('No Friends Found', 'No friends match your search query.');
+      } else {
+        Alert.alert('Error', 'Failed to search friends. Please try again.');
+      }
+      setSearchResults([]);
     } finally {
       setSearching(false);
     }
@@ -124,9 +128,16 @@ export default function InviteUsersScreen() {
         userIds: userIds
       });
 
+      // Show success message with privacy context
+      const privacyMessage = eventPrivacyLevel === 'friends' 
+        ? 'Your friends will be notified of the invitation.'
+        : eventPrivacyLevel === 'private'
+        ? 'Invited users will receive private invitations.'
+        : 'Invited users will be notified and can join the event.';
+
       Alert.alert(
         'Invites Sent!',
-        `Successfully sent ${selectedUsers.length} invite${selectedUsers.length > 1 ? 's' : ''} to ${eventTitle}`,
+        `Successfully sent ${selectedUsers.length} invite${selectedUsers.length > 1 ? 's' : ''} to ${eventTitle}.\n\n${privacyMessage}`,
         [
           {
             text: 'OK',
@@ -137,13 +148,39 @@ export default function InviteUsersScreen() {
 
     } catch (error) {
       console.error('Error sending invites:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to send invites. Please try again.'
-      );
+      
+      // Handle specific error cases
+      if (error.response?.status === 400 && error.response?.data?.message?.includes('friends')) {
+        Alert.alert(
+          'Friends Only Event',
+          'You can only invite friends to this event. Some selected users are not in your friends list.'
+        );
+      } else if (error.response?.status === 403) {
+        Alert.alert(
+          'Permission Denied',
+          error.response?.data?.message || 'You do not have permission to invite users to this event.'
+        );
+      } else {
+        Alert.alert(
+          'Error',
+          error.response?.data?.message || 'Failed to send invites. Please try again.'
+        );
+      }
     } finally {
       setInviting(false);
     }
+  };
+
+  // Get profile picture URL
+  const getProfilePictureUrl = (profilePicture) => {
+    if (!profilePicture) return null;
+    
+    if (profilePicture.startsWith('http')) {
+      return profilePicture;
+    }
+    
+    const cleanPath = profilePicture.startsWith('/') ? profilePicture : `/${profilePicture}`;
+    return `http://${API_BASE_URL}:3000${cleanPath}`;
   };
 
   const renderUserItem = ({ item }) => {
@@ -157,62 +194,34 @@ export default function InviteUsersScreen() {
       >
         <View style={styles.userAvatar}>
           {item.profilePicture ? (
-            <Image 
-              source={{ uri: `${API_BASE_URL}${item.profilePicture}` }} 
-              style={styles.userAvatarImage} 
+            <Image
+              source={{ uri: getProfilePictureUrl(item.profilePicture) }}
+              style={styles.avatarImage}
             />
           ) : (
-            <View style={styles.userAvatarPlaceholder}>
-              <Text style={styles.userAvatarText}>
-                {item.username.charAt(0).toUpperCase()}
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarText}>
+                {(item.displayName || item.username || '?').charAt(0).toUpperCase()}
               </Text>
             </View>
           )}
         </View>
         
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{item.username}</Text>
+          <Text style={styles.username}>
+            {item.displayName || item.username}
+          </Text>
           {item.displayName && (
-            <Text style={styles.userDisplayName}>{item.displayName}</Text>
+            <Text style={styles.handle}>@{item.username}</Text>
           )}
         </View>
         
-        <View style={styles.selectionIndicator}>
-          <Ionicons 
-            name={isSelected ? "checkmark-circle" : "ellipse-outline"} 
-            size={24} 
-            color={isSelected ? "#34C759" : "#C7C7CC"} 
-          />
-        </View>
+        {isSelected && (
+          <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
+        )}
       </TouchableOpacity>
     );
   };
-
-  const renderSelectedUser = ({ item }) => (
-    <View style={styles.selectedUserChip}>
-      <View style={styles.selectedUserAvatar}>
-        {item.profilePicture ? (
-          <Image 
-            source={{ uri: `${API_BASE_URL}${item.profilePicture}` }} 
-            style={styles.selectedUserAvatarImage} 
-          />
-        ) : (
-          <View style={styles.selectedUserAvatarPlaceholder}>
-            <Text style={styles.selectedUserAvatarText}>
-              {item.username.charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        )}
-      </View>
-      <Text style={styles.selectedUserName}>{item.username}</Text>
-      <TouchableOpacity
-        onPress={() => toggleUserSelection(item)}
-        style={styles.removeSelectedUser}
-      >
-        <Ionicons name="close" size={16} color="#FFFFFF" />
-      </TouchableOpacity>
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -220,66 +229,67 @@ export default function InviteUsersScreen() {
       
       {/* Search Section */}
       <View style={styles.searchSection}>
-        <View style={styles.searchInputContainer}>
-          <Ionicons name="search" size={20} color="#8E8E93" />
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
+            placeholder={`Search your friends...`}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search for friends to invite..."
-            placeholderTextColor="#C7C7CC"
-            autoFocus
+            placeholderTextColor="#8E8E93"
+            autoCapitalize="none"
+            autoCorrect={false}
           />
           {searching && (
-            <ActivityIndicator size="small" color="#8E8E93" />
+            <ActivityIndicator size="small" color="#3797EF" style={styles.searchLoader} />
           )}
+        </View>
+        
+        {/* Privacy Info */}
+        <View style={styles.privacyInfo}>
+          <Ionicons 
+            name={eventPrivacyLevel === 'private' ? 'lock-closed' : eventPrivacyLevel === 'friends' ? 'people' : 'globe'} 
+            size={16} 
+            color="#8E8E93" 
+          />
+          <Text style={styles.privacyText}>
+            {eventPrivacyLevel === 'friends' 
+              ? 'You can only invite friends to this event'
+              : eventPrivacyLevel === 'private'
+              ? 'Private event - host controls invitations'
+              : 'You can invite any of your friends'
+            }
+          </Text>
         </View>
       </View>
 
-      {/* Selected Users */}
-      {selectedUsers.length > 0 && (
-        <View style={styles.selectedUsersSection}>
-          <Text style={styles.selectedUsersTitle}>
-            Selected ({selectedUsers.length})
-          </Text>
+      {/* Results */}
+      <View style={styles.resultsContainer}>
+        {searchQuery.trim() === '' ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="people-outline" size={48} color="#C7C7CC" />
+            <Text style={styles.emptyStateTitle}>Search for Friends</Text>
+            <Text style={styles.emptyStateMessage}>
+              Type a name to find friends you can invite to this event
+            </Text>
+          </View>
+        ) : searchResults.length === 0 && !searching ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="search" size={48} color="#C7C7CC" />
+            <Text style={styles.emptyStateTitle}>No Friends Found</Text>
+            <Text style={styles.emptyStateMessage}>
+              No friends match your search query
+            </Text>
+          </View>
+        ) : (
           <FlatList
-            data={selectedUsers}
+            data={searchResults}
             keyExtractor={(item) => item._id}
-            renderItem={renderSelectedUser}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.selectedUsersList}
+            renderItem={renderUserItem}
+            showsVerticalScrollIndicator={false}
+            style={styles.resultsList}
           />
-        </View>
-      )}
-
-      {/* Search Results */}
-      <View style={styles.resultsSection}>
-        <FlatList
-          data={searchResults}
-          keyExtractor={(item) => item._id}
-          renderItem={renderUserItem}
-          ListEmptyComponent={() => (
-            <View style={styles.emptyResults}>
-              {searchQuery ? (
-                <Text style={styles.emptyResultsText}>
-                  {searching ? 'Searching...' : 'No users found'}
-                </Text>
-              ) : (
-                <View style={styles.emptyResultsContent}>
-                  <Ionicons name="people-outline" size={48} color="#C7C7CC" />
-                  <Text style={styles.emptyResultsTitle}>Invite Friends</Text>
-                  <Text style={styles.emptyResultsText}>
-                    Search for friends to invite to your event
-                  </Text>
-                  <Text style={styles.emptyResultsSubtext}>
-                    You can also share the event using the share button in the event details
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-        />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -290,6 +300,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  
+  // Header
   headerButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -299,181 +311,123 @@ const styles = StyleSheet.create({
   },
   headerButtonText: {
     fontSize: 16,
-    fontWeight: '600',
     color: '#3797EF',
+    fontWeight: '600',
   },
   headerButtonTextDisabled: {
     color: '#C7C7CC',
   },
 
-  // Search Section
+  // Search
   searchSection: {
-    backgroundColor: '#F8F8F8',
     paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E8ED',
   },
-  searchInputContainer: {
+  searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8F9FA',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  searchIcon: {
+    marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 8,
     fontSize: 16,
-    color: '#000000',
-    paddingVertical: 8,
-  },
-
-  // Selected Users
-  selectedUsersSection: {
-    backgroundColor: '#F8F8F8',
-    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
+    color: '#1C1C1E',
   },
-  selectedUsersTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 8,
+  searchLoader: {
+    marginLeft: 8,
   },
-  selectedUsersList: {
-    flexGrow: 0,
-  },
-  selectedUserChip: {
+  privacyInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#3797EF',
-    borderRadius: 16,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    marginRight: 8,
+    gap: 6,
   },
-  selectedUserAvatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    marginRight: 6,
-  },
-  selectedUserAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 10,
-  },
-  selectedUserAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  selectedUserAvatarText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#3797EF',
-  },
-  selectedUserName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginRight: 6,
-  },
-  removeSelectedUser: {
-    padding: 2,
+  privacyText: {
+    fontSize: 13,
+    color: '#8E8E93',
   },
 
-  // Results Section
-  resultsSection: {
+  // Results
+  resultsContainer: {
     flex: 1,
   },
+  resultsList: {
+    flex: 1,
+  },
+  
+  // User Item
   userItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F7',
   },
   userItemSelected: {
-    backgroundColor: '#F0F8FF',
+    backgroundColor: '#E3F2FD',
   },
   userAvatar: {
+    marginRight: 12,
+  },
+  avatarImage: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    marginRight: 12,
   },
-  userAvatarImage: {
-    width: '100%',
-    height: '100%',
+  avatarPlaceholder: {
+    width: 44,
+    height: 44,
     borderRadius: 22,
-  },
-  userAvatarPlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 22,
-    backgroundColor: '#C7C7CC',
+    backgroundColor: '#E1E8ED',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  userAvatarText: {
+  avatarText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: '#8E8E93',
   },
   userInfo: {
     flex: 1,
   },
-  userName: {
+  username: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000000',
+    color: '#1C1C1E',
+    marginBottom: 2,
   },
-  userDisplayName: {
+  handle: {
     fontSize: 14,
     color: '#8E8E93',
-    marginTop: 2,
-  },
-  selectionIndicator: {
-    padding: 4,
   },
 
-  // Empty Results
-  emptyResults: {
+  // Empty State
+  emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
-    paddingVertical: 64,
   },
-  emptyResultsContent: {
-    alignItems: 'center',
-  },
-  emptyResultsTitle: {
-    fontSize: 18,
+  emptyStateTitle: {
+    fontSize: 20,
     fontWeight: '600',
-    color: '#000000',
+    color: '#1C1C1E',
     marginTop: 16,
     marginBottom: 8,
   },
-  emptyResultsText: {
+  emptyStateMessage: {
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
-    marginBottom: 8,
-  },
-  emptyResultsSubtext: {
-    fontSize: 14,
-    color: '#C7C7CC',
-    textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
   },
 });

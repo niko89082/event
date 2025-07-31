@@ -1,4 +1,4 @@
-// SocialApp/screens/AttendeeListScreen.js - Phase 1 Updates
+// SocialApp/screens/AttendeeListScreen.js - Phase 1 Updates with Swipe-to-Delete
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -22,9 +22,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 import api from '../services/api';
 import { API_BASE_URL } from '../services/api';
 import QRCode from 'react-native-qrcode-svg';
+import SwipeableRow from '../components/SwipeableRow'; // Import the SwipeableRow component
 
 const AttendeeListScreen = ({ route, navigation }) => {
   const { eventId } = route.params;
@@ -61,13 +63,21 @@ const AttendeeListScreen = ({ route, navigation }) => {
   const [selectedUserResponses, setSelectedUserResponses] = useState(null);
   const [formResponsesLoading, setFormResponsesLoading] = useState(false);
   
-  // Toggle loading states - NEW for Phase 1
+  // Toggle loading states - for Phase 1
   const [toggleLoadingUsers, setToggleLoadingUsers] = useState(new Set());
+  
+  // NEW: Removal loading states - for Phase 1
+  const [removingUsers, setRemovingUsers] = useState(new Set());
 
   // Existing useEffect and functions...
   const fetchAttendees = useCallback(async (silent = false) => {
     try {
-      if (!silent) setLoading(true);
+      if (!silent) {
+        setLoading(true);
+        setRefreshing(false);
+      } else {
+        setRefreshing(true);
+      }
       
       const [eventResponse, attendeesResponse, userResponse] = await Promise.all([
         api.get(`/api/events/${eventId}`),
@@ -108,11 +118,15 @@ const AttendeeListScreen = ({ route, navigation }) => {
       setToggleLoadingUsers(prev => new Set(prev).add(userId));
       
       // Add haptic feedback
-      Vibration.vibrate(50);
+      if (Haptics.impactAsync) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } else {
+        Vibration.vibrate(50);
+      }
       
       if (isCheckedIn) {
         // Undo check-in
-        await api.post(`/api/events/${eventId}/undo-checkin`, { userId });
+        await api.post(`/api/events/${eventId}/manual-checkout`, { userId });
       } else {
         // Check-in user
         if (event?.requiresFormForCheckIn && event?.checkInForm) {
@@ -175,14 +189,17 @@ const AttendeeListScreen = ({ route, navigation }) => {
         }
       }
       
-      // Optimistically update UI
-      setAttendees(prevAttendees => 
-        prevAttendees.map(attendee => 
-          attendee._id === userId 
-            ? { ...attendee, isCheckedIn: !isCheckedIn }
-            : attendee
-        )
-      );
+      // Optimistically update event check-in status
+      setEvent(prev => {
+        const updatedCheckedIn = isCheckedIn 
+          ? (prev.checkedIn || []).filter(id => id !== userId)
+          : [...(prev.checkedIn || []), userId];
+        
+        return {
+          ...prev,
+          checkedIn: updatedCheckedIn,
+        };
+      });
       
       // Refresh data to sync with server
       await fetchAttendees(true);
@@ -217,6 +234,100 @@ const AttendeeListScreen = ({ route, navigation }) => {
       return false;
     }
   };
+
+  // NEW: Enhanced Remove Attendee with optimistic updates
+  const handleRemoveAttendee = async (userId) => {
+    try {
+      setRemovingUsers(prev => new Set([...prev, userId]));
+
+      const response = await api.post(`/api/events/${eventId}/remove-attendee`, { userId });
+
+      if (response.data.success) {
+        // Optimistic update - remove from local state
+        setAttendees(prev => prev.filter(attendee => attendee._id !== userId));
+        
+        // Update event attendee count
+        setEvent(prev => ({
+          ...prev,
+          attendees: prev.attendees.filter(id => id !== userId),
+          checkedIn: (prev.checkedIn || []).filter(id => id !== userId),
+        }));
+
+        // Remove from selected if in bulk mode
+        setSelectedAttendees(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(userId);
+          return newSet;
+        });
+
+        // Show success feedback
+        Alert.alert('Success', 'Attendee removed and notified');
+      } else {
+        throw new Error(response.data.message || 'Failed to remove attendee');
+      }
+
+    } catch (error) {
+      console.error('Error removing attendee:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to remove attendee';
+      Alert.alert('Error', errorMessage);
+      
+      // Refresh data on error to ensure consistency
+      fetchAttendees(true);
+    } finally {
+      setRemovingUsers(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(userId);
+        return newSet;
+      });
+    }
+  };
+
+  // NEW: Swipe-to-delete handler with confirmation
+  const handleSwipeRemove = async (userId) => {
+    return new Promise((resolve, reject) => {
+      const attendee = attendees.find(a => a._id === userId);
+      const displayName = attendee?.username || 
+                         `${attendee?.firstName} ${attendee?.lastName}`.trim() || 
+                         'this attendee';
+
+      Alert.alert(
+        'Remove Attendee',
+        `Remove ${displayName} from the event?`,
+        [
+          { 
+            text: 'Cancel', 
+            style: 'cancel',
+            onPress: () => reject(new Error('Cancelled'))
+          },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await handleRemoveAttendee(userId);
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            },
+          },
+        ]
+      );
+    });
+  };
+
+  // NEW: Bulk selection handlers
+  const toggleAttendeeSelection = useCallback((attendeeId) => {
+    setSelectedAttendees(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(attendeeId)) {
+        newSet.delete(attendeeId);
+      } else {
+        newSet.add(attendeeId);
+      }
+      return newSet;
+    });
+  }, []);
 
   // UPDATED: Permanent QR Code Handling
   const handleShowQR = async () => {
@@ -263,31 +374,6 @@ const AttendeeListScreen = ({ route, navigation }) => {
     });
   };
 
-  // Existing functions for bulk operations, filtering, etc...
-  const handleRemoveAttendee = async (userId) => {
-    Alert.alert(
-      'Remove Attendee',
-      'Are you sure you want to remove this person from the event?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.post(`/api/events/${eventId}/remove-attendee`, { userId });
-              await fetchAttendees(true);
-              Alert.alert('Success', 'Attendee removed from event');
-            } catch (error) {
-              console.error('Error removing attendee:', error);
-              Alert.alert('Error', 'Failed to remove attendee');
-            }
-          },
-        },
-      ]
-    );
-  };
-
   // Filter attendees based on search and filters
   const filteredAttendees = attendees.filter(attendee => {
     const matchesSearch = attendee.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -306,14 +392,25 @@ const AttendeeListScreen = ({ route, navigation }) => {
     return matchesSearch && matchesFilters;
   });
 
-  // UPDATED: Enhanced Attendee Item Rendering
+  // UPDATED: Enhanced Attendee Item Rendering with SwipeableRow Integration
   const renderAttendeeItem = ({ item }) => {
     const isCheckedIn = canManage && event?.checkedIn?.includes(item._id);
     const hasFormResponse = canManage && event?.requiresFormForCheckIn && item.formSubmission;
     const isSelected = selectedAttendees.has(item._id);
     const isToggleLoading = toggleLoadingUsers.has(item._id);
+    const isRemoving = removingUsers.has(item._id);
 
-    return (
+    // Show loading state for removing users
+    if (isRemoving) {
+      return (
+        <View style={styles.removingItem}>
+          <ActivityIndicator size="small" color="#FF3B30" />
+          <Text style={styles.removingText}>Removing...</Text>
+        </View>
+      );
+    }
+
+    const renderAttendeeContent = () => (
       <View style={styles.attendeeItem}>
         {/* Bulk Selection Checkbox */}
         {bulkMode && canManage && (
@@ -368,8 +465,8 @@ const AttendeeListScreen = ({ route, navigation }) => {
           </View>
         </TouchableOpacity>
 
-        {/* UPDATED: Enhanced Check-in Toggle */}
-        {canManage && (
+        {/* UPDATED: Enhanced Check-in Toggle - Only show if not in bulk mode */}
+        {canManage && !bulkMode && (
           <TouchableOpacity
             style={[
               styles.checkInButton,
@@ -396,19 +493,25 @@ const AttendeeListScreen = ({ route, navigation }) => {
             )}
           </TouchableOpacity>
         )}
-
-        {/* Remove button for non-bulk mode */}
-        {canManage && !bulkMode && (
-          <TouchableOpacity
-            style={styles.removeButton}
-            onPress={() => handleRemoveAttendee(item._id)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-          </TouchableOpacity>
-        )}
       </View>
     );
+
+    // NEW: Wrap with SwipeableRow only if user can manage and not in bulk mode
+    if (canManage && !bulkMode) {
+      return (
+        <SwipeableRow
+          onDelete={() => handleSwipeRemove(item._id)}
+          deleteText="Remove"
+          deleteColor="#FF3B30"
+          disabled={bulkMode || isRemoving}
+        >
+          {renderAttendeeContent()}
+        </SwipeableRow>
+      );
+    }
+
+    // Return plain content for non-managers or bulk mode
+    return renderAttendeeContent();
   };
 
   // Header component with search and controls
@@ -578,6 +681,17 @@ const AttendeeListScreen = ({ route, navigation }) => {
         }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={filteredAttendees.length === 0 ? styles.emptyList : undefined}
+        // NEW: Performance optimizations for Phase 1
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        initialNumToRender={15}
+        windowSize={10}
+        getItemLayout={(data, index) => ({
+          length: 85, // Approximate height of each item
+          offset: 85 * index,
+          index,
+        })}
       />
 
       {/* UPDATED: Simplified QR Modal (Permanent QR) */}
@@ -830,6 +944,7 @@ const styles = {
     borderBottomWidth: 1,
     borderBottomColor: '#F2F2F7',
     backgroundColor: '#FFFFFF',
+    minHeight: 85, // For getItemLayout optimization
   },
   checkboxContainer: {
     marginRight: 12,
@@ -920,8 +1035,23 @@ const styles = {
     color: '#FFFFFF',
     fontWeight: '600',
   },
-  removeButton: {
-    padding: 8,
+
+  // NEW: Removing Item Styles
+  removingItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F7',
+    gap: 12,
+  },
+  removingText: {
+    fontSize: 16,
+    color: '#FF3B30',
+    fontWeight: '500',
   },
 
   // Empty State

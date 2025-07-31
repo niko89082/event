@@ -995,6 +995,80 @@ router.get('/event-timeline', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+
+router.get('/friends/search', protect, async (req, res) => {
+  try {
+    const { q, eventId, limit = 20 } = req.query;
+    
+    console.log(`🔍 PHASE 2: Friends search - Query: "${q}", EventId: ${eventId}`);
+
+    if (!q || q.trim().length < 2) {
+      return res.json([]);
+    }
+
+    // Get current user's friends
+    const currentUser = await User.findById(req.user._id);
+    const friendIds = currentUser ? currentUser.getAcceptedFriends() : [];
+    
+    if (friendIds.length === 0) {
+      return res.json([]);
+    }
+
+    // Build search query to search only among friends
+    const searchQuery = {
+      _id: { $in: friendIds },
+      $or: [
+        { username: { $regex: q.trim(), $options: 'i' } },
+        { displayName: { $regex: q.trim(), $options: 'i' } }
+      ]
+    };
+
+    // If eventId is provided, exclude users who are already invited or attending
+    if (eventId) {
+      try {
+        const event = await Event.findById(eventId).select('invitedUsers attendees');
+        if (event) {
+          const excludeUserIds = [
+            ...(event.invitedUsers || []),
+            ...(event.attendees || [])
+          ].map(id => String(id));
+          
+          // Add exclusion to search query
+          searchQuery._id.$nin = excludeUserIds;
+          
+          console.log(`🚫 Excluding ${excludeUserIds.length} already invited/attending users`);
+        }
+      } catch (eventError) {
+        console.error('Error fetching event for exclusion:', eventError);
+        // Continue search without exclusion if event fetch fails
+      }
+    }
+
+    console.log('🔍 Friends search query:', JSON.stringify(searchQuery, null, 2));
+
+    // Search among friends
+    const friends = await User.find(searchQuery)
+      .select('username displayName profilePicture')
+      .limit(parseInt(limit))
+      .sort({ username: 1 });
+
+    console.log(`✅ Found ${friends.length} friends matching "${q}"`);
+
+    res.json(friends);
+
+  } catch (error) {
+    console.error('❌ Friends search error:', error);
+    res.status(500).json({ 
+      message: 'Server error during friends search',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+
+
+
 router.get('/event-photos/:eventId', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
