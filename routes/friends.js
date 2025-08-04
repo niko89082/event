@@ -18,6 +18,7 @@ const Event = require('../models/Event');
  * POST /friends/request/:userId
  * Send a friend request to another user
  */
+
 router.post('/quick-accept/:requesterId', protect, async (req, res) => {
   try {
     const requesterUserId = req.params.requesterId;
@@ -105,6 +106,7 @@ router.post('/quick-accept/:requesterId', protect, async (req, res) => {
     });
   }
 });
+
 router.post('/request/:userId', protect, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
@@ -165,6 +167,26 @@ router.post('/request/:userId', protect, async (req, res) => {
       // For now, allow all requests - implement mutual friends check later
     }
 
+    // 🔧 PHASE 1 FIX: Clean up any existing friend request notifications BEFORE sending new request
+    console.log(`🧹 Cleaning up existing friend request notifications between ${currentUserId} and ${targetUserId}`);
+    
+    const cleanupResult = await Notification.deleteMany({
+      $or: [
+        {
+          user: targetUserId,
+          sender: currentUserId,
+          type: 'friend_request'
+        },
+        {
+          user: currentUserId,
+          sender: targetUserId,
+          type: 'friend_request'
+        }
+      ]
+    });
+
+    console.log(`🧹 Cleaned up ${cleanupResult.deletedCount} existing friend request notifications`);
+
     // Send friend request using model method
     try {
       await currentUser.sendFriendRequest(targetUserId, message || '');
@@ -173,7 +195,7 @@ router.post('/request/:userId', protect, async (req, res) => {
       setImmediate(async () => {
         try {
           await notificationService.sendFriendRequest(currentUserId, targetUserId);
-          console.log('🔔 Friend request notification sent');
+          console.log('🔔 Friend request notification sent (no duplicates)');
         } catch (notifError) {
           console.error('Failed to send friend request notification:', notifError);
         }
@@ -200,6 +222,7 @@ router.post('/request/:userId', protect, async (req, res) => {
     });
   }
 });
+
 router.get('/request-status/:userId', protect, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
@@ -431,23 +454,23 @@ router.delete('/cancel/:userId', protect, async (req, res) => {
     try {
       await currentUser.removeFriendship(targetUserId);
 
-      // ✅ ENHANCED: Remove/mark the friend request notification for the target user
-      const updatedNotification = await Notification.findOneAndUpdate(
-        { 
-          user: targetUserId, 
-          sender: currentUserId, 
-          type: 'friend_request',
-          isRead: false 
-        },
-        { 
-          isRead: true, 
-          readAt: new Date(),
-          $set: { 'data.actionTaken': 'cancelled' }
-        },
-        { new: true }
-      );
+      // 🔧 PHASE 1 FIX: More thorough notification cleanup
+      const deletedNotifications = await Notification.deleteMany({
+        $or: [
+          {
+            user: targetUserId,
+            sender: currentUserId,
+            type: 'friend_request'
+          },
+          {
+            user: currentUserId,
+            sender: targetUserId,
+            type: 'friend_request'
+          }
+        ]
+      });
 
-      console.log(`🚫 Marked notification as cancelled:`, updatedNotification?._id);
+      console.log(`🧹 Cleaned up ${deletedNotifications.deletedCount} friend request notifications`);
 
       // ✅ ENHANCED: Return more data for frontend UI updates
       res.status(200).json({ 
@@ -457,7 +480,8 @@ router.delete('/cancel/:userId', protect, async (req, res) => {
         data: {
           targetUsername: targetUser.username,
           targetId: targetUserId,
-          actionTaken: 'cancelled'
+          actionTaken: 'cancelled',
+          notificationsCleanedUp: deletedNotifications.deletedCount
         }
       });
 
@@ -485,7 +509,7 @@ router.delete('/request/:targetUserId', protect, async (req, res) => {
     const { targetUserId } = req.params;
     const currentUserId = req.user._id;
 
-    console.log(`❌ Canceling friend request: ${currentUserId} -> ${targetUserId}`);
+    console.log(`❌ Canceling friend request (legacy route): ${currentUserId} -> ${targetUserId}`);
 
     const currentUser = await User.findById(currentUserId);
     const targetUser = await User.findById(targetUserId);
@@ -521,22 +545,28 @@ router.delete('/request/:targetUserId', protect, async (req, res) => {
       targetUser.save()
     ]);
 
-    // ✅ ACTIVITY CLEANUP: Remove any related friend request activities
-    // Since activities are generated dynamically in your system, this might involve
-    // clearing cache or removing notifications
-
-    // Remove the friend request notification
-    await Notification.deleteMany({
-      user: targetUserId,
-      sender: currentUserId,
-      type: 'friend_request'
+    // 🔧 PHASE 1 FIX: Enhanced cleanup - remove ALL related friend request notifications
+    const deletedNotifications = await Notification.deleteMany({
+      $or: [
+        {
+          user: targetUserId,
+          sender: currentUserId,
+          type: 'friend_request'
+        },
+        {
+          user: currentUserId,
+          sender: targetUserId,
+          type: 'friend_request'
+        }
+      ]
     });
 
-    console.log(`✅ Friend request canceled and notifications cleaned up`);
+    console.log(`✅ Friend request canceled and ${deletedNotifications.deletedCount} notifications cleaned up`);
 
     res.json({
       success: true,
-      message: 'Friend request canceled successfully'
+      message: 'Friend request canceled successfully',
+      notificationsCleanedUp: deletedNotifications.deletedCount
     });
 
   } catch (error) {

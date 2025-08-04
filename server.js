@@ -60,10 +60,91 @@ cron.schedule('0 0 * * *', async () => {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - 28); // 4 weeks
-    const result = await Notification.deleteMany({ createdAt: { $lt: cutoffDate } });
-    console.log(`🧹 Deleted ${result.deletedCount} old notifications`);
+
+    // ✅ SAFE TO DELETE: Informational notifications that don't require action
+    const safeToDeleteTypes = [
+      'friend_request_accepted',     // ✅ Informational - user was notified, no action needed
+      'new_follower',               // ✅ Informational - user was notified, no action needed  
+      'memory_photo_added',         // ✅ Informational - photo was added to memory
+      'memory_photo_batch',         // ✅ Informational - batch photos added
+      'memory_photo_liked',         // ✅ Informational - someone liked their photo
+      'event_reminder',             // ✅ Past events - reminder is no longer relevant
+      'event_reminder_1_hour',      // ✅ Past events - reminder is no longer relevant
+      'event_update',               // ✅ Old event updates are not actionable
+      'event_cancelled',            // ✅ Cancellation notifications are informational
+      'event_announcement',         // ✅ Old announcements are not actionable
+      'event_rsvp_batch',          // ✅ Informational - RSVP summary
+      'post_liked',                // ✅ Informational - like notification
+      'post_commented',            // ✅ Informational - comment notification
+      'cohost_added',              // ✅ Informational - user was notified of cohost status
+      'cohost_left',               // ✅ Informational - user was notified of cohost removal
+    ];
+
+    // ✅ DELETE: Safe notifications older than 28 days
+    const safeDeleteResult = await Notification.deleteMany({
+      createdAt: { $lt: cutoffDate },
+      type: { $in: safeToDeleteTypes }
+    });
+
+    console.log(`🧹 Deleted ${safeDeleteResult.deletedCount} old informational notifications`);
+
+    // ✅ ADDITIONAL CLEANUP: Delete very old friend requests (6 months+) that are likely stale
+    const veryOldCutoff = new Date();
+    veryOldCutoff.setMonth(veryOldCutoff.getMonth() - 6); // 6 months
+
+    const staleRequestsResult = await Notification.deleteMany({
+      createdAt: { $lt: veryOldCutoff },
+      type: 'friend_request',
+      isRead: false // Only delete unread ones (read ones might have been seen but not acted on)
+    });
+
+    console.log(`🧹 Deleted ${staleRequestsResult.deletedCount} stale friend requests (6+ months old)`);
+
+    // ✅ PRESERVE: Important actionable notifications (these should NOT be auto-deleted)
+    const preservedTypes = [
+      'friend_request',            // 🔒 PRESERVE - User needs to accept/reject
+      'event_invitation',          // 🔒 PRESERVE - User needs to RSVP (events might be in future)
+      'memory_invitation',         // 🔒 PRESERVE - User needs to join memory
+      'cohost_permission_denied',  // 🔒 PRESERVE - Important permission info
+    ];
+
+    // ✅ LOG: Count of preserved actionable notifications
+    const preservedCount = await Notification.countDocuments({
+      createdAt: { $lt: cutoffDate },
+      type: { $in: preservedTypes }
+    });
+
+    if (preservedCount > 0) {
+      console.log(`🔒 Preserved ${preservedCount} actionable notifications (friend requests, invitations, etc.)`);
+    }
+
+    // ✅ SUMMARY: Log cleanup results
+    const totalDeleted = safeDeleteResult.deletedCount + staleRequestsResult.deletedCount;
+    console.log(`✅ Notification cleanup complete: ${totalDeleted} total deleted, ${preservedCount} preserved`);
+
   } catch (error) {
-    console.error('❌ Error deleting old notifications:', error);
+    console.error('❌ Error in enhanced notification cleanup:', error);
+  }
+});
+
+// ✅ OPTIONAL: Additional cleanup for resolved friend requests
+// This runs separately to clean up friend requests that have been acted upon
+cron.schedule('0 2 * * 0', async () => { // Runs weekly on Sunday at 2 AM
+  try {
+    // Clean up friend requests that have been resolved (accepted/rejected)
+    // These have actionTaken data indicating they were processed
+    const resolvedRequestsResult = await Notification.deleteMany({
+      type: 'friend_request',
+      'data.actionTaken': { $in: ['accepted', 'rejected'] },
+      createdAt: { $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // 1 week old
+    });
+
+    if (resolvedRequestsResult.deletedCount > 0) {
+      console.log(`🧹 Weekly cleanup: Deleted ${resolvedRequestsResult.deletedCount} resolved friend requests`);
+    }
+
+  } catch (error) {
+    console.error('❌ Error in weekly friend request cleanup:', error);
   }
 });
 

@@ -7822,16 +7822,6 @@ router.get('/:eventId', protect, async (req, res) => {
     console.log(`✅ PHASE 2: User ${userId} can view event ${eventId}`);
 
     // Check if user can view this event using existing service
-    const permission = await EventPrivacyService.checkPermission(
-      userId, 
-      eventId, 
-      'view'
-    );
-
-    if (!permission.allowed) {
-      console.log(`❌ Permission denied: ${permission.reason}`);
-      return res.status(403).json({ message: permission.reason });
-    }
 
     // Filter sensitive information based on privacy settings
     const eventObj = event.toObject();

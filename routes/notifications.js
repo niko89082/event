@@ -1,4 +1,4 @@
-// routes/notifications.js - PHASE 3: Enhanced with categories and batching
+// routes/notifications.js - PHASE 1: Enhanced with individual deletion
 const express = require('express');
 const protect = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
@@ -74,6 +74,61 @@ router.put('/:id/read', protect, async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════
+   🔧 PHASE 1 NEW: DELETE /api/notifications/:notificationId - Delete individual notification
+═══════════════════════════════════════════════════════════════════ */
+router.delete('/:notificationId', protect, async (req, res) => {
+  try {
+    const notificationId = req.params.notificationId;
+    const userId = req.user._id;
+
+    console.log(`🗑️ Deleting notification ${notificationId} for user ${userId}`);
+
+    // Import Notification model directly for this operation
+    const Notification = require('../models/Notification');
+
+    const notification = await Notification.findOneAndDelete({
+      _id: notificationId,
+      user: userId // Ensure user can only delete their own notifications
+    });
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        message: 'Notification not found or you do not have permission to delete it'
+      });
+    }
+
+    console.log(`✅ Successfully deleted notification ${notificationId} of type ${notification.type}`);
+
+    res.json({
+      success: true,
+      message: 'Notification removed successfully',
+      deletedNotification: {
+        id: notification._id,
+        type: notification.type,
+        category: notification.category || 'unknown'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    
+    // Handle invalid ObjectId errors gracefully
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid notification ID format'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting notification'
+    });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
    POST /api/notifications/mark-all-read - Mark all notifications as read
 ═══════════════════════════════════════════════════════════════════ */
 router.post('/mark-all-read', protect, async (req, res) => {
@@ -92,7 +147,59 @@ router.post('/mark-all-read', protect, async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════
-   DELETE /api/notifications/:id - Delete single notification
+   🔧 PHASE 1 NEW: DELETE /api/notifications/batch - Delete multiple notifications
+   This provides foundation for future bulk operations
+═══════════════════════════════════════════════════════════════════ */
+router.delete('/batch', protect, async (req, res) => {
+  try {
+    const { notificationIds } = req.body;
+    const userId = req.user._id;
+
+    if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid notification IDs provided. Expected non-empty array.'
+      });
+    }
+
+    if (notificationIds.length > 50) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete more than 50 notifications at once'
+      });
+    }
+
+    console.log(`🗑️ Batch deleting ${notificationIds.length} notifications for user ${userId}`);
+
+    // Import Notification model directly
+    const Notification = require('../models/Notification');
+
+    const result = await Notification.deleteMany({
+      _id: { $in: notificationIds },
+      user: userId // Ensure user can only delete their own notifications
+    });
+
+    console.log(`✅ Successfully deleted ${result.deletedCount} out of ${notificationIds.length} requested notifications`);
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} notifications`,
+      deletedCount: result.deletedCount,
+      requestedCount: notificationIds.length
+    });
+
+  } catch (error) {
+    console.error('Error deleting notifications in batch:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting notifications'
+    });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   DELETE /api/notifications/:id - Delete single notification (legacy compatibility)
+   Note: This is the same as /:notificationId but kept for any existing API calls
 ═══════════════════════════════════════════════════════════════════ */
 router.delete('/:id', protect, async (req, res) => {
   try {

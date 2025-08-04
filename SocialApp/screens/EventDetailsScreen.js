@@ -34,6 +34,7 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
 import useEventStore from '../stores/eventStore';
+const PHOTO_FEATURES_ENABLED = false;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -536,8 +537,9 @@ export default function EventDetailsScreen() {
   };
 
   const showPhotoSection = () => {
-    return canViewPhotos() && eventPhotos.length > 0;
-  };
+  if (!PHOTO_FEATURES_ENABLED) return false;
+  return canViewPhotos() && eventPhotos.length > 0;
+};
 
   // NEW: Event status helpers
   const getEventStatus = () => {
@@ -598,27 +600,32 @@ export default function EventDetailsScreen() {
 
   // Enhanced fetch event photos with permission check
   const fetchEventPhotos = async () => {
-    try {
-      if (!canViewPhotos()) {
-        console.log('📸 Photos not allowed for this event');
-        setEventPhotos([]);
-        return;
-      }
-
-      setPhotosLoading(true);
-      console.log(`📸 Fetching photos for event ${eventId}`);
-      
-      const response = await api.get(`/api/users/event-photos/${eventId}`);
-      console.log(`✅ Photos fetched:`, response.data.photos?.length || 0);
-      setEventPhotos(response.data.photos || []);
-      
-    } catch (error) {
-      console.error('❌ Error fetching event photos:', error);
+  if (!PHOTO_FEATURES_ENABLED) {
+    console.log('📸 Photo features disabled');
+    return;
+  }
+  
+  try {
+    if (!canViewPhotos()) {
+      console.log('📸 Photos not allowed for this event');
       setEventPhotos([]);
-    } finally {
-      setPhotosLoading(false);
+      return;
     }
-  };
+
+    setPhotosLoading(true);
+    console.log(`📸 Fetching photos for event ${eventId}`);
+    
+    const response = await api.get(`/api/users/event-photos/${eventId}`);
+    console.log(`✅ Photos fetched:`, response.data.photos?.length || 0);
+    setEventPhotos(response.data.photos || []);
+    
+  } catch (error) {
+    console.error('❌ Error fetching event photos:', error);
+    setEventPhotos([]);
+  } finally {
+    setPhotosLoading(false);
+  }
+};
 
   // PHASE 4: Refresh on focus (instead of polling)
   useFocusEffect(

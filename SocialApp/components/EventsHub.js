@@ -1,4 +1,4 @@
-// components/EventsHub.js - Updated with centralized state management
+// components/EventsHub.js - Updated with dynamic tabs (PRESERVING ALL ANIMATIONS)
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,
@@ -16,16 +16,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
 import EventsFeed from './EventsFeed';
+// ✅ NEW: Import new feed components
+import HostingEventsFeed from './HostingEventsFeed';
+import AttendingEventsFeed from './AttendingEventsFeed';
+// ✅ NEW: Import dynamic tab hooks
+import { useUserEvents } from '../hooks/useUserEvents';
+import { useDynamicEventTabs, getDefaultActiveTab, getNextValidTab } from '../hooks/useDynamicEventTabs';
 import useEventStore from '../stores/eventStore'; // Import centralized store
 
+// ❌ REMOVED: Static EVENTS_TABS array - now dynamic
 // Following and For You tabs (can add more in the future)
-const EVENTS_TABS = [
-  { key: 'following', label: 'Following', icon: 'people-outline' },
-  { key: 'for-you', label: 'For You', icon: 'star-outline' },
-  // ADD MORE TABS HERE IN THE FUTURE:
-  // { key: 'nearby', label: 'Nearby', icon: 'location-outline' },
-  // { key: 'trending', label: 'Trending', icon: 'trending-up-outline' },
-];
+// const EVENTS_TABS = [
+//   { key: 'following', label: 'Following', icon: 'people-outline' },
+//   { key: 'for-you', label: 'For You', icon: 'star-outline' },
+//   // ADD MORE TABS HERE IN THE FUTURE:
+//   // { key: 'nearby', label: 'Nearby', icon: 'location-outline' },
+//   // { key: 'trending', label: 'Trending', icon: 'trending-up-outline' },
+// ];
 
 const EventsHub = forwardRef(({ 
   navigation, 
@@ -37,7 +44,20 @@ const EventsHub = forwardRef(({
   subTabTranslateY, // RECEIVE the actual animated value
 }, ref) => {
   const { currentUser } = useContext(AuthContext);
+  
+  // ✅ NEW: Dynamic tab logic
+  const { 
+    hasHostingEvents, 
+    hasAttendingEvents, 
+    loading: userEventsLoading,
+    refresh: refreshUserEvents 
+  } = useUserEvents(currentUser?._id);
+  
+  const { tabs: dynamicTabs } = useDynamicEventTabs(hasHostingEvents, hasAttendingEvents);
+  
+  // ✅ NEW: Smart default tab selection (but start with 'following' to match original)
   const [activeTab, setActiveTab] = useState('following');
+  
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -51,6 +71,16 @@ const EventsHub = forwardRef(({
     needsRefresh,
     clearEvents
   } = useEventStore();
+
+  // ✅ NEW: Update active tab when user events change
+  useEffect(() => {
+    const currentTabValid = dynamicTabs.some(tab => tab.key === activeTab);
+    if (!currentTabValid) {
+      const nextValidTab = getNextValidTab(activeTab, hasHostingEvents, hasAttendingEvents);
+      console.log(`🔄 EventsHub: Switching from invalid tab "${activeTab}" to "${nextValidTab}"`);
+      setActiveTab(nextValidTab);
+    }
+  }, [activeTab, hasHostingEvents, hasAttendingEvents, dynamicTabs]);
 
   // Expose refresh method to parent
   useImperativeHandle(ref, () => ({
@@ -77,6 +107,9 @@ const EventsHub = forwardRef(({
     try {
       // Add a small delay to ensure proper refresh
       await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // ✅ NEW: Refresh user events data (for tab visibility)
+      await refreshUserEvents();
       
       // Clear stale cache for current tab to force fresh data
       const currentCache = getFeedCache(activeTab);
@@ -178,6 +211,7 @@ const EventsHub = forwardRef(({
       activeTab, // Pass active tab for cache management
     };
 
+    // ✅ UPDATED: Enhanced switch statement with new feed components
     switch (activeTab) {
       case 'following':
         return (
@@ -192,14 +226,38 @@ const EventsHub = forwardRef(({
             feedType="discover"
           />
         );
+      case 'hosting':
+        return (
+          <HostingEventsFeed
+            {...commonProps}
+          />
+        );
+      case 'attending':
+        return (
+          <AttendingEventsFeed
+            {...commonProps}
+          />
+        );
       default:
         return null;
     }
   };
 
+  // ✅ NEW: Show loading state while determining which tabs to show
+  if (userEventsLoading && dynamicTabs.length === 0) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading your events...</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* FIXED: Sub-tabs with DIRECT animation value */}
+      {/* 🚫 UNCHANGED: Sub-tabs with DIRECT animation value - PRESERVING ALL ANIMATIONS */}
       <Animated.View style={[
         styles.unifiedSubTabsContainer, 
         { transform: [{ translateY: subTabTranslateY || 0 }] } // USE the direct animated value
@@ -211,7 +269,8 @@ const EventsHub = forwardRef(({
           style={styles.subTabScrollView}
         >
           <View style={styles.subTabBar}>
-            {EVENTS_TABS.map(tab => 
+            {/* ✅ UPDATED: Use dynamic tabs instead of static EVENTS_TABS */}
+            {dynamicTabs.map(tab => 
               renderTabButton(tab.key, tab.label, tab.icon)
             )}
           </View>
@@ -226,6 +285,7 @@ const EventsHub = forwardRef(({
   );
 });
 
+// 🚫 UNCHANGED: All styles preserved exactly as they were from the original file
 const styles = StyleSheet.create({
   container: {
     flex: 1,
