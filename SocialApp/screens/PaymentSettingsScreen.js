@@ -16,14 +16,38 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-
+import { FEATURES } from '../config/features';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 
 export default function PaymentSettingsScreen() {
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
-
+if (!FEATURES.PAYMENTS) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="chevron-back" size={24} color="#000000" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Payment Settings</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+        <View style={styles.disabledContainer}>
+          <View style={styles.disabledIcon}>
+            <Ionicons name="card-outline" size={48} color="#C7C7CC" />
+          </View>
+          <Text style={styles.disabledTitle}>Payment Settings Unavailable</Text>
+          <Text style={styles.disabledText}>
+            Payment features are temporarily disabled. Check back later for updates.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
   // State
   const [paymentMethods, setPaymentMethods] = useState({});
   const [loading, setLoading] = useState(true);
@@ -490,7 +514,10 @@ export default function PaymentSettingsScreen() {
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              
+
+
+
+              {FEATURES.PAYMENTS && isPaidEvent() && !hasUserPaid() && (
               <TouchableOpacity
                 style={[styles.saveButton, (!paypalEmail.trim() || updating) && styles.buttonDisabled]}
                 onPress={handlePayPalUpdate}
@@ -504,6 +531,7 @@ export default function PaymentSettingsScreen() {
                   </Text>
                 )}
               </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
@@ -855,4 +883,27 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     opacity: 0.6,
   },
+  disabledContainer: {
+  flex: 1,
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 40,
+  paddingTop: 100,
+},
+disabledIcon: {
+  marginBottom: 20,
+},
+disabledTitle: {
+  fontSize: 20,
+  fontWeight: '600',
+  color: '#000000',
+  marginBottom: 12,
+  textAlign: 'center',
+},
+disabledText: {
+  fontSize: 16,
+  color: '#8E8E93',
+  textAlign: 'center',
+  lineHeight: 22,
+},
 });

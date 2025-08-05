@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { API_BASE_URL } from '@env';
 import useEventStore from '../stores/eventStore'; // Import centralized store
-
+import { FEATURES } from '../config/features';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function EventCard({
@@ -116,19 +116,21 @@ export default function EventCard({
 
   // Helper function to get formatted price
   const getFormattedPrice = () => {
-    if (!event.pricing || event.pricing.isFree) return 'Free';
-    
-    // Check if early bird pricing is active
-    if (event.pricing.earlyBirdPricing?.enabled && 
-        event.pricing.earlyBirdPricing?.deadline && 
-        new Date() < new Date(event.pricing.earlyBirdPricing.deadline)) {
-      const earlyPrice = (event.pricing.earlyBirdPricing.amount / 100).toFixed(2);
-      return `$${earlyPrice}`;
-    }
-    
-    const regularPrice = (event.pricing.amount / 100).toFixed(2);
-    return `$${regularPrice}`;
-  };
+  if (!FEATURES.PAYMENTS || !event.pricing || event.pricing.isFree) {
+    return 'Free';
+  }
+  
+  // Check if early bird pricing is active
+  if (event.pricing.earlyBirdPricing?.enabled && 
+      event.pricing.earlyBirdPricing?.deadline && 
+      new Date() < new Date(event.pricing.earlyBirdPricing.deadline)) {
+    const earlyPrice = (event.pricing.earlyBirdPricing.amount / 100).toFixed(2);
+    return `$${earlyPrice}`;
+  }
+  
+  const regularPrice = (event.pricing.amount / 100).toFixed(2);
+  return `$${regularPrice}`;
+};
 
   // Check if user has paid for this event
   const hasUserPaid = () => {
@@ -215,25 +217,25 @@ export default function EventCard({
 
   // Get button state for paid events
   const getAttendButtonInfo = () => {
-    if (event.pricing && !event.pricing.isFree && !hasUserPaid()) {
-      return {
-        text: getFormattedPrice(),
-        isPaid: true
-      };
-    }
-    
-    if (event.permissions?.canJoin === 'approval-required') {
-      return {
-        text: 'Request',
-        isPaid: false
-      };
-    }
-    
+  if (FEATURES.PAYMENTS && event.pricing && !event.pricing.isFree && !hasUserPaid()) {
     return {
-      text: 'Join',
+      text: getFormattedPrice(),
+      isPaid: true
+    };
+  }
+  
+  if (event.permissions?.canJoin === 'approval-required') {
+    return {
+      text: 'Request',
       isPaid: false
     };
+  }
+  
+  return {
+    text: 'Join',
+    isPaid: false
   };
+};
 
   return (
     <TouchableOpacity 

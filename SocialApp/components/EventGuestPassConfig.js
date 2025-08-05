@@ -4,6 +4,7 @@ import {
   View, Text, StyleSheet, Switch, TextInput, TouchableOpacity, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { FEATURES } from '../config/features';
 
 export default function EventGuestPassConfig({ 
   config, 
@@ -87,6 +88,7 @@ export default function EventGuestPassConfig({
           </View>
 
           {/* Cover Charge */}
+          {FEATURES.PAYMENTS && (
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Text style={styles.settingTitle}>Cover Charge</Text>
@@ -101,8 +103,10 @@ export default function EventGuestPassConfig({
               thumbColor="#FFFFFF"
             />
           </View>
+        )}
 
-          {coverChargeEnabled && (
+
+          {FEATURES.PAYMENTS && coverChargeEnabled && (
             <View style={styles.chargeConfig}>
               <View style={styles.amountRow}>
                 <View style={styles.currencySelector}>

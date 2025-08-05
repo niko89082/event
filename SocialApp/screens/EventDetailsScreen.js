@@ -34,6 +34,8 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
 import useEventStore from '../stores/eventStore';
+import { FEATURES } from '../config/features';
+
 const PHOTO_FEATURES_ENABLED = false;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');

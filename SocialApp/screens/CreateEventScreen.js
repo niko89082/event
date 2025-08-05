@@ -14,7 +14,7 @@ import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
 import PaymentSetupComponent from '../components/PaymentSetupComponent';
 import SimplifiedEventPrivacySettings from '../components/SimplifiedEventPrivacySettings';
-
+import { FEATURES } from '../config/features';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PERMISSION_PRESETS = {
@@ -388,6 +388,11 @@ export default function CreateEventScreen({ navigation, route }) {
   };
 
   const handleCreate = async () => {
+     if ((isPaidEvent && !FEATURES.PAYMENTS) || (requiresCheckInForm && !FEATURES.EVENT_FORMS)) {
+    Alert.alert('Feature Unavailable', 'This feature is temporarily disabled.');
+    return;
+  }
+  
   if (!canProceed() || creating) return;
 
   try {
@@ -880,7 +885,7 @@ export default function CreateEventScreen({ navigation, route }) {
                   </View>
                 </View>
               )}
-
+              {FEATURES.EVENT_FORMS && (
               <View style={styles.formToggleContainer}>
                 <View style={styles.formToggleRow}>
                   <View style={styles.formToggleText}>
@@ -942,21 +947,23 @@ export default function CreateEventScreen({ navigation, route }) {
                   </View>
                 )}
               </View>
+              )}
             </View>
 
             {/* Event Pricing */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Event Pricing</Text>
-              <Text style={styles.sectionDescription}>
-                Configure ticket pricing for your event
-              </Text>
-
-              {/* Payment Status Indicator */}
-              {paymentStatus && (
-                <View style={[
-                  styles.paymentStatusBanner,
-                  paymentStatus.canReceivePayments ? styles.statusReady : styles.statusPending
-                ]}>
+            {FEATURES.PAYMENTS && (
+  <View style={styles.section}>
+    <Text style={styles.sectionTitle}>Event Pricing</Text>
+    <Text style={styles.sectionDescription}>
+      Configure ticket pricing for your event
+    </Text>
+    
+    {/* Payment Status Indicator */}
+    {paymentStatus && (
+      <View style={[
+        styles.paymentStatusBanner,
+        paymentStatus.canReceivePayments ? styles.statusReady : styles.statusPending
+      ]}>
                   <Ionicons 
                     name={paymentStatus.canReceivePayments ? "checkmark-circle" : "warning"} 
                     size={20} 
@@ -1108,7 +1115,7 @@ export default function CreateEventScreen({ navigation, route }) {
                 </View>
               )}
             </View>
-
+            )}
             {/* Co-hosts Section */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Co-hosts</Text>

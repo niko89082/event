@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-
+import { FEATURES } from '../config/features';
 import api from '../services/api';
 
 export default function QuickPaymentSetupModal({ 
@@ -22,6 +22,10 @@ export default function QuickPaymentSetupModal({
   onSuccess, 
   eventTitle = 'your event' 
 }) {
+  // Add this early return
+  if (!FEATURES.PAYMENTS) {
+    return null;
+  }
   const [paypalEmail, setPaypalEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

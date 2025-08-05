@@ -15,6 +15,7 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
 import { API_BASE_URL } from '@env';
+import { FEATURES } from '../config/features';
 
 const CATEGORIES = [
   'General', 'Music', 'Arts', 'Sports', 'Food', 'Technology', 'Business',
@@ -1073,31 +1074,37 @@ const handleSaveEvent = async () => {
   )}
 
   {/* Ticket Price - Host Only */}
-  {canEditField('pricing') ? (
-    <View style={styles.inputGroup}>
-      <Text style={styles.label}>Ticket Price ($)</Text>
-      <TextInput
-        style={styles.input}
-        value={price}
-        onChangeText={setPrice}
-        placeholder="0.00"
-        placeholderTextColor="#C7C7CC"
-        keyboardType="numeric"
-      />
-    </View>
-  ) : (
-    <View style={styles.inputGroup}>
-      <Text style={styles.label}>
-        Ticket Price ($) <Text style={styles.restrictedLabel}>(Host Only)</Text>
-      </Text>
-      <View style={[styles.input, styles.inputDisabled]}>
-        <Text style={styles.disabledText}>${price}</Text>
+  
+  {/* Ticket Price - Host Only */}
+{FEATURES.PAYMENTS && (
+  <>
+    {canEditField('pricing') ? (
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Ticket Price ($)</Text>
+        <TextInput
+          style={styles.input}
+          value={price}
+          onChangeText={setPrice}
+          placeholder="0.00"
+          placeholderTextColor="#C7C7CC"
+          keyboardType="numeric"
+        />
       </View>
-      <Text style={styles.restrictedHint}>
-        Only the host can change pricing
-      </Text>
-    </View>
-  )}
+    ) : (
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>
+          Ticket Price ($) <Text style={styles.restrictedLabel}>(Host Only)</Text>
+        </Text>
+        <View style={[styles.input, styles.inputDisabled]}>
+          <Text style={styles.disabledText}>${price}</Text>
+        </View>
+        <Text style={styles.restrictedHint}>
+          Only the host can change pricing
+        </Text>
+      </View>
+    )}
+  </>
+)}
 
   {/* Tags - Co-hosts CAN edit this */}
   <View style={styles.inputGroup}>
