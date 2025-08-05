@@ -25,6 +25,10 @@ import FriendRequestAcceptedActivity from './activities/FriendRequestAcceptedAct
 import EventReminderActivity from './activities/EventReminderActivity';
 import MemoryCreatedActivity from './activities/MemoryCreatedActivity';
 import EventCreatedActivity from './activities/EventCreatedActivity';
+import MemoryPhotoUploadActivity from './activities/MemoryPhotoUploadActivity';
+import PhotoCommentActivity from './activities/PhotoCommentActivity';              // ✅ NEW
+import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
+
 
 const ActivityFeed = forwardRef(({
   navigation,
@@ -176,22 +180,22 @@ const ActivityFeed = forwardRef(({
 
   // ✅ UPDATED: Render different activity types
   const renderActivity = useCallback(({ item }) => {
-    console.log('🎯 ActivityFeed: Rendering activity:', {
-      activityId: item._id,
-      activityType: item.activityType,
-      currentUserId: currentUserId,
-      hasCurrentUserId: !!currentUserId
-    });
-    
-    // Common props for all activity components
-    const commonProps = {
-      activity: item,
-      currentUserId: currentUserId,
-      navigation: navigation,
-      onAction: handleActivityActionPress,
-    };
+  console.log('🎯 ActivityFeed: Rendering activity:', {
+    activityId: item._id,
+    activityType: item.activityType,
+    currentUserId: currentUserId,
+    hasCurrentUserId: !!currentUserId
+  });
+  
+  // Common props for all activity components
+  const commonProps = {
+    activity: item,
+    currentUserId: currentUserId,
+    navigation: navigation,
+    onAction: handleActivityActionPress,
+  };
 
-    switch (item.activityType) {
+  switch (item.activityType) {
     case 'regular_post':
     case 'memory_post':
       // Use existing PostItem component for posts
@@ -212,7 +216,7 @@ const ActivityFeed = forwardRef(({
         </View>
       );
 
-    case 'event_created':  // ✅ ADD THIS CASE
+    case 'event_created':
       return (
         <View style={styles.activityWrapper}>
           <EventCreatedActivity {...commonProps} />
@@ -261,6 +265,28 @@ const ActivityFeed = forwardRef(({
         </View>
       );
 
+    case 'memory_photo_upload':
+      return (
+        <View style={styles.activityWrapper}>
+          <MemoryPhotoUploadActivity {...commonProps} />
+        </View>
+      );
+
+    // ✅ NEW PHASE 2 CASES: Comment activities
+    case 'photo_comment':
+      return (
+        <View style={styles.activityWrapper}>
+          <PhotoCommentActivity {...commonProps} />
+        </View>
+      );
+
+    case 'memory_photo_comment':
+      return (
+        <View style={styles.activityWrapper}>
+          <MemoryPhotoCommentActivity {...commonProps} />
+        </View>
+      );
+
     default:
       console.warn('⚠️ Unknown activity type:', item.activityType);
       return (
@@ -272,6 +298,8 @@ const ActivityFeed = forwardRef(({
       );
   }
 }, [navigation, currentUserId, handleActivityActionPress]);
+
+
 
   const renderFooter = () => {
     if (!loading || data.length === 0) return null;

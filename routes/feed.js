@@ -31,7 +31,7 @@ const ACTIVITY_TYPES = {
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
   
-  // New activity types
+  // Existing activity types
   'event_invitation': { 
     priority: 'high', 
     weight: 2.0,
@@ -72,11 +72,322 @@ const ACTIVITY_TYPES = {
     weight: 1.3,
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
+
+  // ✅ NEW ACTIVITY TYPES - PHASE 1
+  'memory_photo_upload': { 
+    priority: 'medium', 
+    weight: 1.3,
+    maxAge: 5 * 24 * 60 * 60 * 1000 // 5 days
+  },
+  'photo_comment': { 
+    priority: 'low', 
+    weight: 0.8,
+    maxAge: 3 * 24 * 60 * 60 * 1000 // 3 days
+  },
+  'memory_photo_comment': { 
+    priority: 'low', 
+    weight: 0.9,
+    maxAge: 3 * 24 * 60 * 60 * 1000 // 3 days
+  },
 };
+
+const fetchPhotoComments = async (userId, friendIds, timeRange) => {
+  console.log('💬 Fetching regular photo comments...');
+  
+  try {
+    // Get user's accepted friends for privacy checking
+    const user = await User.findById(userId);
+    const userFriendIds = user.getAcceptedFriends().map(id => String(id));
+    
+    // Find recent comments on regular photos from friends
+    const photoComments = await Photo.aggregate([
+      {
+        $match: {
+          user: { $in: friendIds }, // Photos owned by friends
+          'comments.0': { $exists: true }, // Has at least one comment
+          $or: [
+            { isDeleted: { $exists: false } },
+            { isDeleted: false }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'photoOwner'
+        }
+      },
+      {
+        $lookup: {
+          from: 'events',
+          localField: 'event',
+          foreignField: '_id',
+          as: 'event'
+        }
+      },
+      {
+        $unwind: { path: '$photoOwner', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $unwind: { path: '$event', preserveNullAndEmptyArrays: true }
+      },
+      {
+        $match: {
+          // ✅ PRIVACY FILTER: Exclude comments on photos from private events
+          $or: [
+            // Photos not associated with any event
+            { event: { $exists: false } },
+            { event: null },
+            // Photos from public events
+            { 'event.privacyLevel': 'public' },
+            // Photos from friends-only events where user is friends with host
+            { 
+              'event.privacyLevel': 'friends',
+              'event.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+            }
+            // Private event photos completely excluded
+          ]
+        }
+      },
+      {
+        $unwind: '$comments'
+      },
+      {
+        $match: {
+          'comments.createdAt': { $gte: timeRange.start },
+          'comments.user': { $in: friendIds }, // Comments by friends
+          'comments.user': { $ne: userId } // Exclude user's own comments
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'comments.user',
+          foreignField: '_id',
+          as: 'commenter'
+        }
+      },
+      {
+        $unwind: { path: '$commenter', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $project: {
+          photoId: '$_id',
+          photoUrl: { $arrayElemAt: ['$paths', 0] },
+          photoCaption: '$caption',
+          photoOwner: {
+            _id: '$photoOwner._id',
+            username: '$photoOwner.username',
+            fullName: '$photoOwner.fullName',
+            profilePicture: '$photoOwner.profilePicture'
+          },
+          comment: {
+            _id: '$comments._id',
+            text: '$comments.text',
+            createdAt: '$comments.createdAt'
+          },
+          commenter: {
+            _id: '$commenter._id',
+            username: '$commenter.username',
+            fullName: '$commenter.fullName',
+            profilePicture: '$commenter.profilePicture'
+          }
+        }
+      },
+      {
+        $sort: { 'comment.createdAt': -1 }
+      },
+      {
+        $limit: 50
+      }
+    ]);
+
+    console.log(`💬 Found ${photoComments.length} regular photo comments`);
+
+    // Transform to activity format
+    return photoComments.map(comment => ({
+      _id: `photo_comment_${comment.comment._id}`,
+      activityType: 'photo_comment',
+      timestamp: comment.comment.createdAt,
+      data: {
+        comment: comment.comment,
+        photo: {
+          _id: comment.photoId,
+          url: comment.photoUrl,
+          caption: comment.photoCaption
+        },
+        commenter: comment.commenter,
+        photoOwner: comment.photoOwner
+      },
+      metadata: {
+        actionable: true, // Users can view the photo/comment
+        grouped: false,
+        priority: 'low'
+      },
+      score: calculateActivityScore(comment.comment, 'photo_comment', userId)
+    }));
+    
+  } catch (error) {
+    console.error('❌ Error fetching photo comments:', error);
+    return [];
+  }
+};
+
+const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
+  console.log('💬 Fetching memory photo comments...');
+  
+  try {
+    // Get user's accepted friends
+    const user = await User.findById(userId);
+    const userFriendIds = user.getAcceptedFriends().map(id => String(id));
+    
+    // Find memories the user can see (where they're creator or participant)
+    const userMemories = await Memory.find({
+      $or: [
+        { creator: userId },
+        { participants: userId }
+      ]
+    }).select('_id');
+    
+    const userMemoryIds = userMemories.map(m => m._id);
+    
+    if (userMemoryIds.length === 0) {
+      console.log('💬 No accessible memories found for user');
+      return [];
+    }
+    
+    // Find recent comments on memory photos from friends
+    const memoryPhotoComments = await MemoryPhoto.aggregate([
+      {
+        $match: {
+          memory: { $in: userMemoryIds }, // Photos in user's accessible memories
+          'comments.0': { $exists: true }, // Has at least one comment
+          isDeleted: false
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'uploadedBy',
+          foreignField: '_id',
+          as: 'photoUploader'
+        }
+      },
+      {
+        $lookup: {
+          from: 'memories',
+          localField: 'memory',
+          foreignField: '_id',
+          as: 'memoryData'
+        }
+      },
+      {
+        $unwind: { path: '$photoUploader', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $unwind: { path: '$memoryData', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $unwind: '$comments'
+      },
+      {
+        $match: {
+          'comments.createdAt': { $gte: timeRange.start },
+          'comments.user': { $in: friendIds }, // Comments by friends
+          'comments.user': { $ne: userId } // Exclude user's own comments
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'comments.user',
+          foreignField: '_id',
+          as: 'commenter'
+        }
+      },
+      {
+        $unwind: { path: '$commenter', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $project: {
+          photoId: '$_id',
+          photoUrl: '$url',
+          photoCaption: '$caption',
+          photoUploader: {
+            _id: '$photoUploader._id',
+            username: '$photoUploader.username',
+            fullName: '$photoUploader.fullName',
+            profilePicture: '$photoUploader.profilePicture'
+          },
+          memory: {
+            _id: '$memoryData._id',
+            title: '$memoryData.title'
+          },
+          comment: {
+            _id: '$comments._id',
+            text: '$comments.text',
+            createdAt: '$comments.createdAt'
+          },
+          commenter: {
+            _id: '$commenter._id',
+            username: '$commenter.username',
+            fullName: '$commenter.fullName',
+            profilePicture: '$commenter.profilePicture'
+          }
+        }
+      },
+      {
+        $sort: { 'comment.createdAt': -1 }
+      },
+      {
+        $limit: 50
+      }
+    ]);
+
+    console.log(`💬 Found ${memoryPhotoComments.length} memory photo comments`);
+
+    // Transform to activity format
+    return memoryPhotoComments.map(comment => ({
+      _id: `memory_photo_comment_${comment.comment._id}`,
+      activityType: 'memory_photo_comment',
+      timestamp: comment.comment.createdAt,
+      data: {
+        comment: comment.comment,
+        photo: {
+          _id: comment.photoId,
+          url: comment.photoUrl,
+          caption: comment.photoCaption
+        },
+        memory: comment.memory,
+        commenter: comment.commenter,
+        photoUploader: comment.photoUploader
+      },
+      metadata: {
+        actionable: true, // Users can view the photo/comment
+        grouped: false,
+        priority: 'low'
+      },
+      score: calculateActivityScore(comment.comment, 'memory_photo_comment', userId)
+    }));
+    
+  } catch (error) {
+    console.error('❌ Error fetching memory photo comments:', error);
+    return [];
+  }
+};
+
 
 /* ═══════════════════════════════════════════════════════════════════
    ACTIVITY SCORING SYSTEM
 ══════════════════════════════════════════════════════════════════ */
+
+
+
+
+
+
 
 const calculateActivityScore = (activity, activityType, userId) => {
   const config = ACTIVITY_TYPES[activityType];
@@ -412,6 +723,138 @@ const fetchMemoryPosts = async (userId, friendIds, timeRange) => {
     timestamp: post.uploadDate,
     score: calculateActivityScore(post, 'memory_post', userId)
   }));
+};
+const fetchMemoryPhotoUploads = async (userId, friendIds, timeRange) => {
+  console.log('📸 Fetching memory photo uploads...');
+  
+  try {
+    // Get user's accepted friends
+    const user = await User.findById(userId);
+    const userFriendIds = user.getAcceptedFriends().map(id => String(id));
+    
+    // Find memories the user can see (where they're creator or participant)
+    const userMemories = await Memory.find({
+      $or: [
+        { creator: userId },
+        { participants: userId }
+      ]
+    }).select('_id');
+    
+    const userMemoryIds = userMemories.map(m => m._id);
+    
+    if (userMemoryIds.length === 0) {
+      console.log('📸 No accessible memories found for user');
+      return [];
+    }
+    
+    console.log(`📸 User can see ${userMemoryIds.length} memories`);
+    
+    // Find memory photo uploads from friends to memories user can see
+    const memoryPhotoUploads = await MemoryPhoto.aggregate([
+      {
+        $match: {
+          memory: { $in: userMemoryIds },
+          uploadedBy: { $in: friendIds }, // Photos uploaded by friends
+          uploadedAt: { $gte: timeRange.start },
+          isDeleted: false
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'uploadedBy',
+          foreignField: '_id',
+          as: 'uploader'
+        }
+      },
+      {
+        $lookup: {
+          from: 'memories',
+          localField: 'memory',
+          foreignField: '_id',
+          as: 'memoryData'
+        }
+      },
+      {
+        $unwind: { path: '$uploader', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $unwind: { path: '$memoryData', preserveNullAndEmptyArrays: false }
+      },
+      {
+        $addFields: {
+          likeCount: {
+            $cond: {
+              if: { $isArray: '$likes' },
+              then: { $size: '$likes' },
+              else: 0
+            }
+          },
+          commentCount: {
+            $cond: {
+              if: { $isArray: '$comments' },
+              then: { $size: '$comments' },
+              else: 0
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          url: 1,
+          caption: 1,
+          uploadedAt: 1,
+          likeCount: 1,
+          commentCount: 1,
+          uploader: {
+            _id: 1,
+            username: 1,
+            fullName: 1,
+            profilePicture: 1
+          },
+          memory: {
+            _id: '$memoryData._id',
+            title: '$memoryData.title',
+            creator: '$memoryData.creator'
+          }
+        }
+      },
+      {
+        $sort: { uploadedAt: -1 }
+      }
+    ]);
+
+    console.log(`📸 Found ${memoryPhotoUploads.length} memory photo uploads`);
+
+    // Transform to activity format
+    return memoryPhotoUploads.map(upload => ({
+      _id: `memory_photo_upload_${upload._id}`,
+      activityType: 'memory_photo_upload',
+      timestamp: upload.uploadedAt,
+      data: {
+        photo: {
+          _id: upload._id,
+          url: upload.url,
+          caption: upload.caption,
+          likeCount: upload.likeCount,
+          commentCount: upload.commentCount
+        },
+        memory: upload.memory,
+        uploader: upload.uploader
+      },
+      metadata: {
+        actionable: true, // Users can view/like/comment on the photo
+        grouped: true, // Can be grouped with other memory uploads
+        priority: 'medium'
+      },
+      score: calculateActivityScore(upload, 'memory_photo_upload', userId)
+    }));
+    
+  } catch (error) {
+    console.error('❌ Error fetching memory photo uploads:', error);
+    return [];
+  }
 };
 
 const fetchEventInvitations = async (userId, timeRange) => {
@@ -908,7 +1351,7 @@ router.get('/feed/activity', protect, async (req, res) => {
       end: new Date()
     };
 
-    // Fetch all activity types in parallel
+    // ✅ PHASE 2: Fetch all activity types including comment activities
     const [
       regularPosts,
       memoryPosts,
@@ -919,7 +1362,10 @@ router.get('/feed/activity', protect, async (req, res) => {
       friendRequestsAccepted,
       eventReminders,
       memoriesCreated,
-      eventCreations 
+      eventCreations,
+      memoryPhotoUploads,
+      photoComments,           // ✅ NEW: Regular photo comments
+      memoryPhotoComments      // ✅ NEW: Memory photo comments
     ] = await Promise.all([
       fetchRegularPosts(userId, friendIds, timeRange),
       fetchMemoryPosts(userId, friendIds, timeRange),
@@ -930,10 +1376,29 @@ router.get('/feed/activity', protect, async (req, res) => {
       fetchFriendRequestsAccepted(userId, friendIds, timeRange),
       fetchEventReminders(userId, timeRange),
       fetchMemoriesCreated(userId, friendIds, timeRange),
-      fetchEventCreations(userId, friendIds, timeRange) 
+      fetchEventCreations(userId, friendIds, timeRange),
+      fetchMemoryPhotoUploads(userId, friendIds, timeRange),
+      fetchPhotoComments(userId, friendIds, timeRange),           // ✅ NEW: Fetch photo comments
+      fetchMemoryPhotoComments(userId, friendIds, timeRange)      // ✅ NEW: Fetch memory photo comments
     ]);
 
-    // Combine all activities
+    console.log('📊 Activity counts by type:', {
+      regularPosts: regularPosts.length,
+      memoryPosts: memoryPosts.length,
+      eventInvitations: eventInvitations.length,
+      eventPhotoUploads: eventPhotoUploads.length,
+      friendEventJoins: friendEventJoins.length,
+      friendRequests: friendRequests.length,
+      friendRequestsAccepted: friendRequestsAccepted.length,
+      eventReminders: eventReminders.length,
+      memoriesCreated: memoriesCreated.length,
+      eventCreations: eventCreations.length,
+      memoryPhotoUploads: memoryPhotoUploads.length,
+      photoComments: photoComments.length,              // ✅ NEW
+      memoryPhotoComments: memoryPhotoComments.length   // ✅ NEW
+    });
+
+    // ✅ PHASE 2: Combine all activities including comment activities
     const allActivities = [
       ...regularPosts,
       ...memoryPosts,
@@ -944,23 +1409,64 @@ router.get('/feed/activity', protect, async (req, res) => {
       ...friendRequestsAccepted,
       ...eventReminders,
       ...memoriesCreated,
-      ...eventCreations
+      ...eventCreations,
+      ...memoryPhotoUploads,
+      ...photoComments,           // ✅ NEW: Include photo comments
+      ...memoryPhotoComments      // ✅ NEW: Include memory photo comments
     ];
 
-    // Sort by score (highest first)
-    allActivities.sort((a, b) => b.score - a.score);
-    
+    console.log(`📈 Total activities before filtering: ${allActivities.length}`);
+
+    // Filter out activities older than their maxAge
+    const now = Date.now();
+    const filteredActivities = allActivities.filter(activity => {
+      const config = ACTIVITY_TYPES[activity.activityType];
+      if (!config) return false;
+      
+      const activityTime = new Date(activity.timestamp || activity.createdAt).getTime();
+      const age = now - activityTime;
+      
+      return age <= config.maxAge;
+    });
+
+    console.log(`🔍 Activities after age filtering: ${filteredActivities.length}`);
+
+    // Sort by score (highest first), then by timestamp (newest first)
+    filteredActivities.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      
+      const aTime = new Date(a.timestamp || a.createdAt).getTime();
+      const bTime = new Date(b.timestamp || b.createdAt).getTime();
+      return bTime - aTime;
+    });
+
     // Apply pagination
-    const paginatedActivities = allActivities.slice(skip, skip + limit);
-    const hasMore = allActivities.length > skip + limit;
+    const paginatedActivities = filteredActivities.slice(skip, skip + limit);
+
+    console.log('📄 Pagination:', {
+      totalActivities: filteredActivities.length,
+      startIndex: skip,
+      endIndex: skip + limit,
+      returnedCount: paginatedActivities.length
+    });
+
+    // Debug: Log activity types in final feed
+    const activityTypeCounts = {};
+    paginatedActivities.forEach(activity => {
+      activityTypeCounts[activity.activityType] = (activityTypeCounts[activity.activityType] || 0) + 1;
+    });
+    
+    console.log('📊 Final feed activity types:', activityTypeCounts);
 
     const response = {
       activities: paginatedActivities,
       pagination: {
         currentPage: page,
-        totalPages: Math.ceil(allActivities.length / limit),
-        totalActivities: allActivities.length,
-        hasMore,
+        totalPages: Math.ceil(filteredActivities.length / limit),
+        totalActivities: filteredActivities.length,
+        hasMore: skip + limit < filteredActivities.length,
         limit
       },
       debug: {
@@ -974,31 +1480,39 @@ router.get('/feed/activity', protect, async (req, res) => {
           friendRequestsAccepted: friendRequestsAccepted.length,
           eventReminders: eventReminders.length,
           memoriesCreated: memoriesCreated.length,
+          eventCreations: eventCreations.length,
+          memoryPhotoUploads: memoryPhotoUploads.length,
+          photoComments: photoComments.length,              // ✅ NEW
+          memoryPhotoComments: memoryPhotoComments.length,  // ✅ NEW
           total: allActivities.length
         },
+        finalFeedTypes: activityTypeCounts,
         userConnections: {
           followingCount: followingIds.length,
           friendsCount: friendIds.length
         },
         timeRange,
-        privacyFiltered: true
+        privacyFiltered: true,
+        phase2Complete: true  // ✅ NEW: Indicates Phase 2 is implemented
       }
     };
 
-    console.log(`🟢 Sending activity response:`, {
-      totalActivities: allActivities.length,
+    console.log(`🟢 [PHASE 2] Sending activity response:`, {
+      totalActivities: filteredActivities.length,
       paginatedCount: paginatedActivities.length,
-      hasMore,
+      hasMore: response.pagination.hasMore,
+      commentActivities: photoComments.length + memoryPhotoComments.length,  // ✅ NEW
       topActivityTypes: paginatedActivities.slice(0, 5).map(a => a.activityType)
     });
 
     res.json(response);
 
   } catch (err) {
-    console.error('❌ Activity feed error:', err);
+    console.error('❌ [PHASE 2] Activity feed error:', err);
     res.status(500).json({ 
       message: 'Server error',
       error: err.message,
+      phase2Error: true,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }

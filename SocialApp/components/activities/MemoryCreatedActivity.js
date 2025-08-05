@@ -1,4 +1,4 @@
-// components/activities/MemoryCreatedActivity.js - Memory Created Activity
+// components/activities/MemoryCreatedActivity.js - FIXED: Navigation to MemoryDetailsScreen
 import React from 'react';
 import {
   View,
@@ -20,17 +20,21 @@ const MemoryCreatedActivity = ({
   const { data, metadata, timestamp } = activity;
   const { memory, event, creator } = data;
 
+  // ✅ FIXED: Change navigation from 'MemoryScreen' to 'MemoryDetailsScreen'
   const handleViewMemory = () => {
-    navigation.navigate('MemoryScreen', { memoryId: memory._id });
+    console.log('🎯 Navigating to MemoryDetailsScreen with memoryId:', memory._id);
+    navigation.navigate('MemoryDetailsScreen', { memoryId: memory._id });
   };
 
   const handleViewEvent = () => {
     if (event) {
+      console.log('🎯 Navigating to EventDetailsScreen with eventId:', event._id);
       navigation.navigate('EventDetailsScreen', { eventId: event._id });
     }
   };
 
   const handleViewProfile = () => {
+    console.log('🎯 Navigating to ProfileScreen with userId:', creator._id);
     navigation.navigate('ProfileScreen', { userId: creator._id });
   };
 
@@ -70,7 +74,7 @@ const MemoryCreatedActivity = ({
         </Text>
       </View>
 
-      {/* Memory Card */}
+      {/* Memory Card - ✅ FIXED: Updated onPress handler */}
       <TouchableOpacity 
         style={styles.memoryCard}
         onPress={handleViewMemory}
@@ -160,7 +164,7 @@ const MemoryCreatedActivity = ({
         </TouchableOpacity>
       )}
 
-      {/* Action Button */}
+      {/* Action Button - ✅ FIXED: Updated onPress handler */}
       <View style={styles.actionContainer}>
         <ActivityActionButton
           title="View Memory"

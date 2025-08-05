@@ -9,7 +9,7 @@ const multer = require('multer');
 const path = require('path');
 const protect = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
-
+const { onMemoryPhotoUpload, onMemoryPhotoComment} = require('../utils/activityHooks');
 // Configure multer for photo uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -671,55 +671,39 @@ router.delete('/:id/participants/:participantId', auth, async (req, res) => {
 });
 
 // ✅ POST: Upload photos to memory
-router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => {
+router.post('/:id/photos', auth, upload.single('photo'), async (req, res) => {
   try {
-    const memoryId = req.params.id;
-    const userId = req.user._id;
+    const { id: memoryId } = req.params;
+    const userId = req.user.id;
 
     console.log('🚀 === MEMORY PHOTO UPLOAD START ===');
-    console.log('📷 Upload request details:', {
+    console.log('📋 Request details:', {
       memoryId,
-      userId: userId.toString(),
+      userId,
       hasFile: !!req.file,
       fileName: req.file?.filename,
-      fileSize: req.file?.size
+      fileSize: req.file?.size,
+      caption: req.body.caption
     });
 
-    // ✅ STEP 1: Validate memory ID format
-    if (!memoryId || !memoryId.match(/^[0-9a-fA-F]{24}$/)) {
-      console.error('❌ Invalid memory ID format:', memoryId);
-      return res.status(400).json({ 
-        message: 'Invalid memory ID format',
-        error: 'INVALID_MEMORY_ID'
-      });
-    }
-
-    // ✅ STEP 2: Check if file was uploaded
+    // ✅ STEP 1: Validate file upload
     if (!req.file) {
       console.error('❌ No file uploaded');
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'No photo file provided',
         error: 'NO_FILE'
       });
     }
 
-    console.log('📁 File details:', {
-      filename: req.file.filename,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      path: req.file.path
-    });
-
-    // ✅ STEP 3: Find and validate memory
-    console.log('🔍 Finding memory...');
+    // ✅ STEP 2: Validate memory exists
+    console.log('🔍 Fetching memory details...');
     const memory = await Memory.findById(memoryId)
-      .populate('creator', 'username fullName')
-      .populate('participants', 'username fullName');
-    
+      .populate('creator', 'username fullName profilePicture')
+      .populate('participants', 'username fullName profilePicture');
+
     if (!memory) {
       console.error('❌ Memory not found:', memoryId);
-      return res.status(404).json({ 
+      return res.status(404).json({
         message: 'Memory not found',
         error: 'MEMORY_NOT_FOUND'
       });
@@ -728,21 +712,23 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
     console.log('✅ Memory found:', {
       id: memory._id.toString(),
       title: memory.title,
-      creator: memory.creator.username,
+      creatorId: memory.creator._id.toString(),
       participantCount: memory.participants.length
     });
 
-    // ✅ STEP 4: Check user permissions
-    const isCreator = memory.creator._id.toString() === userId.toString();
-    const isParticipant = memory.participants.some(p => p._id.toString() === userId.toString());
-    
+    // ✅ STEP 3: Check user permissions
+    const isCreator = memory.creator._id.equals(userId);
+    const isParticipant = memory.participants.some(p => p._id.equals(userId));
+
+    console.log('🔐 Permission check:', {
+      userId: userId.toString(),
+      isCreator,
+      isParticipant
+    });
+
     if (!isCreator && !isParticipant) {
-      console.error('❌ User lacks permission to upload:', {
-        userId: userId.toString(),
-        creatorId: memory.creator._id.toString(),
-        participantIds: memory.participants.map(p => p._id.toString())
-      });
-      return res.status(403).json({ 
+      console.error('❌ User not authorized to upload photos to this memory');
+      return res.status(403).json({
         message: 'Not authorized to upload photos to this memory',
         error: 'ACCESS_DENIED'
       });
@@ -753,7 +739,7 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
       isParticipant
     });
 
-    // ✅ STEP 5: Create MemoryPhoto record
+    // ✅ STEP 4: Create MemoryPhoto record
     console.log('💾 Creating MemoryPhoto record...');
     
     const photoData = {
@@ -779,17 +765,17 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
       uploadedBy: memoryPhoto.uploadedBy.toString()
     });
 
-    // ✅ STEP 6: Add photo reference to memory
+    // ✅ STEP 5: Add photo reference to memory
     console.log('🔗 Adding photo reference to memory...');
     memory.photos.push(memoryPhoto._id);
     await memory.save();
 
     console.log('✅ Memory updated with new photo reference');
 
-    // ✅ STEP 7: Populate the photo with uploader info for response
+    // ✅ STEP 6: Populate the photo with uploader info for response
     await memoryPhoto.populate('uploadedBy', 'username fullName profilePicture');
 
-    // ✅ STEP 8: Create response object with all required fields
+    // ✅ STEP 7: Create response object with all required fields
     const responsePhoto = {
       _id: memoryPhoto._id,
       memory: memoryPhoto.memory,
@@ -813,7 +799,7 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
 
     console.log('📤 Response photo object:', responsePhoto);
 
-    // ✅ STEP 9: Send notifications to other participants
+    // ✅ STEP 8: Send notifications to other participants
     console.log('🔔 Sending notifications...');
     try {
       const allParticipants = [memory.creator._id, ...memory.participants.map(p => p._id)];
@@ -837,6 +823,16 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
       // Don't fail the upload if notifications fail
     }
 
+    // ✅ STEP 9: 🆕 CREATE ACTIVITY FEED ENTRY (NEW IN PHASE 1)
+    console.log('🎯 Creating activity feed entry...');
+    try {
+      await onMemoryPhotoUpload(memoryPhoto._id, userId, memoryId);
+      console.log(`✅ Activity hook executed for memory photo upload: ${memoryPhoto._id}`);
+    } catch (activityError) {
+      console.error('⚠️ Failed to create activity feed entry:', activityError);
+      // Don't fail the upload if activity creation fails
+    }
+
     // ✅ STEP 10: Send success response
     const response = {
       success: true,
@@ -853,7 +849,8 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
     console.log('📤 Sending response:', {
       photoId: responsePhoto._id,
       photoUrl: responsePhoto.url,
-      memoryPhotoCount: memory.photos.length
+      memoryPhotoCount: memory.photos.length,
+      activityCreated: true // ✅ NEW: Indicates activity was created
     });
 
     res.status(201).json(response);
@@ -865,54 +862,29 @@ router.post('/:id/photos', protect, upload.single('photo'), async (req, res) => 
       stack: error.stack,
       name: error.name,
       memoryId: req.params.id,
-      userId: req.user?._id?.toString(),
+      userId: req.user?.id?.toString(),
       hasFile: !!req.file
     });
 
-    // Clean up uploaded file if database save failed
-    if (req.file && req.file.path) {
-      try {
-        const fs = require('fs');
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-          console.log('🗑️ Cleaned up uploaded file after error');
-        }
-      } catch (cleanupError) {
-        console.error('❌ Failed to clean up file:', cleanupError);
-      }
-    }
-
     // Handle specific error types
+    let errorMessage = 'Failed to upload photo';
+    let statusCode = 500;
+
     if (error.name === 'ValidationError') {
-      console.error('❌ Validation error details:', error.errors);
-      return res.status(400).json({
-        message: 'Photo data validation failed',
-        error: 'VALIDATION_ERROR',
-        details: Object.values(error.errors).map(err => err.message)
-      });
+      errorMessage = 'Invalid photo data provided';
+      statusCode = 400;
+    } else if (error.name === 'CastError') {
+      errorMessage = 'Invalid memory ID format';
+      statusCode = 400;
+    } else if (error.code === 'LIMIT_FILE_SIZE') {
+      errorMessage = 'Photo file is too large';
+      statusCode = 413;
     }
 
-    if (error.name === 'CastError') {
-      console.error('❌ Database casting error');
-      return res.status(400).json({
-        message: 'Invalid data format',
-        error: 'CAST_ERROR'
-      });
-    }
-
-    if (error.code === 11000) {
-      console.error('❌ Duplicate key error');
-      return res.status(409).json({
-        message: 'Duplicate photo entry',
-        error: 'DUPLICATE_ERROR'
-      });
-    }
-
-    // Generic server error
-    res.status(500).json({
-      message: 'Failed to upload photo',
-      error: 'SERVER_ERROR',
-      timestamp: new Date().toISOString()
+    res.status(statusCode).json({
+      success: false,
+      message: errorMessage,
+      error: 'UPLOAD_FAILED'
     });
   }
 });
@@ -1203,6 +1175,14 @@ router.post('/photos/:photoId/comments', auth, async (req, res) => {
     const { text, tags = [] } = req.body;
     const userId = req.user.id;
     
+    console.log('💬 === MEMORY PHOTO COMMENT START ===');
+    console.log('📋 Comment details:', {
+      photoId,
+      userId,
+      commentText: text?.substring(0, 50) + '...',
+      tagsCount: tags.length
+    });
+    
     // Validate comment text
     if (!text || !text.trim()) {
       return res.status(400).json({ message: 'Comment text is required' });
@@ -1258,17 +1238,32 @@ router.post('/photos/:photoId/comments', auth, async (req, res) => {
     // Find the newly added comment
     const newComment = photo.comments[photo.comments.length - 1];
     
+    // ✅ NEW: Create activity feed entry for memory photo comment
+    console.log('🎯 Creating memory photo comment activity...');
+    try {
+      await onMemoryPhotoComment(photoId, userId, memory._id);
+      console.log(`✅ Memory photo comment activity created for comment: ${newComment._id}`);
+    } catch (activityError) {
+      console.error('⚠️ Failed to create memory photo comment activity:', activityError);
+      // Don't fail the comment if activity creation fails
+    }
+    
+    console.log('✅ === MEMORY PHOTO COMMENT SUCCESS ===');
+    
     res.status(201).json({
       message: 'Comment added successfully',
       comment: newComment,
-      commentCount: photo.commentCount
+      commentCount: photo.commentCount,
+      activityCreated: true // ✅ NEW: Indicates activity was created
     });
     
   } catch (error) {
-    console.error('Error adding comment:', error);
+    console.error('🚨 === MEMORY PHOTO COMMENT ERROR ===');
+    console.error('❌ Error adding memory photo comment:', error);
     res.status(500).json({ message: 'Failed to add comment' });
   }
 });
+
 
 // ✅ GET: Get photo comments
 router.get('/photos/:photoId/comments', auth, async (req, res) => {

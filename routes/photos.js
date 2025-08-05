@@ -8,6 +8,8 @@ const User = require('../models/User');
 const protect = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 const router = express.Router();
+const { onPhotoComment } = require('../utils/activityHooks');
+
 
 // Configure Multer for multiple photo uploads with a cap of 10
 const storage = multer.diskStorage({
@@ -858,6 +860,13 @@ router.post('/like/:photoId', protect, async (req, res) => {
 router.post('/comment/:photoId', protect, async (req, res) => {
   const { text, tags } = req.body;
   try {
+    console.log('💬 === REGULAR PHOTO COMMENT START ===');
+    console.log('📋 Comment details:', {
+      photoId: req.params.photoId,
+      userId: req.user._id.toString(),
+      commentText: text?.substring(0, 50) + '...'
+    });
+
     // Find photo and populate owner
     const photo = await Photo.findById(req.params.photoId).populate('user', '_id username');
     if (!photo) {
@@ -870,12 +879,31 @@ router.post('/comment/:photoId', protect, async (req, res) => {
       return res.status(403).json({ message: 'Access denied to this photo' });
     }
 
+    // Validate comment text
+    if (!text || !text.trim()) {
+      return res.status(400).json({ message: 'Comment text is required' });
+    }
+    
+    if (text.trim().length > 500) {
+      return res.status(400).json({ message: 'Comment cannot exceed 500 characters' });
+    }
+
     // Add the comment
     await Photo.findByIdAndUpdate(
       req.params.photoId,
-      { $push: { comments: { user: req.user._id, text, tags } } },
+      { $push: { comments: { user: req.user._id, text: text.trim(), tags } } },
       { new: true, runValidators: true }
     );
+
+    // ✅ NEW: Create activity feed entry for regular photo comment
+    console.log('🎯 Creating regular photo comment activity...');
+    try {
+      await onPhotoComment(req.params.photoId, req.user._id, photo.user._id, false);
+      console.log(`✅ Regular photo comment activity created for photo: ${req.params.photoId}`);
+    } catch (activityError) {
+      console.error('⚠️ Failed to create regular photo comment activity:', activityError);
+      // Don't fail the comment if activity creation fails
+    }
 
     // Send notification to photo owner (non-blocking)
     if (photo.user._id.toString() !== req.user._id.toString()) {
@@ -909,13 +937,19 @@ router.post('/comment/:photoId', protect, async (req, res) => {
       .populate('event', 'title')
       .populate({
         path: 'comments.user',
-        select: 'username',
+        select: 'username profilePicture',
       });
 
-    res.status(200).json(updatedPhoto);
+    console.log('✅ === REGULAR PHOTO COMMENT SUCCESS ===');
+
+    res.status(200).json({
+      ...updatedPhoto.toObject(),
+      activityCreated: true // ✅ NEW: Indicates activity was created
+    });
 
   } catch (error) {
-    console.error(error);
+    console.error('🚨 === REGULAR PHOTO COMMENT ERROR ===');
+    console.error('❌ Regular photo comment error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
