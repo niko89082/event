@@ -180,12 +180,15 @@ export default function FollowingEventsFeed({
 }
 
 const styles = StyleSheet.create({
+  // ✅ STANDARDIZED: Use paddingTop instead of contentInset for consistency
   container: {
-    paddingBottom: 20,
-    backgroundColor: 'transparent', // TRANSPARENT!
+    paddingTop: 190,        // ✅ NEW: Standard top padding like other feeds
+    paddingBottom: 20,      // ✅ KEEP: Existing bottom padding
+    backgroundColor: 'transparent',
   },
   emptyContainer: {
     flexGrow: 1,
+    paddingTop: 190,        // ✅ NEW: Consistent empty state padding
     backgroundColor: 'transparent',
   },
   eventWrapper: {
@@ -193,24 +196,28 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     backgroundColor: 'transparent',
   },
+  
+  // Loading states
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'transparent',
-    paddingTop: 250, // Account for headers
+    paddingTop: 250,        // ✅ KEEP: Higher padding for loading states
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
   },
+  
+  // Empty state
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 250, // Account for headers
+    paddingTop: 50,         // ✅ ADJUSTED: Relative padding within container
     backgroundColor: 'transparent',
   },
   emptyIconContainer: {

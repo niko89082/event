@@ -407,12 +407,13 @@ const ActivityFeed = forwardRef(({
 
 const styles = StyleSheet.create({
   contentContainer: {
-    paddingTop: 16,
+    paddingTop: 190,
     paddingBottom: 100,
   },
   emptyContentContainer: {
     flexGrow: 1,
     justifyContent: 'center',
+    paddingTop: 190, 
   },
   
   // Activity wrappers

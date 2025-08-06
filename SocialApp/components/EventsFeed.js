@@ -404,18 +404,22 @@ export default function EventsFeed({
   );
 }
 
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: 'transparent',
   },
+  // ✅ STANDARDIZED: Reduced paddingTop from 200 to 190 for consistency
   listContent: {
-    paddingTop: 200,
+    paddingTop: 190,     // ✅ CHANGED: From 200 to 190 to match other event feeds
     paddingBottom: 100,
   },
+  // ✅ STANDARDIZED: Also update empty state for consistency
   emptyListContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
+    paddingTop: 190,     // ✅ CHANGED: From 200 to 190 to match other event feeds
+    paddingBottom: 100,
+    minHeight: '100%',   // ✅ KEEP: From Phase 1 fix
   },
   
   // Loading states
@@ -423,7 +427,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 250,
+    paddingTop: 250,     // ✅ KEEP: Loading states use higher padding
   },
   loadingText: {
     marginTop: 16,
@@ -431,67 +435,83 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
   },
-  footerLoader: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+  
+  // Footer loading
+  footer: {
+    padding: 20,
     alignItems: 'center',
-    paddingVertical: 20,
-    gap: 12,
   },
-  footerLoaderText: {
+  footerText: {
+    marginTop: 8,
     fontSize: 14,
     color: '#8E8E93',
   },
-
-  // Empty state
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 100,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-
-  // Error state
+  
+  // Error states
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 250,
+    paddingTop: 250,     // ✅ KEEP: Error states use higher padding
   },
   errorTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#FF3B30',
-    marginBottom: 8,
+    color: '#1C1C1E',
+    marginTop: 16,
     textAlign: 'center',
   },
   errorMessage: {
     fontSize: 16,
     color: '#8E8E93',
     textAlign: 'center',
+    marginTop: 8,
     lineHeight: 22,
-    marginBottom: 20,
   },
-  retryButton: {
+  
+  // Empty state
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingTop: 50,      // ✅ KEEP: Relative padding within emptyListContent
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 22,
+  },
+  
+  // Action buttons
+  actionButton: {
     backgroundColor: '#3797EF',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
+    marginTop: 24,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  retryButton: {
+    backgroundColor: '#FF6B6B',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 24,
   },
   retryButtonText: {
     color: '#FFFFFF',

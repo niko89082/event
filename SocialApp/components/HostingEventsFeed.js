@@ -293,13 +293,15 @@ export default function HostingEventsFeed({
 }
 
 const styles = StyleSheet.create({
+  // ✅ FIXED: Increased paddingTop from 140 to 190 for consistent positioning
   contentContainer: {
-    paddingTop: 140, // Account for header + tabs
-    paddingBottom: 20,
+    paddingTop: 190,     // ✅ CHANGED: From 140 to 190 to match standard
+    paddingBottom: 20,   // ✅ KEEP: Existing bottom padding
   },
+  // ✅ FIXED: Also update empty container for consistency
   emptyContainer: {
     flex: 1,
-    paddingTop: 140,
+    paddingTop: 190,     // ✅ CHANGED: From 140 to 190 to match standard
   },
   eventWrapper: {
     marginBottom: 16,
@@ -311,7 +313,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 140,
+    paddingTop: 250,     // ✅ KEEP: Loading states use higher padding (already correct)
   },
   loadingText: {
     marginTop: 12,
@@ -326,7 +328,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
-    paddingTop: 60,
+    paddingTop: 60,      // ✅ KEEP: Relative padding within emptyContainer
   },
   emptyIconContainer: {
     width: 120,
@@ -377,7 +379,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
-    paddingTop: 60,
+    paddingTop: 60,      // ✅ KEEP: Relative padding within container
   },
   retryButton: {
     backgroundColor: '#3797EF',
