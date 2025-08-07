@@ -17,6 +17,7 @@ import api from '../services/api';
 
 // Import activity components
 import CompletePostItem from './PostItem'; // Existing post component
+import MemoryPostActivityComponent from './MemoryPostActivityComponent'; // ✅ NEW: Replace old component
 import EventInvitationActivity from './activities/EventInvitationActivity';
 import EventPhotoActivity from './activities/EventPhotoActivity';
 import FriendEventActivity from './activities/FriendEventActivity';
@@ -28,6 +29,7 @@ import EventCreatedActivity from './activities/EventCreatedActivity';
 import MemoryPhotoUploadActivity from './activities/MemoryPhotoUploadActivity';
 import PhotoCommentActivity from './activities/PhotoCommentActivity';              // ✅ NEW
 import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
+import PostActivityComponent from './PostActivityComponent'; // ✅ NEW: Import PostActivityComponent
 
 
 const ActivityFeed = forwardRef(({
@@ -198,13 +200,31 @@ const ActivityFeed = forwardRef(({
   switch (item.activityType) {
     case 'regular_post':
     case 'memory_post':
-      // Use existing PostItem component for posts
+      // Use new PostActivityComponent for posts
       return (
         <View style={styles.activityWrapper}>
-          <CompletePostItem 
-            post={item} 
+          <PostActivityComponent 
+            activity={item} 
             currentUserId={currentUserId}
             navigation={navigation}
+            onCommentAdded={(comment) => {
+              console.log('💬 Comment added to post:', item._id, comment);
+            }}
+          />
+        </View>
+      );
+
+    case 'memory_photo_upload':
+      // ✅ NEW: Use MemoryPostActivityComponent for memory photo uploads
+      return (
+        <View style={styles.activityWrapper}>
+          <MemoryPostActivityComponent 
+            activity={item} 
+            currentUserId={currentUserId}
+            navigation={navigation}
+            onCommentAdded={(comment) => {
+              console.log('💬 Comment added to memory photo:', item._id, comment);
+            }}
           />
         </View>
       );
@@ -265,14 +285,6 @@ const ActivityFeed = forwardRef(({
         </View>
       );
 
-    case 'memory_photo_upload':
-      return (
-        <View style={styles.activityWrapper}>
-          <MemoryPhotoUploadActivity {...commonProps} />
-        </View>
-      );
-
-    // ✅ NEW PHASE 2 CASES: Comment activities
     case 'photo_comment':
       return (
         <View style={styles.activityWrapper}>
