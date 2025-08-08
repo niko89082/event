@@ -1046,6 +1046,113 @@ router.post('/photos/:photoId/like', protect, async (req, res) => {
   }
 });
 
+router.get('/photos/:photoId', auth, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+    const userId = req.user.id;
+    
+    console.log('🔍 === FETCHING MEMORY PHOTO DETAILS ===');
+    console.log('📋 Request details:', { photoId, userId });
+
+    // Validate photo ID format
+    if (!photoId || !photoId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error('❌ Invalid photo ID format:', photoId);
+      return res.status(400).json({ 
+        message: 'Invalid photo ID format',
+        error: 'INVALID_PHOTO_ID'
+      });
+    }
+
+    // Find the photo with populated data
+    const photo = await MemoryPhoto.findById(photoId)
+      .populate('uploadedBy', 'username fullName profilePicture')
+      .populate({
+        path: 'memory',
+        select: 'title creator participants',
+        populate: {
+          path: 'creator participants',
+          select: 'username fullName profilePicture'
+        }
+      });
+    
+    if (!photo || photo.isDeleted) {
+      console.error('❌ Memory photo not found:', photoId);
+      return res.status(404).json({ 
+        message: 'Memory photo not found',
+        error: 'PHOTO_NOT_FOUND'
+      });
+    }
+
+    // Check access permissions
+    const memory = photo.memory;
+    const hasAccess = memory.creator._id.equals(userId) || 
+                     memory.participants.some(p => p._id.equals(userId));
+    
+    if (!hasAccess) {
+      console.error('❌ User lacks access to memory photo:', {
+        userId,
+        creatorId: memory.creator._id.toString(),
+        participantIds: memory.participants.map(p => p._id.toString())
+      });
+      return res.status(403).json({ 
+        message: 'Access denied to this memory photo',
+        error: 'ACCESS_DENIED'
+      });
+    }
+
+    // Add like status for current user
+    const userLiked = photo.isLikedBy(userId);
+    const likeCount = photo.likeCount;
+    const commentCount = photo.commentCount;
+    
+    console.log(`📊 Photo ${photo._id} status:`, {
+      userLiked,
+      likeCount,
+      commentCount
+    });
+
+    // Create response object
+    const photoResponse = {
+      _id: photo._id,
+      url: photo.url,
+      filename: photo.filename,
+      caption: photo.caption,
+      uploadedBy: photo.uploadedBy,
+      uploadedAt: photo.uploadedAt,
+      userLiked,
+      likeCount,
+      commentCount,
+      postType: 'memory',
+      user: photo.uploadedBy, // Standardize user field
+      createdAt: photo.uploadedAt, // Standardize date field
+      memoryInfo: {
+        memoryId: memory._id,
+        memoryTitle: memory.title
+      }
+    };
+
+    console.log('✅ Memory photo details fetched successfully:', {
+      id: photo._id.toString(),
+      memoryTitle: memory.title,
+      userLiked,
+      likeCount,
+      commentCount
+    });
+
+    res.json({
+      success: true,
+      photo: photoResponse
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching memory photo details:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch memory photo details',
+      error: 'SERVER_ERROR'
+    });
+  }
+});
+
 // ✅ GET: Get photo likes
 router.get('/photos/:photoId/likes', auth, async (req, res) => {
   try {
