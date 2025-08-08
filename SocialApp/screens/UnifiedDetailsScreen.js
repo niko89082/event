@@ -1,4 +1,4 @@
-// screens/UnifiedDetailsScreen.js - Fixed with proper image dimensions
+// screens/UnifiedDetailsScreen.js - Updated to hide like functionality
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
@@ -69,109 +69,112 @@ export default function UnifiedDetailsScreen() {
   const toggleLikeInStore = usePostsStore(state => state.toggleLike);
   const addCommentInStore = usePostsStore(state => state.addComment);
 
+  // Use store post if available, otherwise use initialPost or fetch
   const currentPost = storePost || initialPost;
 
-  // Initialize store with this post if not already there
-  useEffect(() => {
-    if (!storePost && initialPost) {
-      usePostsStore.getState().addPost(initialPost);
-    }
-  }, [postId, storePost, initialPost]);
-
-  const currentUserId = currentUser?._id;
-
-  // CENTRALIZED STATE - Get state from store
-  const isLiked = currentPost?.userLiked || false;
-  const likeCount = currentPost?.likeCount || 0;
-  const commentCount = currentPost?.commentCount || 0;
-
-  // Local state for UI only
-  const [post, setPost] = useState(initialPost || null);
-  const [loading, setLoading] = useState(!initialPost);
-  const [commentsLoading, setCommentsLoading] = useState(false);
+  // State
+  const [post, setPost] = useState(currentPost);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
+  const [loading, setLoading] = useState(!currentPost);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
 
-  // ADD: Image dimensions state for proper aspect ratio
+  // Like state - Keep intact but hidden from UI
+  const [isLiked, setIsLiked] = useState(currentPost?.isLiked || false);
+  const [likeCount, setLikeCount] = useState(currentPost?.likeCount || 0);
+  const [heartScale] = useState(new Animated.Value(1));
+
+  // Derived data
+  const imgURL = currentPost?.paths?.[0] 
+    ? `http://${API_BASE_URL}:3000${currentPost.paths[0]}`
+    : currentPost?.url;
+
+  const commentCount = currentPost?.commentCount || comments.length || 0;
+
+  // Image dimensions calculation
   const [imageDimensions, setImageDimensions] = useState({
     width: SCREEN_WIDTH,
-    height: SCREEN_WIDTH, // Default to square
-    loading: true
+    height: SCREEN_WIDTH
   });
 
-  // Animation for like button
-  const heartScale = useRef(new Animated.Value(1)).current;
-
-  // ADD: Calculate image dimensions
   useEffect(() => {
-    if (!currentPost) return;
-
-    const imgURL = isMemoryPost 
-      ? (currentPost.url ? `http://${API_BASE_URL}:3000${currentPost.url}` : null)
-      : (currentPost.paths?.[0] ? `http://${API_BASE_URL}:3000/${currentPost.paths[0].replace(/^\/?/, '')}` : null);
-
-    if (!imgURL) {
-      setImageDimensions(prev => ({ ...prev, loading: false }));
-      return;
+    if (imgURL) {
+      Image.getSize(imgURL, (width, height) => {
+        const aspectRatio = width / height;
+        const maxHeight = SCREEN_WIDTH * 1.25;
+        
+        let newWidth = SCREEN_WIDTH;
+        let newHeight = SCREEN_WIDTH / aspectRatio;
+        
+        if (newHeight > maxHeight) {
+          newHeight = maxHeight;
+          newWidth = maxHeight * aspectRatio;
+        }
+        
+        setImageDimensions({ width: newWidth, height: newHeight });
+      });
     }
+  }, [imgURL]);
 
-    Image.getSize(
-      imgURL,
-      (width, height) => {
-        const aspectRatio = height / width;
-        const maxHeight = 600; // Adjust this as needed
-        const calculatedHeight = Math.min(SCREEN_WIDTH * aspectRatio, maxHeight);
-
-        setImageDimensions({
-          width: SCREEN_WIDTH,
-          height: calculatedHeight,
-          loading: false,
-          aspectRatio
-        });
-      },
-      (error) => {
-        console.warn('Failed to get image dimensions:', error);
-        setImageDimensions(prev => ({ ...prev, loading: false }));
-      }
-    );
-  }, [currentPost, isMemoryPost]);
-
-  // Set custom header with back button only
-  useEffect(() => {
-    navigation.setOptions({
-      headerShown: true,
-      headerTitle: '',
-      headerLeft: () => (
-        <TouchableOpacity 
-          onPress={() => navigation.goBack()} 
-          style={{ marginLeft: 16, padding: 8 }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#000" />
-        </TouchableOpacity>
-      ),
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowColor: 'transparent',
-        elevation: 0,
-      },
-    });
-  }, [navigation]);
-
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
-    
+  // Keep like functionality intact but hidden
+  const toggleLike = async () => {
     try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return '';
+      const newLikedState = !isLiked;
+      const newLikeCount = newLikedState ? likeCount + 1 : likeCount - 1;
       
+      setIsLiked(newLikedState);
+      setLikeCount(newLikeCount);
+      
+      // Animate heart
+      Animated.sequence([
+        Animated.timing(heartScale, { toValue: 1.2, duration: 100, useNativeDriver: true }),
+        Animated.timing(heartScale, { toValue: 1, duration: 100, useNativeDriver: true })
+      ]).start();
+
+      await toggleLikeInStore(postId, isMemoryPost ? 'memory' : 'post');
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      setIsLiked(!isLiked);
+      setLikeCount(isLiked ? likeCount + 1 : likeCount - 1);
+    }
+  };
+
+  const handleLikesPress = () => {
+    // Keep functionality but hidden
+    console.log('Likes pressed - functionality hidden');
+  };
+
+  const handleMemoryPress = () => {
+    if (currentPost?.memoryInfo?.memoryId) {
+      navigation.navigate('MemoryDetailsScreen', { 
+        memoryId: currentPost.memoryInfo.memoryId 
+      });
+    }
+  };
+
+  const handleEventPress = () => {
+    if (currentPost?.event?._id) {
+      navigation.navigate('EventDetailsScreen', { 
+        eventId: currentPost.event._id 
+      });
+    }
+  };
+
+  const formatDate = (iso) => {
+    try {
+      if (isMemoryPost) {
+        return formatMemoryTime(iso);
+      }
+      
+      const date = new Date(iso);
       const now = new Date();
-      const diffTime = Math.abs(now - date);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const diffDays = Math.ceil((now - date) / (1000 * 60 * 60 * 24));
       
-      if (diffDays === 1) return 'Yesterday';
-      if (diffDays < 7) return `${diffDays} days ago`;
-      if (diffDays < 30) return `${Math.ceil(diffDays / 7)} weeks ago`;
-      if (diffDays < 365) return `${Math.ceil(diffDays / 30)} months ago`;
+      if (diffDays <= 1) return 'today';
+      if (diffDays <= 7) return `${diffDays} days ago`;
+      if (diffDays <= 30) return `${Math.ceil(diffDays / 7)} weeks ago`;
+      if (diffDays <= 365) return `${Math.ceil(diffDays / 30)} months ago`;
       return `${Math.ceil(diffDays / 365)} years ago`;
     } catch (error) {
       console.error('Date formatting error:', error);
@@ -248,101 +251,36 @@ export default function UnifiedDetailsScreen() {
       } else {
         response = await api.get(`/api/photos/${postId}`);
         setComments(response.data.comments || []);
-        usePostsStore.getState().updatePost(postId, {
-          commentCount: response.data.commentCount || response.data.comments?.length || 0
-        });
       }
     } catch (error) {
       console.error('Error fetching comments:', error);
-      if (currentPost?.comments) {
-        setComments(currentPost.comments);
-      }
     } finally {
       setCommentsLoading(false);
-    }
-  };
-
-  const toggleLike = async () => {
-    if (!currentPost?._id || !currentUser?._id) return;
-
-    Animated.sequence([
-      Animated.timing(heartScale, {
-        toValue: 1.2,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(heartScale, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    try {
-      await toggleLikeInStore(currentPost._id, isMemoryPost, currentUser._id);
-    } catch (error) {
-      console.error('Error toggling like:', error);
-      Alert.alert('Error', 'Failed to update like');
     }
   };
 
   const postComment = async () => {
-    if (!newComment.trim() || commentsLoading) return;
+    if (!newComment.trim() || submittingComment) return;
 
     try {
-      setCommentsLoading(true);
-      const commentText = newComment.trim();
+      setSubmittingComment(true);
+      await addCommentInStore(postId, newComment.trim(), isMemoryPost);
       setNewComment('');
-
-      const response = await addCommentInStore(currentPost._id, commentText, isMemoryPost);
-      
-      if (isMemoryPost) {
-        setComments(prev => [...prev, response.comment]);
-      } else {
-        setComments(response.comments || []);
-      }
-
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-
+      await fetchComments();
     } catch (error) {
       console.error('Error posting comment:', error);
-      setNewComment(commentText);
       Alert.alert('Error', 'Failed to post comment');
     } finally {
-      setCommentsLoading(false);
-    }
-  };
-
-  const handleLikesPress = () => {
-    if (likeCount > 0) {
-      navigation.navigate('PostLikesScreen', {
-        postId: currentPost._id,
-        postType: isMemoryPost ? 'memory' : 'post',
-        likeCount: likeCount
-      });
-    }
-  };
-
-  const handleEventPress = () => {
-    if (currentPost?.event?._id) {
-      navigation.navigate('EventDetailsScreen', { eventId: currentPost.event._id });
-    }
-  };
-
-  const handleMemoryPress = () => {
-    if (isMemoryPost && currentPost?.memoryInfo?.memoryId) {
-      navigation.navigate('MemoryDetailsScreen', { memoryId: currentPost.memoryInfo.memoryId });
+      setSubmittingComment(false);
     }
   };
 
   const renderComment = ({ item: comment }) => (
-    <View style={styles.commentItem}>
-      <TouchableOpacity onPress={() => handleUserPress(comment.user?._id)}>
+    <View style={styles.commentContainer}>
+      <TouchableOpacity onPress={() => handleUserPress(comment.user._id)}>
         <Image
-          source={{ 
-            uri: comment.user?.profilePicture 
+          source={{
+            uri: comment.user?.profilePicture
               ? `http://${API_BASE_URL}:3000${comment.user.profilePicture}`
               : 'https://via.placeholder.com/32/CCCCCC/666666?text=U'
           }}
@@ -350,13 +288,13 @@ export default function UnifiedDetailsScreen() {
         />
       </TouchableOpacity>
       <View style={styles.commentContent}>
-        <View style={styles.commentBubble}>
-          <Text style={styles.commentUsername}>{comment.user?.username || 'Unknown'}</Text>
-          <Text style={styles.commentText}>{comment.text}</Text>
-        </View>
-        <View style={styles.commentMeta}>
-          <Text style={styles.commentTime}>{niceDate(comment.createdAt)}</Text>
-        </View>
+        <Text style={styles.commentText}>
+          <TouchableOpacity onPress={() => handleUserPress(comment.user._id)}>
+            <Text style={styles.commentUsername}>{comment.user?.username || 'Unknown'}</Text>
+          </TouchableOpacity>
+          <Text> {comment.text}</Text>
+        </Text>
+        <Text style={styles.commentTime}>{niceDate(comment.createdAt)}</Text>
       </View>
     </View>
   );
@@ -365,35 +303,18 @@ export default function UnifiedDetailsScreen() {
     if (!currentPost) return null;
 
     const memoryMood = isMemoryPost ? getMemoryMood(currentPost.createdAt || currentPost.uploadedAt) : null;
-    const memoryTimeText = isMemoryPost ? formatMemoryTime(currentPost.createdAt || currentPost.uploadedAt) : null;
-    
-    const imgURL = isMemoryPost 
-      ? (currentPost.url ? `http://${API_BASE_URL}:3000${currentPost.url}` : null)
-      : (currentPost.paths?.[0] ? `http://${API_BASE_URL}:3000/${currentPost.paths[0].replace(/^\/?/, '')}` : null);
 
     return (
-      <View style={styles.headerContainer}>
-        {/* Memory Story Header */}
-        {isMemoryPost && (
-          <View style={styles.memoryStoryHeader}>
-            <View style={styles.memoryIndicator}>
-              <Text style={styles.memoryEmoji}>{memoryMood?.emoji}</Text>
-              <Text style={styles.memoryStoryText}>
-                A memory {memoryTimeText}
-              </Text>
-            </View>
-            <View style={[styles.memoryMoodBadge, { backgroundColor: getMoodColor(memoryMood?.mood) }]}>
-              <Text style={styles.memoryMoodText}>{memoryMood?.mood}</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Author Section */}
+      <View style={styles.postContainer}>
+        {/* Author Info */}
         <View style={styles.authorContainer}>
-          <TouchableOpacity onPress={() => handleUserPress(currentPost.user?._id)} style={styles.authorInfo}>
+          <TouchableOpacity 
+            onPress={() => handleUserPress(currentPost.user?._id)}
+            style={styles.authorInfo}
+          >
             <Image
-              source={{ 
-                uri: currentPost.user?.profilePicture 
+              source={{
+                uri: currentPost.user?.profilePicture
                   ? `http://${API_BASE_URL}:3000${currentPost.user.profilePicture}`
                   : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
               }}
@@ -452,18 +373,21 @@ export default function UnifiedDetailsScreen() {
           )}
         </View>
 
-        {/* Actions */}
+        {/* Actions - UPDATED: Hide like button and like count */}
         <View style={styles.actionsContainer}>
           <View style={styles.leftActions}>
-            <TouchableOpacity onPress={toggleLike} style={styles.actionButton}>
-              <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-                <Ionicons
-                  name={isLiked ? 'heart' : 'heart-outline'}
-                  size={24}
-                  color={isLiked ? HEART : '#000'}
-                />
-              </Animated.View>
-            </TouchableOpacity>
+            {/* HIDDEN: Like button - keep functionality but hide from UI */}
+            {false && (
+              <TouchableOpacity onPress={toggleLike} style={styles.actionButton}>
+                <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+                  <Ionicons
+                    name={isLiked ? 'heart' : 'heart-outline'}
+                    size={24}
+                    color={isLiked ? HEART : '#000'}
+                  />
+                </Animated.View>
+              </TouchableOpacity>
+            )}
             
             <TouchableOpacity 
               onPress={() => textInputRef.current?.focus()} 
@@ -488,8 +412,8 @@ export default function UnifiedDetailsScreen() {
           )}
         </View>
 
-        {/* Like Count */}
-        {likeCount > 0 && (
+        {/* HIDDEN: Like Count - keep functionality but hide from UI */}
+        {false && likeCount > 0 && (
           <TouchableOpacity onPress={handleLikesPress} style={styles.likeCountContainer}>
             <Text style={styles.likeCount}>
               {likeCount.toLocaleString()} {likeCount === 1 ? 'like' : 'likes'}
@@ -602,7 +526,7 @@ export default function UnifiedDetailsScreen() {
             {commentsLoading ? (
               <ActivityIndicator size="small" color="#3797EF" />
             ) : (
-              <Text style={styles.commentPostText}>Post</Text>
+              <Text style={styles.commentPostButtonText}>Post</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -611,18 +535,6 @@ export default function UnifiedDetailsScreen() {
   );
 }
 
-// Helper function for memory mood colors
-const getMoodColor = (mood) => {
-  switch (mood) {
-    case 'fresh': return 'rgba(52, 199, 89, 0.1)';
-    case 'recent': return 'rgba(55, 151, 239, 0.1)';
-    case 'nostalgic': return 'rgba(255, 149, 0, 0.1)';
-    case 'vintage': return 'rgba(142, 68, 173, 0.1)';
-    default: return 'rgba(142, 142, 147, 0.1)';
-  }
-};
-
-// FIXED: Styles with proper imageContainer definition
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -632,37 +544,30 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF',
   },
   loadingText: {
-    marginTop: 16,
+    marginTop: 10,
     fontSize: 16,
     color: '#8E8E93',
-    fontWeight: '500',
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
     padding: 20,
-    backgroundColor: '#F8F9FA',
   },
   errorText: {
     fontSize: 18,
-    color: '#FF3B30',
+    color: '#8E8E93',
     marginBottom: 20,
-    textAlign: 'center',
   },
   backButton: {
     backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
   backButtonText: {
     color: '#FFFFFF',
@@ -671,65 +576,24 @@ const styles = StyleSheet.create({
   },
   commentsList: {
     flex: 1,
+  },
+  postContainer: {
     backgroundColor: '#FFFFFF',
+    paddingBottom: 16,
   },
-  headerContainer: {
-    backgroundColor: '#FFFFFF',
-  },
-
-  // Memory Story Header
-  memoryStoryHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(55, 151, 239, 0.1)',
-    borderRadius: 12,
-    margin: 16,
-    marginBottom: 8,
-  },
-  memoryIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  memoryEmoji: {
-    fontSize: 16,
-    marginRight: 8,
-  },
-  memoryStoryText: {
-    fontSize: 13,
-    color: '#8E8E93',
-    fontStyle: 'italic',
-  },
-  memoryMoodBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  memoryMoodText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#666',
-    textTransform: 'capitalize',
-  },
-
-  // Author section
   authorContainer: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
   },
   authorInfo: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   authorAvatar: {
     width: 40,
     height: 40,
-    borderRadius: 8,
+    borderRadius: 20,
     marginRight: 12,
-    backgroundColor: '#F6F6F6',
   },
   authorTextContainer: {
     flex: 1,
@@ -746,8 +610,7 @@ const styles = StyleSheet.create({
   },
   contextText: {
     fontSize: 16,
-    color: '#666666',
-    fontWeight: '400',
+    color: '#8E8E93',
   },
   memoryLink: {
     fontSize: 16,
@@ -764,13 +627,9 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginTop: 2,
   },
-
-  // FIXED: Image container without static dimensions
   imageContainer: {
-    backgroundColor: '#F6F6F6',
-    position: 'relative',
     alignSelf: 'center',
-    // Width and height will be set dynamically in JSX
+    marginBottom: 12,
   },
   postImage: {
     width: '100%',
@@ -781,94 +640,105 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#F2F2F7',
   },
   placeholderText: {
-    marginTop: 8,
     fontSize: 14,
     color: '#8E8E93',
+    marginTop: 8,
   },
-
-  // Actions
   actionsContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
   },
   leftActions: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   actionButton: {
-    padding: 4,
     marginRight: 16,
+    padding: 4,
   },
-  
-  // Memory explore button
   memoryExploreBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(55, 151, 239, 0.1)',
+    backgroundColor: '#F0F8FF',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(55, 151, 239, 0.2)',
   },
   memoryExploreBtnText: {
-    fontSize: 12,
+    fontSize: 14,
     color: MEMORY_BLUE,
-    fontWeight: '600',
+    fontWeight: '500',
     marginRight: 4,
   },
-
-  // Like count
   likeCountContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 2,
+    marginBottom: 8,
   },
   likeCount: {
     fontSize: 14,
     fontWeight: '600',
     color: '#000000',
   },
-
-  // Caption
   captionContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 5,
+    marginBottom: 12,
   },
   captionText: {
     fontSize: 14,
-    color: '#000000',
     lineHeight: 18,
+    color: '#000000',
   },
   captionUsername: {
     fontWeight: '600',
   },
-
-  // Comments Header
   commentsHeader: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+    borderTopColor: '#E1E1E1',
   },
   commentsTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
   },
-
-  // Empty comments
-  emptyCommentsContainer: {
+  commentContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  commentAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 12,
+  },
+  commentContent: {
     flex: 1,
-    justifyContent: 'center',
+  },
+  commentText: {
+    fontSize: 14,
+    lineHeight: 18,
+    color: '#000000',
+  },
+  commentUsername: {
+    fontWeight: '600',
+  },
+  commentTime: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 4,
+  },
+  emptyCommentsContainer: {
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: 40,
+    paddingHorizontal: 16,
   },
   emptyCommentsTitle: {
     fontSize: 18,
@@ -881,90 +751,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 20,
   },
-
-  // Comments
-  commentItem: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  commentAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#F6F6F6',
-    marginRight: 12,
-  },
-  commentContent: {
-    flex: 1,
-  },
-  commentBubble: {
-    backgroundColor: '#F6F6F6',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  commentUsername: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  commentText: {
-    fontSize: 14,
-    color: '#000000',
-    lineHeight: 18,
-  },
-  commentMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-    paddingHorizontal: 12,
-  },
-  commentTime: {
-    fontSize: 12,
-    color: '#8E8E93',
-  },
-
-  // Comment Input
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: '#E1E1E1',
     backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E1E1E1',
   },
   commentInputAvatar: {
     width: 32,
     height: 32,
-    borderRadius: 8,
+    borderRadius: 16,
     marginRight: 12,
-    backgroundColor: '#F6F6F6',
   },
   commentInput: {
     flex: 1,
-    backgroundColor: '#F6F6F6',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    maxHeight: 100,
     fontSize: 14,
-    color: '#000000',
+    maxHeight: 100,
+    marginRight: 12,
   },
   commentPostButton: {
-    marginLeft: 12,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: '#3797EF',
   },
-  commentPostText: {
-    color: '#FFFFFF',
+  commentPostButtonText: {
     fontSize: 14,
     fontWeight: '600',
+    color: '#3797EF',
   },
 });

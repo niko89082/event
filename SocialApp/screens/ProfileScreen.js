@@ -731,18 +731,23 @@ export default function ProfileScreen() {
   };
 
   // Post grid renderer (same as before)
-  const renderPostGrid = ({ item }) => (
-    <TouchableOpacity
-      style={styles.postGridItem}
-      onPress={() => navigation.navigate('PostDetailsScreen', { postId: item._id })}
-      activeOpacity={0.8}
-    >
-      <Image
-        source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
-        style={styles.postGridImage}
-      />
-    </TouchableOpacity>
-  );
+  
+const renderPostGrid = ({ item }) => (
+  <TouchableOpacity
+    style={styles.postGridItem}
+    onPress={() => navigation.navigate('UnifiedDetailsScreen', { 
+      postId: item._id,
+      postType: 'post', // Regular posts from profile
+      post: item // Pass the post data
+    })}
+    activeOpacity={0.8}
+  >
+    <Image
+      source={{ uri: `http://${API_BASE_URL}:3000${item.paths[0]}` }}
+      style={styles.postGridImage}
+    />
+  </TouchableOpacity>
+);
 
   // Event card renderer (same as before)
   const renderEventCard = ({ item: event }) => {

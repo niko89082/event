@@ -1,4 +1,4 @@
-// components/activities/MemoryPhotoCommentActivity.js - NEW: Memory Photo Comment Activity
+// components/activities/MemoryPhotoCommentActivity.js - IMPROVED: Memory Photo Comment Activity
 import React from 'react';
 import {
   View,
@@ -6,10 +6,15 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ActivityHeader from './ActivityHeader';
-import ActivityActionButton from './ActivityActionButton';
+import { API_BASE_URL } from '@env';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const IMAGE_WIDTH = SCREEN_WIDTH - 32; // Account for horizontal padding
+const MAX_IMAGE_HEIGHT = 300;
 
 const MemoryPhotoCommentActivity = ({ 
   activity, 
@@ -20,37 +25,42 @@ const MemoryPhotoCommentActivity = ({
   const { data, metadata, timestamp } = activity;
   const { comment, photo, memory, commenter, photoUploader } = data;
 
-  // Helper function to get proper image URL
+  // Helper function to get proper image URL - consistent with app
   const getImageUrl = (url) => {
     if (!url) return null;
     if (url.startsWith('http')) return url;
     const cleanPath = url.startsWith('/') ? url : `/${url}`;
-    // Replace with your actual API base URL
-    return `http://YOUR_API_BASE_URL:3000${cleanPath}`;
+    return `http://${API_BASE_URL}:3000${cleanPath}`;
   };
+
+  // Debug logging
+  console.log('🖼️ MemoryPhotoCommentActivity - Photo data:', {
+    photoId: photo?._id,
+    photoUrl: photo?.url,
+    processedUrl: getImageUrl(photo?.url)
+  });
+
+  // Calculate image dimensions for consistent formatting
+  const getImageDimensions = () => {
+    const aspectRatio = 4/3; // Default aspect ratio consistent with app
+    const height = Math.min(IMAGE_WIDTH / aspectRatio, MAX_IMAGE_HEIGHT);
+    
+    return {
+      width: IMAGE_WIDTH,
+      height: height
+    };
+  };
+
+  const imageDimensions = getImageDimensions();
 
   const handleViewPhoto = () => {
     console.log('🎯 Navigating to memory photo details:', photo._id);
     navigation.navigate('UnifiedDetailsScreen', { 
       postId: photo._id,
       postType: 'memory',
-      openKeyboard: false,
-      post: {
-        ...photo,
-        postType: 'memory',
-        user: photoUploader,
-        createdAt: timestamp,
-        memoryInfo: {
-          memoryId: memory._id,
-          memoryTitle: memory.title
-        }
-      }
+      memoryId: memory._id,
+      openKeyboard: false
     });
-  };
-
-  const handleViewMemory = () => {
-    console.log('🎯 Navigating to memory details:', memory._id);
-    navigation.navigate('MemoryDetailsScreen', { memoryId: memory._id });
   };
 
   const handleViewCommenter = () => {
@@ -63,23 +73,9 @@ const MemoryPhotoCommentActivity = ({
     navigation.navigate('ProfileScreen', { userId: photoUploader._id });
   };
 
-  const handleReplyToComment = () => {
-    console.log('💬 Opening reply to memory photo comment:', comment._id);
-    navigation.navigate('UnifiedDetailsScreen', { 
-      postId: photo._id,
-      postType: 'memory',
-      openKeyboard: true,
-      post: {
-        ...photo,
-        postType: 'memory',
-        user: photoUploader,
-        createdAt: timestamp,
-        memoryInfo: {
-          memoryId: memory._id,
-          memoryTitle: memory.title
-        }
-      }
-    });
+  const handleViewMemory = () => {
+    console.log('🎯 Navigating to memory details:', memory._id);
+    navigation.navigate('MemoryDetailsScreen', { memoryId: memory._id });
   };
 
   const formatCommentTime = (createdAt) => {
@@ -101,101 +97,86 @@ const MemoryPhotoCommentActivity = ({
         timestamp={timestamp}
         activityType="memory_photo_comment"
         onUserPress={handleViewCommenter}
-        customIcon={{ name: 'chatbubble', color: '#FF9500' }}
+        customIcon={{ name: 'chatbubble-outline', color: '#FF9500' }}
       />
 
-      {/* Comment Message */}
+      {/* Comment Message with Proper Inline Text */}
       <View style={styles.messageContainer}>
         <Text style={styles.messageText}>
-          <Text style={styles.boldText}>{commenter.username}</Text>
-          <Text> commented on </Text>
-          <TouchableOpacity onPress={handleViewPhotoUploader}>
-            <Text style={[styles.boldText, styles.uploaderLink]}>
-              {photoUploader._id === currentUserId ? 'your' : `${photoUploader.username}'s`}
-            </Text>
-          </TouchableOpacity>
+          <Text 
+            style={styles.commenterName}
+            onPress={handleViewCommenter}
+          >
+            {commenter.username}
+          </Text>
+          <Text> commented "</Text>
+          <Text style={styles.commentInlineText}>{comment.text}</Text>
+          <Text>" on </Text>
+          <Text 
+            style={styles.photoUploaderName}
+            onPress={handleViewPhotoUploader}
+          >
+            {photoUploader._id === currentUserId ? 'your' : `${photoUploader.username}'s`}
+          </Text>
           <Text> photo in </Text>
-          <TouchableOpacity onPress={handleViewMemory}>
-            <Text style={[styles.boldText, styles.memoryLink]}>{memory.title}</Text>
-          </TouchableOpacity>
+          <Text 
+            style={styles.memoryName}
+            onPress={handleViewMemory}
+          >
+            {memory.title}
+          </Text>
         </Text>
       </View>
 
-      {/* Photo Preview with Comment */}
+      {/* Photo Display - Clean Photo Only */}
       <TouchableOpacity 
-        style={styles.photoContainer}
+        style={[styles.photoContainer, { height: imageDimensions.height }]}
         onPress={handleViewPhoto}
         activeOpacity={0.95}
       >
-        <Image
-          source={{ uri: getImageUrl(photo.url) }}
-          style={styles.photoImage}
-          resizeMode="cover"
-        />
-        
-        {/* Comment Overlay */}
-        <View style={styles.commentOverlay}>
-          <View style={styles.commentBubble}>
-            <Text style={styles.commentText} numberOfLines={3}>
-              {comment.text}
-            </Text>
-            <Text style={styles.commentTime}>
-              {formatCommentTime(comment.createdAt)}
-            </Text>
+        {photo?.url ? (
+          <Image
+            source={{ uri: getImageUrl(photo.url) }}
+            style={[styles.photoImage, imageDimensions]}
+            resizeMode="cover"
+            onError={(error) => {
+              console.error('🖼️ Memory image load error:', error.nativeEvent.error);
+            }}
+            onLoad={() => {
+              console.log('🖼️ Memory image loaded successfully:', getImageUrl(photo.url));
+            }}
+          />
+        ) : (
+          <View style={[styles.photoPlaceholder, imageDimensions]}>
+            <Ionicons name="image-outline" size={50} color="#CCCCCC" />
+            <Text style={styles.placeholderText}>Photo not available</Text>
           </View>
-        </View>
+        )}
       </TouchableOpacity>
 
-      {/* Memory Context */}
+      {/* Memory Context Badge */}
       <TouchableOpacity 
-        style={styles.memoryContext}
+        style={styles.memoryContextBadge}
         onPress={handleViewMemory}
         activeOpacity={0.7}
       >
         <View style={styles.memoryIcon}>
-          <Ionicons name="book" size={16} color="#FF9500" />
+          <Ionicons name="book" size={14} color="#FF9500" />
         </View>
-        <Text style={styles.memoryContextText}>
-          View "{memory.title}" memory
+        <Text style={styles.memoryContextText} numberOfLines={1}>
+          From "{memory.title}" memory
         </Text>
-        <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+        <Ionicons name="chevron-forward" size={14} color="#C7C7CC" />
       </TouchableOpacity>
 
-      {/* Photo Caption Context */}
+      {/* Photo Caption Context (if available) */}
       {photo.caption && (
-        <View style={styles.photoContext}>
+        <View style={styles.photoCaptionContainer}>
           <Text style={styles.photoCaption} numberOfLines={2}>
             "{photo.caption}"
           </Text>
         </View>
       )}
-
-      {/* Action Buttons */}
-      <View style={styles.actionContainer}>
-        <ActivityActionButton
-          title="View Photo"
-          onPress={handleViewPhoto}
-          variant="primary"
-          icon="eye-outline"
-          compact
-        />
-        
-        <ActivityActionButton
-          title="Reply"
-          onPress={handleReplyToComment}
-          variant="ghost"
-          icon="chatbubble-outline"
-          compact
-        />
-        
-        <ActivityActionButton
-          title="View Memory"
-          onPress={handleViewMemory}
-          variant="ghost"
-          icon="book-outline"
-          compact
-        />
-      </View>
     </View>
   );
 };
@@ -213,19 +194,34 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 16,
-    lineHeight: 20,
+    lineHeight: 22,
     color: '#000000',
   },
-  boldText: {
-    fontWeight: '600',
+  usernameContainer: {
+    // Remove any default TouchableOpacity styling that might cause misalignment
   },
-  uploaderLink: {
-    color: '#007AFF',
-    textDecorationLine: 'underline',
+  commenterName: {
+    fontWeight: '700',
+    color: '#20B2AA', // Teal color
+    fontSize: 16,
+    // No textDecorationLine - removes underline
   },
-  memoryLink: {
-    color: '#FF9500',
-    textDecorationLine: 'underline',
+  photoUploaderName: {
+    fontWeight: '700',
+    color: '#20B2AA', // Teal color  
+    fontSize: 16,
+    // No textDecorationLine - removes underline
+  },
+  memoryName: {
+    fontWeight: '700',
+    color: '#FF9500', // Orange color for memory
+    fontSize: 16,
+    // No textDecorationLine - removes underline
+  },
+  commentInlineText: {
+    fontStyle: 'italic',
+    color: '#555555',
+    fontSize: 16,
   },
   photoContainer: {
     borderRadius: 12,
@@ -233,11 +229,23 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: '#F8F9FA',
     position: 'relative',
+    width: IMAGE_WIDTH,
+    alignSelf: 'center',
   },
   photoImage: {
-    width: '100%',
-    height: 160,
     backgroundColor: '#E1E4E8',
+    borderRadius: 12,
+  },
+  photoPlaceholder: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#999999',
   },
   commentOverlay: {
     position: 'absolute',
@@ -250,32 +258,42 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     maxWidth: '85%',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   commentText: {
     fontSize: 14,
     color: '#FFFFFF',
     lineHeight: 18,
     marginBottom: 4,
+    fontWeight: '500',
   },
   commentTime: {
     fontSize: 12,
     color: '#FFE6CC',
+    fontWeight: '400',
   },
-  memoryContext: {
+  memoryContextBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 12,
     backgroundColor: '#FFF5E6',
     borderRadius: 8,
-    marginBottom: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#FFE0B3',
   },
   memoryIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#FF9500',
     justifyContent: 'center',
     alignItems: 'center',
@@ -287,22 +305,18 @@ const styles = StyleSheet.create({
     color: '#D2691E',
     fontWeight: '500',
   },
-  photoContext: {
+  photoCaptionContainer: {
     paddingVertical: 8,
     paddingHorizontal: 12,
     backgroundColor: '#F8F9FA',
     borderRadius: 8,
-    marginBottom: 12,
+    marginTop: 4,
   },
   photoCaption: {
     fontSize: 14,
     color: '#666666',
     fontStyle: 'italic',
     lineHeight: 18,
-  },
-  actionContainer: {
-    flexDirection: 'row',
-    gap: 8,
   },
 });
 
