@@ -566,27 +566,62 @@ router.delete('/delete', protect, async (req, res) => {
 });
 
 // Get current user profile
-router.get('/', protect, async (req, res) => {
+router.get('/:userId', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .select('-password')
-      .populate({
-        path: 'photos',
-        populate: [
-          { path: 'user', select: 'username _id' },
-          { path: 'event', select: 'title time' },
-        ],
-      })
-      .populate('followers', '_id username')
-      .populate('following', '_id username');
+    const targetUserId = req.params.userId;
+    const currentUserId = req.user._id;
+    const isSelf = String(currentUserId) === String(targetUserId);
+    
+    console.log(`🟡 Profile request: userId=${targetUserId}, currentUserId=${currentUserId}`);
+    
+    // Get basic user data
+    const user = await User.findById(targetUserId).select(
+      'username profilePicture bio createdAt'
+    ).lean();
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    return res.json(user);
+    
+    // Check friendship status if not self
+    let friendshipStatus = 'not-friends';
+    let canViewPrivateContent = isSelf;
+    
+    if (!isSelf) {
+      const currentUser = await User.findById(currentUserId);
+      friendshipStatus = await currentUser.getFriendshipStatus(targetUserId);
+      canViewPrivateContent = friendshipStatus === 'friends';
+      
+      console.log(`🔒 Friendship status: ${friendshipStatus}, canView: ${canViewPrivateContent}`);
+    }
+    
+    // Get friends count (always visible)
+    const targetUser = await User.findById(targetUserId);
+    const friendsCount = targetUser.getAcceptedFriends().length;
+    
+    // Get photos based on privacy
+    let photos = [];
+    if (canViewPrivateContent) {
+      photos = await Photo.find({ user: targetUserId })
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean();
+    }
+    
+    const response = {
+      ...user,
+      photos: photos,
+      friendsCount: friendsCount,
+      canViewPrivateContent: canViewPrivateContent
+    };
+    
+    console.log(`🟢 Profile data: photos=${photos.length}, friendsCount=${friendsCount}, canView=${canViewPrivateContent}`);
+    
+    res.json(response);
+    
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Profile fetch error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

@@ -1103,17 +1103,22 @@ const fetchFriendEventJoins = async (userId, friendIds, timeRange) => {
 };
 
 const fetchFriendRequests = async (userId, timeRange) => {
-  console.log('🤝 Fetching friend requests...');
+  console.log('🤝 Fetching friend requests (EFFICIENT)...');
   
+  // ✅ EFFICIENT: Single query with proper indexing
   const requests = await Notification.find({
     user: userId,
     type: 'friend_request',
     createdAt: { $gte: timeRange.start },
-    read: false // Only unread friend requests
+    // ✅ SIMPLE: Just exclude handled requests - no complex logic
+    'data.actionTaken': { $exists: false }
   })
   .populate('sender', 'username profilePicture')
   .sort({ createdAt: -1 })
-  .limit(10);
+  .limit(10)
+  .lean(); // ✅ PERFORMANCE: Use lean() for read-only operations
+
+  console.log(`🔍 Found ${requests.length} unhandled friend requests`);
 
   return requests.map(request => ({
     _id: `friendreq_${request._id}`,
@@ -1123,7 +1128,7 @@ const fetchFriendRequests = async (userId, timeRange) => {
     data: {
       requestId: request._id,
       requester: request.sender,
-      message: request.message
+      message: request.message || request.data?.message || 'I would like to add you as a friend.'
     },
     metadata: {
       actionable: true,

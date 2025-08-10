@@ -261,115 +261,161 @@ export default function ProfileScreen() {
 
   // Fetch user profile data (UPDATED for friends system)
   const fetchUserProfile = async (isRefresh = false) => {
-    try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      console.log('📡 Fetching profile data for userId:', userId);
-      const { data } = await api.get(`/api/profile/${userId}`);
-      console.log('✅ Profile data received:', { 
-        username: data.username, 
-        isPublic: data.isPublic,
-        friendsCount: data.friendsCount,
-        postsCount: data.photos?.length || 0
-      });
-      
-      setUser(data);
-      
-      // Sort posts by creation date (newest first)
-      const sortedPosts = (data.photos || []).sort((a, b) => 
-        new Date(b.createdAt) - new Date(a.createdAt)
-      );
-      setPosts(sortedPosts);
-      
-      // Set friends count from profile data or fetch separately
-      if (data.friendsCount !== undefined) {
-        setFriendsCount(data.friendsCount);
-      } else {
-        await fetchFriendsCount();
-      }
-
-      // Fetch friendship status
-      await fetchFriendshipStatus();
-
-      // Fetch events if on Events tab
-      if (activeTabIndex === 1) {
-        await fetchUserEvents();
-      }
-
-      // Fetch memories if on Memories tab
-      if (activeTabIndex === 2) {
-        await fetchUserMemories();
-      }
-
-      // Check if we should show memories tab for other users
-      if (!isSelf) {
-        await checkSharedMemories();
-      }
-
-    } catch (error) {
-      console.error('❌ Error fetching profile:', error);
-      if (error.response?.status === 404) {
-        Alert.alert('Error', 'User not found');
-        navigation.goBack();
-      } else if (error.response?.status === 403) {
-        Alert.alert('Private Account', 'This account is private.');
-      } else {
-        Alert.alert('Error', 'Failed to load profile');
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  try {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
     }
-  };
+
+    console.log('📡 Fetching profile data for userId:', userId);
+    const { data } = await api.get(`/api/profile/${userId}`);
+    console.log('✅ Profile data received:', { 
+      username: data.username, 
+      friendsCount: data.friendsCount,
+      postsCount: data.photos?.length || 0,
+      canViewContent: data.photos?.length > 0 || 'backend-filtered'
+    });
+    
+    setUser(data);
+    
+    // Fetch friendship status FIRST
+    await fetchFriendshipStatus();
+    
+    // BACKUP FILTER: Only show posts if friends or self
+    let filteredPosts = data.photos || [];
+    if (!isSelf && friendshipStatus !== 'friends') {
+      console.log('🔒 Frontend backup filter: Hiding posts for non-friend');
+      filteredPosts = []; // Hide posts for non-friends
+    }
+    
+    const sortedPosts = filteredPosts.sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    setPosts(sortedPosts);
+    
+    // Set friends count from profile data or fetch separately
+    if (data.friendsCount !== undefined) {
+      setFriendsCount(data.friendsCount);
+    } else {
+      await fetchFriendsCount();
+    }
+
+    // Fetch events if on Events tab
+    if (activeTabIndex === 1) {
+      await fetchUserEvents();
+    }
+
+    // Fetch memories if on Memories tab
+    if (activeTabIndex === 2) {
+      await fetchUserMemories();
+    }
+
+    // Check if we should show memories tab for other users
+    if (!isSelf) {
+      await checkSharedMemories();
+    }
+
+  } catch (error) {
+    console.error('❌ Error fetching profile:', error);
+    if (error.response?.status === 404) {
+      Alert.alert('Error', 'User not found');
+      navigation.goBack();
+    } else if (error.response?.status === 403) {
+      Alert.alert('Privacy Notice', 'Some content may be limited based on your connection with this user.');
+      if (error.response?.data?.user) {
+        setUser(error.response.data.user);
+        setPosts([]); // Backend restricted posts
+      }
+    } else {
+      Alert.alert('Error', 'Failed to load profile');
+    }
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
+
 
   // Fetch user events (same as before)
   const fetchUserEvents = async () => {
-    try {
-      setEventsLoading(true);
+  try {
+    setEventsLoading(true);
+    
+    // BACKUP CHECK: Don't fetch events for non-friends
+    if (!isSelf && friendshipStatus !== 'friends') {
+      console.log('🔒 Not fetching events - user is not a friend');
+      setEvents([]);
+      return;
+    }
+    
+    console.log(`📅 Fetching events for userId: ${userId} (isSelf: ${isSelf})`);
+    const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
+    
+    const sortedEvents = (data.events || []).sort((a, b) => 
+      new Date(b.time) - new Date(a.time)
+    );
+    
+    // SAFETY CHECK: Make sure events belong to the correct user
+    const userEvents = sortedEvents.filter(event => {
+      const eventUserId = event.host?._id || event.host;
+      const isUserEvent = String(eventUserId) === String(userId) || 
+                         event.userRelationship === 'host' ||
+                         event.userRelationship === 'attendee';
       
-      const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
-      
-      const sortedEvents = (data.events || []).sort((a, b) => 
-        new Date(b.time) - new Date(a.time)
-      );
-      
-      setEvents(sortedEvents);
-      
-      if (isSelf && data.sharedEventIds) {
-        setSharedEventIds(new Set(data.sharedEventIds));
+      if (!isUserEvent) {
+        console.warn('🚨 Filtering out event that doesn\'t belong to user:', event._id);
       }
       
-      console.log(`✅ Loaded ${sortedEvents.length} events for user ${userId}`);
-      
-    } catch (error) {
-      console.error('❌ Error fetching events:', error);
-      Alert.alert('Error', 'Failed to load events. Please try again.');
-    } finally {
-      setEventsLoading(false);
+      return isUserEvent;
+    });
+    
+    setEvents(userEvents);
+    
+    if (isSelf && data.sharedEventIds) {
+      setSharedEventIds(new Set(data.sharedEventIds));
     }
-  };
+    
+    console.log(`✅ Loaded ${userEvents.length} events for user ${userId}`);
+    
+  } catch (error) {
+    console.error('❌ Error fetching events:', error);
+    if (error.response?.status === 403) {
+      setEvents([]);
+      console.log('📝 Events restricted by backend privacy filtering');
+    } else {
+      Alert.alert('Error', 'Failed to load events. Please try again.');
+    }
+  } finally {
+    setEventsLoading(false);
+  }
+};
 
   // Fetch user memories (same as before)
   const fetchUserMemories = async () => {
-    try {
-      setMemoriesLoading(true);
-      const { data } = await api.get(`/api/memories/user/${userId}`);
-      
-      const sortedMemories = (data.memories || []).sort((a, b) => 
-        new Date(b.createdAt) - new Date(a.createdAt)
-      );
-      
-      setMemories(sortedMemories);
-    } catch (error) {
-      console.error('Error fetching memories:', error);
-    } finally {
-      setMemoriesLoading(false);
+  try {
+    setMemoriesLoading(true);
+    const { data } = await api.get(`/api/memories/user/${userId}`);
+    
+    // Backend already filtered memories based on participation and friendship
+    const sortedMemories = (data.memories || []).sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    
+    setMemories(sortedMemories);
+    console.log(`✅ Loaded ${sortedMemories.length} memories for user ${userId} (backend filtered)`);
+  } catch (error) {
+    console.error('Error fetching memories:', error);
+    if (error.response?.status === 403) {
+      // Backend restricted memories due to privacy
+      setMemories([]);
+      console.log('📝 Memories restricted by backend privacy filtering');
     }
-  };
+    // Don't show alert for memories since they're optional content
+  } finally {
+    setMemoriesLoading(false);
+  }
+};
 
   // Check shared memories (same as before)
   const checkSharedMemories = async () => {
@@ -533,7 +579,11 @@ export default function ProfileScreen() {
   };
 
   // UPDATED: Profile header with friends system
-  const renderProfileHeader = () => (
+  const renderProfileHeader = () => {
+  // Show post count based on friendship status
+  const visiblePostsCount = (!isSelf && friendshipStatus !== 'friends') ? '—' : posts.length;
+  
+  return (
     <View style={styles.profileHeader}>
       {/* Centered Avatar */}
       <View style={styles.centeredAvatarSection}>
@@ -555,10 +605,10 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* UPDATED: Stats Container with Friends */}
+      {/* Stats Container with Privacy-Aware Counts */}
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
-          <Text style={styles.statNumber}>{posts.length}</Text>
+          <Text style={styles.statNumber}>{visiblePostsCount}</Text>
           <Text style={styles.statLabel}>Posts</Text>
         </View>
         <TouchableOpacity
@@ -588,7 +638,7 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* UPDATED: Action Buttons with Friends System */}
+      {/* Action Buttons with Friends System */}
       <View style={styles.actionButtons}>
         {isSelf ? (
           <View style={styles.selfActionButtons}>
@@ -660,7 +710,7 @@ export default function ProfileScreen() {
       </View>
     </View>
   );
-
+};
   // Tab bar (same as before)
   const renderTabBar = () => (
     <View style={styles.tabBar}>
@@ -886,188 +936,227 @@ const renderPostGrid = ({ item }) => (
 
   // Get content data for current tab (UPDATED for friends system)
   const getContentData = () => {
-    if (activeTabIndex === 0) { // Posts
-      if (!user?.isPublic && !isSelf && friendshipStatus !== 'friends') {
-        return 'private';
-      }
-      return posts;
-    } else if (activeTabIndex === 1) { // Events
-      if (eventsLoading) {
-        return 'loading';
-      }
-      return isSelf ? filteredEvents : events;
-    } else if (activeTabIndex === 2) { // Memories
-      if (memoriesLoading) {
-        return 'loading';
-      }
-      return memories;
+  if (activeTabIndex === 0) { // Posts
+    return posts; // Backend already filtered these
+  } else if (activeTabIndex === 1) { // Events
+    if (eventsLoading) {
+      return 'loading';
     }
-    return [];
-  };
+    return isSelf ? filteredEvents : events; // Backend already filtered
+  } else if (activeTabIndex === 2) { // Memories
+    if (memoriesLoading) {
+      return 'loading';
+    }
+    return memories; // Backend already filtered
+  }
+  return [];
+};
 
   // Render content for each tab
   const renderTabContent = (tabIndex) => {
-    let contentData;
-    if (tabIndex === 0) { // Posts
-      if (!user?.isPublic && !isSelf && friendshipStatus !== 'friends') {
-        contentData = 'private';
-      } else {
-        contentData = posts;
-      }
-    } else if (tabIndex === 1) { // Events
-      if (eventsLoading) {
-        contentData = 'loading';
-      } else {
-        contentData = isSelf ? filteredEvents : events;
-      }
-    } else if (tabIndex === 2) { // Memories
-      if (memoriesLoading) {
-        contentData = 'loading';
-      } else {
-        contentData = memories;
-      }
+  let contentData;
+  
+  if (tabIndex === 0) { // Posts
+    // BACKUP CHECK: If not friends and not self, don't show posts
+    if (!isSelf && friendshipStatus !== 'friends') {
+      contentData = 'private';
     } else {
-      contentData = [];
+      contentData = posts;
     }
-
-    if (contentData === 'private') {
-      return (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
-          <Text style={styles.emptyTitle}>This account is private</Text>
-          <Text style={styles.emptySubtitle}>
-            {friendshipStatus === 'request-sent' 
-              ? 'Your friend request is pending'
-              : friendshipStatus === 'request-received'
-              ? 'Accept their friend request to see their content'
-              : 'Send a friend request to see their content'
-            }
-          </Text>
-        </View>
-      );
+  } else if (tabIndex === 1) { // Events
+    if (eventsLoading) {
+      contentData = 'loading';
+    } else if (!isSelf && friendshipStatus !== 'friends') {
+      // BACKUP CHECK: Don't show events for non-friends
+      contentData = 'private';
+    } else {
+      contentData = isSelf ? filteredEvents : events;
     }
-
-    if (contentData === 'loading') {
-      return (
-        <View style={styles.emptyContainer}>
-          <ActivityIndicator size="large" color="#3797EF" />
-          <Text style={styles.loadingText}>
-            {tabIndex === 1 ? 'Loading events...' : 'Loading memories...'}
-          </Text>
-        </View>
-      );
+  } else if (tabIndex === 2) { // Memories
+    if (memoriesLoading) {
+      contentData = 'loading';
+    } else {
+      // Memories are OK to show if shared (backend filters properly)
+      contentData = memories;
     }
+  } else {
+    contentData = [];
+  }
 
-    if (Array.isArray(contentData) && contentData.length === 0) {
-      const tabName = tabs[tabIndex];
-      const isEventsTab = tabName === 'Events';
-      const isMemoriesTab = tabName === 'Memories';
-      const hasFilter = isEventsTab && eventFilter !== 'all';
-      
-      return (
-        <View style={styles.emptyContainer}>
-          <Ionicons 
-            name={
-              isEventsTab ? "calendar-outline" : 
-              isMemoriesTab ? "library-outline" : 
-              "camera-outline"
-            } 
-            size={64} 
-            color="#C7C7CC" 
-          />
-          <Text style={styles.emptyTitle}>
-            {isEventsTab 
-              ? (hasFilter 
-                  ? `No ${eventFilter} events`
-                  : (isSelf ? 'No events found' : 'No shared events')
-                )
-              : isMemoriesTab
-                ? (isSelf ? 'No memories yet' : 'No shared memories')
-                : (isSelf ? 'Share your first post' : 'No posts yet')
-            }
+  // Show privacy message for non-friends
+  if (contentData === 'private') {
+    const tabName = tabs[tabIndex];
+    
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
+        <Text style={styles.emptyTitle}>
+          You are not friends with {user?.username}
+        </Text>
+        <Text style={styles.emptySubtitle}>
+          {friendshipStatus === 'request-sent' 
+            ? `Your friend request is pending. Once accepted, you'll be able to see their ${tabName.toLowerCase()}.`
+            : friendshipStatus === 'request-received'
+            ? `Accept their friend request to see their ${tabName.toLowerCase()}.`
+            : `Become friends with ${user?.username} to see their ${tabName.toLowerCase()}.`
+          }
+        </Text>
+        
+        {/* Show mutual friends hint if available */}
+        {friendshipStatus === 'not-friends' && mutualFriends.length > 0 && (
+          <Text style={styles.mutualFriendsHint}>
+            You have {mutualFriends.length} mutual friend{mutualFriends.length > 1 ? 's' : ''}
           </Text>
-          <Text style={styles.emptySubtitle}>
-            {isEventsTab
-              ? (hasFilter
-                  ? `You don't have any ${eventFilter} events yet.`
-                  : (isSelf 
-                      ? 'Join or host events to see them here.'
-                      : 'This user hasn\'t shared any events publicly yet.'
-                    )
-                )
-              : isMemoriesTab
-                ? (isSelf 
-                    ? 'Create your first memory to preserve special moments'
-                    : 'You don\'t have any shared memories with this person yet'
-                  )
+        )}
+        
+        {/* Friend action buttons */}
+        {friendshipStatus === 'not-friends' && (
+          <TouchableOpacity
+            style={styles.friendRequestButton}
+            onPress={handleFriendAction}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="person-add" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.friendRequestButtonText}>Send Friend Request</Text>
+          </TouchableOpacity>
+        )}
+        
+        {friendshipStatus === 'request-received' && (
+          <TouchableOpacity
+            style={styles.respondRequestButton}
+            onPress={handleFriendAction}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="mail" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.respondRequestButtonText}>Respond to Request</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }
+
+  if (contentData === 'loading') {
+    return (
+      <View style={styles.emptyContainer}>
+        <ActivityIndicator size="large" color="#3797EF" />
+        <Text style={styles.loadingText}>
+          {tabIndex === 1 ? 'Loading events...' : 'Loading memories...'}
+        </Text>
+      </View>
+    );
+  }
+
+  if (Array.isArray(contentData) && contentData.length === 0) {
+    const tabName = tabs[tabIndex];
+    const isEventsTab = tabName === 'Events';
+    const isMemoriesTab = tabName === 'Memories';
+    const hasFilter = isEventsTab && eventFilter !== 'all';
+    
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons 
+          name={
+            isEventsTab ? "calendar-outline" : 
+            isMemoriesTab ? "library-outline" : 
+            "camera-outline"
+          } 
+          size={64} 
+          color="#C7C7CC" 
+        />
+        <Text style={styles.emptyTitle}>
+          {isEventsTab 
+            ? (hasFilter 
+                ? `No ${eventFilter} events`
+                : (isSelf ? 'No events found' : 'No shared events')
+              )
+            : isMemoriesTab
+              ? (isSelf ? 'No memories yet' : 'No shared memories')
+              : (isSelf ? 'Share your first post' : 'No posts yet')
+          }
+        </Text>
+        <Text style={styles.emptySubtitle}>
+          {isEventsTab
+            ? (hasFilter
+                ? `You don't have any ${eventFilter} events yet.`
                 : (isSelf 
-                    ? 'When you share photos, they\'ll appear on your profile.'
-                    : 'When they share photos, they\'ll appear here.'
+                    ? 'Join or host events to see them here.'
+                    : `You don't have any shared events with ${user?.username}.`
                   )
-            }
-          </Text>
-          {isSelf && (
-            <TouchableOpacity
-              style={styles.createButton}
-              onPress={() => navigation.navigate(
-                isEventsTab ? 'CreateEventScreen' : 
-                isMemoriesTab ? 'CreateMemoryScreen' : 
-                'CreatePickerScreen'
-              )}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.createButtonText}>
-                {isEventsTab ? 'Create Event' : 
-                 isMemoriesTab ? 'Create Memory' : 
-                 'Create Post'}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      );
-    }
+              )
+            : isMemoriesTab
+              ? (isSelf 
+                  ? 'Create your first memory to preserve special moments'
+                  : `You don't have any shared memories with ${user?.username} yet.`
+                )
+              : (isSelf 
+                  ? 'When you share photos, they\'ll appear on your profile.'
+                  : `${user?.username} hasn't shared any posts with friends yet.`
+                )
+          }
+        </Text>
+        {isSelf && (
+          <TouchableOpacity
+            style={styles.createButton}
+            onPress={() => navigation.navigate(
+              isEventsTab ? 'CreateEventScreen' : 
+              isMemoriesTab ? 'CreateMemoryScreen' : 
+              'CreatePickerScreen'
+            )}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.createButtonText}>
+              {isEventsTab ? 'Create Event' : 
+               isMemoriesTab ? 'Create Memory' : 
+               'Create Post'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }
 
-    if (!Array.isArray(contentData)) {
-      return null;
-    }
-
-    // Render the appropriate list based on tab
-    if (tabIndex === 0) { // Posts - 2 column grid
-      return (
-        <FlatList
-          data={contentData}
-          renderItem={renderPostGrid}
-          keyExtractor={(item) => item._id}
-          numColumns={2}
-          scrollEnabled={false}
-          columnWrapperStyle={styles.postGridRow}
-          contentContainerStyle={styles.postsGrid}
-        />
-      );
-    } else if (tabIndex === 1) { // Events - card list
-      return (
-        <FlatList
-          data={contentData}
-          renderItem={renderEventCard}
-          keyExtractor={(item) => item._id}
-          scrollEnabled={false}
-          contentContainerStyle={styles.eventsGrid}
-        />
-      );
-    } else if (tabIndex === 2) { // Memories - card list
-      return (
-        <FlatList
-          data={contentData}
-          renderItem={renderMemoryCard}
-          keyExtractor={(item) => item._id}
-          scrollEnabled={false}
-          contentContainerStyle={styles.memoriesGrid}
-        />
-      );
-    }
-
+  if (!Array.isArray(contentData)) {
     return null;
-  };
+  }
+
+  // Render the appropriate list based on tab
+  if (tabIndex === 0) {
+    return (
+      <FlatList
+        data={contentData}
+        renderItem={renderPostGrid}
+        keyExtractor={(item) => item._id}
+        numColumns={2}
+        scrollEnabled={false}
+        columnWrapperStyle={styles.postGridRow}
+        contentContainerStyle={styles.postsGrid}
+      />
+    );
+  } else if (tabIndex === 1) {
+    return (
+      <FlatList
+        data={contentData}
+        renderItem={renderEventCard}
+        keyExtractor={(item) => item._id}
+        scrollEnabled={false}
+        contentContainerStyle={styles.eventsGrid}
+      />
+    );
+  } else if (tabIndex === 2) {
+    return (
+      <FlatList
+        data={contentData}
+        renderItem={renderMemoryCard}
+        keyExtractor={(item) => item._id}
+        scrollEnabled={false}
+        contentContainerStyle={styles.memoriesGrid}
+      />
+    );
+  }
+
+  return null;
+};
+
 
   if (loading && !user) {
     return (
@@ -1665,6 +1754,42 @@ const styles = StyleSheet.create({
   createButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  mutualFriendsHint: {
+    fontSize: 13,
+    color: '#3797EF',
+    fontWeight: '500',
+    marginTop: 8,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  friendRequestButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    marginTop: 8,
+  },
+  friendRequestButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  respondRequestButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    marginTop: 8,
+  },
+  respondRequestButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '600',
   },
 });

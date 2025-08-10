@@ -51,23 +51,30 @@ router.post('/quick-accept/:requesterId', protect, async (req, res) => {
       // Accept the friend request using your existing model method
       await currentUser.acceptFriendRequest(requesterUserId);
       
-      // Mark the friend request notification as read and handled
-      const updatedNotification = await Notification.findOneAndUpdate(
+      // ✅ ENHANCED: Mark ALL related notifications as handled
+      const updatedNotifications = await Notification.updateMany(
         { 
-          user: currentUserId, 
-          sender: requesterUserId, 
-          type: 'friend_request',
-          isRead: false 
+          $or: [
+            {
+              user: currentUserId, 
+              sender: requesterUserId, 
+              type: 'friend_request'
+            },
+            {
+              user: requesterUserId,
+              sender: currentUserId,
+              type: 'friend_request'
+            }
+          ]
         },
         { 
           isRead: true, 
           readAt: new Date(),
           $set: { 'data.actionTaken': 'accepted' }
-        },
-        { new: true }
+        }
       );
 
-      console.log(`✅ Marked notification as accepted:`, updatedNotification?._id);
+      console.log(`✅ Marked ${updatedNotifications.modifiedCount} notifications as accepted`);
 
       // Send notification to requester (non-blocking)
       setImmediate(async () => {
@@ -81,12 +88,13 @@ router.post('/quick-accept/:requesterId', protect, async (req, res) => {
 
       res.status(200).json({ 
         success: true,
-        message: `You are now friends with ${requesterUser.username}!`,
+        message: `You and ${requesterUser.username} are now friends!`,
         status: 'friends',
         data: {
           friendUsername: requesterUser.username,
           friendId: requesterUserId,
-          actionTaken: 'accepted'
+          actionTaken: 'accepted',
+          notificationState: 'friendship_established' // ✅ NEW: Signal for UI
         }
       });
 
@@ -1361,26 +1369,33 @@ router.post('/quick-reject/:requesterId', protect, async (req, res) => {
     }
 
     try {
-      // Reject the friend request using your existing model method
-      await currentUser.rejectFriendRequest(requesterUserId);
+      // Reject the friend request - use removeFriendship instead of rejectFriendRequest
+      await currentUser.removeFriendship(requesterUserId);
       
-      // Mark the friend request notification as read and handled
-      const updatedNotification = await Notification.findOneAndUpdate(
+      // ✅ ENHANCED: Mark ALL related notifications as handled
+      const updatedNotifications = await Notification.updateMany(
         { 
-          user: currentUserId, 
-          sender: requesterUserId, 
-          type: 'friend_request',
-          isRead: false 
+          $or: [
+            {
+              user: currentUserId, 
+              sender: requesterUserId, 
+              type: 'friend_request'
+            },
+            {
+              user: requesterUserId,
+              sender: currentUserId,
+              type: 'friend_request'
+            }
+          ]
         },
         { 
           isRead: true, 
           readAt: new Date(),
           $set: { 'data.actionTaken': 'rejected' }
-        },
-        { new: true }
+        }
       );
 
-      console.log(`❌ Marked notification as rejected:`, updatedNotification?._id);
+      console.log(`❌ Marked ${updatedNotifications.modifiedCount} notifications as rejected`);
 
       res.status(200).json({ 
         success: true,
@@ -1389,7 +1404,8 @@ router.post('/quick-reject/:requesterId', protect, async (req, res) => {
         data: {
           friendUsername: requesterUser.username,
           friendId: requesterUserId,
-          actionTaken: 'rejected'
+          actionTaken: 'rejected',
+          notificationState: 'request_rejected' // ✅ NEW: Signal for UI to remove
         }
       });
 

@@ -122,146 +122,186 @@ export default function NotificationScreen({ navigation }) {
      DATA FETCHING WITH REFRESH SUPPORT
   ═══════════════════════════════════════════════════════════════════ */
 
-  const FriendRequestActions = ({ notification, onActionComplete }) => {
-    const [loading, setLoading] = useState(null); // 'accept' | 'reject' | null
-    const [actionTaken, setActionTaken] = useState(notification.data?.actionTaken || null);
+  
+const FriendRequestActions = ({ notification, onActionComplete }) => {
+  const [loading, setLoading] = useState(null); // 'accept' | 'reject' | null
+  const [actionTaken, setActionTaken] = useState(notification.data?.actionTaken || null);
 
-    const handleAccept = async () => {
-      if (loading || actionTaken) return;
+  const handleAccept = async () => {
+    if (loading || actionTaken) return;
+    
+    setLoading('accept');
+    try {
+      console.log('🤝 Accepting friend request from:', notification.sender.username);
       
-      setLoading('accept');
-      try {
-        console.log('🤝 Accepting friend request from:', notification.sender.username);
+      // ✅ FIXED: Use the quick-accept endpoint
+      const response = await api.post(`/api/friends/quick-accept/${notification.sender._id}`);
+      
+      if (response.data.success) {
+        setActionTaken('accepted');
         
-        // ✅ FIXED: Use your existing /api/friends/accept/:userId endpoint
-        const response = await api.post(`/api/friends/accept/${notification.sender._id}`);
+        // ✅ ENHANCED: Pass notification state for UI handling
+        onActionComplete('accepted', notification._id, {
+          ...response.data.data,
+          notificationState: response.data.data.notificationState
+        });
         
-        if (response.data.success) {
-          setActionTaken('accepted');
-          onActionComplete('accepted', notification._id, response.data.data);
-          
-          // Show success feedback
-          Alert.alert(
-            '🎉 Friend Request Accepted!',
-            response.data.message,
-            [{ text: 'Great!', style: 'default' }]
-          );
-        }
-      } catch (error) {
-        console.error('Error accepting friend request:', error);
-        
-        const errorMessage = error.response?.data?.message || 'Failed to accept friend request. Please try again.';
-        
+        // Show enhanced success feedback
         Alert.alert(
-          'Error',
-          errorMessage,
-          [{ text: 'OK', style: 'default' }]
+          '🎉 Friend Request Accepted!',
+          response.data.message || `You and ${notification.sender.username} are now friends!`,
+          [{ text: 'Great!', style: 'default' }]
         );
-      } finally {
-        setLoading(null);
       }
-    };
-
-    const handleReject = async () => {
-      if (loading || actionTaken) return;
+    } catch (error) {
+      console.error('Error accepting friend request:', error);
       
-      // Show confirmation dialog
+      const errorMessage = error.response?.data?.message || 'Failed to accept friend request. Please try again.';
+      
       Alert.alert(
-        'Reject Friend Request',
-        `Are you sure you want to reject ${notification.sender.username}'s friend request?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Reject', 
-            style: 'destructive',
-            onPress: async () => {
-              setLoading('reject');
-              try {
-                console.log('❌ Rejecting friend request from:', notification.sender.username);
+        'Error',
+        errorMessage,
+        [{ text: 'OK', style: 'default' }]
+      );
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleReject = async () => {
+    if (loading || actionTaken) return;
+    
+    // Show confirmation dialog
+    Alert.alert(
+      'Reject Friend Request',
+      `Are you sure you want to reject ${notification.sender.username}'s friend request?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Reject', 
+          style: 'destructive',
+          onPress: async () => {
+            setLoading('reject');
+            try {
+              console.log('❌ Rejecting friend request from:', notification.sender.username);
+              
+              // ✅ FIXED: Use the quick-reject endpoint
+              const response = await api.post(`/api/friends/quick-reject/${notification.sender._id}`);
+              
+              if (response.data.success) {
+                setActionTaken('rejected');
                 
-                // ✅ FIXED: Use your existing /api/friends/reject/:userId endpoint (DELETE method)
-                const response = await api.delete(`/api/friends/reject/${notification.sender._id}`);
+                // ✅ ENHANCED: Pass notification state for UI handling
+                onActionComplete('rejected', notification._id, {
+                  ...response.data.data,
+                  notificationState: response.data.data.notificationState
+                });
                 
-                if (response.data.success) {
-                  setActionTaken('rejected');
-                  onActionComplete('rejected', notification._id, response.data.data);
-                }
-              } catch (error) {
-                console.error('Error rejecting friend request:', error);
-                
-                const errorMessage = error.response?.data?.message || 'Failed to reject friend request. Please try again.';
-                
+                // ✅ NEW: Show rejection feedback and auto-remove
                 Alert.alert(
-                  'Error',
-                  errorMessage,
-                  [{ text: 'OK', style: 'default' }]
+                  'Friend Request Rejected',
+                  `You rejected ${notification.sender.username}'s friend request.`,
+                  [{ 
+                    text: 'OK', 
+                    style: 'default',
+                    onPress: () => {
+                      // Auto-remove the notification from list
+                      // This will be handled by the parent component
+                    }
+                  }]
                 );
-              } finally {
-                setLoading(null);
               }
+            } catch (error) {
+              console.error('Error rejecting friend request:', error);
+              
+              const errorMessage = error.response?.data?.message || 'Failed to reject friend request. Please try again.';
+              
+              Alert.alert(
+                'Error',
+                errorMessage,
+                [{ text: 'OK', style: 'default' }]
+              );
+            } finally {
+              setLoading(null);
             }
           }
-        ]
-      );
-    };
+        }
+      ]
+    );
+  };
 
-    // Show result state if action was taken
-    if (actionTaken) {
-      return (
-        <View style={styles.friendRequestResult}>
-          <View style={[
-            styles.resultBadge,
-            actionTaken === 'accepted' ? styles.acceptedBadge : styles.rejectedBadge
-          ]}>
-            <Ionicons 
-              name={actionTaken === 'accepted' ? 'checkmark' : 'close'} 
-              size={16} 
-              color="#FFFFFF" 
-            />
-            <Text style={styles.resultText}>
-              {actionTaken === 'accepted' ? 'Accepted' : 'Rejected'}
-            </Text>
-          </View>
-        </View>
-      );
-    }
-
+  // ✅ ENHANCED: Show different states based on action taken
+  if (actionTaken === 'accepted') {
     return (
-      <View style={styles.friendRequestActions}>
-        <TouchableOpacity
-          style={[styles.actionButton, styles.rejectButton]}
-          onPress={handleReject}
-          disabled={loading !== null}
-          activeOpacity={0.8}
+      <View style={styles.friendRequestResult}>
+        <View style={[styles.resultBadge, styles.acceptedBadge]}>
+          <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+          <Text style={styles.resultText}>Friends</Text>
+        </View>
+        <Text style={styles.friendshipMessage}>
+          You and {notification.sender.username} are now friends!
+        </Text>
+        {/* ✅ NEW: Allow swipe to delete */}
+        <TouchableOpacity 
+          style={styles.deleteButton} 
+          onPress={() => onActionComplete('delete', notification._id, { shouldRemove: true })}
         >
-          {loading === 'reject' ? (
-            <ActivityIndicator size="small" color="#FF3B30" />
-          ) : (
-            <>
-              <Ionicons name="close" size={18} color="#FF3B30" />
-              <Text style={styles.rejectButtonText}>Reject</Text>
-            </>
-          )}
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.actionButton, styles.acceptButton]}
-          onPress={handleAccept}
-          disabled={loading !== null}
-          activeOpacity={0.8}
-        >
-          {loading === 'accept' ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-              <Text style={styles.acceptButtonText}>Accept</Text>
-            </>
-          )}
+          <Text style={styles.deleteButtonText}>Dismiss</Text>
         </TouchableOpacity>
       </View>
     );
-  };
+  }
+
+  if (actionTaken === 'rejected') {
+    // ✅ NEW: Auto-remove rejected notifications
+    // This notification should be removed from the list
+    return null;
+  }
+
+  // Show action buttons for pending requests
+  return (
+    <View style={styles.friendRequestActions}>
+      <TouchableOpacity
+        style={[
+          styles.actionButton,
+          styles.rejectButton,
+          loading === 'reject' && styles.buttonLoading
+        ]}
+        onPress={handleReject}
+        disabled={loading}
+      >
+        {loading === 'reject' ? (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        ) : (
+          <>
+            <Ionicons name="close" size={16} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>Reject</Text>
+          </>
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[
+          styles.actionButton,
+          styles.acceptButton,
+          loading === 'accept' && styles.buttonLoading
+        ]}
+        onPress={handleAccept}
+        disabled={loading}
+      >
+        {loading === 'accept' ? (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        ) : (
+          <>
+            <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>Accept</Text>
+          </>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+};
+
 
   const fetchNotifications = async (reset = false) => {
     try {
@@ -523,29 +563,44 @@ export default function NotificationScreen({ navigation }) {
     const isFriendRequest = item.type === 'friend_request';
     const hasActionTaken = item.data?.actionTaken;
 
-    const handleActionComplete = (action, notificationId, actionData) => {
-      console.log('🔔 Friend request action completed:', { action, notificationId, actionData });
-      
-      // Update the notification in the list with the action taken
-      setNotifications(prev => 
-        prev.map(notif => 
-          notif._id === notificationId 
-            ? { 
-                ...notif, 
-                isRead: true,
-                data: { 
-                  ...notif.data, 
-                  actionTaken: action,
-                  actionData: actionData
-                }
-              }
-            : notif
-        )
-      );
-      
-      // Update unread counts
-      fetchUnreadCounts();
-    };
+    const handleActionComplete = (action, notificationId, data) => {
+  console.log('🎯 Friend request action completed:', { action, notificationId, data });
+  
+  // Update the notification state
+  setNotifications(prev => prev.map(notif => {
+    if (notif._id === notificationId) {
+      if (action === 'rejected' || data?.shouldRemove) {
+        // ✅ NEW: Remove rejected notifications or manually dismissed ones
+        return null;
+      } else if (action === 'accepted') {
+        // ✅ NEW: Update accepted notifications with friendship state
+        return {
+          ...notif,
+          data: {
+            ...notif.data,
+            actionTaken: 'accepted',
+            notificationState: data?.notificationState
+          }
+        };
+      }
+    }
+    return notif;
+  }).filter(Boolean)); // Remove null entries
+  
+  // Update unread counts
+  if (action === 'rejected' || data?.shouldRemove) {
+    setUnreadCounts(prev => ({
+      ...prev,
+      social: Math.max(0, prev.social - 1)
+    }));
+  }
+  
+  // Refresh notifications to get latest state
+  setTimeout(() => {
+    fetchNotifications(true);
+  }, 1000);
+};
+
 
     const handleRegularNotificationPress = () => {
       if (isFriendRequest) {

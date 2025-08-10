@@ -342,22 +342,28 @@ const performActivityAction = async (action, activity, actionData) => {
 
   switch (action) {
     case 'accept_friend_request':
-      endpoint = `/api/friends/accept`;
-      data = { requesterId: activity.data.requester._id };
+      // ✅ FIXED: Use existing quick-accept endpoint
+      endpoint = `/api/friends/quick-accept/${activity.data.requester._id}`;
+      method = 'POST';
+      data = {}; // No data needed
       break;
       
     case 'decline_friend_request':
-      endpoint = `/api/friends/decline`;
-      data = { requesterId: activity.data.requester._id };
+      // ✅ FIXED: Use existing quick-reject endpoint
+      endpoint = `/api/friends/quick-reject/${activity.data.requester._id}`;
+      method = 'POST';
+      data = {}; // No data needed
       break;
       
     case 'send_friend_request':
-      endpoint = `/api/friends/request`;
-      data = { targetUserId: activity.data.uploader._id };
+      endpoint = `/api/friends/request/${activity.data.uploader._id}`;
+      method = 'POST';
+      data = { message: actionData.message || '' };
       break;
       
     case 'accept_event_invitation':
       endpoint = `/api/events/attend/${activity.data.event._id}`;
+      method = 'POST';
       break;
       
     case 'decline_event_invitation':
@@ -366,11 +372,9 @@ const performActivityAction = async (action, activity, actionData) => {
       break;
       
     case 'view_event':
-      // No API call needed, just return success
       return { success: true, action: 'navigation' };
       
     case 'view_profile':
-      // No API call needed, just return success
       return { success: true, action: 'navigation' };
       
     default:
@@ -380,7 +384,7 @@ const performActivityAction = async (action, activity, actionData) => {
   console.log('📡 Making API call:', {
     method,
     endpoint,
-    data
+    data: Object.keys(data).length > 0 ? data : 'no data'
   });
 
   const response = await api({
