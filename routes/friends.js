@@ -1668,4 +1668,183 @@ router.get('/:userId', protect, async (req, res) => {
   }
 });
 
+router.delete('/remove/:userId', protect, async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const currentUserId = req.user._id;
+
+    console.log(`🗑️ Removing friendship: ${currentUserId} <-> ${targetUserId}`);
+
+    const currentUser = await User.findById(currentUserId);
+    const targetUser = await User.findById(targetUserId);
+    
+    if (!targetUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Check if they are actually friends
+    const friendshipStatus = currentUser.getFriendshipStatus(targetUserId);
+    
+    if (friendshipStatus.status !== 'friends') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'You are not friends with this user',
+        currentStatus: friendshipStatus.status
+      });
+    }
+
+    try {
+      // Remove friendship using your existing model method
+      await currentUser.removeFriendship(targetUserId);
+
+      // ✅ COMPREHENSIVE CLEANUP: Delete ALL related notifications
+      const deletedNotifications = await Notification.deleteMany({
+        $or: [
+          {
+            user: currentUserId,
+            sender: targetUserId,
+            type: { $in: ['friend_request', 'friend_request_accepted'] }
+          },
+          {
+            user: targetUserId,
+            sender: currentUserId,
+            type: { $in: ['friend_request', 'friend_request_accepted'] }
+          }
+        ]
+      });
+
+      console.log(`🧹 Deleted ${deletedNotifications.deletedCount} notifications`);
+
+      // ✅ CLEANUP: Delete ALL friend request activities (if you have Activity model)
+      let deletedActivities = 0;
+      try {
+        const Activity = require('../models/Activity'); // Adjust path as needed
+        const activityCleanup = await Activity.deleteMany({
+          $or: [
+            {
+              activityType: { $in: ['friend_request', 'friend_request_accepted'] },
+              'data.requester._id': { $in: [currentUserId, targetUserId] },
+              userId: { $in: [currentUserId, targetUserId] }
+            },
+            {
+              activityType: { $in: ['friend_request', 'friend_request_accepted'] },
+              'data.accepter._id': { $in: [currentUserId, targetUserId] },
+              userId: { $in: [currentUserId, targetUserId] }
+            }
+          ]
+        });
+        deletedActivities = activityCleanup.deletedCount;
+        console.log(`🧹 Deleted ${deletedActivities} activities`);
+      } catch (activityError) {
+        console.log('⚠️ No Activity model found or error cleaning activities:', activityError.message);
+      }
+
+      // ✅ SAFETY CLEANUP: Remove any stale friend request states in user documents
+      await User.updateMany(
+        { _id: { $in: [currentUserId, targetUserId] } },
+        {
+          $pull: {
+            friendRequests: { $in: [currentUserId, targetUserId] },
+            sentFriendRequests: { $in: [currentUserId, targetUserId] }
+          }
+        }
+      );
+
+      console.log(`✅ Friendship removed and all related data cleaned up`);
+
+      res.status(200).json({ 
+        success: true,
+        message: 'Friend removed and all related data cleaned up',
+        status: 'not-friends',
+        data: {
+          removedUser: {
+            _id: targetUser._id,
+            username: targetUser.username
+          },
+          cleanupStats: {
+            notificationsDeleted: deletedNotifications.deletedCount,
+            activitiesDeleted: deletedActivities
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error removing friend:', error);
+      res.status(400).json({ 
+        success: false,
+        message: error.message || 'Failed to remove friend'
+      });
+    }
+
+  } catch (error) {
+    console.error('Remove friend error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// ✅ ALSO ADD: Cleanup endpoint for frontend to call
+router.post('/cleanup-after-unfriend', protect, async (req, res) => {
+  try {
+    const { removedUserId } = req.body;
+    const currentUserId = req.user._id;
+
+    console.log(`🧹 Post-unfriend cleanup: ${currentUserId} <-> ${removedUserId}`);
+
+    // Delete any remaining friend-related notifications
+    const cleanupResult = await Notification.deleteMany({
+      $or: [
+        {
+          user: currentUserId,
+          sender: removedUserId,
+          type: { $in: ['friend_request', 'friend_request_accepted'] }
+        },
+        {
+          user: removedUserId,
+          sender: currentUserId,
+          type: { $in: ['friend_request', 'friend_request_accepted'] }
+        }
+      ]
+    });
+
+    // Delete any remaining friend-related activities
+    let activityCleanup = { deletedCount: 0 };
+    try {
+      const Activity = require('../models/Activity');
+      activityCleanup = await Activity.deleteMany({
+        $or: [
+          {
+            activityType: { $in: ['friend_request', 'friend_request_accepted'] },
+            $or: [
+              { 'data.requester._id': removedUserId, userId: currentUserId },
+              { 'data.requester._id': currentUserId, userId: removedUserId }
+            ]
+          }
+        ]
+      });
+    } catch (activityError) {
+      console.log('⚠️ No Activity model found for cleanup');
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Post-unfriend cleanup completed',
+      cleaned: {
+        notifications: cleanupResult.deletedCount,
+        activities: activityCleanup.deletedCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in post-unfriend cleanup:', error);
+    res.status(500).json({ success: false, message: 'Cleanup failed' });
+  }
+});
+
+
 module.exports = router;

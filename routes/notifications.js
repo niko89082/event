@@ -73,6 +73,67 @@ router.put('/:id/read', protect, async (req, res) => {
   }
 });
 
+
+
+
+router.post('/cleanup-friend-requests', protect, async (req, res) => {
+  try {
+    const { userId1, userId2, action } = req.body;
+    const currentUserId = req.user._id;
+
+    console.log(`🧹 Cleaning up friend request notifications: ${userId1} <-> ${userId2}, action: ${action}`);
+
+    if (action === 'accepted') {
+      // When accepted, mark all friend request notifications between these users as read/handled
+      await Notification.updateMany(
+        {
+          $or: [
+            { user: userId1, sender: userId2, type: 'friend_request' },
+            { user: userId2, sender: userId1, type: 'friend_request' }
+          ]
+        },
+        {
+          isRead: true,
+          readAt: new Date(),
+          $set: { 'data.actionTaken': 'accepted' }
+        }
+      );
+
+      // Create acceptance notification for the requester
+      const requester = userId1 === currentUserId ? userId2 : userId1;
+      await notificationService.createNotification({
+        userId: requester,
+        senderId: currentUserId,
+        category: 'social',
+        type: 'friend_request_accepted',
+        title: 'Friend Request Accepted',
+        message: `${req.user.username} accepted your friend request`,
+        data: {
+          userId: currentUserId
+        },
+        actionType: 'VIEW_PROFILE',
+        actionData: { userId: currentUserId }
+      });
+
+    } else if (action === 'rejected') {
+      // When rejected, remove all friend request notifications between these users
+      await Notification.deleteMany({
+        $or: [
+          { user: userId1, sender: userId2, type: 'friend_request' },
+          { user: userId2, sender: userId1, type: 'friend_request' }
+        ]
+      });
+    }
+
+    res.json({ success: true, message: 'Notifications cleaned up' });
+  } catch (error) {
+    console.error('Error cleaning up friend request notifications:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+
 /* ═══════════════════════════════════════════════════════════════════
    🔧 PHASE 1 NEW: DELETE /api/notifications/:notificationId - Delete individual notification
 ═══════════════════════════════════════════════════════════════════ */

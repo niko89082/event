@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
+import { useFriendRequestManager } from '../hooks/useFriendRequestManager';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -33,7 +34,14 @@ export default function ProfileScreen() {
 
   const userId = params?.userId || currentUser?._id;
   const isSelf = !params?.userId || userId === currentUser?._id;
-
+  const friendRequestManager = useFriendRequestManager('ProfileScreen', {
+      showSuccessAlerts: true, // Show success alerts for profile actions
+      onAcceptSuccess: handleFriendRequestAccepted,
+      onRejectSuccess: handleFriendRequestRejected,
+      onCancelSuccess: handleFriendRequestCancelled,
+      onSendSuccess: handleFriendRequestSent,
+      onRefreshRequired: () => fetchUserProfile(true)
+    });
   // State
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -77,6 +85,36 @@ export default function ProfileScreen() {
   useEffect(() => {
     currentTabIndex.current = activeTabIndex;
   }, [activeTabIndex]);
+  function handleFriendRequestAccepted(data) {
+    console.log('🎉 ProfileScreen: Friend request accepted', data);
+    if (data.requesterId === userId) {
+      setFriendshipStatus('friends');
+      setFriendsCount(prev => prev + 1);
+      // Refresh profile to show new content
+      fetchUserProfile(true);
+    }
+  }
+
+  function handleFriendRequestRejected(data) {
+    console.log('❌ ProfileScreen: Friend request rejected', data);
+    if (data.requesterId === userId) {
+      setFriendshipStatus('not-friends');
+    }
+  }
+
+  function handleFriendRequestCancelled(data) {
+    console.log('🚫 ProfileScreen: Friend request cancelled', data);
+    if (data.targetUserId === userId) {
+      setFriendshipStatus('not-friends');
+    }
+  }
+
+  function handleFriendRequestSent(data) {
+    console.log('📤 ProfileScreen: Friend request sent', data);
+    if (data.targetUserId === userId) {
+      setFriendshipStatus('request-sent');
+    }
+  }
 
   // PanResponder for swipe functionality (same as before)
   const panResponder = useRef(
@@ -475,20 +513,33 @@ export default function ProfileScreen() {
 
   // NEW: Handle friend actions
   const handleFriendAction = async () => {
+    if (friendRequestManager.isProcessing()) return;
+
     try {
-      let response;
-      
       switch (friendshipStatus) {
         case 'not-friends':
-          response = await api.post(`/api/friends/request/${userId}`);
-          setFriendshipStatus('request-sent');
-          Alert.alert('Success', 'Friend request sent!');
+          await friendRequestManager.sendRequest(userId, 'I would like to add you as a friend.');
           break;
           
         case 'request-sent':
-          response = await api.delete(`/api/friends/cancel/${userId}`);
-          setFriendshipStatus('not-friends');
-          Alert.alert('Success', 'Friend request cancelled');
+          Alert.alert(
+            'Cancel Friend Request',
+            `Cancel your friend request to ${user?.username}?`,
+            [
+              { text: 'Keep Request', style: 'cancel' },
+              { 
+                text: 'Cancel Request', 
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await friendRequestManager.cancelSentRequest(userId);
+                  } catch (error) {
+                    console.error('Cancel request failed:', error);
+                  }
+                }
+              }
+            ]
+          );
           break;
           
         case 'request-received':
@@ -501,10 +552,9 @@ export default function ProfileScreen() {
                 style: 'cancel',
                 onPress: async () => {
                   try {
-                    await api.delete(`/api/friends/reject/${userId}`);
-                    setFriendshipStatus('not-friends');
+                    await friendRequestManager.rejectRequest(userId);
                   } catch (error) {
-                    Alert.alert('Error', 'Failed to decline request');
+                    console.error('Reject request failed:', error);
                   }
                 }
               },
@@ -512,18 +562,15 @@ export default function ProfileScreen() {
                 text: 'Accept',
                 onPress: async () => {
                   try {
-                    await api.post(`/api/friends/accept/${userId}`);
-                    setFriendshipStatus('friends');
-                    setFriendsCount(prev => prev + 1);
-                    Alert.alert('Success', 'Friend request accepted!');
+                    await friendRequestManager.acceptRequest(userId);
                   } catch (error) {
-                    Alert.alert('Error', 'Failed to accept request');
+                    console.error('Accept request failed:', error);
                   }
                 }
               }
             ]
           );
-          return;
+          break;
           
         case 'friends':
           Alert.alert(
@@ -540,6 +587,8 @@ export default function ProfileScreen() {
                     setFriendshipStatus('not-friends');
                     setFriendsCount(prev => Math.max(0, prev - 1));
                     Alert.alert('Success', 'Friend removed');
+                    // Refresh to hide private content
+                    fetchUserProfile(true);
                   } catch (error) {
                     Alert.alert('Error', 'Failed to remove friend');
                   }
@@ -547,13 +596,69 @@ export default function ProfileScreen() {
               }
             ]
           );
-          return;
+          break;
       }
     } catch (error) {
       console.error('Friend action error:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to perform action');
+      Alert.alert('Error', error.message || 'Failed to perform action');
     }
   };
+
+
+  const renderFriendButton = () => {
+  const isProcessing = friendRequestManager.isProcessing();
+  
+  return (
+    <TouchableOpacity
+      style={[
+        styles.friendButton,
+        friendshipStatus === 'friends' && styles.friendsButton,
+        friendshipStatus === 'request-received' && styles.requestReceivedButton,
+        friendshipStatus === 'request-sent' && styles.requestSentButton,
+        isProcessing && styles.friendButtonDisabled
+      ]}
+      onPress={handleFriendAction}
+      disabled={isProcessing}
+      activeOpacity={0.8}
+    >
+      <View style={styles.friendButtonContent}>
+        {isProcessing ? (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        ) : (
+          <>
+            <Ionicons 
+              name={
+                friendshipStatus === 'friends' ? 'checkmark-circle' :
+                friendshipStatus === 'request-received' ? 'mail' :
+                friendshipStatus === 'request-sent' ? 'time' :
+                'person-add'
+              } 
+              size={16} 
+              color={
+                friendshipStatus === 'friends' ? '#34C759' :
+                friendshipStatus === 'request-received' ? '#FFFFFF' :
+                friendshipStatus === 'request-sent' ? '#8E8E93' :
+                '#FFFFFF'
+              } 
+              style={styles.friendButtonIcon}
+            />
+            <Text style={[
+              styles.friendButtonText,
+              friendshipStatus === 'friends' && styles.friendsButtonText,
+              friendshipStatus === 'request-sent' && styles.requestSentButtonText
+            ]}>
+              {friendshipStatus === 'friends' ? 'Friends' :
+               friendshipStatus === 'request-received' ? 'Respond' :
+               friendshipStatus === 'request-sent' ? 'Requested' :
+               'Add Friend'}
+            </Text>
+          </>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+};
+
 
   // Toggle event sharing (same as before)
   const toggleEventShare = async (eventId) => {
@@ -667,45 +772,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          <TouchableOpacity
-            style={[
-              styles.friendButton,
-              friendshipStatus === 'friends' && styles.friendsButton,
-              friendshipStatus === 'request-received' && styles.requestReceivedButton,
-              friendshipStatus === 'request-sent' && styles.requestSentButton
-            ]}
-            onPress={handleFriendAction}
-            activeOpacity={0.8}
-          >
-            <View style={styles.friendButtonContent}>
-              <Ionicons 
-                name={
-                  friendshipStatus === 'friends' ? 'checkmark-circle' :
-                  friendshipStatus === 'request-received' ? 'mail' :
-                  friendshipStatus === 'request-sent' ? 'time' :
-                  'person-add'
-                } 
-                size={16} 
-                color={
-                  friendshipStatus === 'friends' ? '#34C759' :
-                  friendshipStatus === 'request-received' ? '#FFFFFF' :
-                  friendshipStatus === 'request-sent' ? '#8E8E93' :
-                  '#FFFFFF'
-                } 
-                style={styles.friendButtonIcon}
-              />
-              <Text style={[
-                styles.friendButtonText,
-                friendshipStatus === 'friends' && styles.friendsButtonText,
-                friendshipStatus === 'request-sent' && styles.requestSentButtonText
-              ]}>
-                {friendshipStatus === 'friends' ? 'Friends' :
-                 friendshipStatus === 'request-received' ? 'Respond' :
-                 friendshipStatus === 'request-sent' ? 'Requested' :
-                 'Add Friend'}
-              </Text>
-            </View>
-          </TouchableOpacity>
+          renderFriendButton()
         )}
       </View>
     </View>
@@ -1791,5 +1858,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  friendButtonDisabled: {
+    opacity: 0.6,
   },
 });

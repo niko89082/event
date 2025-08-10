@@ -9,6 +9,7 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { useIsFocused } from '@react-navigation/native';
 import { API_BASE_URL } from '@env';
+import { useFriendRequestManager } from '../hooks/useFriendRequestManager';
 
 // Import our new swipeable component
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
@@ -27,7 +28,12 @@ export default function NotificationScreen({ navigation }) {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [processingRequests, setProcessingRequests] = useState(new Set()); // Track processing friend requests
-
+  const friendRequestManager = useFriendRequestManager('NotificationScreen', {
+      showSuccessAlerts: false, // We handle our own alerts
+      onAcceptSuccess: handleFriendRequestAccepted,
+      onRejectSuccess: handleFriendRequestRejected,
+      onRefreshRequired: () => fetchNotifications(true)
+    });
   const CATEGORIES = [
     { key: 'all', label: 'All', icon: 'notifications-outline' },
     { key: 'social', label: 'Social', icon: 'people-outline' },
@@ -77,6 +83,59 @@ export default function NotificationScreen({ navigation }) {
     }
   }, [isFocused, activeCategory]);
 
+  function handleFriendRequestAccepted(data) {
+  console.log('🎉 NotificationScreen: Friend request accepted', data);
+  
+  // Update the notification in the list
+  setNotifications(prev => prev.map(notif => {
+    if (notif._id === data.notificationId || 
+        (notif.sender._id === data.requesterId && notif.type === 'friend_request')) {
+      return {
+        ...notif,
+        data: {
+          ...notif.data,
+          actionTaken: 'accepted'
+        }
+      };
+    }
+    return notif;
+  }));
+
+  // Update unread counts
+  setUnreadCounts(prev => ({
+    ...prev,
+    social: Math.max(0, prev.social - 1)
+  }));
+
+  // ✅ NEW: Clean up any duplicate/stale friend request notifications
+  if (data.requesterId && currentUser?._id) {
+    cleanupFriendRequestNotifications(data.requesterId, currentUser._id, 'accepted');
+  }
+
+  // ✅ NEW: Refresh notifications after a short delay to sync with backend
+  setTimeout(() => {
+    fetchNotifications(true);
+  }, 2000);
+}
+
+
+  function handleFriendRequestRejected(data) {
+    console.log('❌ NotificationScreen: Friend request rejected', data);
+    
+    // Remove the notification from the list (auto-remove rejected requests)
+    setNotifications(prev => prev.filter(notif => {
+      const isTargetNotification = notif._id === data.notificationId || 
+        (notif.sender._id === data.requesterId && notif.type === 'friend_request');
+      return !isTargetNotification;
+    }));
+
+    // Update unread counts
+    setUnreadCounts(prev => ({
+      ...prev,
+      social: Math.max(0, prev.social - 1)
+    }));
+  }
+
   /* ═══════════════════════════════════════════════════════════════════
      🔧 PHASE 2 NEW: Enhanced notification deletion with optimistic updates
   ═══════════════════════════════════════════════════════════════════ */
@@ -124,54 +183,46 @@ export default function NotificationScreen({ navigation }) {
 
   
 const FriendRequestActions = ({ notification, onActionComplete }) => {
-  const [loading, setLoading] = useState(null); // 'accept' | 'reject' | null
   const [actionTaken, setActionTaken] = useState(notification.data?.actionTaken || null);
+  const requesterId = notification.sender._id;
+  const notificationId = notification._id;
+
+  // ✅ NEW: Check if users are already friends (this handles the case where friendship was established outside notifications)
+  const [currentFriendshipStatus, setCurrentFriendshipStatus] = useState(null);
+
+  useEffect(() => {
+    // Check current friendship status when component mounts
+    const checkFriendshipStatus = async () => {
+      try {
+        const response = await api.get(`/api/friends/status/${requesterId}`);
+        setCurrentFriendshipStatus(response.data.status);
+      } catch (error) {
+        console.error('Error checking friendship status:', error);
+      }
+    };
+
+    checkFriendshipStatus();
+  }, [requesterId]);
 
   const handleAccept = async () => {
-    if (loading || actionTaken) return;
+    if (friendRequestManager.isProcessing()) return;
     
-    setLoading('accept');
     try {
-      console.log('🤝 Accepting friend request from:', notification.sender.username);
+      await friendRequestManager.acceptRequest(requesterId, notificationId);
+      setActionTaken('accepted');
+      setCurrentFriendshipStatus('friends');
       
-      // ✅ FIXED: Use the quick-accept endpoint
-      const response = await api.post(`/api/friends/quick-accept/${notification.sender._id}`);
-      
-      if (response.data.success) {
-        setActionTaken('accepted');
-        
-        // ✅ ENHANCED: Pass notification state for UI handling
-        onActionComplete('accepted', notification._id, {
-          ...response.data.data,
-          notificationState: response.data.data.notificationState
-        });
-        
-        // Show enhanced success feedback
-        Alert.alert(
-          '🎉 Friend Request Accepted!',
-          response.data.message || `You and ${notification.sender.username} are now friends!`,
-          [{ text: 'Great!', style: 'default' }]
-        );
-      }
+      // Call the existing onActionComplete for backward compatibility
+      onActionComplete('accepted', notificationId, { actionTaken: 'accepted' });
     } catch (error) {
       console.error('Error accepting friend request:', error);
-      
-      const errorMessage = error.response?.data?.message || 'Failed to accept friend request. Please try again.';
-      
-      Alert.alert(
-        'Error',
-        errorMessage,
-        [{ text: 'OK', style: 'default' }]
-      );
-    } finally {
-      setLoading(null);
+      Alert.alert('Error', 'Failed to accept friend request. Please try again.');
     }
   };
 
   const handleReject = async () => {
-    if (loading || actionTaken) return;
+    if (friendRequestManager.isProcessing()) return;
     
-    // Show confirmation dialog
     Alert.alert(
       'Reject Friend Request',
       `Are you sure you want to reject ${notification.sender.username}'s friend request?`,
@@ -181,48 +232,17 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
           text: 'Reject', 
           style: 'destructive',
           onPress: async () => {
-            setLoading('reject');
             try {
-              console.log('❌ Rejecting friend request from:', notification.sender.username);
+              await friendRequestManager.rejectRequest(requesterId, notificationId, null, {
+                autoRemove: true
+              });
+              setActionTaken('rejected');
               
-              // ✅ FIXED: Use the quick-reject endpoint
-              const response = await api.post(`/api/friends/quick-reject/${notification.sender._id}`);
-              
-              if (response.data.success) {
-                setActionTaken('rejected');
-                
-                // ✅ ENHANCED: Pass notification state for UI handling
-                onActionComplete('rejected', notification._id, {
-                  ...response.data.data,
-                  notificationState: response.data.data.notificationState
-                });
-                
-                // ✅ NEW: Show rejection feedback and auto-remove
-                Alert.alert(
-                  'Friend Request Rejected',
-                  `You rejected ${notification.sender.username}'s friend request.`,
-                  [{ 
-                    text: 'OK', 
-                    style: 'default',
-                    onPress: () => {
-                      // Auto-remove the notification from list
-                      // This will be handled by the parent component
-                    }
-                  }]
-                );
-              }
+              // Call the existing onActionComplete for backward compatibility
+              onActionComplete('rejected', notificationId, { shouldRemove: true });
             } catch (error) {
               console.error('Error rejecting friend request:', error);
-              
-              const errorMessage = error.response?.data?.message || 'Failed to reject friend request. Please try again.';
-              
-              Alert.alert(
-                'Error',
-                errorMessage,
-                [{ text: 'OK', style: 'default' }]
-              );
-            } finally {
-              setLoading(null);
+              Alert.alert('Error', 'Failed to reject friend request. Please try again.');
             }
           }
         }
@@ -230,8 +250,11 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     );
   };
 
-  // ✅ ENHANCED: Show different states based on action taken
-  if (actionTaken === 'accepted') {
+  // ✅ NEW: If they're already friends, show the accepted state
+  const finalActionTaken = currentFriendshipStatus === 'friends' ? 'accepted' : actionTaken;
+
+  // Show different states based on action taken
+  if (finalActionTaken === 'accepted') {
     return (
       <View style={styles.friendRequestResult}>
         <View style={[styles.resultBadge, styles.acceptedBadge]}>
@@ -241,10 +264,9 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
         <Text style={styles.friendshipMessage}>
           You and {notification.sender.username} are now friends!
         </Text>
-        {/* ✅ NEW: Allow swipe to delete */}
         <TouchableOpacity 
           style={styles.deleteButton} 
-          onPress={() => onActionComplete('delete', notification._id, { shouldRemove: true })}
+          onPress={() => handleDeleteNotification(notification._id)}
         >
           <Text style={styles.deleteButtonText}>Dismiss</Text>
         </TouchableOpacity>
@@ -252,25 +274,26 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     );
   }
 
-  if (actionTaken === 'rejected') {
-    // ✅ NEW: Auto-remove rejected notifications
-    // This notification should be removed from the list
+  if (finalActionTaken === 'rejected') {
+    // This should not render since rejected notifications are auto-removed
     return null;
   }
 
   // Show action buttons for pending requests
+  const isProcessing = friendRequestManager.isProcessing();
+  
   return (
     <View style={styles.friendRequestActions}>
       <TouchableOpacity
         style={[
           styles.actionButton,
           styles.rejectButton,
-          loading === 'reject' && styles.buttonLoading
+          isProcessing && styles.buttonLoading
         ]}
         onPress={handleReject}
-        disabled={loading}
+        disabled={isProcessing}
       >
-        {loading === 'reject' ? (
+        {isProcessing ? (
           <ActivityIndicator size="small" color="#FFFFFF" />
         ) : (
           <>
@@ -284,12 +307,12 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
         style={[
           styles.actionButton,
           styles.acceptButton,
-          loading === 'accept' && styles.buttonLoading
+          isProcessing && styles.buttonLoading
         ]}
         onPress={handleAccept}
-        disabled={loading}
+        disabled={isProcessing}
       >
-        {loading === 'accept' ? (
+        {isProcessing ? (
           <ActivityIndicator size="small" color="#FFFFFF" />
         ) : (
           <>
@@ -301,7 +324,6 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     </View>
   );
 };
-
 
   const fetchNotifications = async (reset = false) => {
     try {
@@ -418,6 +440,20 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
   /* ═══════════════════════════════════════════════════════════════════
      NAVIGATION ACTIONS
   ═══════════════════════════════════════════════════════════════════ */
+  const cleanupFriendRequestNotifications = async (userId1, userId2, action) => {
+  try {
+    // Call backend endpoint to clean up related notifications
+    await api.post('/api/notifications/cleanup-friend-requests', {
+      userId1,
+      userId2,
+      action // 'accepted' or 'rejected'
+    });
+    console.log('✅ Cleaned up friend request notifications');
+  } catch (error) {
+    console.error('❌ Error cleaning up notifications:', error);
+  }
+};
+
 
   const handleNotificationPress = async (notification) => {
     // Don't navigate if it's a friend request - handled by buttons
@@ -1036,4 +1072,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
+  deleteButton: {
+      marginTop: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 6,
+    },
+    deleteButtonText: {
+      color: '#3797EF',
+      fontSize: 13,
+      fontWeight: '500',
+    },
+    friendshipMessage: {
+      fontSize: 14,
+      color: '#1C1C1E',
+      textAlign: 'center',
+      marginTop: 8,
+    },
 });
