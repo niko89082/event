@@ -302,6 +302,35 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     fetchPhotoLikes(photoId);
   };
 
+  
+  const handlePhotoDeleted = async (photoId, shouldRefreshMemory = false) => {
+  console.log('🗑️ Photo deleted:', photoId);
+  
+  if (shouldRefreshMemory) {
+    console.log('🔄 Refreshing memory after photo deletion...');
+    
+    try {
+      // Refetch the memory data to get updated photo list
+      await fetchMemoryDetails();
+      
+      console.log('✅ Memory refreshed successfully after photo deletion');
+    } catch (error) {
+      console.error('❌ Failed to refresh memory after photo deletion:', error);
+      // Fallback: Remove photo from local state
+      setMemory(prevMemory => ({
+        ...prevMemory,
+        photos: prevMemory.photos.filter(p => p._id !== photoId)
+      }));
+    }
+  } else {
+    // Fallback: Just remove from local state
+    setMemory(prevMemory => ({
+      ...prevMemory,
+      photos: prevMemory.photos.filter(p => p._id !== photoId)
+    }));
+  }
+};
+
   // ✅ FIXED: Add null safety for user checks
   const isHost = currentUser?._id && memory?.creator?._id && memory.creator._id === currentUser._id;
   const isParticipant = currentUser?._id && memory && (
@@ -712,21 +741,22 @@ export default function MemoryDetailsScreen({ route, navigation }) {
 
   // ✅ SIMPLIFIED: Photo rendering using centralized store data
   const renderPhoto = ({ item: photo }) => {
-    console.log('🖼️ Rendering memory photo:', {
-      photoId: photo._id,
-      uploadedBy: photo.uploadedBy?.username
-    });
-    
-    return (
-      <MemoryPhotoItem
-        photo={photo}
-        onCommentUpdate={handleCommentUpdate}
-        onOpenComments={handleOpenComments}
-        onOpenFullscreen={handleOpenFullscreen}
-        onOpenLikes={handleOpenLikes}
-      />
-    );
-  };
+  console.log('🖼️ Rendering memory photo:', {
+    photoId: photo._id,
+    uploadedBy: photo.uploadedBy?.username
+  });
+  
+  return (
+    <MemoryPhotoItem
+      photo={photo}
+      onCommentUpdate={handleCommentUpdate}
+      onOpenComments={handleOpenComments}
+      onOpenFullscreen={handleOpenFullscreen}
+      onOpenLikes={handleOpenLikes}
+      onPhotoDeleted={handlePhotoDeleted} // ✅ NEW: Pass the deletion handler
+    />
+  );
+};
 
   const renderParticipant = ({ item: participant }) => {
     if (!participant?._id) {

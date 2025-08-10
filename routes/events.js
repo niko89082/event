@@ -1533,10 +1533,21 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       console.log(`✅ Event assigned check-in form ${checkInFormId}`);
     }
 
-    // Handle cover image
+    const { coverImageSource } = req.body;
+
+  if (coverImageSource === 'template') {
+    // Handle template images - they're pre-optimized assets
+    eventData.coverImage = req.body.coverImage; // Template path from frontend
+    eventData.coverImageSource = 'template';
+    console.log('✅ Using template cover image:', req.body.coverImage);
+  } else {
+    // Handle uploaded images normally
     if (req.file) {
       eventData.coverImage = `/uploads/covers/${req.file.filename}`;
+      eventData.coverImageSource = 'upload';
+      console.log('✅ Using uploaded cover image:', eventData.coverImage);
     }
+  }
 
     console.log('🔧 Final event data privacy settings:', {
       privacyLevel: eventData.privacyLevel,

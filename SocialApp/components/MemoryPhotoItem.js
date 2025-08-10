@@ -2,12 +2,13 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, 
-  Animated, Alert, Dimensions, TextInput, KeyboardAvoidingView, Platform
+  Animated, Alert, Dimensions, TextInput, KeyboardAvoidingView, Platform, ActionSheetIOS, ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../services/AuthContext';
 import usePostsStore from '../stores/postsStore';
+import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -16,7 +17,8 @@ export default function MemoryPhotoItem({
   photo, 
   onCommentUpdate, 
   onOpenComments,
-  onOpenFullscreen
+  onOpenFullscreen,
+  onPhotoDeleted // New prop for handling photo deletion
 }) {
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
@@ -36,7 +38,9 @@ export default function MemoryPhotoItem({
   // Local state for UI interactions only
   const [commentText, setCommentText] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
-  const [isLiking, setIsLiking] = useState(false);
+  const [deletingPhoto, setDeletingPhoto] = useState(false);
+  // COMMENTED OUT: Like functionality state
+  // const [isLiking, setIsLiking] = useState(false);
 
   // State for image dimensions to maintain aspect ratio
   const [imageDimensions, setImageDimensions] = useState({
@@ -44,12 +48,11 @@ export default function MemoryPhotoItem({
     height: 300
   });
 
-  // Animation refs for heart double-tap
-  const heartScale = useRef(new Animated.Value(0)).current;
+  // COMMENTED OUT: Animation refs for heart double-tap
+  // const heartScale = useRef(new Animated.Value(0)).current;
   const scaleValue = useRef(new Animated.Value(1)).current;
-  const lastTap = useRef(0);
-
-  const DOUBLE_PRESS_DELAY = 300;
+  // const lastTap = useRef(0);
+  // const DOUBLE_PRESS_DELAY = 300;
 
   // ✅ FIXED: Initialize post in store if not present
   useEffect(() => {
@@ -126,7 +129,8 @@ export default function MemoryPhotoItem({
     }
   };
 
-  // ✅ FIXED: Simplified like handler using centralized store
+  // COMMENTED OUT: ✅ FIXED: Simplified like handler using centralized store
+  /*
   const handleLike = async () => {
     if (isLiking) {
       console.log('⚠️ Like request already in progress, ignoring');
@@ -182,8 +186,10 @@ export default function MemoryPhotoItem({
       setIsLiking(false);
     }
   };
+  */
 
-  // ✅ NEW: Separate heart animation function
+  // COMMENTED OUT: ✅ NEW: Separate heart animation function
+  /*
   const triggerHeartAnimation = () => {
     heartScale.setValue(0);
     
@@ -214,6 +220,13 @@ export default function MemoryPhotoItem({
         useNativeDriver: true,
       }),
     ]).start();
+  };
+  */
+
+  // Check if current user can delete this photo
+  const canDeletePhoto = () => {
+    return photo.uploadedBy?._id === currentUser?._id || 
+           photo.memory?.creator === currentUser?._id; // Memory creator can delete any photo
   };
 
   // ✅ FIXED: Simplified comment submission using centralized store
@@ -250,10 +263,16 @@ export default function MemoryPhotoItem({
       setCommentText('');
       console.log('✅ Inline memory comment submitted successfully');
 
+      // ✅ UPDATED: Increment comment count in local state for immediate UI update
+      updatePost(photo._id, {
+        ...postData,
+        commentCount: (postData.commentCount || 0) + 1
+      });
+
       // Notify parent component if callback provided
       if (onCommentUpdate) {
         onCommentUpdate(photo._id, {
-          commentCount: postData.commentCount + 1
+          commentCount: (postData.commentCount || 0) + 1
         });
       }
 
@@ -265,7 +284,94 @@ export default function MemoryPhotoItem({
     }
   };
 
+  // Handle photo options (delete)
+  const handlePhotoOptions = () => {
+    if (!canDeletePhoto()) return;
+
+    const options = ['Delete Photo', 'Cancel'];
+    
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: options,
+          destructiveButtonIndex: 0,
+          cancelButtonIndex: 1,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) {
+            handleDeletePhoto();
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Photo Options',
+        'What would you like to do?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete Photo', style: 'destructive', onPress: handleDeletePhoto }
+        ]
+      );
+    }
+  };
+
+  // Handle photo deletion
+  const handleDeletePhoto = () => {
+    Alert.alert(
+      'Delete Photo',
+      'This photo will be permanently removed from the memory. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingPhoto(true);
+              
+              // Find the memory ID - check if it's in the photo object or fetch it
+              const memoryId = photo.memory?._id || photo.memory;
+              
+              if (!memoryId) {
+                throw new Error('Memory ID not found');
+              }
+
+              // Use the backend endpoint: DELETE /api/memories/:id/photos/:photoId
+              await api.delete(`/api/memories/${memoryId}/photos/${photo._id}`);
+              
+              // ✅ UPDATED: Notify parent component about deletion for memory refresh
+              if (onPhotoDeleted) {
+                onPhotoDeleted(photo._id, true); // Pass true to indicate memory should refresh
+              }
+              
+              Alert.alert('Success', 'Photo deleted successfully');
+              
+            } catch (error) {
+              console.error('❌ Error deleting memory photo:', error);
+              
+              let errorMessage = 'Failed to delete photo';
+              if (error.response?.status === 404) {
+                errorMessage = 'Photo not found';
+              } else if (error.response?.status === 403) {
+                errorMessage = 'You do not have permission to delete this photo';
+              } else if (error.response?.data?.message) {
+                errorMessage = error.response.data.message;
+              }
+              
+              Alert.alert('Error', errorMessage);
+            } finally {
+              setDeletingPhoto(false);
+            }
+          }
+        },
+      ]
+    );
+  };
+
+  // UPDATED: Simplified image press handler (removed double-tap like)
   const handleImagePress = () => {
+    // COMMENTED OUT: Double-tap like functionality
+    /*
     const now = Date.now();
     const timeSinceLastTap = now - lastTap.current;
 
@@ -285,15 +391,16 @@ export default function MemoryPhotoItem({
     }
 
     lastTap.current = now;
-  };
+    */
 
-  const handleCommentsPress = () => {
-    if (onOpenComments) {
-      onOpenComments(photo._id);
+    // Simple single tap to open fullscreen
+    if (onOpenFullscreen) {
+      onOpenFullscreen(photo);
     }
   };
 
-  // Navigate to dedicated likes screen
+  // COMMENTED OUT: Navigate to dedicated likes screen
+  /*
   const handleLikesPress = () => {
     if (postData.likeCount > 0) {
       navigation.navigate('PostLikesScreen', { 
@@ -302,6 +409,29 @@ export default function MemoryPhotoItem({
         isMemoryPost: true
       });
     }
+  };
+  */
+
+  // ✅ UPDATED: Handle comments press - navigate to UnifiedDetailsScreen
+  const handleCommentsPress = () => {
+    console.log('📱 MemoryPhotoItem: Comments pressed, navigating to UnifiedDetails');
+    
+    // Navigate to UnifiedDetailsScreen for memory photos with comment focus
+    navigation.navigate('UnifiedDetailsScreen', { 
+      postId: photo._id,
+      postType: 'memory',
+      openKeyboard: false, // ✅ UPDATED: Don't auto-open keyboard
+      post: {
+        ...photo,
+        postType: 'memory',
+        user: photo.uploadedBy,
+        createdAt: photo.uploadedAt,
+        memoryInfo: {
+          memoryId: photo.memory?._id || photo.memory,
+          memoryTitle: photo.memory?.title || 'Memory'
+        }
+      }
+    });
   };
 
   const photoUrl = getImageUrl(photo.url);
@@ -334,6 +464,21 @@ export default function MemoryPhotoItem({
             </Text>
           </View>
         </View>
+        
+        {/* Three Dots Menu for Photo Options */}
+        {canDeletePhoto() && (
+          <TouchableOpacity
+            onPress={handlePhotoOptions}
+            style={styles.optionsButton}
+            disabled={deletingPhoto}
+          >
+            {deletingPhoto ? (
+              <ActivityIndicator size="small" color="#8E8E93" />
+            ) : (
+              <Ionicons name="ellipsis-horizontal" size={20} color="#8E8E93" />
+            )}
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Photo with overlay interactions */}
@@ -361,7 +506,8 @@ export default function MemoryPhotoItem({
             }}
           />
           
-          {/* Floating heart animation */}
+          {/* COMMENTED OUT: Floating heart animation */}
+          {/*
           <Animated.View 
             style={[
               styles.floatingHeart,
@@ -373,13 +519,15 @@ export default function MemoryPhotoItem({
           >
             <Ionicons name="heart" size={60} color="#FF3B30" />
           </Animated.View>
+          */}
         </TouchableOpacity>
       </Animated.View>
 
-      {/* Actions Row */}
+      {/* COMMENTED OUT: Actions Row */}
+      {/*
       <View style={styles.actionsRow}>
         <View style={styles.leftActions}>
-          {/* Like Button */}
+          // COMMENTED OUT: Like Button
           <TouchableOpacity
             onPress={handleLike}
             disabled={isLiking}
@@ -392,7 +540,7 @@ export default function MemoryPhotoItem({
             />
           </TouchableOpacity>
 
-          {/* Comment Button */}
+          // Comment Button
           <TouchableOpacity
             onPress={handleCommentsPress}
             style={styles.actionButton}
@@ -401,10 +549,12 @@ export default function MemoryPhotoItem({
           </TouchableOpacity>
         </View>
       </View>
+      */}
 
       {/* Stats Section */}
       <View style={styles.statsSection}>
-        {/* Like Count - Clickable */}
+        {/* COMMENTED OUT: Like Count - Clickable */}
+        {/*
         {postData.likeCount > 0 && (
           <TouchableOpacity onPress={handleLikesPress} style={styles.likesContainer}>
             <Text style={styles.likesText}>
@@ -412,6 +562,7 @@ export default function MemoryPhotoItem({
             </Text>
           </TouchableOpacity>
         )}
+        */}
 
         {/* Caption - only show if present */}
         {photo.caption && (
@@ -423,11 +574,22 @@ export default function MemoryPhotoItem({
           </View>
         )}
 
-        {/* View Comments Link */}
+        {/* COMMENTED OUT: View Comments Link */}
+        {/*
         {postData.commentCount > 0 && (
           <TouchableOpacity onPress={handleCommentsPress} style={styles.viewCommentsContainer}>
             <Text style={styles.viewCommentsText}>
               View all {postData.commentCount} comment{postData.commentCount === 1 ? '' : 's'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        */}
+
+        {/* ✅ NEW: Show comment count after commenting */}
+        {postData.commentCount > 0 && (
+          <TouchableOpacity onPress={handleCommentsPress} style={styles.viewCommentsContainer}>
+            <Text style={styles.viewCommentsText}>
+              View {postData.commentCount === 1 ? '1 comment' : `${postData.commentCount} comments`}
             </Text>
           </TouchableOpacity>
         )}
@@ -489,6 +651,9 @@ const styles = StyleSheet.create({
 
   // Header styles
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#FAFAFA',
@@ -496,6 +661,7 @@ const styles = StyleSheet.create({
   userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   avatarContainer: {
     borderRadius: 14,
@@ -524,6 +690,11 @@ const styles = StyleSheet.create({
     marginTop: 1,
     fontWeight: '500',
   },
+  optionsButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#F0F0F0',
+  },
 
   // Image styles
   imageContainer: {
@@ -534,6 +705,8 @@ const styles = StyleSheet.create({
   photo: {
     backgroundColor: '#F6F6F6',
   },
+  // COMMENTED OUT: Floating heart styles
+  /*
   floatingHeart: {
     position: 'absolute',
     top: '50%',
@@ -542,6 +715,7 @@ const styles = StyleSheet.create({
     marginLeft: -30,
     zIndex: 10,
   },
+  */
 
   // Actions styles
   actionsRow: {
@@ -564,18 +738,21 @@ const styles = StyleSheet.create({
   // Stats styles
   statsSection: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 8, // ✅ UPDATED: Reduced bottom padding
     backgroundColor: '#FFFFFF',
   },
-  likesContainer: {
-    marginBottom: 4,
+  viewCommentsContainer: {
+    marginTop: 8, // ✅ UPDATED: Consistent spacing from caption
+    marginBottom: 8, // ✅ UPDATED: Space before comment input
   },
-  likesText: {
+  viewCommentsText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
+    color: '#8E8E93',
+    fontWeight: '500',
   },
   captionContainer: {
+    marginTop: 8,
+    marginBottom: 4, // ✅ UPDATED: Small margin below caption
     marginTop: 8,
   },
   captionText: {

@@ -16,6 +16,8 @@ import PaymentSetupComponent from '../components/PaymentSetupComponent';
 import SimplifiedEventPrivacySettings from '../components/SimplifiedEventPrivacySettings';
 import { FEATURES } from '../config/features';
 
+import CoverTemplateModal from '../components/CoverTemplateModal';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PERMISSION_PRESETS = {
   public: {
@@ -169,6 +171,8 @@ export default function CreateEventScreen({ navigation, route }) {
   const [showFormModal, setShowFormModal] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
 
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [coverSource, setCoverSource] = useState(null); // 'template' | 'upload'
   useEffect(() => {
     checkPaymentStatus();
     
@@ -392,7 +396,7 @@ export default function CreateEventScreen({ navigation, route }) {
     Alert.alert('Feature Unavailable', 'This feature is temporarily disabled.');
     return;
   }
-  
+
   if (!canProceed() || creating) return;
 
   try {
@@ -407,7 +411,7 @@ export default function CreateEventScreen({ navigation, route }) {
     formData.append('location', location.trim());
     formData.append('category', category);
     formData.append('maxAttendees', parseInt(maxAttendees) || 0);
-    
+    formData.append('coverImageSource', coverSource || 'upload');
     // PHASE 1: Only send privacy level - backend sets appropriate permissions
     formData.append('privacyLevel', privacyLevel);
     formData.append('allowGuestPasses', true); // Enable guest passes for all privacy levels
@@ -501,24 +505,92 @@ export default function CreateEventScreen({ navigation, route }) {
     }
   };
 
-  const pickCoverImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [16, 9],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        setCover(result.assets[0].uri);
+  // Replace your existing pickCoverImage function with this enhanced version
+const pickCoverImage = () => {
+  if (Platform.OS === 'ios') {
+    // iOS Action Sheet with template option
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ['Cancel', 'Browse Templates', 'Choose from Gallery', 'Take Photo'],
+        cancelButtonIndex: 0,
+      },
+      (buttonIndex) => {
+        switch (buttonIndex) {
+          case 1:
+            setShowTemplateModal(true);
+            break;
+          case 2:
+            pickFromGallery();
+            break;
+          case 3:
+            takePhoto();
+            break;
+        }
       }
-    } catch (error) {
-      console.error('Image picker error:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
+    );
+  } else {
+    // Android - show custom alert
+    Alert.alert(
+      'Choose Cover Photo',
+      'How would you like to add a cover photo?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Browse Templates', onPress: () => setShowTemplateModal(true) },
+        { text: 'Choose from Gallery', onPress: pickFromGallery },
+        { text: 'Take Photo', onPress: takePhoto }
+      ]
+    );
+  }
+};
 
+// Add these helper functions for gallery and camera
+const pickFromGallery = async () => {
+  const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  
+  if (permissionResult.granted === false) {
+    Alert.alert('Permission Required', 'Permission to access camera roll is required!');
+    return;
+  }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: true,
+    aspect: [16, 9],
+    quality: 0.8,
+  });
+
+  if (!result.canceled) {
+    setCover(result.assets[0].uri);
+    setCoverSource('upload');
+  }
+};
+
+const takePhoto = async () => {
+  const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+  
+  if (permissionResult.granted === false) {
+    Alert.alert('Permission Required', 'Permission to access camera is required!');
+    return;
+  }
+
+  const result = await ImagePicker.launchCameraAsync({
+    allowsEditing: true,
+    aspect: [16, 9],
+    quality: 0.8,
+  });
+
+  if (!result.canceled) {
+    setCover(result.assets[0].uri);
+    setCoverSource('upload');
+  }
+};
+  const handleTemplateSelect = (template) => {
+    // Convert template image to URI format
+    // In production, you'd resolve the require() path to a proper URI
+    setCover(template.image);
+    setCoverSource('template');
+    console.log('Selected template:', template.name);
+  };
   const onDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
     if (selectedDate) {
@@ -579,23 +651,38 @@ export default function CreateEventScreen({ navigation, route }) {
         >
           <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
             {/* Cover Image Section */}
-            <TouchableOpacity
-              style={styles.coverSection}
-              onPress={pickCoverImage}
-              activeOpacity={0.9}
-            >
-              {cover ? (
-                <Image source={{ uri: cover }} style={styles.coverImage} />
-              ) : (
-                <View style={styles.coverPlaceholder}>
-                  <Ionicons name="camera" size={48} color="#C7C7CC" />
-                  <Text style={styles.coverPlaceholderText}>Add Cover Photo</Text>
-                </View>
-              )}
-              <View style={styles.coverOverlay}>
-                <Ionicons name="camera" size={24} color="#FFFFFF" />
-              </View>
-            </TouchableOpacity>
+            {/* Enhanced Cover Image Section */}
+<TouchableOpacity
+  style={styles.coverSection}
+  onPress={pickCoverImage}
+  activeOpacity={0.9}
+>
+  {cover ? (
+    <>
+      <Image source={{ uri: cover }} style={styles.coverImage} />
+      {/* Show source indicator */}
+      <View style={styles.coverSourceIndicator}>
+        <Ionicons 
+          name={coverSource === 'template' ? 'color-palette' : 'camera'} 
+          size={16} 
+          color="#FFFFFF" 
+        />
+        <Text style={styles.coverSourceText}>
+          {coverSource === 'template' ? 'Template' : 'Custom'}
+        </Text>
+      </View>
+    </>
+  ) : (
+    <View style={styles.coverPlaceholder}>
+      <Ionicons name="images" size={48} color="#C7C7CC" />
+      <Text style={styles.coverPlaceholderText}>Add Cover Photo</Text>
+      <Text style={styles.coverPlaceholderSubtext}>Choose a template or upload your own</Text>
+    </View>
+  )}
+  <View style={styles.coverOverlay}>
+    <Ionicons name="camera" size={24} color="#FFFFFF" />
+  </View>
+</TouchableOpacity>
 
             <View style={styles.formContainer}>
               {/* Title */}
@@ -766,6 +853,12 @@ export default function CreateEventScreen({ navigation, route }) {
             onClose={() => setShowPaymentSetup(false)}
           />
         )}
+        <CoverTemplateModal
+          visible={showTemplateModal}
+          onClose={() => setShowTemplateModal(false)}
+          onSelectTemplate={handleTemplateSelect}
+          eventTitle={title || "Your Event"}
+        />
       </SafeAreaView>
     );
   }
@@ -2184,4 +2277,28 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
   },
+  // Add these to your existing styles
+coverPlaceholderSubtext: {
+  fontSize: 14,
+  color: '#C7C7CC',
+  marginTop: 4,
+  textAlign: 'center',
+},
+coverSourceIndicator: {
+  position: 'absolute',
+  top: 16,
+  left: 16,
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: 'rgba(0,0,0,0.7)',
+  borderRadius: 12,
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+},
+coverSourceText: {
+  marginLeft: 4,
+  fontSize: 12,
+  fontWeight: '500',
+  color: '#FFFFFF',
+},
 });
