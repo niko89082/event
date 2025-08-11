@@ -34,6 +34,7 @@ import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { API_BASE_URL } from '@env';
 import useEventStore from '../stores/eventStore';
+import ShareEventModal from '../components/ShareEventModal';
 import { FEATURES } from '../config/features';
 
 const PHOTO_FEATURES_ENABLED = false;
@@ -82,14 +83,10 @@ export default function EventDetailsScreen() {
   const [payPalOrderId, setPayPalOrderId] = useState(null);
   const [payPalApprovalUrl, setPayPalApprovalUrl] = useState(null);
   
-  // Enhanced modals
-  const [showShareInviteModal, setShowShareInviteModal] = useState(false);
-  const [shareInviteMode, setShareInviteMode] = useState('share'); // 'share' or 'invite'
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [selectedUsers, setSelectedUsers] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [inviting, setInviting] = useState(false);
+  // Enhanced modal
+
+  const [showShareModal, setShowShareModal] = useState(false);
+
 
   // NEW: UI Enhancement states
   const [showFullDescription, setShowFullDescription] = useState(false);
@@ -139,7 +136,7 @@ export default function EventDetailsScreen() {
               {/* Invite */}
               <TouchableOpacity
                 style={styles.bottomBarButton}
-                onPress={() => handleShareInvite('invite')}
+                onPress={handleShareInvite}
                 activeOpacity={0.7}
               >
                 <View style={styles.bottomBarButtonInner}>
@@ -233,7 +230,7 @@ export default function EventDetailsScreen() {
               {canShare && (
                 <TouchableOpacity
                   style={styles.bottomBarButton}
-                  onPress={() => handleShareInvite('share')}
+                  onPress={handleShareInvite}
                   activeOpacity={0.7}
                 >
                   <View style={styles.bottomBarButtonInner}>
@@ -359,141 +356,13 @@ export default function EventDetailsScreen() {
     return event?.pricing && !event.pricing.isFree && event.pricing.amount > 0;
   };
     const renderShareInviteModal = () => (
-  <Modal
-    visible={showShareInviteModal}
-    animationType="slide"
-    presentationStyle="pageSheet"
-    onRequestClose={() => setShowShareInviteModal(false)}
-  >
-    <SafeAreaView style={styles.modalContainer}>
-      <View style={styles.modalHeader}>
-        <TouchableOpacity
-          onPress={() => setShowShareInviteModal(false)}
-          style={styles.modalCloseButton}
-        >
-          <Text style={styles.modalCloseText}>Cancel</Text>
-        </TouchableOpacity>
-        <Text style={styles.modalTitle}>
-          {shareInviteMode === 'share' ? 'Share Event' : 'Invite Friends'}
-        </Text>
-        <View style={styles.modalHeaderSpacer} />
-      </View>
-
-      {shareInviteMode === 'share' ? (
-        <View style={styles.shareOptionsContainer}>
-          <TouchableOpacity
-            style={styles.shareOption}
-            onPress={handleShare}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="share" size={24} color="#3797EF" />
-            <Text style={styles.shareOptionText}>Share Link</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.shareOption}
-            onPress={() => setShareInviteMode('invite')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="person-add" size={24} color="#3797EF" />
-            <Text style={styles.shareOptionText}>Invite Friends</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.inviteContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder={getSearchPlaceholder()}
-            value={searchQuery}
-            onChangeText={(text) => {
-              setSearchQuery(text);
-              // ✅ FIXED: Trigger search when text changes (was missing in your code)
-              searchUsers(text);
-            }}
-            placeholderTextColor="#8E8E93"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          
-          {/* ✅ PHASE 2: Added privacy info section */}
-          {event?.privacyLevel && (
-            <View style={styles.privacyInfoSection}>
-              <View style={styles.privacyInfo}>
-                <Ionicons 
-                  name={event.privacyLevel === 'private' ? 'lock-closed' : event.privacyLevel === 'friends' ? 'people' : 'globe'} 
-                  size={16} 
-                  color="#8E8E93" 
-                />
-                <Text style={styles.privacyText}>
-                  {event.privacyLevel === 'friends' 
-                    ? 'You can only invite friends to this event'
-                    : event.privacyLevel === 'private'
-                    ? 'Private event - only friends can be invited'
-                    : 'Invite any of your friends to this event'
-                  }
-                </Text>
-              </View>
-            </View>
-          )}
-
-          {searching && (
-            <View style={styles.searchingContainer}>
-              <ActivityIndicator size="small" color="#3797EF" />
-              <Text style={styles.searchingText}>Searching...</Text>
-            </View>
-          )}
-
-          <FlatList
-            data={searchResults}
-            keyExtractor={(item) => item._id}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[
-                  styles.userItem,
-                  selectedUsers.some(u => u._id === item._id) && styles.userItemSelected
-                ]}
-                onPress={() => toggleUserSelection(item)}
-                activeOpacity={0.7}
-              >
-                <Image
-                  source={{
-                    uri: item.profilePicture
-                      ? `http://${API_BASE_URL}:3000${item.profilePicture}`
-                      : 'https://placehold.co/40x40.png?text=👤'
-                  }}
-                  style={styles.userAvatar}
-                />
-                <Text style={styles.userUsername}>
-                  {item.displayName || item.username}
-                </Text>
-                {selectedUsers.some(u => u._id === item._id) && (
-                  <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
-                )}
-              </TouchableOpacity>
-            )}
-            style={styles.usersList}
-          />
-
-          {selectedUsers.length > 0 && (
-            <TouchableOpacity
-              style={styles.sendInvitesButton}
-              onPress={handleSendInvites}
-              disabled={inviting}
-              activeOpacity={0.7}
-            >
-              {inviting ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.sendInvitesButtonText}>
-                  Send Invites ({selectedUsers.length})
-                </Text>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-    </SafeAreaView>
-  </Modal>
+  <ShareEventModal
+  visible={showShareModal}
+  onClose={() => setShowShareModal(false)}
+  event={event}
+  currentUser={currentUser}
+  onInviteSuccess={handleInviteSuccess}
+/>
 );
   const getCurrentPrice = () => {
     if (!isPaidEvent()) return 0;
@@ -1113,158 +982,9 @@ export default function EventDetailsScreen() {
   };
 
   // Enhanced Share & Invite functionality
-  const handleShareInvite = (mode = 'share') => {
-    setShareInviteMode(mode);
-    setShowShareInviteModal(true);
-    setSearchQuery('');
-    setSearchResults([]);
-    setSelectedUsers([]);
-  };
-  const getInviteButtonText = () => {
-  switch (event?.privacyLevel) {
-    case 'private':
-      return isHost || isCoHost ? 'Invite Friends' : 'Share Event';
-    case 'friends':
-      return 'Invite Friends';
-    case 'public':
-      return 'Invite & Share';
-    default:
-      return 'Invite';
-  }
+  const handleShareInvite = () => {
+  setShowShareModal(true);
 };
-  const searchUsers = async (query) => {
-  if (query.trim().length < 2) {
-    setSearchResults([]);
-    return;
-  }
-
-  try {
-    setSearching(true);
-    console.log(`🔍 PHASE 2: EventDetails searching friends for query: "${query}"`);
-    
-    // Use friends-only search endpoint
-    const response = await api.get(`/api/users/friends/search`, {
-      params: { 
-        q: encodeURIComponent(query),
-        eventId: eventId,
-        limit: 20
-      }
-    });
-    
-    console.log(`✅ PHASE 2: EventDetails found ${response.data.length} friends`);
-    setSearchResults(response.data);
-    
-  } catch (error) {
-    console.error('Search error:', error);
-    
-    // Handle error appropriately based on event privacy level
-    if (error.response?.status === 404) {
-      // No friends found - this is normal, just show empty results
-      setSearchResults([]);
-    } else {
-      console.warn('Failed to search friends:', error.response?.data?.message || error.message);
-      setSearchResults([]);
-    }
-  } finally {
-    setSearching(false);
-  }
-};
-
-  const toggleUserSelection = (user) => {
-    setSelectedUsers(prev => {
-      const isSelected = prev.some(u => u._id === user._id);
-      if (isSelected) {
-        return prev.filter(u => u._id !== user._id);
-      } else {
-        return [...prev, user];
-      }
-    });
-  };
-
-  const handleSendInvites = async () => {
-  if (selectedUsers.length === 0) return;
-
-  try {
-    setInviting(true);
-    console.log(`📨 PHASE 2: Sending invites to ${selectedUsers.length} friends`);
-    
-    await api.post(`/api/events/${eventId}/invite`, {
-      userIds: selectedUsers.map(u => u._id)
-    });
-
-    // Success message with privacy context
-    const getSuccessMessage = () => {
-      if (event?.privacyLevel === 'friends') {
-        return `Successfully invited ${selectedUsers.length} friend${selectedUsers.length === 1 ? '' : 's'} to the event. They will be notified and can join directly.`;
-      } else if (event?.privacyLevel === 'private') {
-        return `Successfully sent ${selectedUsers.length} private invitation${selectedUsers.length === 1 ? '' : 's'}. Invited users will receive exclusive access to the event.`;
-      } else {
-        return `Successfully invited ${selectedUsers.length} friend${selectedUsers.length === 1 ? '' : 's'} to the event.`;
-      }
-    };
-
-    Alert.alert('Invites Sent!', getSuccessMessage());
-    setShowShareInviteModal(false);
-    setSelectedUsers([]);
-    setSearchQuery('');
-    setSearchResults([]);
-    
-  } catch (error) {
-    console.error('Invite error:', error);
-    
-    // Handle specific error cases with user-friendly messages
-    if (error.response?.status === 400 && error.response?.data?.message?.includes('friends')) {
-      Alert.alert(
-        'Friends Only Event',
-        'You can only invite friends to this event. Some selected users may not be in your friends list.'
-      );
-    } else if (error.response?.status === 403) {
-      const message = error.response?.data?.message;
-      if (message?.includes('private')) {
-        Alert.alert(
-          'Permission Denied',
-          'Only the event host can send invitations to private events.'
-        );
-      } else {
-        Alert.alert(
-          'Permission Denied',
-          message || 'You do not have permission to invite users to this event.'
-        );
-      }
-    } else {
-      Alert.alert(
-        'Error', 
-        'Failed to send invites. Please check your connection and try again.'
-      );
-    }
-  } finally {
-    setInviting(false);
-  }
-};
-const getSearchPlaceholder = () => {
-  if (event?.privacyLevel === 'friends') {
-    return 'Search your friends...';
-  } else if (event?.privacyLevel === 'private') {
-    return 'Search friends to invite...';
-  } else {
-    return 'Search your friends...';
-  }
-};
-  // NEW: Enhanced share functionality
-  const handleShare = async () => {
-    try {
-      const shareUrl = `https://yourapp.com/events/${eventId}`; // Replace with your actual deep link
-      const shareContent = {
-        message: `Check out this event: ${event.title}\n\n${event.description}\n\n${shareUrl}`,
-        url: shareUrl,
-        title: event.title
-      };
-
-      await Share.share(shareContent);
-    } catch (error) {
-      console.error('Share error:', error);
-    }
-  };
 
   if (loading) {
     return (
@@ -1293,6 +1013,11 @@ const getSearchPlaceholder = () => {
     );
   }
 
+const handleInviteSuccess = (result) => {
+  // Refresh event data to show updated invite counts
+  fetchEvent();
+  console.log('✅ Invites sent successfully:', result);
+};
   const isHost = String(event.host?._id || event.host) === String(currentUser?._id);
   const isCoHost = event.coHosts?.some(c => String(c._id || c) === String(currentUser?._id));
   const canInvite = event.canUserInvite?.(currentUser?._id) || isHost || isCoHost;

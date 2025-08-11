@@ -10,6 +10,8 @@ import { API_BASE_URL } from '@env';
 import useEventStore from '../stores/eventStore'; // Import centralized store
 import { FEATURES } from '../config/features';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import ShareEventModal from './ShareEventModal';
+import { useCurrentUser } from '../hooks/useCurrentUser'; // Adjust import path
 
 export default function EventCard({
   event: initialEvent,
@@ -19,11 +21,12 @@ export default function EventCard({
   showRecommendationReason = false,
   onAttend, // Keep for backward compatibility but won't use
 }) {
+  const { currentUser } = useCurrentUser();
   // Get event data and actions from centralized store
   const storeEvent = useEventStore(state => state.getEvent(initialEvent._id));
   const toggleRSVP = useEventStore(state => state.toggleRSVP);
   const confirmEventPayment = useEventStore(state => state.confirmEventPayment);
-
+  const [showShareModal, setShowShareModal] = useState(false);
   // Use store data if available, otherwise fall back to initial event
   const event = storeEvent || initialEvent;
 
@@ -49,7 +52,15 @@ export default function EventCard({
   const past = new Date(event.time) <= new Date();
   const isHost = (event.host?._id || event.host) === currentUserId;
   const canAttend = !past && !isHost && !isAttending && !joinRequestSent;
-
+const handleInviteSuccess = (inviteData) => {
+  // Optional: Update local state or show success message
+  console.log('✅ Invites sent successfully:', inviteData);
+  
+  // Optional: Refresh event data if needed
+  // if (onEventUpdate) {
+  //   onEventUpdate();
+  // }
+};
   // CENTRALIZED RSVP HANDLING
   const handleAttendPress = async (e) => {
     e.stopPropagation(); // Prevent card press when tapping attend button
@@ -110,9 +121,9 @@ export default function EventCard({
 
   // FIXED: Separate handler for share button
   const handleSharePress = (e) => {
-    e.stopPropagation(); // Prevent card press when sharing
-    Alert.alert('Share', 'Share functionality coming soon!');
-  };
+  e.stopPropagation(); // Prevent card press when sharing
+  setShowShareModal(true);
+};
 
   // Helper function to get formatted price
   const getFormattedPrice = () => {
@@ -410,6 +421,13 @@ export default function EventCard({
           </View>
         )}
       </View>
+      <ShareEventModal
+      visible={showShareModal}
+      onClose={() => setShowShareModal(false)}
+      event={event}
+      currentUser={currentUser}
+      onInviteSuccess={handleInviteSuccess}
+    />
     </TouchableOpacity>
   );
 }
