@@ -37,11 +37,11 @@ const ACTIVITY_TYPES = {
     weight: 2.0,
     maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
   },
-  'event_photo_upload': { 
-    priority: 'medium', 
-    weight: 1.3,
-    maxAge: 5 * 24 * 60 * 60 * 1000 // 5 days
-  },
+  // 'event_photo_upload': { 
+  //   priority: 'medium', 
+  //   weight: 1.3,
+  //   maxAge: 5 * 24 * 60 * 60 * 1000 // 5 days
+  // },
   'friend_event_join': { 
     priority: 'medium', 
     weight: 1.1,
@@ -99,7 +99,7 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
   
   try {
     const photoComments = await Photo.aggregate([
-      // ✅ FIXED: Add time range filtering first
+      // Add time range filtering first
       {
         $match: {
           'comments.createdAt': {
@@ -113,7 +113,7 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
       {
         $unwind: { path: '$comments', preserveNullAndEmptyArrays: false }
       },
-      // ✅ FIXED: Filter by time range again after unwinding
+      // Filter by time range again after unwinding
       {
         $match: {
           'comments.createdAt': {
@@ -146,16 +146,16 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
       {
         $unwind: { path: '$commenter', preserveNullAndEmptyArrays: false }
       },
-      // ✅ FIXED: Improved visibility logic
+      // ✅ FIXED: Improved visibility logic - REMOVED user's own comments
       {
         $match: {
           $or: [
             // Show comments on your own photos (from anyone)
             { 'photoOwner._id': userId },
             // Show comments from your friends (on any photo you can see)
-            { 'commenter._id': { $in: friendIds } },
-            // Show your own comments (on photos you can see)
-            { 'comments.user': userId }
+            { 'commenter._id': { $in: friendIds } }
+            // ❌ REMOVED: Show your own comments (this was causing the issue)
+            // { 'comments.user': userId }
           ]
         }
       },
@@ -211,7 +211,7 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
       metadata: {
         actionable: true, // Users can view the photo/comment
         grouped: false,
-        priority: 'medium' // ✅ FIXED: Updated priority
+        priority: 'medium'
       },
       score: calculateActivityScore(comment.comment, 'photo_comment', userId)
     }));
@@ -223,28 +223,74 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
 };
 
 // ✅ FIXED: Memory photo comments with proper time filtering and friend logic
+// ✅ FIX 2: Memory photo comments based on participation, not friendship
 const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
   console.log('💬 Fetching memory photo comments...');
   console.log('📅 Time range:', { start: timeRange.start, end: timeRange.end });
-  console.log('👥 Friend IDs count:', friendIds.length);
   
   try {
-    // Get user's accepted friends
-    const user = await User.findById(userId);
-    const userFriendIds = user.getAcceptedFriends();
+    // ✅ STEP 1: Get memories user participates in (creator or participant)
+    const userMemories = await Memory.find({
+      $or: [
+        { creator: userId },
+        { participants: userId }
+      ]
+    }).select('_id creator participants title');
 
+    const userMemoryIds = userMemories.map(memory => memory._id);
+    console.log(`🧠 User participates in ${userMemoryIds.length} memories`);
+
+    if (userMemoryIds.length === 0) {
+      console.log('💬 No accessible memories found for user');
+      return [];
+    }
+
+    // ✅ STEP 2: Get all participants from these memories (not just friends)
+    const memoryParticipantIds = new Set();
+    userMemories.forEach(memory => {
+      // Add creator
+      memoryParticipantIds.add(String(memory.creator));
+      // Add all participants
+      if (memory.participants && Array.isArray(memory.participants)) {
+        memory.participants.forEach(participantId => {
+          memoryParticipantIds.add(String(participantId));
+        });
+      }
+    });
+    
+    // Convert to ObjectIds for MongoDB aggregation
+    const memoryParticipantObjectIds = Array.from(memoryParticipantIds)
+      .map(id => new mongoose.Types.ObjectId(id));
+
+    console.log(`👥 Found ${memoryParticipantIds.size} total memory participants (including user)`);
+
+    // ✅ STEP 3: Fetch memory photo comments from memory participants
     const memoryPhotoComments = await MemoryPhoto.aggregate([
-      // ✅ FIXED: Add time range filtering first
+      // Filter by time range and accessible memories
       {
         $match: {
-          isDeleted: false,
+          memory: { $in: userMemoryIds }, // Only from memories user can access
+          'comments.createdAt': {
+            $gte: timeRange.start,
+            $lte: timeRange.end
+          },
+          isDeleted: false
+        }
+      },
+      // Unwind comments to work with individual comments
+      {
+        $unwind: { path: '$comments', preserveNullAndEmptyArrays: false }
+      },
+      // Filter by time range again after unwinding
+      {
+        $match: {
           'comments.createdAt': {
             $gte: timeRange.start,
             $lte: timeRange.end
           }
         }
       },
-      // Get memory info to check access
+      // Get memory info
       {
         $lookup: {
           from: 'memories',
@@ -255,28 +301,6 @@ const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
       },
       {
         $unwind: { path: '$memoryData', preserveNullAndEmptyArrays: false }
-      },
-      // ✅ FIXED: Filter by memory access (user is creator or participant)
-      {
-        $match: {
-          $or: [
-            { 'memoryData.creator': userId },
-            { 'memoryData.participants': userId }
-          ]
-        }
-      },
-      // Unwind comments
-      {
-        $unwind: { path: '$comments', preserveNullAndEmptyArrays: false }
-      },
-      // ✅ FIXED: Filter by time range again after unwinding
-      {
-        $match: {
-          'comments.createdAt': {
-            $gte: timeRange.start,
-            $lte: timeRange.end
-          }
-        }
       },
       // Get photo uploader info
       {
@@ -301,6 +325,25 @@ const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
       },
       {
         $unwind: { path: '$commenter', preserveNullAndEmptyArrays: false }
+      },
+      // ✅ FIXED: Show comments from memory participants, not just friends
+      // AND exclude user's own comments
+      {
+        $match: {
+          $and: [
+            // Show comments from memory participants (including uploader comments on others' photos)
+            {
+              $or: [
+                // Comments on photos uploaded by user (from any memory participant)
+                { 'uploadedBy': userId },
+                // Comments from memory participants (on any photo in shared memories)
+                { 'commenter._id': { $in: memoryParticipantObjectIds } }
+              ]
+            },
+            // ✅ EXCLUDE user's own comments (this was missing before)
+            { 'comments.user': { $ne: userId } }
+          ]
+        }
       },
       {
         $project: {
@@ -338,7 +381,7 @@ const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
       }
     ]);
 
-    console.log(`💬 Found ${memoryPhotoComments.length} memory photo comments`);
+    console.log(`💬 Found ${memoryPhotoComments.length} memory photo comments from participants`);
 
     // Transform to activity format
     return memoryPhotoComments.map(comment => ({
@@ -359,7 +402,7 @@ const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
       metadata: {
         actionable: true, // Users can view the photo/comment
         grouped: false,
-        priority: 'medium' // ✅ FIXED: Updated priority
+        priority: 'medium'
       },
       score: calculateActivityScore(comment.comment, 'memory_photo_comment', userId)
     }));
@@ -744,17 +787,13 @@ const fetchMemoryPhotoUploads = async (userId, friendIds, timeRange) => {
   console.log('📸 Fetching memory photo uploads...');
   
   try {
-    // Get user's accepted friends
-    const user = await User.findById(userId);
-    const userFriendIds = user.getAcceptedFriends().map(id => String(id));
-    
-    // Find memories the user can see (where they're creator or participant)
+    // ✅ STEP 1: Find memories the user can see (where they're creator or participant)
     const userMemories = await Memory.find({
       $or: [
         { creator: userId },
         { participants: userId }
       ]
-    }).select('_id');
+    }).select('_id creator participants');
     
     const userMemoryIds = userMemories.map(m => m._id);
     
@@ -764,13 +803,34 @@ const fetchMemoryPhotoUploads = async (userId, friendIds, timeRange) => {
     }
     
     console.log(`📸 User can see ${userMemoryIds.length} memories`);
+
+    // ✅ STEP 2: Get all participants from these memories (not just friends)
+    const memoryParticipantIds = new Set();
+    userMemories.forEach(memory => {
+      // Add creator
+      memoryParticipantIds.add(String(memory.creator));
+      // Add all participants
+      if (memory.participants && Array.isArray(memory.participants)) {
+        memory.participants.forEach(participantId => {
+          memoryParticipantIds.add(String(participantId));
+        });
+      }
+    });
     
-    // Find memory photo uploads from friends to memories user can see
+    // Convert to ObjectIds for MongoDB aggregation (exclude current user)
+    const memoryParticipantObjectIds = Array.from(memoryParticipantIds)
+      .filter(id => String(id) !== String(userId)) // Don't show user their own uploads
+      .map(id => new mongoose.Types.ObjectId(id));
+
+    console.log(`👥 Found ${memoryParticipantIds.size} total memory participants`);
+    console.log(`📤 Will show uploads from ${memoryParticipantObjectIds.length} other participants`);
+
+    // ✅ STEP 3: Find memory photo uploads from memory participants (not just friends)
     const memoryPhotoUploads = await MemoryPhoto.aggregate([
       {
         $match: {
-          memory: { $in: userMemoryIds },
-          uploadedBy: { $in: friendIds }, // Photos uploaded by friends
+          memory: { $in: userMemoryIds }, // Only from memories user can access
+          uploadedBy: { $in: memoryParticipantObjectIds }, // ✅ FIXED: From memory participants, not just friends
           uploadedAt: { $gte: timeRange.start },
           isDeleted: false
         }
@@ -841,7 +901,7 @@ const fetchMemoryPhotoUploads = async (userId, friendIds, timeRange) => {
       }
     ]);
 
-    console.log(`📸 Found ${memoryPhotoUploads.length} memory photo uploads`);
+    console.log(`📸 Found ${memoryPhotoUploads.length} memory photo uploads from participants`);
 
     // Transform to activity format
     return memoryPhotoUploads.map(upload => ({
@@ -911,102 +971,102 @@ const fetchEventInvitations = async (userId, timeRange) => {
   }));
 };
 
-const fetchEventPhotoUploads = async (userId, friendIds, timeRange) => {
-  console.log('📷 Fetching event photo uploads...');
+// const fetchEventPhotoUploads = async (userId, friendIds, timeRange) => {
+//   console.log('📷 Fetching event photo uploads...');
   
-  // Get user's accepted friends for privacy checking
-  const user = await User.findById(userId).select('attendingEvents');
-  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
-  const attendingEventIds = user.attendingEvents || [];
+//   // Get user's accepted friends for privacy checking
+//   const user = await User.findById(userId).select('attendingEvents');
+//   const userFriendIds = user.getAcceptedFriends().map(id => String(id));
+//   const attendingEventIds = user.attendingEvents || [];
   
-  // ✅ PRIVACY FIX: Filter out private events completely
-  const photoUploads = await Photo.aggregate([
-    {
-      $match: {
-        user: { $in: friendIds },
-        event: { $in: attendingEventIds },
-        uploadDate: { $gte: timeRange.start },
-        $or: [
-          { isDeleted: { $exists: false } },
-          { isDeleted: false }
-        ]
-      }
-    },
-    {
-      $lookup: {
-        from: 'events',
-        localField: 'event',
-        foreignField: '_id',
-        as: 'eventData'
-      }
-    },
-    {
-      $lookup: {
-        from: 'users',
-        localField: 'user',
-        foreignField: '_id',
-        as: 'userData'
-      }
-    },
-    {
-      $unwind: { path: '$eventData', preserveNullAndEmptyArrays: false }
-    },
-    {
-      $unwind: { path: '$userData', preserveNullAndEmptyArrays: false }
-    },
-    {
-      $match: {
-        // ✅ CRITICAL PRIVACY FILTER: Exclude private events completely
-        $or: [
-          { 'eventData.privacyLevel': 'public' },
-          { 
-            'eventData.privacyLevel': 'friends',
-            'eventData.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
-          }
-          // Private events completely excluded - no photos from private events show up
-        ]
-      }
-    },
-    { $sort: { uploadDate: -1 } },
-    { $limit: 30 }
-  ]);
+//   // ✅ PRIVACY FIX: Filter out private events completely
+//   const photoUploads = await Photo.aggregate([
+//     {
+//       $match: {
+//         user: { $in: friendIds },
+//         event: { $in: attendingEventIds },
+//         uploadDate: { $gte: timeRange.start },
+//         $or: [
+//           { isDeleted: { $exists: false } },
+//           { isDeleted: false }
+//         ]
+//       }
+//     },
+//     {
+//       $lookup: {
+//         from: 'events',
+//         localField: 'event',
+//         foreignField: '_id',
+//         as: 'eventData'
+//       }
+//     },
+//     {
+//       $lookup: {
+//         from: 'users',
+//         localField: 'user',
+//         foreignField: '_id',
+//         as: 'userData'
+//       }
+//     },
+//     {
+//       $unwind: { path: '$eventData', preserveNullAndEmptyArrays: false }
+//     },
+//     {
+//       $unwind: { path: '$userData', preserveNullAndEmptyArrays: false }
+//     },
+//     {
+//       $match: {
+//         // ✅ CRITICAL PRIVACY FILTER: Exclude private events completely
+//         $or: [
+//           { 'eventData.privacyLevel': 'public' },
+//           { 
+//             'eventData.privacyLevel': 'friends',
+//             'eventData.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+//           }
+//           // Private events completely excluded - no photos from private events show up
+//         ]
+//       }
+//     },
+//     { $sort: { uploadDate: -1 } },
+//     { $limit: 30 }
+//   ]);
 
-  console.log(`🔒 Privacy filtered: Found ${photoUploads.length} event photo uploads (private events excluded)`);
+//   console.log(`🔒 Privacy filtered: Found ${photoUploads.length} event photo uploads (private events excluded)`);
 
-  return photoUploads.map(photo => {
-    // Check if user can add this person as friend
-    const canAddFriend = !friendIds.includes(photo.userData._id) && 
-                        String(photo.userData._id) !== String(userId);
+//   return photoUploads.map(photo => {
+//     // Check if user can add this person as friend
+//     const canAddFriend = !friendIds.includes(photo.userData._id) && 
+//                         String(photo.userData._id) !== String(userId);
     
-    return {
-      _id: `eventphoto_${photo._id}`,
-      activityType: 'event_photo_upload',
-      timestamp: photo.uploadDate,
-      user: photo.userData,
-      data: {
-        photo: {
-          _id: photo._id,
-          url: photo.paths?.[0] || photo.url,
-          caption: photo.caption
-        },
-        event: {
-          _id: photo.eventData._id,
-          title: photo.eventData.title,
-          coverImage: photo.eventData.coverImage,
-          privacyLevel: photo.eventData.privacyLevel // Include for debugging
-        },
-        uploader: photo.userData,
-        canAddFriend
-      },
-      metadata: {
-        actionable: canAddFriend,
-        grouped: false,
-        priority: 'medium'
-      },
-      score: calculateActivityScore(photo, 'event_photo_upload', userId)
-    };
-  });
-};
+//     return {
+//       _id: `eventphoto_${photo._id}`,
+//       activityType: 'event_photo_upload',
+//       timestamp: photo.uploadDate,
+//       user: photo.userData,
+//       data: {
+//         photo: {
+//           _id: photo._id,
+//           url: photo.paths?.[0] || photo.url,
+//           caption: photo.caption
+//         },
+//         event: {
+//           _id: photo.eventData._id,
+//           title: photo.eventData.title,
+//           coverImage: photo.eventData.coverImage,
+//           privacyLevel: photo.eventData.privacyLevel // Include for debugging
+//         },
+//         uploader: photo.userData,
+//         canAddFriend
+//       },
+//       metadata: {
+//         actionable: canAddFriend,
+//         grouped: false,
+//         priority: 'medium'
+//       },
+//       score: calculateActivityScore(photo, 'event_photo_upload', userId)
+//     };
+//   });
+// };
 
 const fetchFriendEventJoins = async (userId, friendIds, timeRange) => {
   console.log('👥 Fetching friend event joins...');
@@ -1377,7 +1437,7 @@ router.get('/feed/activity', protect, async (req, res) => {
       regularPosts,
       memoryPosts,
       eventInvitations,
-      eventPhotoUploads,
+     //eventPhotoUploads,
       friendEventJoins,
       friendRequests,
       friendRequestsAccepted,
@@ -1391,7 +1451,7 @@ router.get('/feed/activity', protect, async (req, res) => {
       fetchRegularPosts(userId, friendIds, timeRange),
       fetchMemoryPosts(userId, friendIds, timeRange),
       fetchEventInvitations(userId, timeRange),
-      fetchEventPhotoUploads(userId, friendIds, timeRange),
+      //fetchEventPhotoUploads(userId, friendIds, timeRange),
       fetchFriendEventJoins(userId, friendIds, timeRange),
       fetchFriendRequests(userId, timeRange),
       fetchFriendRequestsAccepted(userId, friendIds, timeRange),
@@ -1407,7 +1467,7 @@ router.get('/feed/activity', protect, async (req, res) => {
       regularPosts: regularPosts.length,
       memoryPosts: memoryPosts.length,
       eventInvitations: eventInvitations.length,
-      eventPhotoUploads: eventPhotoUploads.length,
+     // eventPhotoUploads: eventPhotoUploads.length,
       friendEventJoins: friendEventJoins.length,
       friendRequests: friendRequests.length,
       friendRequestsAccepted: friendRequestsAccepted.length,
@@ -1424,7 +1484,7 @@ router.get('/feed/activity', protect, async (req, res) => {
       ...regularPosts,
       ...memoryPosts,
       ...eventInvitations,
-      ...eventPhotoUploads,
+      //...eventPhotoUploads,
       ...friendEventJoins,
       ...friendRequests,
       ...friendRequestsAccepted,
@@ -1495,7 +1555,7 @@ router.get('/feed/activity', protect, async (req, res) => {
           regularPosts: regularPosts.length,
           memoryPosts: memoryPosts.length,
           eventInvitations: eventInvitations.length,
-          eventPhotoUploads: eventPhotoUploads.length,
+         // eventPhotoUploads: eventPhotoUploads.length,
           friendEventJoins: friendEventJoins.length,
           friendRequests: friendRequests.length,
           friendRequestsAccepted: friendRequestsAccepted.length,
