@@ -997,11 +997,12 @@ router.get('/event-timeline', protect, async (req, res) => {
 });
 
 
+// routes/users.js - FIXED friends/search endpoint
 router.get('/friends/search', protect, async (req, res) => {
   try {
     const { q, eventId, memoryId, limit = 20 } = req.query;
     
-    console.log(`🔍 PHASE 2: Friends search - Query: "${q}", EventId: ${eventId}, MemoryId: ${memoryId}`);
+    console.log(`🔍 FIXED: Friends search - Query: "${q}", EventId: ${eventId}, MemoryId: ${memoryId}`);
 
     // Allow single character searches
     if (!q || q.trim().length === 0) {
@@ -1012,12 +1013,15 @@ router.get('/friends/search', protect, async (req, res) => {
     const friendIds = currentUser ? currentUser.getAcceptedFriends() : [];
     
     if (friendIds.length === 0) {
+      console.log('❌ User has no friends');
       return res.json([]);
     }
 
+    console.log(`📊 User has ${friendIds.length} friends`);
+
     const searchTerm = q.trim();
     
-    // 🆕 Enhanced search with better typo tolerance
+    // Enhanced search with better typo tolerance
     const searchQueries = [];
     
     // 1. Exact partial matches (highest priority)
@@ -1040,7 +1044,6 @@ router.get('/friends/search', protect, async (req, res) => {
     
     // 3. Fuzzy matches for typos (if search term is 3+ chars)
     if (searchTerm.length >= 3) {
-      // Split search term into words for better matching
       const words = searchTerm.split(/\s+/).filter(word => word.length > 0);
       
       if (words.length > 0) {
@@ -1054,31 +1057,33 @@ router.get('/friends/search', protect, async (req, res) => {
       }
     }
 
-    // Base query filters
+    // Base query filters - ONLY search within friends
     const baseQuery = {
       _id: { $in: friendIds }
     };
 
-    // Handle exclusions for events/memories
+    // 🔧 FIXED: Don't exclude event participants, but mark their attendance status
+    let eventAttendees = [];
+    let eventInvited = [];
+    
     if (eventId) {
       try {
-        const event = await Event.findById(eventId).select('invitedUsers attendees');
+        const event = await Event.findById(eventId).select('invitedUsers attendees host');
         if (event) {
-          const excludeUserIds = [
-            ...(event.invitedUsers || []),
-            ...(event.attendees || [])
-          ].map(id => String(id));
+          eventAttendees = (event.attendees || []).map(id => String(id));
+          eventInvited = (event.invitedUsers || []).map(id => String(id));
           
-          baseQuery._id.$nin = excludeUserIds;
-          console.log(`🚫 Excluding ${excludeUserIds.length} event participants`);
+          console.log(`📋 Event has ${eventAttendees.length} attendees and ${eventInvited.length} invited users`);
         }
       } catch (eventError) {
-        console.error('Error fetching event for exclusion:', eventError);
+        console.error('Error fetching event for status:', eventError);
       }
     }
 
+    // 🔧 FIXED: For memories, still exclude participants since we don't want duplicates
     if (memoryId) {
       try {
+        const Memory = require('../models/Memory'); // Make sure Memory model is imported
         const memory = await Memory.findById(memoryId).select('creator participants');
         if (memory) {
           const excludeUserIds = [
@@ -1094,7 +1099,7 @@ router.get('/friends/search', protect, async (req, res) => {
       }
     }
 
-    // 🆕 Search with priority ordering
+    // Search with priority ordering
     let allResults = [];
     
     for (const searchQuery of searchQueries) {
@@ -1102,7 +1107,7 @@ router.get('/friends/search', protect, async (req, res) => {
       
       const results = await User.find(query)
         .select('username displayName fullName profilePicture')
-        .lean(); // Use lean() for better performance
+        .lean();
       
       // Add results that aren't already found
       const newResults = results.filter(result => 
@@ -1117,10 +1122,29 @@ router.get('/friends/search', protect, async (req, res) => {
       }
     }
 
-    // 🆕 Sort by relevance
+    // 🆕 ADD ATTENDANCE STATUS TO RESULTS
+    allResults = allResults.map(user => {
+      const userId = String(user._id);
+      const isAttending = eventAttendees.includes(userId);
+      const isInvited = eventInvited.includes(userId);
+      
+      return {
+        ...user,
+        // Add attendance status for frontend to use
+        attendanceStatus: isAttending ? 'attending' : isInvited ? 'invited' : 'none',
+        isAttending,
+        isInvited
+      };
+    });
+
+    // Sort by relevance (attending users first, then alphabetical)
     allResults = allResults
       .slice(0, parseInt(limit))
       .sort((a, b) => {
+        // First, sort by attendance status (non-attending first for easier selection)
+        if (a.isAttending && !b.isAttending) return 1;
+        if (!a.isAttending && b.isAttending) return -1;
+        
         const aUsername = (a.username || '').toLowerCase();
         const bUsername = (b.username || '').toLowerCase();
         const aDisplay = (a.displayName || '').toLowerCase();
@@ -1140,12 +1164,17 @@ router.get('/friends/search', protect, async (req, res) => {
         return aUsername.localeCompare(bUsername);
       });
 
-    console.log(`✅ Found ${allResults.length} friends matching "${searchTerm}"`);
+    console.log(`✅ FIXED: Found ${allResults.length} friends matching "${searchTerm}"`);
+    console.log(`📊 Results breakdown:`, {
+      attending: allResults.filter(u => u.isAttending).length,
+      invited: allResults.filter(u => u.isInvited).length,
+      available: allResults.filter(u => !u.isAttending && !u.isInvited).length
+    });
 
     res.json(allResults);
 
   } catch (error) {
-    console.error('❌ Friends search error:', error);
+    console.error('❌ FIXED: Friends search error:', error);
     res.status(500).json({ 
       message: 'Server error during friends search',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'

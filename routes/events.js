@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const Event = require('../models/Event');
 const Group = require('../models/Group');
+const { validateEventInvitation, validateSharingPermission } = require('../middleware/invitationValidation');
 const Photo = require('../models/Photo');
 const { onEventJoin, onEventCreated } = require('../utils/activityHooks');
 const EventDiscoveryService = require('../services/eventDiscoveryService');
@@ -3667,15 +3668,114 @@ router.delete('/join-request/:eventId/:userId/reject', protect, async (req, res)
     res.status(500).json({ message: 'Server error' });
   }
 });
+async function validateFriendsOnlyInvitation(inviterId, userIds) {
+  try {
+    // Get inviter's friends list
+    const inviter = await User.findById(inviterId)
+      .populate('following', '_id')
+      .populate('followers', '_id');
+    
+    if (!inviter) {
+      return { allAreFriends: false, validUsers: [], invalidUsers: userIds };
+    }
+
+    // Create set of friend IDs (followers + following for mutual friendship)
+    const followingIds = new Set(inviter.following.map(u => u._id.toString()));
+    const followerIds = new Set(inviter.followers.map(u => u._id.toString()));
+    
+    // Friends are users who are both following and followers (mutual)
+    const friendIds = new Set([...followingIds].filter(id => followerIds.has(id)));
+
+    // Validate each user ID
+    const validUsers = [];
+    const invalidUsers = [];
+
+    for (const userId of userIds) {
+      const userIdStr = userId.toString();
+      if (friendIds.has(userIdStr)) {
+        validUsers.push(userId);
+      } else {
+        invalidUsers.push(userId);
+      }
+    }
+
+    return {
+      allAreFriends: invalidUsers.length === 0,
+      validUsers,
+      invalidUsers
+    };
+
+  } catch (error) {
+    console.error('Friends validation error:', error);
+    return { allAreFriends: false, validUsers: [], invalidUsers: userIds };
+  }
+}
+
+function getInvitationPermissionMessage(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return 'Anyone can invite others to public events';
+    case 'friends':
+      return 'Only the event host and co-hosts can invite friends to this event';
+    case 'private':
+      return 'Only the event host and co-hosts can send private invitations';
+    default:
+      return 'You do not have permission to invite users to this event';
+  }
+}
+function getDefaultInvitationMessage(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return 'You\'re invited to join this public event!';
+    case 'friends':
+      return 'You\'re invited to this friends-only event!';
+    case 'private':
+      return 'You\'ve received a private invitation to this exclusive event!';
+    default:
+      return 'You\'re invited to this event!';
+  }
+}
+function getInvitationType(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return 'public_invite';
+    case 'friends':
+      return 'friends_invite';
+    case 'private':
+      return 'private_invite';
+    default:
+      return 'standard_invite';
+  }
+}
+
+/**
+ * Get notification title based on privacy level
+ */
+function getInvitationNotificationTitle(privacyLevel) {
+  switch (privacyLevel) {
+    case 'public':
+      return 'Event Invitation';
+    case 'friends':
+      return 'Friends Event Invitation';
+    case 'private':
+      return 'Private Event Invitation';
+    default:
+      return 'Event Invitation';
+  }
+}
 
 // Invite Users to Event
 router.post('/:eventId/invite', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
     const { userIds } = req.body;
+    
+    // ✅ ADD MISSING IMPORTS
+    const mongoose = require('mongoose');
+    const Notification = require('../models/Notification'); // ✅ MISSING IMPORT
 
-    console.log(`📨 Processing invite for event ${eventId} from user ${req.user._id}`);
-    console.log(`📨 Inviting users:`, userIds);
+    console.log(`🔍 DEBUG: Processing invite for event ${eventId} from user ${req.user._id}`);
+    console.log(`🔍 DEBUG: Inviting users:`, userIds);
 
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({ message: 'userIds array is required' });
@@ -3686,42 +3786,38 @@ router.post('/:eventId/invite', protect, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Check if user can invite
+    // Check permissions
     const isHost = String(event.host) === String(req.user._id);
     const isCoHost = event.coHosts?.some(c => String(c) === String(req.user._id));
-    
-    // ✅ NEW: For private events, only host/co-hosts can invite
-    if (event.privacyLevel === 'private' && !isHost && !isCoHost) {
-      return res.status(403).json({ 
-        message: 'Only hosts can invite users to private events' 
-      });
-    }
-    
-    if (!isHost && !isCoHost) {
+
+    console.log(`🔍 DEBUG: Permission check - isHost: ${isHost}, isCoHost: ${isCoHost}, privacyLevel: ${event.privacyLevel}`);
+
+    if (isHost || isCoHost) {
+      console.log(`✅ Permission granted: User is host or co-host`);
+    } else {
+      if (event.privacyLevel === 'private') {
+        console.log(`❌ Permission denied: Private event and user is not host/co-host`);
+        return res.status(403).json({ 
+          message: 'Only hosts and co-hosts can invite users to private events' 
+        });
+      }
+      
       if (event.permissions?.canInvite !== 'attendees' && event.permissions?.canInvite !== 'anyone') {
-        return res.status(403).json({ message: 'You do not have permission to invite users to this event' });
+        return res.status(403).json({ 
+          message: 'You do not have permission to invite users to this event' 
+        });
       }
       
       if (event.permissions?.canInvite === 'attendees') {
         const isAttending = event.attendees?.some(a => String(a) === String(req.user._id));
         if (!isAttending) {
-          return res.status(403).json({ message: 'Only attendees can invite others to this event' });
+          return res.status(403).json({ 
+            message: 'Only attendees can invite others to this event' 
+          });
         }
       }
-    }
-
-    // ✅ NEW: For friends-only events, validate that invited users are friends with host
-    if (event.privacyLevel === 'friends') {
-      const host = await User.findById(event.host);
-      const hostFriends = host ? host.getAcceptedFriends().map(f => String(f)) : [];
       
-      const nonFriendInvites = userIds.filter(userId => !hostFriends.includes(String(userId)));
-      if (nonFriendInvites.length > 0) {
-        return res.status(400).json({ 
-          message: 'Can only invite friends to friends-only events',
-          invalidUsers: nonFriendInvites
-        });
-      }
+      console.log(`✅ Permission granted: User meets invite criteria`);
     }
 
     const newInvites = [];
@@ -3729,43 +3825,84 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     const alreadyAttending = [];
     const invalidUsers = [];
 
+    // Process each user
     for (const userId of userIds) {
+      console.log(`🔍 DEBUG: Processing user ID: "${userId}"`);
+      
       try {
-        const userExists = await User.findById(userId);
-        if (!userExists) {
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+          console.log(`❌ DEBUG: Invalid ObjectId format: "${userId}"`);
           invalidUsers.push(userId);
           continue;
         }
 
-        if (event.attendees?.includes(userId)) {
+        const userExists = await User.findById(userId);
+        if (!userExists) {
+          console.log(`❌ DEBUG: User not found in database: ${userId}`);
+          invalidUsers.push(userId);
+          continue;
+        }
+
+        console.log(`✅ DEBUG: User found: ${userExists.username}`);
+
+        const isCurrentlyAttending = event.attendees?.some(aid => String(aid) === String(userId));
+        const isCurrentlyInvited = event.invitedUsers?.some(iid => String(iid) === String(userId));
+
+        console.log(`🔍 DEBUG: User ${userExists.username} - attending: ${isCurrentlyAttending}, invited: ${isCurrentlyInvited}`);
+
+        if (isCurrentlyAttending) {
           alreadyAttending.push(userId);
           continue;
         }
 
-        if (event.invitedUsers?.includes(userId)) {
+        if (isCurrentlyInvited) {
           alreadyInvited.push(userId);
           continue;
         }
 
+        // Add to invites
         if (!event.invitedUsers) {
           event.invitedUsers = [];
         }
         event.invitedUsers.push(userId);
         newInvites.push(userId);
 
+        console.log(`✅ DEBUG: Added ${userExists.username} to invite list`);
+
       } catch (userError) {
-        console.error(`❌ Error processing user ${userId}:`, userError);
+        console.error(`❌ DEBUG: Error processing user ${userId}:`, userError);
         invalidUsers.push(userId);
       }
     }
 
-    await event.save();
+    console.log(`🔍 DEBUG: Results summary:`, {
+      newInvites: newInvites.length,
+      alreadyInvited: alreadyInvited.length,
+      alreadyAttending: alreadyAttending.length,
+      invalidUsers: invalidUsers.length
+    });
 
-    // ✅ FIXED: Send invitation notifications (non-blocking)
+    // ✅ CRITICAL FIX: SAVE THE EVENT FIRST
     if (newInvites.length > 0) {
-      setImmediate(async () => {
-        try {
-          for (const inviteeId of newInvites) {
+      await event.save();
+      console.log(`✅ DEBUG: Event saved with ${newInvites.length} new invites`);
+    }
+
+    // ✅ THEN CREATE NOTIFICATIONS
+    if (newInvites.length > 0) {
+      try {
+        const notificationService = require('../services/notificationService');
+        
+        for (const inviteeId of newInvites) {
+          // Check for duplicates
+          const existingNotification = await Notification.findOne({
+            user: inviteeId,
+            'data.eventId': eventId,
+            type: 'event_invitation',
+            createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) }
+          });
+
+          if (!existingNotification) {
             await notificationService.createNotification({
               userId: inviteeId,
               senderId: req.user._id,
@@ -3774,27 +3911,43 @@ router.post('/:eventId/invite', protect, async (req, res) => {
               title: 'Event Invitation',
               message: `${req.user.username} invited you to "${event.title}"`,
               data: {
-                eventId: eventId
+                eventId: eventId,
+                inviterId: req.user._id,
+                eventTitle: event.title,
+                eventTime: event.time,
+                eventLocation: event.location
               },
               actionType: 'VIEW_EVENT',
               actionData: { eventId }
             });
+            console.log(`🔔 Created event invitation notification for ${inviteeId}`);
+          } else {
+            console.log(`⚠️ Skipped duplicate notification for ${inviteeId}`);
           }
-          console.log(`🔔 Sent ${newInvites.length} event invitation notifications`);
-        } catch (notifError) {
-          console.error('Failed to create invitation notifications:', notifError);
         }
-      });
+        
+        console.log(`🔔 Processed ${newInvites.length} event invitation notifications`);
+      } catch (notificationError) {
+        console.error('Failed to create invitation notifications:', notificationError);
+      }
     }
 
-    console.log(`✅ Successfully invited ${newInvites.length} users`);
-
+    // ✅ PROPER RESPONSE FORMAT
     res.json({
-      message: `Successfully invited ${newInvites.length} user${newInvites.length !== 1 ? 's' : ''}`,
+      message: invalidUsers.length > 0 
+        ? `Invited ${newInvites.length} users, ${invalidUsers.length} users could not be invited`
+        : `Successfully invited ${newInvites.length} user${newInvites.length !== 1 ? 's' : ''}`,
       invited: newInvites.length,
       alreadyInvited: alreadyInvited.length,
       alreadyAttending: alreadyAttending.length,
       invalid: invalidUsers.length,
+      
+      // Legacy support
+      data: {
+        invitationsSent: newInvites.length,
+        alreadyConnected: alreadyInvited.length + alreadyAttending.length
+      },
+      
       details: {
         newInvites,
         alreadyInvited,
@@ -3804,13 +3957,14 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Invite users error:', error);
+    console.error('❌ DEBUG: Invite users error:', error);
     res.status(500).json({ 
       message: 'Server error', 
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 });
+
 
 // Decline Event Invite
 router.delete('/invite/:eventId', protect, async (req, res) => {
@@ -4038,6 +4192,52 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error during check-in'
+    });
+  }
+});
+router.get('/:eventId/can-invite', protect, async (req, res) => {
+  try {
+    const eventId = req.params.eventId;
+    const currentUserId = req.user._id;
+
+    const event = await Event.findById(eventId)
+      .select('host coHosts privacyLevel title attendees')
+      .populate('host', 'username displayName')
+      .populate('coHosts', 'username displayName');
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Get invitation info using the updated method
+    const invitationInfo = event.getInvitationInfo(currentUserId);
+
+    res.json({
+      success: true,
+      canInvite: invitationInfo.canInvite,
+      canShare: invitationInfo.canShare,
+      privacyLevel: invitationInfo.privacyLevel,
+      userRole: {
+        isHost: invitationInfo.isHost,
+        isCoHost: invitationInfo.isCoHost,
+        isAttendee: invitationInfo.isAttendee
+      },
+      explanations: {
+        invite: invitationInfo.inviteReason,
+        share: invitationInfo.shareReason
+      },
+      buttonTexts: {
+        invite: invitationInfo.inviteButtonText,
+        share: invitationInfo.shareButtonText
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Can-invite check error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to check invitation permissions',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -5989,6 +6189,140 @@ router.get('/:eventId/form', protect, async (req, res) => {
     });
   }
 });
+
+
+router.post('/:eventId/share', protect, validateSharingPermission, async (req, res) => {
+  try {
+    const { shareType, recipients, message, platform } = req.body;
+    const eventId = req.params.eventId;
+    const { event } = req.eventInfo;
+
+    // Handle different sharing types
+    let shareResult = {};
+
+    switch (shareType) {
+      case 'copy_link':
+        shareResult = await handleCopyLinkShare(event, req.user);
+        break;
+      
+      case 'social_media':
+        shareResult = await handleSocialMediaShare(event, platform, req.user);
+        break;
+      
+      case 'direct_message':
+        shareResult = await handleDirectMessageShare(event, recipients, message, req.user);
+        break;
+      
+      case 'friends':
+        shareResult = await handleFriendsShare(event, recipients, message, req.user);
+        break;
+      
+      default:
+        return res.status(400).json({ message: 'Invalid share type' });
+    }
+
+    // Update analytics
+    await Event.findByIdAndUpdate(eventId, {
+      $inc: { 
+        'analytics.totalShares': 1,
+        [`analytics.sharesByType.${shareType}`]: 1 
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Event shared successfully',
+      shareType,
+      ...shareResult
+    });
+
+  } catch (error) {
+    console.error('❌ Event sharing error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to share event',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+
+function getDefaultInvitationMessage(privacyLevel) {
+  const messages = {
+    'public': 'You\'re invited to join this public event!',
+    'friends': 'You\'re invited to this friends-only event!',
+    'private': 'You\'ve received a private invitation to this exclusive event!'
+  };
+  return messages[privacyLevel] || 'You\'re invited to this event!';
+}
+
+function getInvitationType(privacyLevel) {
+  const types = {
+    'public': 'public_invite',
+    'friends': 'friends_invite', 
+    'private': 'private_invite'
+  };
+  return types[privacyLevel] || 'standard_invite';
+}
+
+function getInvitationNotificationTitle(privacyLevel) {
+  const titles = {
+    'public': 'Event Invitation',
+    'friends': 'Friends Event Invitation',
+    'private': 'Private Event Invitation'
+  };
+  return titles[privacyLevel] || 'Event Invitation';
+}
+
+// Sharing handler functions
+async function handleCopyLinkShare(event, user) {
+  // Generate shareable link
+  const shareLink = `${process.env.APP_URL}/events/${event._id}`;
+  
+  return {
+    shareLink,
+    message: 'Event link copied to clipboard'
+  };
+}
+
+async function handleSocialMediaShare(event, platform, user) {
+  // Generate platform-specific share data
+  const shareData = {
+    title: event.title,
+    description: event.description,
+    url: `${process.env.APP_URL}/events/${event._id}`,
+    image: event.coverPhoto
+  };
+
+  return {
+    platform,
+    shareData,
+    message: `Event shared to ${platform}`
+  };
+}
+
+async function handleDirectMessageShare(event, recipients, message, user) {
+  // Implementation for direct message sharing
+  // This would integrate with your messaging system
+  
+  return {
+    recipients: recipients?.length || 0,
+    message: 'Event shared via direct message'
+  };
+}
+
+async function handleFriendsShare(event, recipients, message, user) {
+  // Implementation for sharing to friends
+  // Similar to invitation but for sharing purposes
+  
+  return {
+    recipients: recipients?.length || 0,
+    message: 'Event shared with friends'
+  };
+}
+
+
 router.post('/:eventId/submit-form', protect, async (req, res) => {
   try {
     const { eventId } = req.params;

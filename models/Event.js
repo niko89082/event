@@ -966,9 +966,25 @@ EventSchema.methods.canUserJoin = function(userId, userFollowing = []) {
       return isFollowingHost;
     
     case 'private':
-      // Private events require invitation
-      return isInvited;
-    
+      // Private events visible to:
+      // 1. Invited users (even if they haven't responded)
+      // 2. Attendees (users who accepted)
+      // 3. Host and co-hosts (already handled above)
+      
+      console.log(`🔍 Private event access check for user ${userIdStr}:`);
+      console.log(`- Is invited: ${isInvited}`);
+      console.log(`- Is attending: ${this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)}`);
+      
+      // Allow access if user is invited OR attending
+      const hasAccess = isInvited || (this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr));
+      
+      if (hasAccess) {
+        console.log(`✅ ALLOWED: Private event access granted`);
+      } else {
+        console.log(`❌ DENIED: Private event access denied`);
+      }
+      
+      return hasAccess;
     default:
       return false;
   }
@@ -1213,22 +1229,26 @@ EventSchema.methods.canUserInvite = function(userId) {
   // Host can always invite
   if (userIdStr === hostIdStr) return true;
   
-  // Co-hosts can invite
+  // Co-hosts can always invite
   if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
   
-  // Check permissions
-  switch (this.permissions?.canInvite) {
-    case 'anyone':
+  // Check privacy level rules
+  switch (this.privacyLevel) {
+    case 'public':
+      // Public events: Anyone can invite (even if not attending)
       return true;
     
-    case 'attendees':
-      return this.attendees?.includes(userId);
+    case 'friends':
+      // Friends events: Only host and co-hosts can invite
+      return false;
     
-    case 'host-only':
-      return false; // Already checked host above
+    case 'private':
+      // Private events: Only host and co-hosts can invite
+      return false;
     
     default:
-      return this.attendees?.includes(userId);
+      // Default to public behavior for backward compatibility
+      return true;
   }
 };
 
@@ -1244,27 +1264,49 @@ EventSchema.methods.canUserShare = function(userId) {
   // Host can always share
   if (userIdStr === hostIdStr) return true;
   
-  // Co-hosts can share
+  // Co-hosts can always share
   if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
   
-  // ✅ PHASE 1: Removed secret event restriction
-  
-  // Check permissions
-  switch (this.permissions?.canShare) {
-    case 'anyone':
+  // Check privacy level for sharing permissions
+  switch (this.privacyLevel) {
+    case 'public':
+      // Public events: Anyone can share
       return true;
     
-    case 'attendees':
-      return this.attendees?.includes(userId);
+    case 'friends':
+      // Friends events: Only attendees can share
+      return this.attendees?.includes(userId) || false;
     
-    case 'host-only':
-      return false; // Already checked host above
+    case 'private':
+      // Private events: Only attendees can share
+      return this.attendees?.includes(userId) || false;
     
     default:
-      return this.attendees?.includes(userId);
+      // Default to attendees-only sharing
+      return this.attendees?.includes(userId) || false;
   }
 };
 
+EventSchema.methods.declineInvitation = function(userId) {
+  const userIdStr = String(userId);
+  
+  // Remove from attendees if they were attending
+  if (this.attendees) {
+    this.attendees = this.attendees.filter(a => String(a._id || a) !== userIdStr);
+  }
+  
+  // Keep in invitedUsers but mark as declined in a separate field
+  if (!this.declinedUsers) {
+    this.declinedUsers = [];
+  }
+  
+  if (!this.declinedUsers.includes(userId)) {
+    this.declinedUsers.push(userId);
+  }
+  
+  // Note: We DON'T remove from invitedUsers so they can still view the event
+  console.log(`📝 User ${userIdStr} declined invitation but retains view access`);
+};
 // ============================================
 // LEGACY COMPATIBILITY METHODS
 // ============================================
@@ -1342,6 +1384,104 @@ EventSchema.methods.getCheckInStatus = function() {
     opensAt: openTime,
     closesAt: closeTime
   };
+};
+EventSchema.methods.getShareButtonText = function(userId) {
+  const canShare = this.canUserShare(userId);
+  
+  if (!canShare) {
+    return 'Join to Share';
+  }
+  
+  switch (this.privacyLevel) {
+    case 'public':
+      return 'Share Event';
+    case 'friends':
+      return 'Share to Friends';
+    case 'private':
+      return 'Share Privately';
+    default:
+      return 'Share';
+  }
+};
+EventSchema.methods.getInvitationInfo = function(userId) {
+  const canInvite = this.canUserInvite(userId);
+  const canShare = this.canUserShare(userId);
+  const userIdStr = String(userId);
+  const hostIdStr = String(this.host);
+  const isHost = userIdStr === hostIdStr;
+  const isCoHost = this.coHosts && this.coHosts.some(c => String(c) === userIdStr);
+  const isAttendee = this.attendees?.includes(userId) || false;
+
+  let inviteReason = '';
+  let shareReason = '';
+  
+  // Determine why user can/cannot invite
+  if (!canInvite) {
+    switch (this.privacyLevel) {
+      case 'friends':
+        inviteReason = 'Only the host and co-hosts can invite friends to this event';
+        break;
+      case 'private':
+        inviteReason = 'Only the host and co-hosts can send private invitations';
+        break;
+      default:
+        inviteReason = 'You do not have permission to invite others';
+    }
+  } else {
+    if (isHost) {
+      inviteReason = 'You can invite anyone as the event host';
+    } else if (isCoHost) {
+      inviteReason = 'You can invite others as a co-host';
+    } else if (this.privacyLevel === 'public') {
+      inviteReason = 'Anyone can invite friends to public events';
+    }
+  }
+
+  // Determine why user can/cannot share
+  if (!canShare) {
+    shareReason = 'You need to be attending this event to share it';
+  } else {
+    if (isHost || isCoHost) {
+      shareReason = 'You can share this event';
+    } else if (this.privacyLevel === 'public') {
+      shareReason = 'Anyone can share public events';
+    } else if (isAttendee) {
+      shareReason = 'You can share this event as an attendee';
+    }
+  }
+
+  return {
+    canInvite,
+    canShare,
+    isHost,
+    isCoHost,
+    isAttendee,
+    privacyLevel: this.privacyLevel,
+    inviteReason,
+    shareReason,
+    inviteButtonText: this.getInviteButtonText(userId),
+    shareButtonText: this.getShareButtonText(userId)
+  };
+};
+
+
+EventSchema.methods.getInviteButtonText = function(userId) {
+  const canInvite = this.canUserInvite(userId);
+  
+  if (!canInvite) {
+    return 'Share Event';
+  }
+  
+  switch (this.privacyLevel) {
+    case 'public':
+      return 'Invite & Share';
+    case 'friends':
+      return 'Invite Friends';
+    case 'private':
+      return 'Send Invitations';
+    default:
+      return 'Invite';
+  }
 };
 
 // ============================================
