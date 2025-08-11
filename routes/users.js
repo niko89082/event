@@ -999,15 +999,15 @@ router.get('/event-timeline', protect, async (req, res) => {
 
 router.get('/friends/search', protect, async (req, res) => {
   try {
-    const { q, eventId, limit = 20 } = req.query;
+    const { q, eventId, memoryId, limit = 20 } = req.query;
     
-    console.log(`🔍 PHASE 2: Friends search - Query: "${q}", EventId: ${eventId}`);
+    console.log(`🔍 PHASE 2: Friends search - Query: "${q}", EventId: ${eventId}, MemoryId: ${memoryId}`);
 
-    if (!q || q.trim().length < 2) {
+    // Allow single character searches
+    if (!q || q.trim().length === 0) {
       return res.json([]);
     }
 
-    // Get current user's friends
     const currentUser = await User.findById(req.user._id);
     const friendIds = currentUser ? currentUser.getAcceptedFriends() : [];
     
@@ -1015,16 +1015,51 @@ router.get('/friends/search', protect, async (req, res) => {
       return res.json([]);
     }
 
-    // Build search query to search only among friends
-    const searchQuery = {
-      _id: { $in: friendIds },
+    const searchTerm = q.trim();
+    
+    // 🆕 Enhanced search with better typo tolerance
+    const searchQueries = [];
+    
+    // 1. Exact partial matches (highest priority)
+    searchQueries.push({
       $or: [
-        { username: { $regex: q.trim(), $options: 'i' } },
-        { displayName: { $regex: q.trim(), $options: 'i' } }
+        { username: { $regex: `^${searchTerm}`, $options: 'i' } },
+        { displayName: { $regex: `^${searchTerm}`, $options: 'i' } },
+        { fullName: { $regex: `^${searchTerm}`, $options: 'i' } }
       ]
+    });
+    
+    // 2. Contains matches (medium priority)
+    searchQueries.push({
+      $or: [
+        { username: { $regex: searchTerm, $options: 'i' } },
+        { displayName: { $regex: searchTerm, $options: 'i' } },
+        { fullName: { $regex: searchTerm, $options: 'i' } }
+      ]
+    });
+    
+    // 3. Fuzzy matches for typos (if search term is 3+ chars)
+    if (searchTerm.length >= 3) {
+      // Split search term into words for better matching
+      const words = searchTerm.split(/\s+/).filter(word => word.length > 0);
+      
+      if (words.length > 0) {
+        searchQueries.push({
+          $or: words.flatMap(word => [
+            { username: { $regex: word, $options: 'i' } },
+            { displayName: { $regex: word, $options: 'i' } },
+            { fullName: { $regex: word, $options: 'i' } }
+          ])
+        });
+      }
+    }
+
+    // Base query filters
+    const baseQuery = {
+      _id: { $in: friendIds }
     };
 
-    // If eventId is provided, exclude users who are already invited or attending
+    // Handle exclusions for events/memories
     if (eventId) {
       try {
         const event = await Event.findById(eventId).select('invitedUsers attendees');
@@ -1034,28 +1069,80 @@ router.get('/friends/search', protect, async (req, res) => {
             ...(event.attendees || [])
           ].map(id => String(id));
           
-          // Add exclusion to search query
-          searchQuery._id.$nin = excludeUserIds;
-          
-          console.log(`🚫 Excluding ${excludeUserIds.length} already invited/attending users`);
+          baseQuery._id.$nin = excludeUserIds;
+          console.log(`🚫 Excluding ${excludeUserIds.length} event participants`);
         }
       } catch (eventError) {
         console.error('Error fetching event for exclusion:', eventError);
-        // Continue search without exclusion if event fetch fails
       }
     }
 
-    console.log('🔍 Friends search query:', JSON.stringify(searchQuery, null, 2));
+    if (memoryId) {
+      try {
+        const memory = await Memory.findById(memoryId).select('creator participants');
+        if (memory) {
+          const excludeUserIds = [
+            memory.creator,
+            ...(memory.participants || [])
+          ].map(id => String(id));
+          
+          baseQuery._id.$nin = excludeUserIds;
+          console.log(`🚫 Excluding ${excludeUserIds.length} memory participants`);
+        }
+      } catch (memoryError) {
+        console.error('Error fetching memory for exclusion:', memoryError);
+      }
+    }
 
-    // Search among friends
-    const friends = await User.find(searchQuery)
-      .select('username displayName profilePicture')
-      .limit(parseInt(limit))
-      .sort({ username: 1 });
+    // 🆕 Search with priority ordering
+    let allResults = [];
+    
+    for (const searchQuery of searchQueries) {
+      const query = { ...baseQuery, ...searchQuery };
+      
+      const results = await User.find(query)
+        .select('username displayName fullName profilePicture')
+        .lean(); // Use lean() for better performance
+      
+      // Add results that aren't already found
+      const newResults = results.filter(result => 
+        !allResults.some(existing => String(existing._id) === String(result._id))
+      );
+      
+      allResults.push(...newResults);
+      
+      // Stop when we have enough results
+      if (allResults.length >= parseInt(limit)) {
+        break;
+      }
+    }
 
-    console.log(`✅ Found ${friends.length} friends matching "${q}"`);
+    // 🆕 Sort by relevance
+    allResults = allResults
+      .slice(0, parseInt(limit))
+      .sort((a, b) => {
+        const aUsername = (a.username || '').toLowerCase();
+        const bUsername = (b.username || '').toLowerCase();
+        const aDisplay = (a.displayName || '').toLowerCase();
+        const bDisplay = (b.displayName || '').toLowerCase();
+        const searchLower = searchTerm.toLowerCase();
+        
+        // Prioritize exact starts
+        const aUsernameStarts = aUsername.startsWith(searchLower);
+        const bUsernameStarts = bUsername.startsWith(searchLower);
+        const aDisplayStarts = aDisplay.startsWith(searchLower);
+        const bDisplayStarts = bDisplay.startsWith(searchLower);
+        
+        if ((aUsernameStarts || aDisplayStarts) && !(bUsernameStarts || bDisplayStarts)) return -1;
+        if ((bUsernameStarts || bDisplayStarts) && !(aUsernameStarts || aDisplayStarts)) return 1;
+        
+        // Then alphabetical by username
+        return aUsername.localeCompare(bUsername);
+      });
 
-    res.json(friends);
+    console.log(`✅ Found ${allResults.length} friends matching "${searchTerm}"`);
+
+    res.json(allResults);
 
   } catch (error) {
     console.error('❌ Friends search error:', error);
@@ -1065,7 +1152,6 @@ router.get('/friends/search', protect, async (req, res) => {
     });
   }
 });
-
 
 
 

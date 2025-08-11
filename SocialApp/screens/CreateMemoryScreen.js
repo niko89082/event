@@ -108,37 +108,24 @@ export default function CreateMemoryScreen({ navigation }) {
     return () => clearTimeout(delayedSearch);
   }, [searchQuery]);
 
-  const searchUsers = async () => {
+  const searchUsers = async (query) => {
   try {
     setSearching(true);
-    console.log('🔍 Searching for users with query:', searchQuery.trim());
     
-    // Use the correct users search endpoint
-    const response = await api.get(`/api/users/search?q=${encodeURIComponent(searchQuery.trim())}`);
-    console.log('✅ Search response from /api/users/search:', response.data);
-    
-    // The /api/users/search endpoint returns { users: [...] }
-    let users = [];
-    if (response.data && Array.isArray(response.data.users)) {
-      users = response.data.users;
-    } else if (Array.isArray(response.data)) {
-      users = response.data;
-    } else {
-      console.warn('❌ Unexpected search response format:', response.data);
-      users = [];
-    }
+    // 🆕 NEW: Search only friends instead of all users
+    const response = await axios.get(`/api/users/friends/search?q=${query}`, {
+      headers: { Authorization: `Bearer ${authToken}` }
+    });
     
     // Filter out current user and already selected users
     const excludeIds = [currentUser._id, ...selectedUsers.map(u => u._id)];
-    const filteredUsers = users.filter(user => 
-      user && user._id && !excludeIds.includes(user._id)
+    const filteredFriends = response.data.friends.filter(friend => 
+      friend && friend._id && !excludeIds.includes(friend._id)
     );
     
-    console.log('📊 Filtered users found:', filteredUsers.length);
-    setSearchResults(filteredUsers);
-    
+    setSearchResults(filteredFriends);
   } catch (error) {
-    console.error('❌ Error searching users:', error.response?.data || error);
+    console.error('❌ Error searching friends:', error);
     setSearchResults([]);
   } finally {
     setSearching(false);

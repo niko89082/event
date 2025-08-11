@@ -75,22 +75,26 @@ export default function MemoryDetailsScreen({ route, navigation }) {
   }, [memoryId]);
 
   useEffect(() => {
-    if (memory?.creator?._id && currentUser?._id) {
-      const isHost = memory.creator._id === currentUser._id;
-      if (isHost) {
-        navigation.setOptions({
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('EditMemoryScreen', { memoryId: memory._id })}
-              style={{ marginRight: 16 }}
-            >
-              <Ionicons name="settings-outline" size={24} color="#000000" />
-            </TouchableOpacity>
-          ),
-        });
-      }
+  if (memory?.creator?._id && currentUser?._id) {
+    // 🆕 UPDATED: Allow any participant to edit, not just creator
+    const isCreator = memory.creator._id === currentUser._id;
+    const isParticipant = memory.participants?.some(p => p._id === currentUser._id);
+    const canEdit = isCreator || isParticipant;
+    
+    if (canEdit) {
+      navigation.setOptions({
+        headerRight: () => (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('EditMemoryScreen', { memoryId: memory._id })}
+            style={{ marginRight: 16 }}
+          >
+            <Ionicons name="settings-outline" size={24} color="#000000" />
+          </TouchableOpacity>
+        ),
+      });
     }
-  }, [memory?.creator?._id, currentUser?._id, navigation]);
+  }
+}, [memory?.creator?._id, memory?.participants, currentUser?._id, navigation]);
 
   // Helper function to get proper profile picture URL
   const getProfilePictureUrl = (profilePicture, fallbackText = '👤') => {
@@ -302,7 +306,7 @@ export default function MemoryDetailsScreen({ route, navigation }) {
     fetchPhotoLikes(photoId);
   };
 
-  
+
   const handlePhotoDeleted = async (photoId, shouldRefreshMemory = false) => {
   console.log('🗑️ Photo deleted:', photoId);
   

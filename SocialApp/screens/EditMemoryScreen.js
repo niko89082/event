@@ -115,42 +115,88 @@ export default function EditMemoryScreen({ route, navigation }) {
     fetchMemory();
   }, [memoryId]);
 
-  const fetchMemory = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get(`/api/memories/${memoryId}`);
-      const memoryData = response.data.memory;
-      
-      // Check if current user is the creator
-      if (memoryData.creator._id !== currentUser._id) {
-        Alert.alert(
-          'Access Denied',
-          'Only the memory creator can edit this memory.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
-        return;
+const handleLeaveMemory = () => {
+  Alert.alert(
+    'Leave Memory',
+    'Are you sure you want to leave this memory? You will no longer be able to view or add photos to it.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Leave',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setLoading(true);
+            
+            // Call the remove participant API for current user
+            await api.delete(`/api/memories/${memoryId}/participants/${currentUser._id}`);
+            
+            Alert.alert(
+              'Left Memory',
+              'You have successfully left this memory.',
+              [{ 
+                text: 'OK', 
+                onPress: () => {
+                  // Navigate back to memories list or home
+                  navigation.navigate('MemoriesTab');
+                }
+              }]
+            );
+            
+          } catch (error) {
+            console.error('Error leaving memory:', error);
+            const errorMessage = error.response?.data?.message || 'Failed to leave memory';
+            Alert.alert('Error', errorMessage);
+          } finally {
+            setLoading(false);
+          }
+        }
       }
-      
-      setMemory(memoryData);
-      setTitle(memoryData.title || '');
-      setDescription(memoryData.description || '');
-      
-      // 🔍 DEBUG: Log initial values
-      console.log('🐛 DEBUG - Initial memory data loaded:');
-      console.log('  - title:', JSON.stringify(memoryData.title));
-      console.log('  - description:', JSON.stringify(memoryData.description));
-      
-    } catch (error) {
-      console.error('Error fetching memory:', error);
+    ]
+  );
+};
+
+ const fetchMemory = async () => {
+  try {
+    setLoading(true);
+    const response = await api.get(`/api/memories/${memoryId}`);
+    const memoryData = response.data.memory;
+    
+    // 🆕 UPDATED: Check if current user is creator OR participant
+    const isCreator = memoryData.creator._id === currentUser._id;
+    const isParticipant = memoryData.participants.some(p => p._id === currentUser._id);
+    
+    if (!isCreator && !isParticipant) {
       Alert.alert(
-        'Error',
-        'Failed to load memory details.',
+        'Access Denied',
+        'Only memory participants can edit this memory.',
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
-    } finally {
-      setLoading(false);
+      return;
     }
-  };
+    
+    console.log('✅ User can edit memory:', { isCreator, isParticipant });
+    
+    setMemory(memoryData);
+    setTitle(memoryData.title || '');
+    setDescription(memoryData.description || '');
+    
+    // 🔍 DEBUG: Log initial values
+    console.log('🐛 DEBUG - Initial memory data loaded:');
+    console.log('  - title:', JSON.stringify(memoryData.title));
+    console.log('  - description:', JSON.stringify(memoryData.description));
+    
+  } catch (error) {
+    console.error('Error fetching memory:', error);
+    Alert.alert(
+      'Error',
+      'Failed to load memory details.',
+      [{ text: 'OK', onPress: () => navigation.goBack() }]
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Rest of the component remains the same...
   if (loading) {
@@ -265,6 +311,21 @@ export default function EditMemoryScreen({ route, navigation }) {
                   </Text>
                 </View>
               </View>
+
+              {/* 🆕 NEW: Leave Memory Section - Only show for participants, not creator */}
+              {memory && memory.creator._id !== currentUser._id && (
+                <View style={styles.dangerSection}>
+                  <Text style={styles.dangerSectionTitle}>Danger Zone</Text>
+                  <TouchableOpacity
+                    style={styles.leaveButton}
+                    onPress={handleLeaveMemory}
+                    disabled={loading}
+                  >
+                    <Ionicons name="exit-outline" size={20} color="#FF3B30" />
+                    <Text style={styles.leaveButtonText}>Leave Memory</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         </ScrollView>
@@ -414,4 +475,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
   },
+  dangerSection: {
+  marginTop: 32,
+  paddingTop: 24,
+  borderTopWidth: 1,
+  borderTopColor: '#F0F0F0',
+},
+dangerSectionTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#8E8E93',
+  marginBottom: 16,
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+},
+leaveButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: '#FF3B30',
+  borderRadius: 12,
+  paddingHorizontal: 20,
+  paddingVertical: 16,
+  gap: 8,
+  shadowColor: '#FF3B30',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.1,
+  shadowRadius: 4,
+  elevation: 2,
+},
+leaveButtonText: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: '#FFFFFF',
+},
+leaveButtonDisabled: {
+  backgroundColor: '#C7C7CC',
+  shadowOpacity: 0,
+  elevation: 0,
+},
 });

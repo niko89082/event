@@ -27,41 +27,47 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    navigation.setOptions({
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.33,
-        borderBottomColor: '#E1E1E1',
-        height: 88,
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 18,
-        color: '#000000',
-      },
-      headerTitle: 'Participants',
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-back" size={26} color="#000000" />
-        </TouchableOpacity>
-      ),
-      headerRight: isCreator ? () => (
-        <TouchableOpacity
-          onPress={() => setShowAddModal(true)}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="person-add" size={24} color="#3797EF" />
-        </TouchableOpacity>
-      ) : undefined,
-    });
-  }, [navigation, isCreator]);
+  // 🆕 UPDATED: Allow any participant to manage members
+  const isParticipant = memory && currentUser && (
+    memory.creator._id === currentUser._id ||
+    memory.participants?.some(p => p._id === currentUser._id)
+  );
+
+  navigation.setOptions({
+    headerStyle: {
+      backgroundColor: '#FFFFFF',
+      shadowOpacity: 0,
+      elevation: 0,
+      borderBottomWidth: 0.33,
+      borderBottomColor: '#E1E1E1',
+      height: 88,
+    },
+    headerTitleStyle: {
+      fontWeight: '700',
+      fontSize: 18,
+      color: '#000000',
+    },
+    headerTitle: 'Participants',
+    headerLeft: () => (
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        style={styles.headerButton}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="chevron-back" size={26} color="#000000" />
+      </TouchableOpacity>
+    ),
+    headerRight: isParticipant ? () => (
+      <TouchableOpacity
+        onPress={() => setShowAddModal(true)}
+        style={styles.headerButton}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="person-add" size={24} color="#3797EF" />
+      </TouchableOpacity>
+    ) : undefined,
+  });
+}, [navigation, memory, currentUser]);
 
   useEffect(() => {
     fetchMemoryParticipants();
@@ -80,71 +86,63 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
   };
 
   const fetchMemoryParticipants = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get(`/api/memories/${memoryId}`);
-      const memoryData = response.data.memory;
-      
-      setMemory(memoryData);
-      setIsCreator(memoryData.creator._id === currentUser._id);
-      
-      // Combine creator and participants
-      const allParticipants = [
-        { ...memoryData.creator, isCreator: true },
-        ...(memoryData.participants || []).map(p => ({ ...p, isCreator: false }))
-      ];
-      
-      setParticipants(allParticipants);
-      
-    } catch (error) {
-      console.error('Error fetching memory participants:', error);
-      Alert.alert('Error', 'Failed to load participants');
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    setLoading(true);
+    const response = await api.get(`/api/memories/${memoryId}`);
+    const memoryData = response.data.memory;
+    
+    setMemory(memoryData);
+    setIsCreator(memoryData.creator._id === currentUser._id);
+    
+    // Combine creator and participants
+    const allParticipants = [
+      { ...memoryData.creator, isCreator: true },
+      ...(memoryData.participants || []).map(p => ({ ...p, isCreator: false }))
+    ];
+    
+    setParticipants(allParticipants);
+    
+  } catch (error) {
+    console.error('Error fetching memory participants:', error);
+    Alert.alert('Error', 'Failed to load participants');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const searchUsers = async (query) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
+  if (!query.trim()) {
+    setSearchResults([]);
+    return;
+  }
 
-    try {
-      setSearchLoading(true);
-      console.log('🔍 Searching for users with query:', query);
-      
-      // Use the correct users search endpoint
-      const response = await api.get(`/api/users/search?q=${encodeURIComponent(query)}`);
-      console.log('✅ Search response:', response.data);
-      
-      // The /api/users/search endpoint returns { users: [...] }
-      let users = [];
-      if (response.data && Array.isArray(response.data.users)) {
-        users = response.data.users;
-      } else if (Array.isArray(response.data)) {
-        users = response.data;
-      } else {
-        console.warn('❌ Unexpected search response format:', response.data);
-        users = [];
-      }
-      
-      // Filter out current participants
-      const currentParticipantIds = participants.map(p => p._id);
-      const filteredResults = users.filter(user => 
-        user && user._id && !currentParticipantIds.includes(user._id)
-      );
-      
-      console.log('📊 Filtered users found:', filteredResults.length);
-      setSearchResults(filteredResults);
-      
-    } catch (error) {
-      console.error('Error searching users:', error.response?.data || error);
-      setSearchResults([]);
-    } finally {
-      setSearchLoading(false);
-    }
-  };
+  try {
+    setSearchLoading(true);
+    console.log('🔍 Searching for friends with query:', query);
+    
+    const response = await api.get(`/api/users/friends/search?q=${encodeURIComponent(query)}&memoryId=${memoryId}`);
+    console.log('✅ Friends search response:', response.data);
+    
+    const friends = Array.isArray(response.data) ? response.data : [];
+    
+    // Additional filtering to ensure we don't show current participants
+    const currentParticipantIds = participants.map(p => p._id);
+    const filteredResults = friends.filter(friend => 
+      friend && friend._id && !currentParticipantIds.includes(friend._id)
+    );
+    
+    console.log('📊 Filtered friends found:', filteredResults.length);
+    console.log('🧑 First friend data:', filteredResults[0]); // ✅ NEW: Log first friend to check structure
+    
+    setSearchResults(filteredResults);
+    
+  } catch (error) {
+    console.error('Error searching friends:', error.response?.data || error);
+    setSearchResults([]);
+  } finally {
+    setSearchLoading(false);
+  }
+};
 
   // Debounced search
   useEffect(() => {
@@ -156,25 +154,42 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
   }, [searchText]);
 
   const addParticipant = async (userId) => {
-    try {
-      setAdding(true);
-      await api.put(`/api/memories/${memoryId}/participants`, { userId });
-      
-      // Find the user in search results and add to participants
-      const user = searchResults.find(u => u._id === userId);
-      if (user) {
-        setParticipants(prev => [...prev, { ...user, isCreator: false }]);
-        setSearchResults(prev => prev.filter(u => u._id !== userId));
-      }
-      
-      Alert.alert('Success', 'Participant added successfully!');
-    } catch (error) {
-      console.error('Error adding participant:', error);
-      Alert.alert('Error', 'Failed to add participant');
-    } finally {
-      setAdding(false);
+  console.log('🚀 addParticipant called with userId:', userId);
+  console.log('🔍 Type of userId:', typeof userId);
+  
+  if (!userId) {
+    console.error('❌ No userId provided to addParticipant');
+    Alert.alert('Error', 'No user selected');
+    return;
+  }
+
+  try {
+    setAdding(true);
+    
+    console.log('📡 Sending request with participantId:', userId);
+    
+    // 🆕 UPDATED: Use correct parameter name
+    await api.put(`/api/memories/${memoryId}/participants`, { participantId: userId });
+    
+    // Find the user in search results and add to participants
+    const user = searchResults.find(u => u._id === userId);
+    if (user) {
+      setParticipants(prev => [...prev, { ...user, isCreator: false }]);
+      setSearchResults(prev => prev.filter(u => u._id !== userId));
     }
-  };
+    
+    Alert.alert('Success', 'Friend added to memory successfully!');
+    setShowAddModal(false);
+    setSearchText('');
+  } catch (error) {
+    console.error('Error adding participant:', error);
+    console.error('Error response data:', error.response?.data);
+    const errorMessage = error.response?.data?.message || 'Failed to add participant';
+    Alert.alert('Error', errorMessage);
+  } finally {
+    setAdding(false);
+  }
+};
 
   const removeParticipant = async (userId) => {
     Alert.alert(
@@ -204,7 +219,17 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
     navigation.navigate('ProfileScreen', { userId: participant._id });
   };
 
-  const renderParticipant = ({ item: participant }) => (
+  const renderParticipant = ({ item: participant }) => {
+  // 🆕 UPDATED: Check if current user is any participant (not just creator)
+  const isCurrentUserParticipant = memory && currentUser && (
+    memory.creator._id === currentUser._id ||
+    memory.participants?.some(p => p._id === currentUser._id)
+  );
+  
+  // 🆕 NEW: Check if this participant is the current user
+  const isCurrentUser = participant._id === currentUser?._id;
+
+  return (
     <TouchableOpacity 
       style={styles.participantRow} 
       onPress={() => handleParticipantPress(participant)}
@@ -222,7 +247,13 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
         />
         <View style={styles.participantDetails}>
           <View style={styles.nameRow}>
-            <Text style={styles.username}>{participant.username}</Text>
+            <Text style={styles.username}>
+              {participant.username}
+              {/* 🆕 NEW: Show (you) next to current user */}
+              {isCurrentUser && (
+                <Text style={styles.youIndicator}> (you)</Text>
+              )}
+            </Text>
             {participant.isCreator && (
               <View style={styles.creatorBadge}>
                 <Text style={styles.creatorBadgeText}>Creator</Text>
@@ -235,8 +266,8 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
         </View>
       </View>
       
-      {/* Remove button for non-creator participants (only visible to creator) */}
-      {isCreator && !participant.isCreator && (
+      {/* 🆕 UPDATED: Remove button visible to any participant, but not for themselves or creator */}
+      {isCurrentUserParticipant && !participant.isCreator && !isCurrentUser && (
         <TouchableOpacity 
           style={styles.removeButton}
           onPress={() => removeParticipant(participant._id)}
@@ -250,41 +281,37 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
       <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
     </TouchableOpacity>
   );
+};
 
   const renderSearchResult = ({ item: user }) => (
-    <TouchableOpacity
-      style={styles.searchResultRow}
-      onPress={() => addParticipant(user._id)}
-      disabled={adding}
-      activeOpacity={0.8}
-    >
-      <View style={styles.participantInfo}>
-        <Image 
-          source={{ 
-            uri: getProfilePictureUrl(
-              user.profilePicture, 
-              user.username?.charAt(0) || 'U'
-            )
-          }} 
-          style={styles.avatar} 
-        />
-        <View style={styles.participantDetails}>
-          <Text style={styles.username}>{user.username}</Text>
-          {user.fullName && user.fullName !== user.username && (
-            <Text style={styles.fullName}>{user.fullName}</Text>
-          )}
-        </View>
+  <TouchableOpacity
+    style={styles.searchResultRow}
+    onPress={() => addParticipant(user._id)}
+    disabled={adding}
+    activeOpacity={0.8}
+  >
+    <View style={styles.participantInfo}>
+      <Image 
+        source={{ 
+          uri: getProfilePictureUrl(
+            user.profilePicture, 
+            user.username?.charAt(0) || 'U'
+          )
+        }} 
+        style={styles.avatar} 
+      />
+      <View style={styles.participantDetails}>
+        <Text style={styles.username}>{user.username}</Text>
+        {user.fullName && user.fullName !== user.username && (
+          <Text style={styles.fullName}>{user.fullName}</Text>
+        )}
       </View>
-      
-      <TouchableOpacity 
-        style={styles.addButton}
-        onPress={() => addParticipant(user._id)}
-        disabled={adding}
-      >
-        <Ionicons name="add-circle" size={24} color="#3797EF" />
-      </TouchableOpacity>
-    </TouchableOpacity>
-  );
+    </View>
+    
+    {/* ✅ FIXED: Remove the separate TouchableOpacity, make the whole row clickable */}
+    <Ionicons name="add-circle" size={24} color="#3797EF" />
+  </TouchableOpacity>
+);
 
   if (loading) {
     return (
@@ -302,26 +329,34 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       {participants.length === 0 ? (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIconContainer}>
-            <Ionicons name="people-outline" size={64} color="#C7C7CC" />
-          </View>
-          <Text style={styles.emptyTitle}>No participants yet</Text>
-          <Text style={styles.emptySubtitle}>
-            {isCreator 
-              ? 'Add people to share this memory with them'
-              : 'This memory doesn\'t have any participants yet'
-            }
-          </Text>
-          {isCreator && (
-            <TouchableOpacity 
-              style={styles.addFirstButton}
-              onPress={() => setShowAddModal(true)}
-            >
-              <Text style={styles.addFirstButtonText}>Add Participants</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+  <View style={styles.emptyState}>
+    <View style={styles.emptyIconContainer}>
+      <Ionicons name="people-outline" size={64} color="#C7C7CC" />
+    </View>
+    <Text style={styles.emptyTitle}>No participants yet</Text>
+    <Text style={styles.emptySubtitle}>
+      {/* 🆕 UPDATED: Check if any participant, not just creator */}
+      {(memory && currentUser && (
+        memory.creator._id === currentUser._id ||
+        memory.participants?.some(p => p._id === currentUser._id)
+      ))
+        ? 'Add friends to share this memory with them'
+        : 'This memory doesn\'t have any participants yet'
+      }
+    </Text>
+    {/* 🆕 UPDATED: Show button for any participant */}
+    {memory && currentUser && (
+      memory.creator._id === currentUser._id ||
+      memory.participants?.some(p => p._id === currentUser._id)
+    ) && (
+      <TouchableOpacity 
+        style={styles.addFirstButton}
+        onPress={() => setShowAddModal(true)}
+      >
+        <Text style={styles.addFirstButtonText}>Add Friends</Text>
+      </TouchableOpacity>
+    )}
+  </View>
       ) : (
         <View style={styles.content}>
           <View style={styles.statsHeader}>
@@ -356,7 +391,7 @@ export default function MemoryParticipantsScreen({ route, navigation }) {
             <TouchableOpacity onPress={() => setShowAddModal(false)}>
               <Ionicons name="close" size={24} color="#000000" />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Add Participants</Text>
+            <Text style={styles.modalTitle}>Add Friends</Text>
             <View style={{ width: 24 }} />
           </View>
           
@@ -607,4 +642,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#8E8E93',
   },
+  youIndicator: {
+  fontSize: 14,
+  color: '#8E8E93',
+  fontWeight: '400',
+},
 });

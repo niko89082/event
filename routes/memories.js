@@ -485,54 +485,97 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // ✅ PUT: Add participant to memory
+// ✅ PUT: Add participant to memory (WITH FRIEND VALIDATION)
 router.put('/:id/participants', protect, async (req, res) => {
   try {
     const { participantId } = req.body;
     const memoryId = req.params.id;
+    const requesterId = req.user._id;
     
-    // Verify memory exists and user has permission
+    console.log('🔍 Adding participant to memory:', {
+      memoryId,
+      requesterId: requesterId.toString(),
+      participantId
+    });
+    
+    // 1. Verify memory exists
     const memory = await Memory.findById(memoryId);
     if (!memory) {
       return res.status(404).json({ message: 'Memory not found' });
     }
     
-    // Check if user is creator or already a participant
-    const isCreator = memory.creator.toString() === req.user._id.toString();
-    const isParticipant = memory.participants.includes(req.user._id);
+    // 2. Check if requester can manage participants (creator or participant)
+    const isCreator = memory.creator.toString() === requesterId.toString();
+    const isParticipant = memory.participants.some(p => p.toString() === requesterId.toString());
     
     if (!isCreator && !isParticipant) {
-      return res.status(403).json({ message: 'Not authorized to add participants' });
+      return res.status(403).json({ 
+        message: 'Only memory participants can add new members' 
+      });
     }
     
-    // Check if user is already a participant
-    if (memory.participants.includes(participantId)) {
+    console.log('✅ User has permission to add participants:', { isCreator, isParticipant });
+    
+    // 3. 🆕 NEW: Check if target user is in requester's friends list
+    const requester = await User.findById(requesterId);
+    const friendshipStatus = requester.getFriendshipStatus(participantId);
+    
+    if (friendshipStatus.status !== 'friends') {
+      return res.status(400).json({ 
+        message: 'You can only add friends to memories',
+        friendshipStatus: friendshipStatus.status 
+      });
+    }
+    
+    console.log('✅ Target user is friends with requester');
+    
+    // 4. Check if user is already a participant or creator
+    if (memory.creator.toString() === participantId) {
+      return res.status(400).json({ message: 'User is already the memory creator' });
+    }
+    
+    if (memory.participants.some(p => p.toString() === participantId)) {
       return res.status(400).json({ message: 'User is already a participant' });
     }
     
-    // Add participant to memory
+    // 5. Check participant limit (14 participants + 1 creator = 15 total)
+    if (memory.participants.length >= 14) {
+      return res.status(400).json({ 
+        message: 'Memory already has the maximum number of participants (15 total)' 
+      });
+    }
+    
+    // 6. Add participant to memory
     memory.participants.push(participantId);
     await memory.save();
     
-    // 🆕 SEND NOTIFICATION
+    // 7. Populate for response
+    await memory.populate('participants', 'username fullName profilePicture');
+    
+    // 8. 🆕 SEND NOTIFICATION
     await notificationService.sendMemoryInvitation(
-      req.user._id,
+      requesterId,
       memoryId,
       [participantId]
     );
     
+    console.log('✅ Participant added successfully');
     console.log(`🔔 Sent memory invitation notification to ${participantId}`);
     
     res.json({ 
       success: true, 
-      message: 'Participant added successfully',
+      message: 'Friend added to memory successfully',
       memory 
     });
+    
   } catch (error) {
-    console.error('Error adding participant:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Error adding participant:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 });
-
 
 
 
@@ -566,7 +609,7 @@ router.put('/:memoryId', auth, async (req, res) => {
       return res.status(400).json({ message: 'Description cannot exceed 200 characters' });
     }
     
-    // Find memory and check ownership
+    // Find memory and check permissions
     const memory = await Memory.findById(memoryId);
     if (!memory) {
       return res.status(404).json({ message: 'Memory not found' });
@@ -577,10 +620,17 @@ router.put('/:memoryId', auth, async (req, res) => {
     console.log('  - current title:', JSON.stringify(memory.title));
     console.log('  - current description:', JSON.stringify(memory.description));
     
-    // Only memory creator can update
-    if (!memory.creator.equals(userId)) {
-      return res.status(403).json({ message: 'Only memory creator can edit this memory' });
+    // 🆕 UPDATED: Allow creator OR any participant to edit
+    const isCreator = memory.creator.equals(userId);
+    const isParticipant = memory.participants.some(p => p.equals(userId));
+    
+    if (!isCreator && !isParticipant) {
+      return res.status(403).json({ 
+        message: 'Only memory participants can edit this memory' 
+      });
     }
+    
+    console.log('✅ User has permission to edit:', { isCreator, isParticipant });
     
     // 🔍 DEBUG: Log the values we're about to assign
     const newTitle = title.trim();
@@ -628,6 +678,8 @@ router.put('/:memoryId', auth, async (req, res) => {
     res.status(500).json({ message: 'Failed to update memory' });
   }
 });
+
+
 // ✅ DELETE: Remove participant from memory
 router.delete('/:id/participants/:participantId', auth, async (req, res) => {
   try {
@@ -637,31 +689,48 @@ router.delete('/:id/participants/:participantId', auth, async (req, res) => {
       return res.status(404).json({ message: 'Memory not found' });
     }
     
-    const isCreator = memory.creator.equals(req.user.id);
-    const isSelf = req.params.participantId === req.user.id;
+    const requesterId = req.user.id;
+    const participantIdToRemove = req.params.participantId;
     
-    if (!isCreator && !isSelf) {
+    // 🆕 UPDATED: Allow participant to remove themselves OR any participant to remove others
+    const isCreator = memory.creator.equals(requesterId);
+    const isParticipant = memory.participants.some(p => p.equals(requesterId));
+    const isSelfRemoval = participantIdToRemove === requesterId;
+    
+    if (!isCreator && !isParticipant) {
       return res.status(403).json({ message: 'Access denied' });
     }
-    
-    // ✅ FIXED: Manual participant removal instead of using the buggy method
-    const participantIdToRemove = req.params.participantId;
     
     // Cannot remove creator
     if (memory.creator.equals(participantIdToRemove)) {
       return res.status(400).json({ message: 'Cannot remove creator from memory' });
     }
     
+    // 🆕 NEW: Special handling for self-removal
+    if (isSelfRemoval) {
+      console.log('🚪 User is leaving memory:', { requesterId, memoryId: memory._id });
+    } else {
+      console.log('👥 Participant removing another user:', { 
+        requesterId, 
+        participantIdToRemove, 
+        memoryId: memory._id 
+      });
+    }
+    
     // Remove participant from array
     memory.participants = memory.participants.filter(p => 
-      p && !p.equals(participantIdToRemove)  // ✅ FIXED: Added null check
+      p && !p.equals(participantIdToRemove)
     );
     
     await memory.save();
     await memory.populate('participants', 'username fullName profilePicture');
     
+    const message = isSelfRemoval ? 
+      'Successfully left memory' : 
+      'Participant removed successfully';
+    
     res.json({ 
-      message: 'Participant removed successfully',
+      message,
       memory 
     });
   } catch (error) {
