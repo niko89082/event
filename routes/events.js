@@ -3900,35 +3900,36 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
   try {
     const { eventId } = req.params;
     const { qrData } = req.body;
+    const hostUserId = req.user._id;
 
-    // Get event
+    console.log(`🎯 Host scan check-in: Host ${hostUserId} scanning user for event ${eventId}`);
+
+    // Get event with proper populations
     const event = await Event.findById(eventId)
       .populate('host', 'username profilePicture')
-      .populate('coHosts', 'username profilePicture')
-      .populate('attendees', '_id username profilePicture')
-      .populate('checkedIn', '_id username profilePicture');
+      .populate('coHosts', 'username profilePicture');
 
     if (!event) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Event not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
       });
     }
 
     // Verify host permissions
-    const isHost = String(event.host._id) === String(req.user._id);
+    const isHost = String(event.host._id) === String(hostUserId);
     const isCoHost = event.coHosts.some(coHost => 
-      String(coHost._id) === String(req.user._id)
+      String(coHost._id) === String(hostUserId)
     );
-    
+
     if (!isHost && !isCoHost) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only hosts and co-hosts can check in attendees' 
+      return res.status(403).json({
+        success: false,
+        message: 'Only event hosts can scan QR codes for check-in'
       });
     }
 
-    // ✅ SIMPLIFIED: Parse QR data for userId
+    // Parse QR data
     let parsedQR;
     try {
       parsedQR = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
@@ -3946,8 +3947,9 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
       });
     }
 
-    // ✅ SIMPLIFIED: Direct userId lookup
+    // Get target user
     const targetUserId = parsedQR.userId;
+    const User = require('../models/User');
     const targetUser = await User.findById(targetUserId)
       .select('_id username profilePicture bio');
     
@@ -3981,26 +3983,43 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
       String(id) === String(targetUserId)
     );
     
+    let wasAutomaticallyRegistered = false;
+
     if (!isAttendee) {
-      return res.json({
-        success: false,
-        status: 'not_registered',
-        message: 'User is not registered for this event',
-        user: {
-          _id: targetUser._id,
-          username: targetUser.username,
-          profilePicture: targetUser.profilePicture
+      // ✅ NEW: Automatically register user when host scans their QR
+      event.attendees.push(targetUserId);
+      wasAutomaticallyRegistered = true;
+      console.log(`📝 User ${targetUserId} automatically registered by host for event ${eventId}`);
+
+      // Add event to user's attending events
+      await User.findByIdAndUpdate(targetUserId, {
+        $addToSet: { attendingEvents: eventId }
+      });
+
+      // ✅ NEW: Create activity for friends when user joins via host QR scan
+      setImmediate(async () => {
+        try {
+          await onEventJoin(eventId, targetUserId);
+          console.log(`🎯 Activity hook executed for host QR scan registration: ${targetUserId} -> ${eventId}`);
+        } catch (activityError) {
+          console.error('Failed to create host QR scan activity:', activityError);
+          // Don't fail the main operation if activity creation fails
         }
       });
     }
 
-    // ✅ Check them in
+    // Check them in
     event.checkedIn.push(targetUserId);
     await event.save();
 
+    // Success response with enhanced information
+    const responseMessage = wasAutomaticallyRegistered
+      ? `${targetUser.username} has been automatically registered and checked in successfully`
+      : `${targetUser.username} has been checked in successfully`;
+
     res.json({
       success: true,
-      message: `${targetUser.username} has been checked in successfully`,
+      message: responseMessage,
       user: {
         _id: targetUser._id,
         username: targetUser.username,
@@ -4010,14 +4029,15 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
         _id: event._id,
         title: event.title,
         checkedInCount: event.checkedIn.length
-      }
+      },
+      wasAutomaticallyRegistered
     });
 
   } catch (error) {
-    console.error('Event check-in error:', error);
+    console.error('❌ Host QR scan check-in error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error during check-in'
     });
   }
 });
@@ -4105,6 +4125,34 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
               });
             }
           }
+
+          // ✅ NEW: Check if user needs to be added as attendee
+          const targetUserId = req.user._id;
+          const isAttending = event.attendees.some(attendee => 
+            String(attendee._id || attendee) === String(targetUserId)
+          );
+
+          let wasAdded = false;
+          if (!isAttending) {
+            event.attendees.push(targetUserId);
+            wasAdded = true;
+            console.log(`📝 User ${targetUserId} auto-registered via unified QR check-in`);
+
+            const User = require('../models/User');
+            await User.findByIdAndUpdate(targetUserId, {
+              $addToSet: { attendingEvents: eventId }
+            });
+
+            // ✅ NEW: Create activity for friends
+            setImmediate(async () => {
+              try {
+                await onEventJoin(eventId, targetUserId);
+                console.log(`🎯 Activity hook executed for unified QR check-in: ${targetUserId} -> ${eventId}`);
+              } catch (activityError) {
+                console.error('Failed to create unified QR check-in activity:', activityError);
+              }
+            });
+          }
           
           // Proceed with check-in
           const checkInResult = await event.checkInUser(req.user._id);
@@ -4118,7 +4166,8 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
               username: req.user.username,
               profilePicture: req.user.profilePicture
             },
-            checkIn: checkInResult
+            checkIn: checkInResult,
+            wasAutomaticallyRegistered: wasAdded
           });
         }
         
@@ -4166,6 +4215,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
         }
 
         // Find user by share code
+        const User = require('../models/User');
         const targetUser = await User.findOne({ shareCode: shareCodeToFind })
           .select('_id username profilePicture bio');
         
@@ -4209,9 +4259,26 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
           }
           
           // Add to attendees if not already there and host confirmed
+          let wasAutomaticallyRegistered = false;
           if (!isAttendee && confirmEntry) {
             event.attendees.push(targetUser._id);
+            wasAutomaticallyRegistered = true;
             console.log('➕ Added non-attendee to attendees list');
+
+            // Also add event to user's attending events
+            await User.findByIdAndUpdate(targetUserId, {
+              $addToSet: { attendingEvents: eventId }
+            });
+
+            // ✅ NEW: Create activity for friends when host adds user
+            setImmediate(async () => {
+              try {
+                await onEventJoin(eventId, targetUserId);
+                console.log(`🎯 Activity hook executed for host adding user: ${targetUserId} -> ${eventId}`);
+              } catch (activityError) {
+                console.error('Failed to create host add user activity:', activityError);
+              }
+            });
           }
           
           // Check in the user
@@ -4229,7 +4296,7 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
               username: targetUser.username,
               profilePicture: targetUser.profilePicture
             },
-            wasAdded: !isAttendee,
+            wasAdded: wasAutomaticallyRegistered,
             manualCheckIn: manualCheckIn || false
           });
         } else {
@@ -4265,8 +4332,99 @@ router.post('/:eventId/checkin', protect, async (req, res) => {
       }
     }
 
-    // Handle manual check-in (existing logic continues...)
-    // ... rest of the existing check-in endpoint logic
+    // Handle manual check-in by userId
+    if (userId && (isHost || isCoHost)) {
+      console.log('🔍 Processing manual check-in for userId:', userId);
+      
+      const User = require('../models/User');
+      const targetUser = await User.findById(userId).select('_id username profilePicture');
+      
+      if (!targetUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+      
+      // Check if user is already checked in
+      const isAlreadyCheckedIn = event.checkedIn.some(id => String(id) === String(userId));
+      if (isAlreadyCheckedIn) {
+        return res.json({
+          success: false,
+          status: 'already_checked_in',
+          message: 'User is already checked in',
+          user: {
+            _id: targetUser._id,
+            username: targetUser.username,
+            profilePicture: targetUser.profilePicture
+          }
+        });
+      }
+      
+      // Check if user is attendee
+      const isAttendee = event.attendees.some(id => String(id) === String(userId));
+      
+      if (!isAttendee && !confirmEntry) {
+        return res.json({
+          success: false,
+          status: 'requires_confirmation',
+          message: 'User is not registered for this event. Allow entry?',
+          user: {
+            _id: targetUser._id,
+            username: targetUser.username,
+            profilePicture: targetUser.profilePicture
+          }
+        });
+      }
+      
+      // Add to attendees if not already there and host confirmed
+      let wasAutomaticallyRegistered = false;
+      if (!isAttendee && confirmEntry) {
+        event.attendees.push(targetUser._id);
+        wasAutomaticallyRegistered = true;
+        console.log('➕ Manually added non-attendee to attendees list');
+
+        // Also add event to user's attending events
+        await User.findByIdAndUpdate(userId, {
+          $addToSet: { attendingEvents: eventId }
+        });
+
+        // ✅ NEW: Create activity for friends when host manually adds user
+        setImmediate(async () => {
+          try {
+            await onEventJoin(eventId, userId);
+            console.log(`🎯 Activity hook executed for manual host add: ${userId} -> ${eventId}`);
+          } catch (activityError) {
+            console.error('Failed to create manual host add activity:', activityError);
+          }
+        });
+      }
+      
+      // Check in the user
+      event.checkedIn.push(targetUser._id);
+      await event.save();
+      
+      console.log('✅ User manually checked in successfully:', targetUser.username);
+      
+      return res.json({
+        success: true,
+        status: 'checked_in',
+        message: `${targetUser.username} checked in successfully`,
+        user: {
+          _id: targetUser._id,
+          username: targetUser.username,
+          profilePicture: targetUser.profilePicture
+        },
+        wasAdded: wasAutomaticallyRegistered,
+        manualCheckIn: true
+      });
+    }
+
+    // If no valid check-in method provided
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid check-in request. Please provide QR code or user ID.'
+    });
 
   } catch (error) {
     console.error('❌ Check-in error:', error);
@@ -6681,6 +6839,17 @@ router.post('/:eventId/self-checkin', protect, async (req, res) => {
       const User = require('../models/User');
       await User.findByIdAndUpdate(currentUserId, {
         $addToSet: { attendingEvents: eventId }
+      });
+
+      // ✅ NEW: Create activity for friends when user joins via QR scan
+      setImmediate(async () => {
+        try {
+          await onEventJoin(eventId, currentUserId);
+          console.log(`🎯 Activity hook executed for QR self check-in: ${currentUserId} -> ${eventId}`);
+        } catch (activityError) {
+          console.error('Failed to create QR self check-in activity:', activityError);
+          // Don't fail the main operation if activity creation fails
+        }
       });
     }
 

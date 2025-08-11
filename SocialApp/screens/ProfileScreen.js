@@ -973,10 +973,17 @@ const renderPostGrid = ({ item }) => (
   <TouchableOpacity
     style={styles.postGridItem}
     onPress={() => navigation.navigate('UnifiedDetailsScreen', { 
-      postId: item._id,
-      postType: 'post', // Regular posts from profile
-      post: item // Pass the post data
-    })}
+  postId: item._id,
+  postType: 'post',
+  post: {
+    ...item,
+    user: item.user || {
+      _id: currentUser._id,
+      username: currentUser.username,
+      profilePicture: currentUser.profilePicture
+    }
+  }
+})}
     activeOpacity={0.8}
   >
     <Image

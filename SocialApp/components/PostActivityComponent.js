@@ -169,19 +169,26 @@ const PostActivityComponent = ({
 
   // Phase 3: Enhanced navigation handlers with haptic feedback
   const handleImagePress = useCallback(() => {
-    console.log('📱 PostActivityComponent: Image pressed, navigating to PostDetails');
-    
-    // Add subtle haptic feedback on iOS
-    if (Platform.OS === 'ios' && typeof Haptics !== 'undefined') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    
-    navigation.navigate('PostDetailsScreen', { 
-      postId: post._id,
-      source: 'activity_feed',
-      initialData: post
-    });
-  }, [post._id, navigation]);
+  console.log('📱 PostActivityComponent: Image pressed, navigating to UnifiedDetails');
+  
+  // Add subtle haptic feedback on iOS
+  if (Platform.OS === 'ios' && typeof Haptics !== 'undefined') {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }
+  
+  // ✅ FIXED: Navigate to UnifiedDetailsScreen instead of PostDetailsScreen
+  navigation.navigate('UnifiedDetailsScreen', { 
+    postId: post._id,
+    postType: isMemoryPost ? 'memory' : 'post', // Specify post type
+    post: {
+      ...post,
+      postType: isMemoryPost ? 'memory' : 'post',
+      user: user,
+      createdAt: post.createdAt || post.uploadDate
+    },
+    source: 'activity_feed'
+  });
+}, [post._id, navigation, post, user, isMemoryPost]);
 
   const handleUserPress = useCallback(() => {
     console.log('📱 PostActivityComponent: User pressed, navigating to Profile');
@@ -196,14 +203,24 @@ const PostActivityComponent = ({
   }, [post.event?._id, navigation]);
 
   const handleViewAllComments = useCallback(() => {
-    console.log('📱 PostActivityComponent: View comments pressed, navigating to PostDetails');
-    navigation.navigate('PostDetailsScreen', { 
-      postId: post._id,
-      source: 'activity_feed',
-      focusComments: true,
-      initialData: post
-    });
-  }, [post._id, navigation]);
+  console.log('📱 PostActivityComponent: View comments pressed, navigating to UnifiedDetails');
+  
+  // ✅ FIXED: Navigate to UnifiedDetailsScreen instead of PostDetailsScreen
+  navigation.navigate('UnifiedDetailsScreen', { 
+    postId: post._id,
+    postType: isMemoryPost ? 'memory' : 'post', // Specify post type
+    post: {
+      ...post,
+      postType: isMemoryPost ? 'memory' : 'post',
+      user: user,
+      createdAt: post.createdAt || post.uploadDate
+    },
+    source: 'activity_feed',
+    focusComments: true,
+    openKeyboard: true // Auto-focus comment input
+  });
+}, [post._id, navigation, post, user, isMemoryPost]);
+
 
   const handleCommentUserPress = useCallback(() => {
     if (latestComment?.user?._id) {

@@ -82,7 +82,7 @@ const AttendeeListScreen = ({ route, navigation }) => {
       const [eventResponse, attendeesResponse, userResponse] = await Promise.all([
         api.get(`/api/events/${eventId}`),
         api.get(`/api/events/${eventId}/attendees`),
-        api.get('/api/profile/') // Use the correct profile endpoint
+        api.get('/api/profile') // Correct endpoint for current user
       ]);
 
       const eventData = eventResponse.data;
@@ -365,7 +365,60 @@ const AttendeeListScreen = ({ route, navigation }) => {
       console.error('Error sharing:', error);
     }
   };
+// ADD THIS NEW FUNCTION:
+const handleBulkRemove = async () => {
+  if (selectedAttendees.size === 0) return;
 
+  const attendeeNames = Array.from(selectedAttendees)
+    .map(id => {
+      const attendee = attendees.find(a => a._id === id);
+      return attendee?.username || `${attendee?.firstName} ${attendee?.lastName}`.trim() || 'Unknown';
+    })
+    .slice(0, 3)
+    .join(', ');
+
+  const displayText = selectedAttendees.size > 3 
+    ? `${attendeeNames} and ${selectedAttendees.size - 3} others`
+    : attendeeNames;
+
+  Alert.alert(
+    'Remove Attendees',
+    `Remove ${displayText} from the event?`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const removePromises = Array.from(selectedAttendees).map(userId => 
+              api.post(`/api/events/${eventId}/remove-attendee`, { userId })
+            );
+
+            await Promise.all(removePromises);
+
+            // Update local state
+            setAttendees(prev => prev.filter(attendee => !selectedAttendees.has(attendee._id)));
+            setEvent(prev => ({
+              ...prev,
+              attendees: prev.attendees.filter(id => !selectedAttendees.has(id)),
+              checkedIn: (prev.checkedIn || []).filter(id => !selectedAttendees.has(id)),
+            }));
+
+            setSelectedAttendees(new Set());
+            setBulkMode(false);
+
+            Alert.alert('Success', `${selectedAttendees.size} attendees removed and notified`);
+          } catch (error) {
+            console.error('Error bulk removing attendees:', error);
+            Alert.alert('Error', 'Failed to remove some attendees');
+            fetchAttendees(true); // Refresh on error
+          }
+        },
+      },
+    ]
+  );
+};
   const handleOpenScanner = () => {
     navigation.navigate('QrScanScreen', { 
       eventId: eventId,
@@ -376,21 +429,12 @@ const AttendeeListScreen = ({ route, navigation }) => {
 
   // Filter attendees based on search and filters
   const filteredAttendees = attendees.filter(attendee => {
-    const matchesSearch = attendee.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         attendee.firstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         attendee.lastName?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const isCheckedIn = event?.checkedIn?.includes(attendee._id);
-    const hasFormSubmission = attendee.formSubmission;
-    
-    const matchesFilters = 
-      (filters.showCheckedIn && isCheckedIn) ||
-      (filters.showNotCheckedIn && !isCheckedIn) &&
-      (filters.showWithForms && hasFormSubmission) ||
-      (filters.showWithoutForms && !hasFormSubmission);
-    
-    return matchesSearch && matchesFilters;
-  });
+  const matchesSearch = attendee.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                       attendee.firstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                       attendee.lastName?.toLowerCase().includes(searchQuery.toLowerCase());
+  
+  return matchesSearch;
+});
 
   // UPDATED: Enhanced Attendee Item Rendering with SwipeableRow Integration
   const renderAttendeeItem = ({ item }) => {
@@ -465,34 +509,35 @@ const AttendeeListScreen = ({ route, navigation }) => {
           </View>
         </TouchableOpacity>
 
+
         {/* UPDATED: Enhanced Check-in Toggle - Only show if not in bulk mode */}
         {canManage && !bulkMode && (
-          <TouchableOpacity
-            style={[
-              styles.checkInButton,
-              isCheckedIn && styles.checkedInButton,
-              isToggleLoading && styles.loadingButton
-            ]}
-            onPress={() => handleCheckInToggle(item._id, isCheckedIn)}
-            disabled={isToggleLoading}
-            activeOpacity={0.7}
-          >
-            {isToggleLoading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons 
-                  name={isCheckedIn ? "checkmark-circle" : "radio-button-off"} 
-                  size={20} 
-                  color="#FFFFFF" 
-                />
-                <Text style={styles.checkInButtonText}>
-                  {isCheckedIn ? 'Undo' : 'Check In'}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
+  <TouchableOpacity
+    style={[
+      styles.checkInButton,
+      isCheckedIn && styles.checkedInButton,
+      isToggleLoading && styles.loadingButton
+    ]}
+    onPress={() => handleCheckInToggle(item._id, isCheckedIn)}
+    disabled={isToggleLoading}
+    activeOpacity={0.7}
+  >
+    {isToggleLoading ? (
+      <ActivityIndicator size="small" color="#FFFFFF" />
+    ) : (
+      <>
+        <Ionicons 
+          name={isCheckedIn ? "checkmark-circle" : "radio-button-off"} 
+          size={20} 
+          color="#FFFFFF" 
+        />
+        <Text style={styles.checkInButtonText}>
+          {isCheckedIn ? 'Undo' : 'Check In'}
+        </Text>
+      </>
+    )}
+  </TouchableOpacity>
+)}
       </View>
     );
 
@@ -564,14 +609,6 @@ const AttendeeListScreen = ({ route, navigation }) => {
       {/* Filter and Bulk Actions */}
       {canManage && (
         <View style={styles.controlsRow}>
-          <TouchableOpacity
-            style={styles.filterButton}
-            onPress={() => setShowFilterModal(true)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="filter" size={16} color="#3797EF" />
-            <Text style={styles.filterButtonText}>Filter</Text>
-          </TouchableOpacity>
           
           <TouchableOpacity
             style={[styles.bulkButton, bulkMode && styles.bulkButtonActive]}
@@ -620,7 +657,7 @@ const AttendeeListScreen = ({ route, navigation }) => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.bulkActionButton, styles.bulkRemoveButton]}
-                onPress={() => {/* handleBulkRemove */}}
+                onPress={handleBulkRemove}
               >
                 <Text style={[styles.bulkActionText, styles.bulkRemoveText]}>Remove</Text>
               </TouchableOpacity>
@@ -639,7 +676,7 @@ const AttendeeListScreen = ({ route, navigation }) => {
         {searchQuery ? 'No matching attendees' : 'No attendees yet'}
       </Text>
       <Text style={styles.emptySubtitle}>
-        {searchQuery ? 'Try adjusting your search or filters' : 'People who join this event will appear here'}
+        {searchQuery ? 'Try adjusting your search' : 'People who join this event will appear here'}
       </Text>
       {searchQuery && (
         <TouchableOpacity

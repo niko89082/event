@@ -4,7 +4,7 @@ import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, TextInput, FlatList, SafeAreaView,
   StatusBar, KeyboardAvoidingView, Platform, Dimensions, Animated,
-  Modal
+  Modal, ActionSheetIOS
 } from 'react-native';
 import { PinchGestureHandler, PanGestureHandler, State } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
@@ -332,7 +332,117 @@ export default function UnifiedDetailsScreen() {
       Alert.alert('Error', 'Failed to delete comment');
     }
   }, [selectedComment, isMemoryPost, postId, decrementCommentCount]);
+const handlePostActions = React.useCallback(() => {
+  // ✅ FIXED: Handle both string ID and object user
+  const userId = typeof currentPost.user === 'string' ? currentPost.user : currentPost.user?._id;
+  const isOwner = userId === currentUser?._id;
+  
+  console.log('🐛 DEBUG: handlePostActions ownership check:', {
+    currentPostUser: currentPost.user,
+    userId,
+    currentUserId: currentUser?._id,
+    isOwner
+  });
+  
+  if (!isOwner) return;
+  
+  if (Platform.OS === 'ios') {
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ['Cancel', 'Edit Caption', 'Delete Post'],
+        destructiveButtonIndex: 2,
+        cancelButtonIndex: 0,
+      },
+      (buttonIndex) => {
+        if (buttonIndex === 1) {
+          handleEditPost();
+        } else if (buttonIndex === 2) {
+          handleDeletePost();
+        }
+      }
+    );
+  } else {
+    Alert.alert(
+      'Post Options',
+      'What would you like to do?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Edit Caption', onPress: handleEditPost },
+        { text: 'Delete Post', style: 'destructive', onPress: handleDeletePost },
+      ]
+    );
+  }
+}, [currentPost, currentUser]);
 
+const handleEditPost = () => {
+  // Navigate to edit screen or show inline editor
+  Alert.prompt(
+    'Edit Caption',
+    'Enter new caption:',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Save', onPress: updateCaption },
+    ],
+    'plain-text',
+    currentPost?.caption || ''
+  );
+};
+
+const updateCaption = async (newCaption) => {
+  try {
+    const endpoint = isMemoryPost 
+      ? `/api/memories/photos/${postId}`
+      : `/api/photos/${postId}`;
+    
+    await api.put(endpoint, { caption: newCaption });
+    
+    // Update local state
+    setPost(prev => ({ ...prev, caption: newCaption }));
+    
+    // Update store
+    usePostsStore.getState().updatePost(postId, { caption: newCaption });
+    
+    Alert.alert('Success', 'Caption updated successfully!');
+  } catch (error) {
+    console.error('Error updating caption:', error);
+    Alert.alert('Error', 'Failed to update caption');
+  }
+};
+
+const handleDeletePost = () => {
+  Alert.alert(
+    'Delete Post',
+    'Are you sure you want to delete this post? This action cannot be undone.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Delete', 
+        style: 'destructive', 
+        onPress: confirmDeletePost 
+      },
+    ]
+  );
+};
+
+const confirmDeletePost = async () => {
+  try {
+    const endpoint = isMemoryPost 
+      ? `/api/memories/photos/${postId}`
+      : `/api/photos/${postId}`;
+    
+    await api.delete(endpoint);
+    
+    // Remove from store
+    usePostsStore.getState().removePost(postId);
+    
+    Alert.alert('Success', 'Post deleted successfully!', [
+      { text: 'OK', onPress: () => navigation.goBack() }
+    ]);
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    Alert.alert('Error', 'Failed to delete post');
+  }
+};
   const formatDate = (iso) => {
     try {
       if (isMemoryPost) {
@@ -358,13 +468,27 @@ export default function UnifiedDetailsScreen() {
     navigation.navigate('ProfileScreen', { userId });
   };
 
-  useEffect(() => {
-    if (!currentPost && postId) {
-      fetchPostDetails();
-    } else if (currentPost) {
-      setPost(currentPost);
-    }
-  }, [postId, currentPost]);
+  // Replace the existing useEffect around line 580:
+useEffect(() => {
+  console.log('🐛 DEBUG: useEffect triggered with:', {
+    hasCurrentPost: !!currentPost,
+    hasPostId: !!postId,
+    currentPostUser: currentPost?.user,
+    currentPostUploadedBy: currentPost?.uploadedBy,
+    initialPostUser: initialPost?.user,
+    initialPostUploadedBy: initialPost?.uploadedBy,
+    currentUserId: currentUser?._id,
+    currentUserName: currentUser?.username
+  });
+  
+  if (!currentPost && postId) {
+    console.log('🐛 DEBUG: Fetching post details because no currentPost');
+    fetchPostDetails();
+  } else if (currentPost) {
+    console.log('🐛 DEBUG: Setting post from currentPost:', currentPost.user);
+    setPost(currentPost);
+  }
+}, [postId, currentPost]);
 
   useEffect(() => {
     if (postId) {
@@ -381,9 +505,17 @@ export default function UnifiedDetailsScreen() {
   }, [openKeyboard]);
 
   const fetchPostDetails = async () => {
-    try {
-      setLoading(true);
-      let response;
+  console.log('🐛 DEBUG: fetchPostDetails called with:', {
+    postId,
+    isMemoryPost,
+    hasCurrentPost: !!currentPost,
+    hasInitialPost: !!initialPost,
+    currentUser: currentUser
+  });
+  
+  try {
+    setLoading(true);
+    let response;
       
       if (isMemoryPost) {
         try {
@@ -395,13 +527,19 @@ export default function UnifiedDetailsScreen() {
           
           const photoData = response.data.photo || response.data;
           const transformedPost = {
-            ...photoData,
-            _id: postId,
-            postType: 'memory',
-            user: photoData.uploadedBy || photoData.user,
-            createdAt: photoData.uploadedAt || photoData.createdAt,
-            paths: photoData.url ? [photoData.url] : (photoData.paths || [])
-          };
+  ...photoData,
+  _id: postId,
+  postType: 'memory',
+  user: photoData.uploadedBy || photoData.user || currentPost?.user || {
+    username: currentUser?.username || 'You',
+    _id: currentUser?._id || '',
+    profilePicture: currentUser?.profilePicture
+  },
+  createdAt: photoData.uploadedAt || photoData.createdAt,
+  paths: photoData.url ? [photoData.url] : (photoData.paths || [])
+};
+
+console.log('🐛 DEBUG: Created transformedPost with user:', transformedPost.user);
           
           setPost(transformedPost);
           usePostsStore.getState().addPost(transformedPost);
@@ -432,7 +570,11 @@ export default function UnifiedDetailsScreen() {
                 _id: postId,
                 postType: 'memory',
                 url: '', // Will be empty until we find more data
-                user: { username: 'Unknown', _id: '' },
+                user: currentPost?.user || currentPost?.uploadedBy || { 
+                  username: 'Unknown', 
+                  _id: currentUser?._id || '',
+                  profilePicture: currentUser?.profilePicture 
+                },
                 createdAt: new Date().toISOString(),
                 caption: '',
                 userLiked: photoResponse.data?.userLiked || false,
@@ -545,11 +687,23 @@ export default function UnifiedDetailsScreen() {
     </View>
   ), [currentUser?._id, handleCommentActions]);
 
-  const renderHeader = () => {
-    if (!currentPost) return null;
+  // Add this at the beginning of renderHeader function:
+const renderHeader = () => {
+  if (!currentPost) return null;
 
-    const memoryMood = isMemoryPost ? getMemoryMood(currentPost.createdAt || currentPost.uploadedAt) : null;
+  // ✅ FIXED: Handle both string ID and object user
+  const userId = typeof currentPost.user === 'string' ? currentPost.user : currentPost.user?._id;
+  const isOwner = userId === currentUser?._id;
+  
+  console.log('🐛 DEBUG: renderHeader - fixed ownership check:', {
+    currentPostUser: currentPost.user,
+    userId,
+    currentUserId: currentUser?._id,
+    isOwner,
+    userType: typeof currentPost.user
+  });
 
+  const memoryMood = isMemoryPost ? getMemoryMood(currentPost.createdAt || currentPost.uploadedAt) : null;
     return (
       <View style={styles.postContainer}>
         {/* Author Info */}
@@ -568,7 +722,12 @@ export default function UnifiedDetailsScreen() {
             />
             <View style={styles.authorTextContainer}>
               <View style={styles.usernameRow}>
-                <Text style={styles.authorUsername}>{currentPost.user?.username || 'Unknown'}</Text>
+                <Text style={styles.authorUsername}>
+                  {typeof currentPost.user === 'string' 
+                    ? (currentUser?.username || 'Unknown') 
+                    : (currentPost.user?.username || 'Unknown')
+                  }
+                </Text>
                 
                 {/* Context Links */}
                 {isMemoryPost && currentPost.memoryInfo?.memoryTitle && (
@@ -594,6 +753,14 @@ export default function UnifiedDetailsScreen() {
                 {formatDate(currentPost.createdAt || currentPost.uploadedAt)}
               </Text>
             </View>
+            {isOwner && (
+              <TouchableOpacity 
+                onPress={handlePostActions}
+                style={styles.postMenuButton}
+              >
+                <Ionicons name="ellipsis-horizontal" size={20} color="#8E8E93" />
+              </TouchableOpacity>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -670,7 +837,12 @@ export default function UnifiedDetailsScreen() {
         {currentPost.caption && (
           <View style={styles.captionContainer}>
             <Text style={styles.captionText}>
-              <Text style={styles.captionUsername}>{currentPost.user?.username || 'Unknown'}</Text>{' '}
+             <Text style={styles.captionUsername}>
+              {typeof currentPost.user === 'string' 
+                ? (currentUser?.username || 'Unknown') 
+                : (currentPost.user?.username || 'Unknown')
+              }
+            </Text>
               {currentPost.caption}
             </Text>
           </View>
@@ -1242,4 +1414,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  postMenuButton: {
+  padding: 8,
+  marginLeft: 8,
+},
 });
