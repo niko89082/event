@@ -94,7 +94,35 @@ export default function ProfileScreen() {
       fetchUserProfile(true);
     }
   }
-
+ // FIXED: Re-filter posts when friendship status changes
+useEffect(() => {
+  if (user && !loading) {
+    console.log('🔄 === FRIENDSHIP STATUS CHANGE EFFECT ===');
+    console.log('🔄 Friendship status changed, re-filtering posts:', friendshipStatus);
+    console.log('🔄 User photos available:', user.photos?.length || 0);
+    console.log('🔄 isSelf:', isSelf);
+    
+    let filteredPosts = user.photos || [];
+    const shouldShowPosts = isSelf || friendshipStatus === 'friends';
+    
+    console.log('🔄 shouldShowPosts:', shouldShowPosts);
+    
+    if (!shouldShowPosts) {
+      console.log('🔒 Hiding posts due to friendship status change');
+      filteredPosts = [];
+    } else {
+      console.log('✅ Showing posts due to friendship status change');
+    }
+    
+    const sortedPosts = filteredPosts.sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    setPosts(sortedPosts);
+    
+    console.log('🔄 Posts after effect:', sortedPosts.length);
+    console.log('🔄 === END FRIENDSHIP STATUS CHANGE EFFECT ===');
+  }
+}, [friendshipStatus, user, isSelf, loading]);
   function handleFriendRequestRejected(data) {
     console.log('❌ ProfileScreen: Friend request rejected', data);
     if (data.requesterId === userId) {
@@ -242,31 +270,50 @@ export default function ProfileScreen() {
   }, [switchToTab]);
 
   // FIXED: Fetch friendship status with correct endpoint
-  const fetchFriendshipStatus = async () => {
-    if (isSelf) {
-      setFriendshipStatus('self');
-      return;
-    }
+  // FIXED: Fetch friendship status with better debugging
+const fetchFriendshipStatus = async () => {
+  console.log('🤝 === FETCHING FRIENDSHIP STATUS ===');
+  console.log('🤝 userId:', userId);
+  console.log('🤝 currentUser._id:', currentUser?._id);
+  console.log('🤝 isSelf:', isSelf);
+  
+  if (isSelf) {
+    console.log('🤝 Setting friendship status to self');
+    setFriendshipStatus('self');
+    return 'self';
+  }
 
-    try {
-      const { data } = await api.get(`/api/friends/status/${userId}`);
-      setFriendshipStatus(data.status);
-      setFriendshipData(data.friendship);
-      
-      // Fetch mutual friends if not friends yet
-      if (data.status === 'not-friends') {
-        try {
-          const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
-          setMutualFriends(mutualRes.data.mutualFriends || []);
-        } catch (mutualError) {
-          console.log('Could not fetch mutual friends:', mutualError);
-        }
+  try {
+    console.log('🤝 Making API call to /api/friends/status/' + userId);
+    const { data } = await api.get(`/api/friends/status/${userId}`);
+    console.log('🤝 Friendship status response:', data);
+    
+    setFriendshipStatus(data.status);
+    setFriendshipData(data.friendship);
+    
+    console.log('🤝 Friendship status set to:', data.status);
+    
+    // Fetch mutual friends if not friends yet
+    if (data.status === 'not-friends') {
+      try {
+        const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
+        setMutualFriends(mutualRes.data.mutualFriends || []);
+        console.log('👥 Mutual friends found:', mutualRes.data.mutualFriends?.length || 0);
+      } catch (mutualError) {
+        console.log('Could not fetch mutual friends:', mutualError);
       }
-    } catch (error) {
-      console.error('Error fetching friendship status:', error);
-      setFriendshipStatus('not-friends');
     }
-  };
+    
+    console.log('🤝 === FRIENDSHIP STATUS FETCH COMPLETE ===');
+    return data.status;
+  } catch (error) {
+    console.error('❌ Error fetching friendship status:', error);
+    console.error('❌ Error response:', error.response?.data);
+    console.error('❌ Error status:', error.response?.status);
+    setFriendshipStatus('not-friends');
+    return 'not-friends';
+  }
+};
 
   // FIXED: Fetch friends count using correct endpoint
   const fetchFriendsCount = async () => {
@@ -298,7 +345,8 @@ export default function ProfileScreen() {
 };
 
   // Fetch user profile data (UPDATED for friends system)
-  const fetchUserProfile = async (isRefresh = false) => {
+// FIXED: Fetch user profile data with proper sequencing and debugging
+const fetchUserProfile = async (isRefresh = false) => {
   try {
     if (isRefresh) {
       setRefreshing(true);
@@ -306,25 +354,73 @@ export default function ProfileScreen() {
       setLoading(true);
     }
 
+    console.log('📡 === PROFILE FETCH START ===');
     console.log('📡 Fetching profile data for userId:', userId);
+    console.log('📡 isSelf:', isSelf);
+    console.log('📡 Current friendshipStatus before fetch:', friendshipStatus);
+    
+    // CRITICAL FIX: Fetch friendship status FIRST and WAIT for it to update
+    let currentFriendshipStatus = 'not-friends';
+    if (!isSelf) {
+      console.log('🔒 Fetching friendship status first...');
+      try {
+        const { data } = await api.get(`/api/friends/status/${userId}`);
+        currentFriendshipStatus = data.status;
+        setFriendshipStatus(currentFriendshipStatus);
+        setFriendshipData(data.friendship);
+        console.log('🔒 Friendship status fetched and set:', currentFriendshipStatus);
+        
+        // Fetch mutual friends if not friends yet
+        if (currentFriendshipStatus === 'not-friends') {
+          try {
+            const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
+            setMutualFriends(mutualRes.data.mutualFriends || []);
+            console.log('👥 Mutual friends:', mutualRes.data.mutualFriends?.length || 0);
+          } catch (mutualError) {
+            console.log('Could not fetch mutual friends:', mutualError);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error fetching friendship status:', error);
+        currentFriendshipStatus = 'not-friends';
+        setFriendshipStatus('not-friends');
+      }
+    } else {
+      currentFriendshipStatus = 'self';
+      setFriendshipStatus('self');
+      console.log('🔒 User is self, setting friendship status to self');
+    }
+    
+    // Now fetch profile data
+    console.log('📡 Fetching profile data from /api/profile/' + userId);
     const { data } = await api.get(`/api/profile/${userId}`);
     console.log('✅ Profile data received:', { 
       username: data.username, 
       friendsCount: data.friendsCount,
       postsCount: data.photos?.length || 0,
-      canViewContent: data.photos?.length > 0 || 'backend-filtered'
+      canViewContent: data.photos?.length > 0 || 'backend-filtered',
+      backendFriendshipStatus: data.friendshipStatus, // Check if backend returns this
+      canViewPrivateContent: data.canViewPrivateContent
     });
     
     setUser(data);
     
-    // Fetch friendship status FIRST
-    await fetchFriendshipStatus();
-    
-    // BACKUP FILTER: Only show posts if friends or self
+    // FIXED: Filter posts based on CURRENT friendship status (use local variable)
     let filteredPosts = data.photos || [];
-    if (!isSelf && friendshipStatus !== 'friends') {
-      console.log('🔒 Frontend backup filter: Hiding posts for non-friend');
-      filteredPosts = []; // Hide posts for non-friends
+    const shouldShowPosts = isSelf || currentFriendshipStatus === 'friends';
+    
+    console.log('📸 Post filtering logic:');
+    console.log('  - isSelf:', isSelf);
+    console.log('  - currentFriendshipStatus:', currentFriendshipStatus);
+    console.log('  - shouldShowPosts:', shouldShowPosts);
+    console.log('  - rawPhotosFromBackend:', data.photos?.length || 0);
+    console.log('  - backendCanViewPrivateContent:', data.canViewPrivateContent);
+    
+    if (!shouldShowPosts) {
+      console.log('🔒 Frontend filter: Hiding posts for non-friend, status:', currentFriendshipStatus);
+      filteredPosts = [];
+    } else {
+      console.log('✅ Frontend filter: Showing posts, status:', currentFriendshipStatus);
     }
     
     const sortedPosts = filteredPosts.sort((a, b) => 
@@ -332,20 +428,26 @@ export default function ProfileScreen() {
     );
     setPosts(sortedPosts);
     
+    console.log('📸 Final posts set:', sortedPosts.length);
+    
     // Set friends count from profile data or fetch separately
     if (data.friendsCount !== undefined) {
       setFriendsCount(data.friendsCount);
+      console.log('👥 Friends count from profile:', data.friendsCount);
     } else {
+      console.log('👥 Fetching friends count separately...');
       await fetchFriendsCount();
     }
 
     // Fetch events if on Events tab
     if (activeTabIndex === 1) {
+      console.log('📅 On events tab, fetching events...');
       await fetchUserEvents();
     }
 
     // Fetch memories if on Memories tab
     if (activeTabIndex === 2) {
+      console.log('📚 On memories tab, fetching memories...');
       await fetchUserMemories();
     }
 
@@ -353,9 +455,14 @@ export default function ProfileScreen() {
     if (!isSelf) {
       await checkSharedMemories();
     }
+    
+    console.log('✅ === PROFILE FETCH COMPLETE ===');
 
   } catch (error) {
     console.error('❌ Error fetching profile:', error);
+    console.error('❌ Error details:', error.response?.data);
+    console.error('❌ Error status:', error.response?.status);
+    
     if (error.response?.status === 404) {
       Alert.alert('Error', 'User not found');
       navigation.goBack();
@@ -375,26 +482,39 @@ export default function ProfileScreen() {
 };
 
 
-  // Fetch user events (same as before)
-  const fetchUserEvents = async () => {
+useEffect(() => {
+  if (activeTabIndex === 1 && !eventsLoading) { // Only on Events tab
+    console.log('🔄 Re-checking events due to friendship status change:', friendshipStatus);
+    
+    if (!isSelf && friendshipStatus !== 'friends') {
+      console.log('🔒 Clearing events - user is not a friend');
+      setEvents([]);
+    } else if (friendshipStatus === 'friends' && events.length === 0) {
+      console.log('📅 Now friends - fetching events');
+      fetchUserEvents();
+    }
+  }
+}, [friendshipStatus, activeTabIndex, isSelf]);
+  // FIXED: Fetch user events with better synchronization
+const fetchUserEvents = async () => {
   try {
     setEventsLoading(true);
     
-    // BACKUP CHECK: Don't fetch events for non-friends
+    // ENHANCED CHECK: Don't fetch events for non-friends
     if (!isSelf && friendshipStatus !== 'friends') {
-      console.log('🔒 Not fetching events - user is not a friend');
+      console.log('🔒 Not fetching events - user is not a friend. Status:', friendshipStatus);
       setEvents([]);
       return;
     }
     
-    console.log(`📅 Fetching events for userId: ${userId} (isSelf: ${isSelf})`);
+    console.log(`📅 Fetching events for userId: ${userId} (isSelf: ${isSelf}, friendship: ${friendshipStatus})`);
     const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
     
     const sortedEvents = (data.events || []).sort((a, b) => 
       new Date(b.time) - new Date(a.time)
     );
     
-    // SAFETY CHECK: Make sure events belong to the correct user
+    // ENHANCED SAFETY CHECK: Make sure events belong to the correct user
     const userEvents = sortedEvents.filter(event => {
       const eventUserId = event.host?._id || event.host;
       const isUserEvent = String(eventUserId) === String(userId) || 
@@ -414,7 +534,7 @@ export default function ProfileScreen() {
       setSharedEventIds(new Set(data.sharedEventIds));
     }
     
-    console.log(`✅ Loaded ${userEvents.length} events for user ${userId}`);
+    console.log(`✅ Loaded ${userEvents.length} events for user ${userId} (friendship: ${friendshipStatus})`);
     
   } catch (error) {
     console.error('❌ Error fetching events:', error);

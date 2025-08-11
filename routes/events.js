@@ -1160,55 +1160,92 @@ router.get('/user/:userId', protect, async (req, res) => {
     const currentUserId = req.user._id;
     const isOwnProfile = String(userId) === String(currentUserId);
 
+    console.log(`📅 Getting events for user: ${userId}, viewer: ${currentUserId}, isOwnProfile: ${isOwnProfile}`);
+
     let query = {};
     
-    switch (type) {
-      case 'hosted':
-        query.host = userId;
-        break;
-      case 'attending':
-        query.attendees = userId;
-        query.host = { $ne: userId };
-        break;
-      case 'shared':
-        const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        
-        const sharedEventIds = user.sharedEvents || [];
-        query._id = { $in: sharedEventIds };
-        break;
-      default:
-        query.$or = [
-          { host: userId },
-          { attendees: userId }
-        ];
+    // CRITICAL FIX: For other users' profiles, only show shared events
+    if (!isOwnProfile) {
+      console.log(`🔒 Viewing another user's profile - filtering to shared events only`);
+      
+      // Get the target user's shared events
+      const targetUser = await User.findById(userId);
+      if (!targetUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      
+      const sharedEventIds = targetUser.sharedEvents || [];
+      console.log(`📋 User has ${sharedEventIds.length} shared events:`, sharedEventIds);
+      
+      if (sharedEventIds.length === 0) {
+        return res.json({
+          events: [],
+          sharedEventIds: [],
+          total: 0,
+          hasMore: false,
+          filters: { type, includePast, userId, isOwnProfile }
+        });
+      }
+      
+      // Only show the shared events
+      query._id = { $in: sharedEventIds };
+      
+      // For shared events, we also need to check if the viewing user can see them
+      const currentUser = await User.findById(currentUserId);
+      const userFriends = currentUser.getAcceptedFriends().map(f => String(f));
+      const isFriend = userFriends.includes(String(userId));
+      
+      console.log(`🤝 Is friend: ${isFriend}`);
+      
+      if (!isFriend) {
+        // If not friends, only show public shared events
+        query.privacyLevel = 'public';
+        console.log(`🔒 Not friends - only showing public shared events`);
+      } else {
+        console.log(`✅ Friends - showing all shared events`);
+      }
+      
+    } else {
+      // EXISTING LOGIC: For own profile, show based on type
+      switch (type) {
+        case 'hosted':
+          query.host = userId;
+          break;
+        case 'attending':
+          query.attendees = userId;
+          query.host = { $ne: userId };
+          break;
+        case 'shared':
+          const user = await User.findById(userId);
+          if (!user) return res.status(404).json({ message: 'User not found' });
+          
+          const sharedEventIds = user.sharedEvents || [];
+          query._id = { $in: sharedEventIds };
+          break;
+        default:
+          query.$or = [
+            { host: userId },
+            { attendees: userId }
+          ];
+      }
     }
 
+    // Time filtering
     if (includePast !== 'true') {
       query.time = { $gte: new Date() };
     }
 
-    if (!isOwnProfile) {
-      const permission = await EventPrivacyService.getVisibleEvents(currentUserId, {
-        hostFilter: userId,
-        limit: parseInt(limit),
-        skip: parseInt(skip)
-      });
-      
-      return res.json({
-        events: permission,
-        total: permission.length,
-        isOwnProfile: false
-      });
-    }
+    console.log(`🔍 Final query:`, JSON.stringify(query, null, 2));
 
+    // Execute query
     const events = await Event.find(query)
       .populate('host', 'username profilePicture')
-      .populate('attendees', 'username')
+      .populate('attendees', 'username profilePicture')
       .sort({ time: includePast === 'true' ? -1 : 1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip));
 
+    // Add user relationship flags to each event
     const eventsWithMetadata = events.map(event => {
       const isHost = String(event.host._id) === String(userId);
       const isAttending = event.attendees.some(a => String(a._id) === String(userId));
@@ -1219,19 +1256,38 @@ router.get('/user/:userId', protect, async (req, res) => {
         isHost,
         isAttending,
         isPast,
-        relationshipType: isHost ? 'host' : 'attendee'
+        userRelationship: isHost ? 'host' : isAttending ? 'attendee' : 'none'
       };
     });
 
+    // Get shared event IDs for own profile
+    let sharedEventIds = [];
+    if (isOwnProfile) {
+      const user = await User.findById(userId);
+      sharedEventIds = user.sharedEvents || [];
+    }
+
+    console.log(`✅ Returning ${eventsWithMetadata.length} events (${sharedEventIds.length} shared)`);
+
     res.json({
       events: eventsWithMetadata,
+      sharedEventIds,
       total: eventsWithMetadata.length,
-      isOwnProfile: true
+      hasMore: eventsWithMetadata.length === parseInt(limit),
+      filters: {
+        type,
+        includePast,
+        userId,
+        isOwnProfile
+      }
     });
 
   } catch (error) {
-    console.error('Get user events error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Get user events error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 });
 

@@ -565,18 +565,19 @@ router.delete('/delete', protect, async (req, res) => {
   }
 });
 
-// Get current user profile
+// FIXED: Replace the existing router.get('/:userId') in routes/profile.js with this:
+
 router.get('/:userId', protect, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
     const currentUserId = req.user._id;
     const isSelf = String(currentUserId) === String(targetUserId);
     
-    console.log(`🟡 Profile request: userId=${targetUserId}, currentUserId=${currentUserId}`);
+    console.log(`🟡 Profile request: userId=${targetUserId}, currentUserId=${currentUserId}, isSelf=${isSelf}`);
     
     // Get basic user data
     const user = await User.findById(targetUserId).select(
-      'username profilePicture bio createdAt'
+      'username profilePicture bio createdAt displayName'
     ).lean();
     
     if (!user) {
@@ -584,122 +585,63 @@ router.get('/:userId', protect, async (req, res) => {
     }
     
     // Check friendship status if not self
-    let friendshipStatus = 'not-friends';
+    let friendshipStatusString = 'not-friends';
     let canViewPrivateContent = isSelf;
     
     if (!isSelf) {
       const currentUser = await User.findById(currentUserId);
-      friendshipStatus = await currentUser.getFriendshipStatus(targetUserId);
-      canViewPrivateContent = friendshipStatus === 'friends';
       
-      console.log(`🔒 Friendship status: ${friendshipStatus}, canView: ${canViewPrivateContent}`);
+      // CRITICAL FIX: Extract the status string from the friendship object
+      const friendshipResult = currentUser.getFriendshipStatus(targetUserId);
+      console.log(`🔒 Friendship result (raw): ${JSON.stringify(friendshipResult)}`);
+      
+      // Handle both object and string returns
+      if (typeof friendshipResult === 'object' && friendshipResult.status) {
+        friendshipStatusString = friendshipResult.status;
+      } else if (typeof friendshipResult === 'string') {
+        friendshipStatusString = friendshipResult;
+      } else {
+        console.log(`⚠️ Unexpected friendship result type: ${typeof friendshipResult}`);
+        friendshipStatusString = 'not-friends';
+      }
+      
+      canViewPrivateContent = friendshipStatusString === 'friends';
+      
+      console.log(`🔒 Friendship status: ${friendshipStatusString}, canView: ${canViewPrivateContent}`);
     }
     
     // Get friends count (always visible)
     const targetUser = await User.findById(targetUserId);
     const friendsCount = targetUser.getAcceptedFriends().length;
     
-    // Get photos based on privacy
+    // CRITICAL FIX: Get photos based on privacy
     let photos = [];
     if (canViewPrivateContent) {
       photos = await Photo.find({ user: targetUserId })
         .sort({ createdAt: -1 })
         .limit(100)
         .lean();
+      
+      console.log(`✅ User CAN view content - returning ${photos.length} photos`);
+    } else {
+      console.log(`🔒 User CANNOT view content - hiding photos (friendship: ${friendshipStatusString})`);
     }
     
     const response = {
       ...user,
       photos: photos,
       friendsCount: friendsCount,
-      canViewPrivateContent: canViewPrivateContent
+      canViewPrivateContent: canViewPrivateContent,
+      friendshipStatus: friendshipStatusString // Add this for debugging
     };
     
-    console.log(`🟢 Profile data: photos=${photos.length}, friendsCount=${friendsCount}, canView=${canViewPrivateContent}`);
+    console.log(`🟢 Profile data: photos=${photos.length}, friendsCount=${friendsCount}, canView=${canViewPrivateContent}, friendship=${friendshipStatusString}`);
     
     res.json(response);
     
   } catch (error) {
-    console.error('Profile fetch error:', error);
+    console.error('❌ Profile fetch error:', error);
     res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// FIXED: Get user profile by ID - removed featuredEvents
-router.get('/:userId', protect, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const currentUserId = req.user._id;
-
-    console.log(`🟡 Profile request: userId=${userId}, currentUserId=${currentUserId}`);
-
-    // FIXED: Only populate fields that exist in the schema
-    const user = await User.findById(userId)
-      .populate('followers', 'username profilePicture displayName')
-      .populate('following', 'username profilePicture displayName')
-      .populate('photos', 'paths uploadDate likes comments')
-      .lean();
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Check follow relationships
-    const isFollowing = user.followers.some(
-      (f) => f._id.toString() === currentUserId.toString()
-    );
-
-    const isSelf = user._id.toString() === currentUserId.toString();
-
-    // Check for pending follow requests
-    let hasRequested = false;
-    if (user.followRequests && user.followRequests.length > 0) {
-      hasRequested = user.followRequests.some(
-        (rId) => rId.toString() === currentUserId.toString()
-      );
-    }
-
-    // Add follower/following counts
-    const followersCount = user.followers?.length || 0;
-    const followingCount = user.following?.length || 0;
-
-    console.log(`🟢 Profile data: followers=${followersCount}, following=${followingCount}, isFollowing=${isFollowing}`);
-
-    // If user is private and we're not authorized, return limited data
-    if (!user.isPublic && !isSelf && !isFollowing) {
-      return res.json({
-        _id: user._id,
-        username: user.username,
-        profilePicture: user.profilePicture,
-        displayName: user.displayName,
-        bio: user.bio,
-        isPublic: user.isPublic,
-        isFollowing: false,
-        hasRequested,
-        followersCount: 0,
-        followingCount: 0,
-        followers: [],
-        following: [],
-        photos: [],
-        message: 'This account is private.',
-      });
-    }
-
-    // Return full profile data
-    return res.json({
-      ...user,
-      isFollowing,
-      hasRequested,
-      followersCount,
-      followingCount,
-      followers: user.followers || [],
-      following: user.following || [],
-      photos: user.photos || [],
-    });
-
-  } catch (error) {
-    console.error('Profile endpoint error:', error);
-    return res.status(500).json({ message: 'Server error' });
   }
 });
 
