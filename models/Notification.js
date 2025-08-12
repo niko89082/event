@@ -31,7 +31,7 @@ const NotificationSchema = new mongoose.Schema({
       'memory_photo_added',
       'memory_invitation',
       'memory_photo_batch',                   // 🆕 NEW: When multiple friends upload photos
-      
+      'event_invitation_batch',
       // Event notifications
       'event_invitation',
       'event_reminder',

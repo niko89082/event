@@ -22,8 +22,37 @@ const EventInvitationActivity = ({
   navigation, 
   onAction 
 }) => {
-  const { data, metadata, timestamp } = activity;
-  const { event, invitedBy } = data;
+  const { data, metadata, timestamp, user } = activity;
+  const { event, invitedBy, inviterCount, isGrouped } = data;
+
+  // ✅ FIX: Handle both data formats - use invitedBy if available, fallback to user
+  const inviter = invitedBy || user;
+  
+  // ✅ SAFETY CHECK: Ensure inviter exists
+  if (!inviter) {
+    console.error('❌ EventInvitationActivity: No inviter data found', { activity });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Invitation data unavailable</Text>
+      </View>
+    );
+  }
+
+  // ✅ SAFETY CHECK: Ensure event exists
+  if (!event) {
+    console.error('❌ EventInvitationActivity: No event data found', { activity });
+    return (
+      <View style={styles.container}>
+        <ActivityHeader
+          user={inviter}
+          timestamp={timestamp}
+          activityType="event_invitation"
+          onUserPress={() => navigation.navigate('ProfileScreen', { userId: inviter._id })}
+        />
+        <Text style={styles.errorText}>Event information unavailable</Text>
+      </View>
+    );
+  }
 
   const handleAccept = () => {
     onAction(activity._id, 'accept_event_invitation', { eventId: event._id });
@@ -38,7 +67,7 @@ const EventInvitationActivity = ({
   };
 
   const handleViewProfile = () => {
-    navigation.navigate('ProfileScreen', { userId: invitedBy._id });
+    navigation.navigate('ProfileScreen', { userId: inviter._id });
   };
 
   const formatEventTime = (eventTime) => {
@@ -62,11 +91,27 @@ const EventInvitationActivity = ({
     }
   };
 
+  // ✅ IMPROVED: Handle grouped invitations
+  const getInvitationMessage = () => {
+    const username = inviter.username || inviter.displayName || 'Someone';
+    const eventTitle = event.title || 'this event';
+    
+    if (isGrouped && inviterCount > 1) {
+      if (inviterCount === 2) {
+        return `${username} and 1 other invited you to ${eventTitle}`;
+      } else {
+        return `${username} and ${inviterCount - 1} others invited you to ${eventTitle}`;
+      }
+    } else {
+      return `${username} invited you to ${eventTitle}`;
+    }
+  };
+
   return (
     <View style={styles.container}>
       {/* Activity Header */}
       <ActivityHeader
-        user={invitedBy}
+        user={inviter}
         timestamp={timestamp}
         activityType="event_invitation"
         onUserPress={handleViewProfile}
@@ -75,10 +120,13 @@ const EventInvitationActivity = ({
       {/* Invitation Message */}
       <View style={styles.messageContainer}>
         <Text style={styles.messageText}>
-          <Text style={styles.boldText}>{invitedBy.username}</Text>
-          <Text> invited you to </Text>
-          <Text style={styles.boldText}>{event.title}</Text>
+          {getInvitationMessage()}
         </Text>
+        {isGrouped && inviterCount > 1 && (
+          <Text style={styles.groupedText}>
+            {inviterCount} people invited you
+          </Text>
+        )}
       </View>
 
       {/* Event Card */}
@@ -96,71 +144,47 @@ const EventInvitationActivity = ({
           />
         ) : (
           <View style={[styles.eventImage, styles.placeholderImage]}>
-            <Ionicons name="calendar-outline" size={40} color="#8E8E93" />
+            <Ionicons name="calendar" size={40} color="#C7C7CC" />
           </View>
         )}
 
-        {/* Event Details Overlay */}
-        <View style={styles.eventOverlay}>
-          <View style={styles.eventInfo}>
-            <Text style={styles.eventTitle} numberOfLines={2}>
-              {event.title}
-            </Text>
+        {/* Event Info */}
+        <View style={styles.eventInfo}>
+          <Text style={styles.eventTitle} numberOfLines={2}>
+            {event.title}
+          </Text>
+          
+          <View style={styles.eventDetails}>
+            <View style={styles.eventDetailRow}>
+              <Ionicons name="time" size={14} color="#8E8E93" />
+              <Text style={styles.eventDetailText}>
+                {formatEventTime(event.time)}
+              </Text>
+            </View>
             
-            <View style={styles.eventMeta}>
-              {/* Event Time */}
-              <View style={styles.metaItem}>
-                <Ionicons name="time-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.metaText}>
-                  {formatEventTime(event.time)}
-                </Text>
-              </View>
-
-              {/* Location */}
-              {event.location && (
-                <View style={styles.metaItem}>
-                  <Ionicons name="location-outline" size={16} color="#FFFFFF" />
-                  <Text style={styles.metaText} numberOfLines={1}>
-                    {event.location}
-                  </Text>
-                </View>
-              )}
-
-              {/* Attendee Count */}
-              <View style={styles.metaItem}>
-                <Ionicons name="people-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.metaText}>
-                  {event.attendeeCount} {event.attendeeCount === 1 ? 'person' : 'people'}
-                </Text>
-              </View>
+            <View style={styles.eventDetailRow}>
+              <Ionicons name="lock-closed" size={14} color="#8E8E93" />
+              <Text style={styles.eventDetailText}>
+                {event.privacyLevel || 'Public'} Event
+              </Text>
             </View>
           </View>
-
-          {/* Quick View Button */}
-          <TouchableOpacity style={styles.quickViewButton}>
-            <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
         </View>
       </TouchableOpacity>
 
       {/* Action Buttons */}
-      <View style={styles.actionsContainer}>
+      <View style={styles.actionButtons}>
         <ActivityActionButton
           title="Decline"
           onPress={handleDecline}
-          style={styles.declineButton}
-          textStyle={styles.declineButtonText}
-          loading={metadata?.actionProcessing && metadata?.actionLabel?.includes('Declining')}
-          disabled={metadata?.actionProcessing}
+          variant="secondary"
+          style={styles.actionButton}
         />
-        
         <ActivityActionButton
           title="Accept"
           onPress={handleAccept}
-          style={styles.acceptButton}
-          textStyle={styles.acceptButtonText}
-          loading={metadata?.actionProcessing && metadata?.actionLabel?.includes('Accepting')}
-          disabled={metadata?.actionProcessing}
+          variant="primary"
+          style={styles.actionButton}
         />
       </View>
     </View>

@@ -3770,9 +3770,10 @@ router.post('/:eventId/invite', protect, async (req, res) => {
     const { eventId } = req.params;
     const { userIds } = req.body;
     
-    // ✅ ADD MISSING IMPORTS
+    // Add missing imports
     const mongoose = require('mongoose');
-    const Notification = require('../models/Notification'); // ✅ MISSING IMPORT
+    const Notification = require('../models/Notification');
+    const notificationService = require('../services/notificationService');
 
     console.log(`🔍 DEBUG: Processing invite for event ${eventId} from user ${req.user._id}`);
     console.log(`🔍 DEBUG: Inviting users:`, userIds);
@@ -3781,45 +3782,91 @@ router.post('/:eventId/invite', protect, async (req, res) => {
       return res.status(400).json({ message: 'userIds array is required' });
     }
 
-    const event = await Event.findById(eventId);
+    const event = await Event.findById(eventId).populate('host', '_id username');
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Check permissions
-    const isHost = String(event.host) === String(req.user._id);
-    const isCoHost = event.coHosts?.some(c => String(c) === String(req.user._id));
+    // FIX: Convert ObjectIds to strings for proper comparison
+    const currentUserId = req.user._id.toString();
+    const hostId = event.host._id ? event.host._id.toString() : event.host.toString();
+    
+    // Check permissions with better logic
+    const isHost = currentUserId === hostId;
+    const isCoHost = event.coHosts?.some(coHostId => {
+      const coHostIdStr = coHostId._id ? coHostId._id.toString() : coHostId.toString();
+      return coHostIdStr === currentUserId;
+    });
 
-    console.log(`🔍 DEBUG: Permission check - isHost: ${isHost}, isCoHost: ${isCoHost}, privacyLevel: ${event.privacyLevel}`);
+    console.log(`🔍 DEBUG: Permission check details:`);
+    console.log(`   - Current User ID: ${currentUserId}`);
+    console.log(`   - Host ID: ${hostId}`);
+    console.log(`   - Is Host: ${isHost}`);
+    console.log(`   - Is Co-Host: ${isCoHost}`);
+    console.log(`   - Privacy Level: ${event.privacyLevel}`);
 
-    if (isHost || isCoHost) {
-      console.log(`✅ Permission granted: User is host or co-host`);
+    // FIX: More robust permission checking
+    let canInvite = false;
+    let permissionReason = '';
+
+    if (isHost) {
+      canInvite = true;
+      permissionReason = 'User is the event host';
+    } else if (isCoHost) {
+      canInvite = true;
+      permissionReason = 'User is a co-host';
     } else {
-      if (event.privacyLevel === 'private') {
-        console.log(`❌ Permission denied: Private event and user is not host/co-host`);
-        return res.status(403).json({ 
-          message: 'Only hosts and co-hosts can invite users to private events' 
-        });
+      // Non-host/co-host users
+      switch (event.privacyLevel) {
+        case 'public':
+          // For public events, check the permissions setting
+          if (event.permissions?.canInvite === 'anyone' || !event.permissions?.canInvite) {
+            canInvite = true;
+            permissionReason = 'Public event allows anyone to invite';
+          } else if (event.permissions?.canInvite === 'attendees') {
+            const isAttending = event.attendees?.some(attendeeId => {
+              const attendeeIdStr = attendeeId._id ? attendeeId._id.toString() : attendeeId.toString();
+              return attendeeIdStr === currentUserId;
+            });
+            if (isAttending) {
+              canInvite = true;
+              permissionReason = 'User is an attendee and can invite others';
+            } else {
+              permissionReason = 'Only attendees can invite others to this public event';
+            }
+          } else {
+            permissionReason = 'Invitation permissions restricted by event settings';
+          }
+          break;
+          
+        case 'friends':
+          canInvite = false;
+          permissionReason = 'Only hosts and co-hosts can invite to friends-only events';
+          break;
+          
+        case 'private':
+          canInvite = false;
+          permissionReason = 'Only hosts and co-hosts can invite to private events';
+          break;
+          
+        default:
+          permissionReason = 'Unknown privacy level';
       }
-      
-      if (event.permissions?.canInvite !== 'attendees' && event.permissions?.canInvite !== 'anyone') {
-        return res.status(403).json({ 
-          message: 'You do not have permission to invite users to this event' 
-        });
-      }
-      
-      if (event.permissions?.canInvite === 'attendees') {
-        const isAttending = event.attendees?.some(a => String(a) === String(req.user._id));
-        if (!isAttending) {
-          return res.status(403).json({ 
-            message: 'Only attendees can invite others to this event' 
-          });
-        }
-      }
-      
-      console.log(`✅ Permission granted: User meets invite criteria`);
     }
 
+    console.log(`🔍 DEBUG: Permission result - Can Invite: ${canInvite}, Reason: ${permissionReason}`);
+
+    if (!canInvite) {
+      return res.status(403).json({ 
+        message: permissionReason,
+        privacyLevel: event.privacyLevel,
+        isHost: isHost,
+        isCoHost: isCoHost,
+        permissions: event.permissions
+      });
+    }
+
+    // Proceed with invitation logic...
     const newInvites = [];
     const alreadyInvited = [];
     const alreadyAttending = [];
@@ -3838,36 +3885,43 @@ router.post('/:eventId/invite', protect, async (req, res) => {
 
         const userExists = await User.findById(userId);
         if (!userExists) {
-          console.log(`❌ DEBUG: User not found in database: ${userId}`);
+          console.log(`❌ DEBUG: User not found: "${userId}"`);
           invalidUsers.push(userId);
           continue;
         }
 
-        console.log(`✅ DEBUG: User found: ${userExists.username}`);
+        // Check if already attending (use event.attendees array)
+        const isAlreadyAttending = event.attendees?.some(attendeeId => {
+          const attendeeIdStr = attendeeId._id ? attendeeId._id.toString() : attendeeId.toString();
+          return attendeeIdStr === userId.toString();
+        });
 
-        const isCurrentlyAttending = event.attendees?.some(aid => String(aid) === String(userId));
-        const isCurrentlyInvited = event.invitedUsers?.some(iid => String(iid) === String(userId));
-
-        console.log(`🔍 DEBUG: User ${userExists.username} - attending: ${isCurrentlyAttending}, invited: ${isCurrentlyInvited}`);
-
-        if (isCurrentlyAttending) {
+        if (isAlreadyAttending) {
+          console.log(`ℹ️ DEBUG: User ${userId} is already attending`);
           alreadyAttending.push(userId);
           continue;
         }
 
-        if (isCurrentlyInvited) {
+        // Check if already invited (use event.invitedUsers array)
+        const isAlreadyInvited = event.invitedUsers?.some(invitedId => {
+          const invitedIdStr = invitedId._id ? invitedId._id.toString() : invitedId.toString();
+          return invitedIdStr === userId.toString();
+        });
+
+        if (isAlreadyInvited) {
+          console.log(`⚠️ DEBUG: User ${userId} is already invited`);
           alreadyInvited.push(userId);
           continue;
         }
 
-        // Add to invites
+        // Add to event's invitedUsers array
         if (!event.invitedUsers) {
           event.invitedUsers = [];
         }
         event.invitedUsers.push(userId);
         newInvites.push(userId);
 
-        console.log(`✅ DEBUG: Added ${userExists.username} to invite list`);
+        console.log(`✅ DEBUG: Added user ${userId} to invite list`);
 
       } catch (userError) {
         console.error(`❌ DEBUG: Error processing user ${userId}:`, userError);
@@ -3875,119 +3929,71 @@ router.post('/:eventId/invite', protect, async (req, res) => {
       }
     }
 
-    console.log(`🔍 DEBUG: Results summary:`, {
-      newInvites: newInvites.length,
-      alreadyInvited: alreadyInvited.length,
-      alreadyAttending: alreadyAttending.length,
-      invalidUsers: invalidUsers.length
-    });
-
-    // ✅ CRITICAL FIX: SAVE THE EVENT FIRST
+    // Save event with new invites
     if (newInvites.length > 0) {
       await event.save();
       console.log(`✅ DEBUG: Event saved with ${newInvites.length} new invites`);
     }
 
-    // ✅ THEN CREATE NOTIFICATIONS
+    // Create activity feed entries and batched notifications
     if (newInvites.length > 0) {
       try {
-        const notificationService = require('../services/notificationService');
-        
+        // Create batched notifications for each invited user
         for (const inviteeId of newInvites) {
-          // Check for duplicates
-          const existingNotification = await Notification.findOne({
-            user: inviteeId,
-            'data.eventId': eventId,
-            type: 'event_invitation',
-            createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) }
-          });
-
-          if (!existingNotification) {
-            await notificationService.createNotification({
-              userId: inviteeId,
-              senderId: req.user._id,
-              category: 'events',
-              type: 'event_invitation',
-              title: 'Event Invitation',
-              message: `${req.user.username} invited you to "${event.title}"`,
-              data: {
-                eventId: eventId,
-                inviterId: req.user._id,
-                eventTitle: event.title,
-                eventTime: event.time,
-                eventLocation: event.location
-              },
-              actionType: 'VIEW_EVENT',
-              actionData: { eventId }
-            });
-            console.log(`🔔 Created event invitation notification for ${inviteeId}`);
-          } else {
-            console.log(`⚠️ Skipped duplicate notification for ${inviteeId}`);
-          }
+          await notificationService.sendEventInvitationBatched(
+            req.user._id,
+            inviteeId, 
+            eventId
+          );
         }
         
-        console.log(`🔔 Processed ${newInvites.length} event invitation notifications`);
+        console.log(`🔔 Created batched notifications for ${newInvites.length} invitations`);
       } catch (notificationError) {
-        console.error('Failed to create invitation notifications:', notificationError);
+        console.error('⚠️ Failed to create notifications:', notificationError);
+        // Don't fail the invitation if notifications fail
       }
     }
 
-    // ✅ PROPER RESPONSE FORMAT
-    res.json({
-      message: invalidUsers.length > 0 
-        ? `Invited ${newInvites.length} users, ${invalidUsers.length} users could not be invited`
-        : `Successfully invited ${newInvites.length} user${newInvites.length !== 1 ? 's' : ''}`,
-      invited: newInvites.length,
-      alreadyInvited: alreadyInvited.length,
-      alreadyAttending: alreadyAttending.length,
-      invalid: invalidUsers.length,
-      
-      // Legacy support
+    // Update event analytics
+    if (newInvites.length > 0) {
+      await Event.findByIdAndUpdate(eventId, {
+        $inc: { 'analytics.totalInvites': newInvites.length }
+      });
+    }
+
+    const response = {
+      success: true,
+      message: `Processed ${userIds.length} invitation(s)`,
       data: {
         invitationsSent: newInvites.length,
         alreadyConnected: alreadyInvited.length + alreadyAttending.length
       },
-      
-      details: {
-        newInvites,
-        alreadyInvited,
-        alreadyAttending,
-        invalidUsers
+      results: {
+        invited: newInvites,
+        alreadyInvited: alreadyInvited,
+        alreadyAttending: alreadyAttending,
+        invalid: invalidUsers
+      },
+      stats: {
+        total: userIds.length,
+        successful: newInvites.length,
+        failed: invalidUsers.length + alreadyInvited.length + alreadyAttending.length
       }
-    });
+    };
+
+    console.log(`✅ DEBUG: Invitation process completed:`, response.stats);
+    res.status(200).json(response);
 
   } catch (error) {
-    console.error('❌ DEBUG: Invite users error:', error);
+    console.error('❌ Event invitation error:', error);
     res.status(500).json({ 
-      message: 'Server error', 
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      message: 'Failed to send invitations',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
 
-// Decline Event Invite
-router.delete('/invite/:eventId', protect, async (req, res) => {
-  try {
-    console.log(`❌ User ${req.user._id} declining invite to event ${req.params.eventId}`);
-    
-    const event = await Event.findById(req.params.eventId);
-    if (!event) return res.status(404).json({ message: 'Event not found' });
-
-    const wasInvited = event.invitedUsers.includes(req.user._id);
-    event.invitedUsers.pull(req.user._id);
-    await event.save();
-
-    if (wasInvited) {
-      console.log(`✅ Successfully declined invitation to ${event.title}`);
-    }
-
-    res.json({ message: 'Event invitation declined' });
-  } catch (error) {
-    console.error('❌ Decline invite error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
 
 // Ban User from Event
 router.post('/:eventId/banUser', protect, async (req, res) => {
@@ -4195,47 +4201,85 @@ router.post('/:eventId/scan-user-qr', protect, async (req, res) => {
     });
   }
 });
+
+
+
 router.get('/:eventId/can-invite', protect, async (req, res) => {
   try {
-    const eventId = req.params.eventId;
-    const currentUserId = req.user._id;
+    const { eventId } = req.params;
+    const userId = req.user._id;
 
     const event = await Event.findById(eventId)
-      .select('host coHosts privacyLevel title attendees')
-      .populate('host', 'username displayName')
-      .populate('coHosts', 'username displayName');
+      .populate('host', '_id username')
+      .select('host coHosts privacyLevel permissions title');
 
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    // Get invitation info using the updated method
-    const invitationInfo = event.getInvitationInfo(currentUserId);
-
-    res.json({
-      success: true,
-      canInvite: invitationInfo.canInvite,
-      canShare: invitationInfo.canShare,
-      privacyLevel: invitationInfo.privacyLevel,
-      userRole: {
-        isHost: invitationInfo.isHost,
-        isCoHost: invitationInfo.isCoHost,
-        isAttendee: invitationInfo.isAttendee
-      },
-      explanations: {
-        invite: invitationInfo.inviteReason,
-        share: invitationInfo.shareReason
-      },
-      buttonTexts: {
-        invite: invitationInfo.inviteButtonText,
-        share: invitationInfo.shareButtonText
-      }
+    // Check if user can invite using the Event model method
+    const canInvite = event.canUserInvite(userId);
+    
+    // Get detailed explanation
+    const currentUserId = userId.toString();
+    const hostId = event.host._id ? event.host._id.toString() : event.host.toString();
+    const isHost = currentUserId === hostId;
+    const isCoHost = event.coHosts?.some(coHostId => {
+      const coHostIdStr = coHostId._id ? coHostId._id.toString() : coHostId.toString();
+      return coHostIdStr === currentUserId;
     });
+
+    let explanation = '';
+    if (canInvite) {
+      if (isHost) {
+        explanation = 'As the event host, you can invite anyone to this event.';
+      } else if (isCoHost) {
+        explanation = 'As a co-host, you can invite others to this event.';
+      } else {
+        explanation = 'You can invite others to this public event.';
+      }
+    } else {
+      switch (event.privacyLevel) {
+        case 'friends':
+          explanation = 'Only the host and co-hosts can invite people to friends-only events.';
+          break;
+        case 'private':
+          explanation = 'Only the host and co-hosts can send invitations to private events.';
+          break;
+        default:
+          explanation = 'You cannot invite others to this event.';
+      }
+    }
+
+    const response = {
+      canInvite,
+      canShare: event.canUserShare(userId),
+      privacyLevel: event.privacyLevel,
+      isHost,
+      isCoHost,
+      explanations: {
+        invite: explanation,
+        privacy: `This is a ${event.privacyLevel} event`
+      },
+      event: {
+        _id: event._id,
+        title: event.title,
+        privacyLevel: event.privacyLevel
+      }
+    };
+
+    console.log(`🔍 Can-invite check for user ${userId} on event ${eventId}:`, {
+      canInvite,
+      isHost,
+      isCoHost,
+      privacyLevel: event.privacyLevel
+    });
+
+    res.json(response);
 
   } catch (error) {
     console.error('❌ Can-invite check error:', error);
     res.status(500).json({ 
-      success: false,
       message: 'Failed to check invitation permissions',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });

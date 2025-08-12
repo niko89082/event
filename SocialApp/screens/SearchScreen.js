@@ -1,4 +1,4 @@
-// screens/SearchScreen.js - Complete implementation with Phase 2 friend suggestions
+// Enhanced SearchScreen.js - Improved with comprehensive search and friend request functionality
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, TextInput, FlatList, Text, TouchableOpacity, StyleSheet,
@@ -16,6 +16,10 @@ export default function SearchScreen({ navigation, route }) {
   const [tab, setTab] = useState('users'); // users | events
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  
+  // Enhanced search state
+  const [searchType, setSearchType] = useState('all'); // 'all', 'friends', 'non-friends'
+  const [friendStatuses, setFriendStatuses] = useState({}); // Track friendship statuses
   
   // Friend suggestions state
   const [suggestions, setSuggestions] = useState([]);
@@ -61,33 +65,21 @@ export default function SearchScreen({ navigation, route }) {
     });
   }, [navigation, showSuggestions]);
 
-  // Fetch friend suggestions using Phase 2 API
-  const fetchFriendSuggestions = async () => {
-    try {
-      setLoadingSuggestions(true);
-      console.log('🎯 Fetching friend suggestions...');
-      
-      const { data } = await api.get('/api/friends/suggestions?limit=15'); // Hard limit at 15
-      
-      if (data.success) {
-        setSuggestions(data.suggestions || []);
-        console.log(`📱 Loaded ${data.suggestions?.length || 0} friend suggestions`);
-        console.log('🔍 Algorithm version:', data.metadata?.algorithmVersion);
+  // Debounced search effect with improved logic
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (query.trim().length > 0) {
+        runEnhancedSearch();
       } else {
-        console.warn('⚠️ Friend suggestions API returned unsuccessful response');
-        setSuggestions([]);
+        setResults([]);
       }
-    } catch (error) {
-      console.error('❌ Error fetching friend suggestions:', error);
-      Alert.alert('Error', 'Could not load friend suggestions. Please try again.');
-      setSuggestions([]);
-    } finally {
-      setLoadingSuggestions(false);
-    }
-  };
+    }, 200); // Reduced delay for faster response
 
-  // Enhanced search with friend prioritization
-  const runSearch = async () => {
+    return () => clearTimeout(timeoutId);
+  }, [query, tab, searchType]);
+
+  // ENHANCED: Comprehensive search function
+  const runEnhancedSearch = async () => {
     if (!query.trim()) {
       setResults([]);
       return;
@@ -95,105 +87,247 @@ export default function SearchScreen({ navigation, route }) {
     
     setLoading(true);
     try {
-      console.log(`🔍 Searching for ${tab}: "${query}"`);
+      console.log(`🔍 ENHANCED: Searching for ${tab}: "${query}", Type: ${searchType}`);
       
       if (tab === 'users') {
-        // Search users with friend prioritization
-        const response = await api.get(`/api/search/users?q=${encodeURIComponent(query)}`);
-        let searchResults = response.data || [];
+        // Use the enhanced user search endpoint
+        const response = await api.get(`/api/users/search`, {
+          params: {
+            q: query,
+            type: searchType,
+            limit: 20
+          }
+        });
         
-        // ENHANCEMENT: Prioritize friends and mutual friends in search results
-        if (searchResults.length > 0) {
-          const prioritizedResults = await prioritizeSearchResults(searchResults);
-          setResults(prioritizedResults);
-        } else {
-          setResults([]);
-        }
+        let searchResults = response.data || [];
+        console.log(`✅ ENHANCED: Found ${searchResults.length} user results`);
+        
+        // Additional processing for friend status tracking
+        const statusMap = {};
+        searchResults.forEach(user => {
+          statusMap[user._id] = user.relationshipStatus || 'unknown';
+        });
+        setFriendStatuses(statusMap);
+        
+        setResults(searchResults);
       } else {
-        // Search events
+        // Search events (existing functionality)
         const response = await api.get(`/api/search/events?q=${encodeURIComponent(query)}`);
         setResults(response.data || []);
       }
       
-      console.log(`✅ Found ${results.length} ${tab} results`);
     } catch (error) {
-      console.error('❌ Search error:', error);
+      console.error('❌ Enhanced search error:', error);
       setResults([]);
-      Alert.alert('Search Error', 'Could not complete search. Please try again.');
+      
+      // Better error handling
+      if (error.response?.status === 429) {
+        Alert.alert('Search Limit', 'Please wait a moment before searching again.');
+      } else {
+        Alert.alert('Search Error', 'Could not complete search. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Prioritize search results based on friendship status
-  const prioritizeSearchResults = async (searchResults) => {
+  // Fetch friend suggestions using Phase 2 API
+  const fetchFriendSuggestions = async () => {
     try {
-      // Get current user's friends for prioritization
-      const { data: friendsData } = await api.get('/api/friends/list?limit=1000');
-      const friendIds = (friendsData.friends || []).map(f => f._id);
+      setLoadingSuggestions(true);
+      console.log('🎯 Fetching friend suggestions...');
       
-      // Categorize results
-      const friends = [];
-      const mutualFriendUsers = [];
-      const otherUsers = [];
+      const { data } = await api.get('/api/friends/suggestions?limit=15');
       
-      for (const user of searchResults) {
-        if (friendIds.includes(user._id)) {
-          friends.push({ ...user, priorityReason: 'Your friend' });
-        } else {
-          // Check for mutual friends
-          try {
-            const { data: mutualData } = await api.get(`/api/friends/mutual/${user._id}`);
-            if (mutualData.count > 0) {
-              mutualFriendUsers.push({ 
-                ...user, 
-                priorityReason: `${mutualData.count} mutual friend${mutualData.count > 1 ? 's' : ''}`,
-                mutualFriendsCount: mutualData.count
-              });
-            } else {
-              otherUsers.push(user);
-            }
-          } catch (mutualError) {
-            // If mutual friends check fails, just add to other users
-            otherUsers.push(user);
-          }
-        }
-      }
-      
-      // Sort mutual friend users by count (highest first)
-      mutualFriendUsers.sort((a, b) => (b.mutualFriendsCount || 0) - (a.mutualFriendsCount || 0));
-      
-      // Return prioritized results: friends first, then mutual friends, then others
-      return [...friends, ...mutualFriendUsers, ...otherUsers];
-    } catch (error) {
-      console.error('❌ Error prioritizing search results:', error);
-      return searchResults; // Return original results if prioritization fails
-    }
-  };
-
-  // Send friend request
-  const sendFriendRequest = async (userId) => {
-    try {
-      console.log(`📤 Sending friend request to user: ${userId}`);
-      
-      await api.post(`/api/friends/request/${userId}`);
-      
-      // Remove from suggestions list
-      setSuggestions(prev => prev.filter(user => user._id !== userId));
-      
-      Alert.alert('Success', 'Friend request sent!');
-      console.log('✅ Friend request sent successfully');
-    } catch (error) {
-      console.error('❌ Error sending friend request:', error);
-      if (error.response?.status === 400) {
-        Alert.alert('Info', error.response.data.message || 'Could not send friend request');
+      if (data.success) {
+        setSuggestions(data.suggestions || []);
+        console.log(`📱 Loaded ${data.suggestions?.length || 0} friend suggestions`);
       } else {
-        Alert.alert('Error', 'Could not send friend request. Please try again.');
+        setSuggestions([]);
       }
+    } catch (error) {
+      console.error('❌ Error fetching friend suggestions:', error);
+      setSuggestions([]);
+    } finally {
+      setLoadingSuggestions(false);
     }
   };
 
-  // Render suggestion item
+  // ENHANCED: Send friend request with better UX
+  const sendFriendRequest = async (userId, username) => {
+    try {
+      console.log(`📤 ENHANCED: Sending friend request to user: ${userId}`);
+      
+      // Show confirmation alert with user's name
+      Alert.alert(
+        'Send Friend Request',
+        `Send a friend request to ${username}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Send Request',
+            onPress: async () => {
+              try {
+                // Use existing friends endpoint instead of duplicate
+                await api.post(`/api/friends/request/${userId}`);
+                
+                // Update local state immediately for better UX
+                setResults(prev => prev.map(user => 
+                  user._id === userId 
+                    ? { 
+                        ...user, 
+                        relationshipStatus: 'request-sent', 
+                        priorityReason: 'Friend request sent',
+                        canAddFriend: false 
+                      }
+                    : user
+                ));
+                
+                // Update friend statuses
+                setFriendStatuses(prev => ({
+                  ...prev,
+                  [userId]: 'request-sent'
+                }));
+                
+                // Remove from suggestions if present
+                setSuggestions(prev => prev.filter(user => user._id !== userId));
+                
+                Alert.alert('Success', `Friend request sent to ${username}!`);
+                console.log('✅ ENHANCED: Friend request sent successfully');
+              } catch (error) {
+                console.error('❌ ENHANCED: Error sending friend request:', error);
+                
+                let errorMessage = 'Could not send friend request. Please try again.';
+                if (error.response?.status === 400) {
+                  errorMessage = error.response.data.error || errorMessage;
+                } else if (error.response?.status === 409) {
+                  errorMessage = 'Friend request already exists or you are already friends.';
+                }
+                
+                Alert.alert('Error', errorMessage);
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('❌ ENHANCED: Error in sendFriendRequest:', error);
+    }
+  };
+
+  // ENHANCED: Get mutual friends for a user
+  const getMutualFriendsText = (user) => {
+    if (user.mutualFriendsCount > 0) {
+      return `${user.mutualFriendsCount} mutual friend${user.mutualFriendsCount > 1 ? 's' : ''}`;
+    }
+    return null;
+  };
+
+  // ENHANCED: Render user item with comprehensive relationship info
+  const renderEnhancedUserItem = ({ item }) => {
+    const avatar = item.profilePicture
+      ? `http://${API_BASE_URL}${item.profilePicture}`
+      : `https://placehold.co/50x50/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`;
+
+    const relationshipStatus = item.relationshipStatus || friendStatuses[item._id] || 'unknown';
+    const mutualFriendsText = getMutualFriendsText(item);
+    
+    const getStatusInfo = (status) => {
+      switch (status) {
+        case 'friends':
+          return { color: '#34C759', icon: 'checkmark-circle', text: 'Friends' };
+        case 'request-sent':
+          return { color: '#FF9500', icon: 'time', text: 'Request Sent' };
+        case 'request-received':
+          return { color: '#007AFF', icon: 'person-add', text: 'Respond to Request' };
+        case 'not-friends':
+          return { color: '#8E8E93', icon: 'person-add-outline', text: 'Add Friend' };
+        default:
+          return { color: '#8E8E93', icon: 'person', text: '' };
+      }
+    };
+
+    const statusInfo = getStatusInfo(relationshipStatus);
+    const canSendRequest = item.canAddFriend !== false && relationshipStatus === 'not-friends';
+
+    return (
+      <TouchableOpacity
+        style={styles.enhancedUserItem}
+        onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
+        activeOpacity={0.95}
+      >
+        <View style={styles.userContent}>
+          <Image source={{ uri: avatar }} style={styles.userAvatar} />
+          
+          <View style={styles.userInfo}>
+            <View style={styles.userNameRow}>
+              <Text style={styles.username} numberOfLines={1}>
+                {item.username}
+              </Text>
+              <Ionicons 
+                name={statusInfo.icon} 
+                size={16} 
+                color={statusInfo.color}
+                style={styles.statusIcon}
+              />
+            </View>
+            
+            {item.displayName && (
+              <Text style={styles.displayName} numberOfLines={1}>
+                {item.displayName}
+              </Text>
+            )}
+            
+            {item.priorityReason && (
+              <Text style={styles.priorityReason} numberOfLines={1}>
+                {item.priorityReason}
+              </Text>
+            )}
+            
+            {mutualFriendsText && (
+              <Text style={styles.mutualFriendsText}>
+                {mutualFriendsText}
+              </Text>
+            )}
+          </View>
+
+          {/* Action button */}
+          {canSendRequest && (
+            <TouchableOpacity
+              style={styles.addFriendButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                sendFriendRequest(item._id, item.username);
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="person-add" size={18} color="#007AFF" />
+              <Text style={styles.addFriendText}>Add</Text>
+            </TouchableOpacity>
+          )}
+          
+          {relationshipStatus === 'request-received' && (
+            <TouchableOpacity
+              style={styles.respondButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                navigation.navigate('FriendsListScreen', { 
+                  userId: currentUser._id, 
+                  mode: 'requests' 
+                });
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="person-add" size={18} color="#34C759" />
+              <Text style={styles.respondText}>Respond</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Render suggestion item (enhanced)
   const renderSuggestionItem = ({ item }) => (
     <TouchableOpacity
       style={styles.suggestionItem}
@@ -229,7 +363,7 @@ export default function SearchScreen({ navigation, route }) {
           style={styles.addFriendButton}
           onPress={(e) => {
             e.stopPropagation();
-            sendFriendRequest(item._id);
+            sendFriendRequest(item._id, item.username);
           }}
           activeOpacity={0.8}
         >
@@ -239,46 +373,12 @@ export default function SearchScreen({ navigation, route }) {
     </TouchableOpacity>
   );
 
-  // Render search result item
+  // Render search result item (updated to use enhanced user item)
   const renderSearchResult = ({ item }) => {
     if (tab === 'users') {
-      return (
-        <TouchableOpacity 
-          style={styles.item}
-          onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
-          activeOpacity={0.95}
-        >
-          <View style={styles.userItem}>
-            <Image
-              source={{
-                uri: item.profilePicture
-                  ? `http://${API_BASE_URL}${item.profilePicture}`
-                  : `https://placehold.co/40x40/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`
-              }}
-              style={styles.userAvatar}
-            />
-            <View style={styles.userInfo}>
-              <Text style={styles.username}>{item.username}</Text>
-              {item.displayName && (
-                <Text style={styles.displayName}>{item.displayName}</Text>
-              )}
-              {item.priorityReason && (
-                <Text style={styles.priorityReason}>{item.priorityReason}</Text>
-              )}
-            </View>
-            {item.priorityReason && (
-              <View style={styles.priorityBadge}>
-                <Ionicons 
-                  name={item.priorityReason.includes('friend') ? 'people' : 'person'} 
-                  size={16} 
-                  color="#3797EF" 
-                />
-              </View>
-            )}
-          </View>
-        </TouchableOpacity>
-      );
+      return renderEnhancedUserItem({ item });
     } else {
+      // Event rendering (existing logic)
       return (
         <TouchableOpacity 
           style={styles.item}
@@ -389,7 +489,7 @@ export default function SearchScreen({ navigation, route }) {
                 onChangeText={setQuery}
                 placeholder={`Search ${tab}...`}
                 style={styles.searchInput}
-                onSubmitEditing={runSearch}
+                onSubmitEditing={runEnhancedSearch}
                 returnKeyType="search"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -428,6 +528,30 @@ export default function SearchScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
 
+          {/* ENHANCED: Search Filter (for users only) */}
+          {tab === 'users' && query.length > 0 && (
+            <View style={styles.filterContainer}>
+              <TouchableOpacity
+                style={[styles.filterButton, searchType === 'all' && styles.activeFilter]}
+                onPress={() => setSearchType('all')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.filterText, searchType === 'all' && styles.activeFilterText]}>
+                  All People
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterButton, searchType === 'friends' && styles.activeFilter]}
+                onPress={() => setSearchType('friends')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.filterText, searchType === 'friends' && styles.activeFilterText]}>
+                  Friends Only
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Search Results */}
           <FlatList 
             data={results} 
@@ -457,8 +581,17 @@ export default function SearchScreen({ navigation, route }) {
                       No {tab} found
                     </Text>
                     <Text style={styles.emptySubtext}>
-                      Try searching for something else or check your spelling
+                      Try different keywords or check your spelling
                     </Text>
+                    {tab === 'users' && searchType === 'friends' && (
+                      <TouchableOpacity
+                        style={styles.expandSearchButton}
+                        onPress={() => setSearchType('all')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.expandSearchText}>Search All People</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 );
               }
@@ -471,7 +604,7 @@ export default function SearchScreen({ navigation, route }) {
                   </Text>
                   <Text style={styles.welcomeSubtext}>
                     {tab === 'users' 
-                      ? 'Find friends by username or name' 
+                      ? 'Find friends by username, name, or email' 
                       : 'Discover events by title or location'
                     }
                   </Text>
@@ -562,6 +695,34 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontWeight: '600',
   },
+
+  // ENHANCED: Filter Styles
+  filterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  filterButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  activeFilter: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  filterText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  activeFilterText: {
+    color: '#FFFFFF',
+  },
   
   // Results List Styles
   resultsList: {
@@ -574,41 +735,89 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
   },
   
-  // User Item Styles
-  userItem: {
+  // ENHANCED: User Item Styles
+  enhancedUserItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F0F0F0',
+  },
+  userContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   userAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     marginRight: 12,
   },
   userInfo: {
     flex: 1,
   },
+  userNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
   username: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
+    flex: 1,
+  },
+  statusIcon: {
+    marginLeft: 8,
   },
   displayName: {
     fontSize: 14,
     color: '#8E8E93',
-    marginTop: 2,
+    marginBottom: 2,
   },
   priorityReason: {
     fontSize: 12,
-    color: '#3797EF',
+    color: '#007AFF',
     fontWeight: '500',
-    marginTop: 2,
+    marginBottom: 2,
   },
-  priorityBadge: {
-    marginLeft: 8,
+  mutualFriendsText: {
+    fontSize: 12,
+    color: '#34C759',
+    fontWeight: '500',
+  },
+  addFriendButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    gap: 4,
+  },
+  addFriendText: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  respondButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FFF0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#34C759',
+    gap: 4,
+  },
+  respondText: {
+    fontSize: 14,
+    color: '#34C759',
+    fontWeight: '500',
   },
   
-  // Event Item Styles
+  // Event Item Styles (unchanged)
   eventItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -653,7 +862,7 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   
-  // Suggestions Styles
+  // Suggestions Styles (unchanged but enhanced)
   suggestionsContainer: {
     flex: 1,
   },
@@ -721,14 +930,6 @@ const styles = StyleSheet.create({
     color: '#3797EF',
     fontWeight: '500',
   },
-  addFriendButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   separator: {
     height: 0.5,
     backgroundColor: '#F0F0F0',
@@ -775,6 +976,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 20,
+  },
+  expandSearchButton: {
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    marginTop: 12,
+  },
+  expandSearchText: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   welcomeState: {
     alignItems: 'center',

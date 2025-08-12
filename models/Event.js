@@ -1224,30 +1224,48 @@ EventSchema.methods.hasUserPendingJoinRequest = function(userId) {
  */
 EventSchema.methods.canUserInvite = function(userId) {
   const userIdStr = String(userId);
-  const hostIdStr = String(this.host);
+  const hostIdStr = String(this.host._id || this.host);
+  
+  console.log(`🔍 canUserInvite check:`, {
+    userId: userIdStr,
+    hostId: hostIdStr,
+    isHost: userIdStr === hostIdStr,
+    privacyLevel: this.privacyLevel,
+    coHosts: this.coHosts
+  });
   
   // Host can always invite
-  if (userIdStr === hostIdStr) return true;
+  if (userIdStr === hostIdStr) {
+    console.log(`✅ Host can invite`);
+    return true;
+  }
   
   // Co-hosts can always invite
-  if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
+  if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) {
+    console.log(`✅ Co-host can invite`);
+    return true;
+  }
   
   // Check privacy level rules
   switch (this.privacyLevel) {
     case 'public':
       // Public events: Anyone can invite (even if not attending)
+      console.log(`✅ Public event - anyone can invite`);
       return true;
     
     case 'friends':
       // Friends events: Only host and co-hosts can invite
+      console.log(`❌ Friends event - only host/co-hosts can invite`);
       return false;
     
     case 'private':
       // Private events: Only host and co-hosts can invite
+      console.log(`❌ Private event - only host/co-hosts can invite`);
       return false;
     
     default:
       // Default to public behavior for backward compatibility
+      console.log(`✅ Default - allowing invite`);
       return true;
   }
 };
@@ -1259,32 +1277,22 @@ EventSchema.methods.canUserInvite = function(userId) {
  */
 EventSchema.methods.canUserShare = function(userId) {
   const userIdStr = String(userId);
-  const hostIdStr = String(this.host);
+  const hostIdStr = String(this.host._id || this.host);
   
   // Host can always share
   if (userIdStr === hostIdStr) return true;
   
   // Co-hosts can always share
-  if (this.coHosts && this.coHosts.some(c => String(c) === userIdStr)) return true;
+  if (this.coHosts && this.coHosts.some(c => String(c._id || c) === userIdStr)) return true;
   
-  // Check privacy level for sharing permissions
-  switch (this.privacyLevel) {
-    case 'public':
-      // Public events: Anyone can share
-      return true;
-    
-    case 'friends':
-      // Friends events: Only attendees can share
-      return this.attendees?.includes(userId) || false;
-    
-    case 'private':
-      // Private events: Only attendees can share
-      return this.attendees?.includes(userId) || false;
-    
-    default:
-      // Default to attendees-only sharing
-      return this.attendees?.includes(userId) || false;
-  }
+  // Attendees can share
+  if (this.attendees && this.attendees.some(a => String(a._id || a) === userIdStr)) return true;
+  
+  // For public events, anyone can share
+  if (this.privacyLevel === 'public') return true;
+  
+  // For private/friends events, only involved users can share
+  return false;
 };
 
 EventSchema.methods.declineInvitation = function(userId) {

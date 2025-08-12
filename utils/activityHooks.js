@@ -238,6 +238,33 @@ const onMemoryPhotoComment = async (photoId, commenterId, memoryId) => {
     console.error('❌ Error in onMemoryPhotoComment hook:', error);
   }
 };
+const onEventInvitation = async (eventId, inviterId, inviteeId) => {
+  try {
+    const Event = require('../models/Event');
+    const User = require('../models/User');
+    const notificationService = require('../services/notificationService');
+    
+    // Get event and inviter info
+    const event = await Event.findById(eventId).select('title host privacyLevel time');
+    const inviter = await User.findById(inviterId).select('username');
+    
+    if (!event || !inviter) return;
+    
+    console.log(`📧 Creating invitation activity for ${inviter.username} inviting to ${event.title}`);
+    
+    // Send batched notification (this handles grouping multiple invites)
+    await notificationService.sendEventInvitationBatched(
+      inviterId,
+      inviteeId, 
+      eventId
+    );
+    
+    // Activity feed entry is created through notification system
+    
+  } catch (error) {
+    console.error('Error in onEventInvitation hook:', error);
+  }
+};
 
 module.exports = {
   onEventJoin,

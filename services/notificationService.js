@@ -394,34 +394,76 @@ class NotificationService {
    * @param {string} eventId - Event ID
    * @param {Array} invitedUserIds - Array of invited user IDs
    */
-  async sendEventInvitation(hostId, eventId, invitedUserIds) {
-    const host = await User.findById(hostId).select('username');
-    const event = await Event.findById(eventId).select('title time');
+  async sendEventInvitationBatched(inviterId, inviteeId, eventId) {
+  const Event = require('../models/Event');
+  const User = require('../models/User');
+  
+  try {
+    const event = await Event.findById(eventId).select('title privacyLevel');
+    const inviter = await User.findById(inviterId).select('username');
     
-    const notifications = await Promise.all(
-      invitedUserIds.map(userId => 
-        this.createNotification({
-          userId,
-          senderId: hostId,
-          category: 'events',
-          type: 'event_invitation',
-          title: 'Event Invitation',
-          message: `${host.username} invited you to "${event.title}"`,
-          actionType: 'VIEW_EVENT',
-          actionData: { eventId },
-          data: { 
-            eventId,
-            eventTitle: event.title,
-            eventTime: event.time 
-          },
-          priority: 'high'
-        })
-      )
-    );
+    if (!event || !inviter) return null;
     
-    return notifications;
+    // Look for existing invitation notifications within last 2 hours
+    const timeWindow = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours
+    const existingNotif = await Notification.findOne({
+      user: inviteeId,
+      type: 'event_invitation_batch',
+      'data.eventId': eventId,
+      createdAt: { $gte: timeWindow }
+    });
+    
+    if (existingNotif) {
+      // Update existing batched notification
+      const currentInviters = existingNotif.data.inviterIds || [existingNotif.sender];
+      
+      // Add new inviter if not already included
+      if (!currentInviters.some(id => id.toString() === inviterId.toString())) {
+        currentInviters.push(inviterId);
+        
+        const count = currentInviters.length;
+        existingNotif.data.inviterIds = currentInviters;
+        existingNotif.data.count = count;
+        
+        // Update message based on count
+        if (count === 2) {
+          existingNotif.message = `${inviter.username} and 1 other invited you to "${event.title}"`;
+        } else {
+          existingNotif.message = `${inviter.username} and ${count - 1} others invited you to "${event.title}"`;
+        }
+        
+        existingNotif.updatedAt = new Date();
+        await existingNotif.save();
+        
+        console.log(`📧 Updated batched invitation notification (${count} inviters total)`);
+        return existingNotif;
+      }
+      
+      return existingNotif;
+    } else {
+      // Create new invitation notification
+      return this.createNotification({
+        userId: inviteeId,
+        senderId: inviterId,
+        category: 'events',
+        type: 'event_invitation_batch',
+        title: 'Event Invitation',
+        message: `${inviter.username} invited you to "${event.title}"`,
+        actionType: 'VIEW_EVENT',
+        actionData: { eventId },
+        data: { 
+          eventId, 
+          count: 1,
+          inviterIds: [inviterId],
+          privacyLevel: event.privacyLevel
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error sending batched event invitation:', error);
+    return null;
   }
-
+}
   /**
    * Send event reminder notification
    * @param {string} eventId - Event ID

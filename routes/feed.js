@@ -934,43 +934,56 @@ const fetchMemoryPhotoUploads = async (userId, friendIds, timeRange) => {
 };
 
 const fetchEventInvitations = async (userId, timeRange) => {
-  console.log('📨 Fetching event invitations...');
+  console.log('📧 Fetching event invitations for activity feed...');
   
-  const invitations = await Event.find({
-    invitedUsers: userId,
-    createdAt: { $gte: timeRange.start },
-    time: { $gte: new Date() } // Only future events
+  const invitations = await Notification.find({
+    user: userId,
+    type: { $in: ['event_invitation_batch'] },
+    createdAt: { $gte: timeRange.start }
   })
-  .populate('host', 'username profilePicture')
-  .populate('invitedUsers', 'username')
-  .sort({ createdAt: -1 })
-  .limit(20);
+  .populate('sender', 'username profilePicture')
+  .populate({
+    path: 'data.eventId',
+    select: 'title coverImage time privacyLevel host',
+    populate: { path: 'host', select: 'username' }
+  })
+  .sort({ updatedAt: -1 })
+  .limit(10)
+  .lean();
 
-  return invitations.map(event => ({
-    _id: `invitation_${event._id}`,
+  console.log(`🔍 Found ${invitations.length} event invitations`);
+
+  return invitations.map(invitation => ({
+    _id: `invitation_${invitation._id}`,
     activityType: 'event_invitation',
-    timestamp: event.createdAt,
-    user: event.host,
+    timestamp: invitation.updatedAt || invitation.createdAt,
+    user: invitation.sender, // ✅ This is the main user for ActivityHeader
     data: {
-      event: {
-        _id: event._id,
-        title: event.title,
-        coverImage: event.coverImage,
-        time: event.time,
-        location: event.location,
-        attendeeCount: event.attendees?.length || 0
-      },
-      invitedBy: event.host
+      event: invitation.data.eventId ? {
+        _id: invitation.data.eventId._id,
+        title: invitation.data.eventId.title,
+        coverImage: invitation.data.eventId.coverImage,
+        time: invitation.data.eventId.time,
+        privacyLevel: invitation.data.eventId.privacyLevel,
+        host: invitation.data.eventId.host
+      } : null,
+      // ✅ FIX: Add invitedBy for backward compatibility
+      invitedBy: invitation.sender,
+      inviterCount: invitation.data.count || 1,
+      inviterIds: invitation.data.inviterIds || [invitation.sender],
+      message: invitation.message,
+      isGrouped: (invitation.data.count || 1) > 1
     },
     metadata: {
       actionable: true,
-      grouped: false,
-      priority: 'high'
+      grouped: (invitation.data.count || 1) > 1,
+      priority: 'high',
+      actionType: 'VIEW_EVENT',
+      actionData: { eventId: invitation.data.eventId?._id }
     },
-    score: calculateActivityScore(event, 'event_invitation', userId)
+    score: calculateActivityScore(invitation, 'event_invitation', userId)
   }));
 };
-
 // const fetchEventPhotoUploads = async (userId, friendIds, timeRange) => {
 //   console.log('📷 Fetching event photo uploads...');
   

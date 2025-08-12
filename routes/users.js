@@ -319,41 +319,35 @@ router.get('/:userId/events', protect, async (req, res) => {
 });
 
 
-// ✅ FIXED: User search route with correct middleware name
+// NEW: General user search endpoint (includes all users when no friendship filter)
 router.get('/search', protect, async (req, res) => {
   try {
-    const { q } = req.query;
+    const { q, limit = 20, type = 'all' } = req.query; // type: 'all', 'friends', 'non-friends'
     
-    if (!q || q.trim().length < 2) {
-      return res.json({ users: [] });
+    console.log(`🔍 GENERAL: User search - Query: "${q}", Type: ${type}`);
+
+    if (!q || q.trim().length === 0) {
+      return res.json([]);
     }
+
+    const includeNonFriends = type === 'all' || type === 'non-friends';
     
-    const searchQuery = q.trim();
+    // Use the enhanced friends search with includeNonFriends flag
+    req.query.includeNonFriends = includeNonFriends.toString();
     
-    // Search users by username, fullName, or email
-    const users = await User.find({
-      $and: [
-        { _id: { $ne: req.user._id } }, // ✅ FIXED: Use req.user._id instead of req.user.id
-        {
-          $or: [
-            { username: { $regex: searchQuery, $options: 'i' } },
-            { fullName: { $regex: searchQuery, $options: 'i' } },
-            { email: { $regex: searchQuery, $options: 'i' } }
-          ]
-        }
-      ]
-    })
-    .select('username fullName profilePicture')
-    .limit(20)
-    .sort({ username: 1 });
-    
-    res.json({ users });
+    // Call the enhanced search function
+    return router.handle(req, res);
     
   } catch (error) {
-    console.error('Error searching users:', error);
-    res.status(500).json({ message: 'Failed to search users' });
+    console.error('❌ General search error:', error);
+    res.status(500).json({ 
+      error: 'Search failed', 
+      message: error.message 
+    });
   }
 });
+
+
 
 // ✅ FIXED: Advanced search with correct middleware
 router.get('/search-advanced', protect, async (req, res) => {
@@ -996,191 +990,242 @@ router.get('/event-timeline', protect, async (req, res) => {
   }
 });
 
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function calculatePriorityScore(user, searchTerm, relationship, mutualFriendsCount = 0) {
+  let score = 0;
+  const term = searchTerm.toLowerCase();
+  const username = (user.username || '').toLowerCase();
+  const displayName = (user.displayName || '').toLowerCase();
+  const fullName = (user.fullName || '').toLowerCase();
+
+  // === EXACT MATCH BONUSES ===
+  if (username === term) score += 100;
+  if (displayName === term) score += 90;
+  if (fullName === term) score += 85;
+
+  // === STARTS WITH BONUSES ===
+  if (username.startsWith(term)) score += 50;
+  if (displayName.startsWith(term)) score += 45;
+  if (fullName.startsWith(term)) score += 40;
+
+  // === WORD BOUNDARY BONUSES ===
+  const wordBoundaryRegex = new RegExp(`\\b${escapeRegex(term)}`, 'i');
+  if (wordBoundaryRegex.test(username)) score += 30;
+  if (wordBoundaryRegex.test(displayName)) score += 25;
+  if (wordBoundaryRegex.test(fullName)) score += 20;
+
+  // === CONTAINS BONUSES ===
+  if (username.includes(term)) score += 15;
+  if (displayName.includes(term)) score += 12;
+  if (fullName.includes(term)) score += 10;
+
+  // === RELATIONSHIP BONUSES ===
+  switch (relationship) {
+    case 'friend':
+      score += 1000; // Friends always rank highest
+      break;
+    case 'pending':
+      score += 500; // Pending requests rank high
+      break;
+    case 'non-friend':
+      // Mutual friends boost for non-friends
+      score += mutualFriendsCount * 10;
+      break;
+  }
+
+  // === LENGTH PENALTY (prefer shorter names for partial matches) ===
+  if (term.length > 0) {
+    const usernameRatio = term.length / username.length;
+    const displayNameRatio = displayName ? term.length / displayName.length : 0;
+    score += Math.max(usernameRatio, displayNameRatio) * 10;
+  }
+
+  return score;
+}
 
 // routes/users.js - FIXED friends/search endpoint
 router.get('/friends/search', protect, async (req, res) => {
   try {
-    const { q, eventId, memoryId, limit = 20 } = req.query;
+    const { q, eventId, memoryId, limit = 20, includeNonFriends = false } = req.query;
     
-    console.log(`🔍 FIXED: Friends search - Query: "${q}", EventId: ${eventId}, MemoryId: ${memoryId}`);
+    console.log(`🔍 ENHANCED: User search - Query: "${q}", IncludeNonFriends: ${includeNonFriends}`);
 
-    // Allow single character searches
+    // Allow searches starting from 1 character
     if (!q || q.trim().length === 0) {
       return res.json([]);
     }
 
     const currentUser = await User.findById(req.user._id);
-    const friendIds = currentUser ? currentUser.getAcceptedFriends() : [];
-    
-    if (friendIds.length === 0) {
-      console.log('❌ User has no friends');
-      return res.json([]);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
     }
-
-    console.log(`📊 User has ${friendIds.length} friends`);
 
     const searchTerm = q.trim();
+    const friendIds = currentUser.getAcceptedFriends();
+    const pendingRequestIds = currentUser.getSentRequests().map(req => req.user.toString());
+    const receivedRequestIds = currentUser.getPendingRequests().map(req => req.user.toString());
     
-    // Enhanced search with better typo tolerance
-    const searchQueries = [];
-    
-    // 1. Exact partial matches (highest priority)
-    searchQueries.push({
-      $or: [
-        { username: { $regex: `^${searchTerm}`, $options: 'i' } },
-        { displayName: { $regex: `^${searchTerm}`, $options: 'i' } },
-        { fullName: { $regex: `^${searchTerm}`, $options: 'i' } }
-      ]
-    });
-    
-    // 2. Contains matches (medium priority)
-    searchQueries.push({
-      $or: [
-        { username: { $regex: searchTerm, $options: 'i' } },
-        { displayName: { $regex: searchTerm, $options: 'i' } },
-        { fullName: { $regex: searchTerm, $options: 'i' } }
-      ]
-    });
-    
-    // 3. Fuzzy matches for typos (if search term is 3+ chars)
-    if (searchTerm.length >= 3) {
-      const words = searchTerm.split(/\s+/).filter(word => word.length > 0);
-      
-      if (words.length > 0) {
-        searchQueries.push({
-          $or: words.flatMap(word => [
-            { username: { $regex: word, $options: 'i' } },
-            { displayName: { $regex: word, $options: 'i' } },
-            { fullName: { $regex: word, $options: 'i' } }
-          ])
-        });
-      }
-    }
+    console.log(`📊 User has ${friendIds.length} friends, ${pendingRequestIds.length} sent requests, ${receivedRequestIds.length} received requests`);
 
-    // Base query filters - ONLY search within friends
-    const baseQuery = {
-      _id: { $in: friendIds }
-    };
-
-    // 🔧 FIXED: Don't exclude event participants, but mark their attendance status
-    let eventAttendees = [];
-    let eventInvited = [];
+    // Enhanced search algorithm with multiple tiers
+    const searchResults = [];
     
-    if (eventId) {
-      try {
-        const event = await Event.findById(eventId).select('invitedUsers attendees host');
-        if (event) {
-          eventAttendees = (event.attendees || []).map(id => String(id));
-          eventInvited = (event.invitedUsers || []).map(id => String(id));
+    // === TIER 1: FRIENDS SEARCH (Always included) ===
+    if (friendIds.length > 0) {
+      const friendsQuery = {
+        _id: { $in: friendIds },
+        $or: [
+          // Exact starts-with matches (highest priority)
+          { username: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { displayName: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { fullName: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
           
-          console.log(`📋 Event has ${eventAttendees.length} attendees and ${eventInvited.length} invited users`);
-        }
-      } catch (eventError) {
-        console.error('Error fetching event for status:', eventError);
-      }
-    }
-
-    // 🔧 FIXED: For memories, still exclude participants since we don't want duplicates
-    if (memoryId) {
-      try {
-        const Memory = require('../models/Memory'); // Make sure Memory model is imported
-        const memory = await Memory.findById(memoryId).select('creator participants');
-        if (memory) {
-          const excludeUserIds = [
-            memory.creator,
-            ...(memory.participants || [])
-          ].map(id => String(id));
+          // Word boundary matches
+          { username: { $regex: `\\b${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { displayName: { $regex: `\\b${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { fullName: { $regex: `\\b${escapeRegex(searchTerm)}`, $options: 'i' } },
           
-          baseQuery._id.$nin = excludeUserIds;
-          console.log(`🚫 Excluding ${excludeUserIds.length} memory participants`);
-        }
-      } catch (memoryError) {
-        console.error('Error fetching memory for exclusion:', memoryError);
-      }
-    }
-
-    // Search with priority ordering
-    let allResults = [];
-    
-    for (const searchQuery of searchQueries) {
-      const query = { ...baseQuery, ...searchQuery };
-      
-      const results = await User.find(query)
-        .select('username displayName fullName profilePicture')
-        .lean();
-      
-      // Add results that aren't already found
-      const newResults = results.filter(result => 
-        !allResults.some(existing => String(existing._id) === String(result._id))
-      );
-      
-      allResults.push(...newResults);
-      
-      // Stop when we have enough results
-      if (allResults.length >= parseInt(limit)) {
-        break;
-      }
-    }
-
-    // 🆕 ADD ATTENDANCE STATUS TO RESULTS
-    allResults = allResults.map(user => {
-      const userId = String(user._id);
-      const isAttending = eventAttendees.includes(userId);
-      const isInvited = eventInvited.includes(userId);
-      
-      return {
-        ...user,
-        // Add attendance status for frontend to use
-        attendanceStatus: isAttending ? 'attending' : isInvited ? 'invited' : 'none',
-        isAttending,
-        isInvited
+          // Contains matches (lower priority)
+          { username: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+          { displayName: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+          { fullName: { $regex: escapeRegex(searchTerm), $options: 'i' } }
+        ]
       };
-    });
 
-    // Sort by relevance (attending users first, then alphabetical)
-    allResults = allResults
-      .slice(0, parseInt(limit))
-      .sort((a, b) => {
-        // First, sort by attendance status (non-attending first for easier selection)
-        if (a.isAttending && !b.isAttending) return 1;
-        if (!a.isAttending && b.isAttending) return -1;
-        
-        const aUsername = (a.username || '').toLowerCase();
-        const bUsername = (b.username || '').toLowerCase();
-        const aDisplay = (a.displayName || '').toLowerCase();
-        const bDisplay = (b.displayName || '').toLowerCase();
-        const searchLower = searchTerm.toLowerCase();
-        
-        // Prioritize exact starts
-        const aUsernameStarts = aUsername.startsWith(searchLower);
-        const bUsernameStarts = bUsername.startsWith(searchLower);
-        const aDisplayStarts = aDisplay.startsWith(searchLower);
-        const bDisplayStarts = bDisplay.startsWith(searchLower);
-        
-        if ((aUsernameStarts || aDisplayStarts) && !(bUsernameStarts || bDisplayStarts)) return -1;
-        if ((bUsernameStarts || bDisplayStarts) && !(aUsernameStarts || aDisplayStarts)) return 1;
-        
-        // Then alphabetical by username
-        return aUsername.localeCompare(bUsername);
+      const friends = await User.find(friendsQuery)
+        .select('username displayName fullName profilePicture bio')
+        .limit(parseInt(limit))
+        .lean();
+
+      // Add friend status and prioritization score
+      friends.forEach(friend => {
+        friend.relationshipStatus = 'friends';
+        friend.priorityReason = 'Your friend';
+        friend.priorityScore = calculatePriorityScore(friend, searchTerm, 'friend');
+        friend.canAddFriend = false;
+        searchResults.push(friend);
       });
+    }
 
-    console.log(`✅ FIXED: Found ${allResults.length} friends matching "${searchTerm}"`);
-    console.log(`📊 Results breakdown:`, {
-      attending: allResults.filter(u => u.isAttending).length,
-      invited: allResults.filter(u => u.isInvited).length,
-      available: allResults.filter(u => !u.isAttending && !u.isInvited).length
+    // === TIER 2: NON-FRIENDS SEARCH (When includeNonFriends=true) ===
+    if (includeNonFriends === 'true') {
+      const excludeIds = [
+        currentUser._id.toString(),
+        ...friendIds.map(id => id.toString()),
+        ...pendingRequestIds,
+        ...receivedRequestIds
+      ];
+
+      const nonFriendsQuery = {
+        _id: { $nin: excludeIds },
+        $or: [
+          { username: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { displayName: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { fullName: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+          { username: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+          { displayName: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+          { fullName: { $regex: escapeRegex(searchTerm), $options: 'i' } }
+        ]
+      };
+
+      const nonFriends = await User.find(nonFriendsQuery)
+        .select('username displayName fullName profilePicture bio')
+        .limit(parseInt(limit) - searchResults.length)
+        .lean();
+
+      // Check for mutual friends and add metadata
+      for (const user of nonFriends) {
+        const targetFriends = await User.findById(user._id).then(u => u ? u.getAcceptedFriends() : []);
+        const mutualFriendIds = friendIds.filter(friendId => 
+          targetFriends.includes(friendId.toString())
+        );
+
+        user.relationshipStatus = 'not-friends';
+        user.mutualFriendsCount = mutualFriendIds.length;
+        user.priorityScore = calculatePriorityScore(user, searchTerm, 'non-friend', mutualFriendIds.length);
+        user.canAddFriend = true;
+        
+        if (mutualFriendIds.length > 0) {
+          user.priorityReason = `${mutualFriendIds.length} mutual friend${mutualFriendIds.length > 1 ? 's' : ''}`;
+          
+          // Get mutual friends details for display
+          const mutualFriends = await User.find({
+            _id: { $in: mutualFriendIds.slice(0, 3) } // Limit to 3 for performance
+          }).select('username displayName').lean();
+          
+          user.mutualFriends = mutualFriends;
+        } else {
+          user.priorityReason = 'Suggested for you';
+        }
+        
+        searchResults.push(user);
+      }
+    }
+
+    // === TIER 3: PENDING REQUESTS (Show status) ===
+    const pendingUsers = await User.find({
+      _id: { $in: [...pendingRequestIds, ...receivedRequestIds] },
+      $or: [
+        { username: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+        { displayName: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+        { fullName: { $regex: escapeRegex(searchTerm), $options: 'i' } }
+      ]
+    }).select('username displayName fullName profilePicture bio').lean();
+
+    pendingUsers.forEach(user => {
+      const userId = user._id.toString();
+      if (pendingRequestIds.includes(userId)) {
+        user.relationshipStatus = 'request-sent';
+        user.priorityReason = 'Friend request sent';
+        user.canAddFriend = false;
+      } else if (receivedRequestIds.includes(userId)) {
+        user.relationshipStatus = 'request-received';
+        user.priorityReason = 'Wants to be friends';
+        user.canAddFriend = false;
+      }
+      
+      user.priorityScore = calculatePriorityScore(user, searchTerm, 'pending');
+      searchResults.push(user);
     });
 
-    res.json(allResults);
+    // Sort by priority score (highest first) and relationship status
+    const sortedResults = searchResults
+      .sort((a, b) => {
+        // First sort by relationship priority
+        const relationshipPriority = {
+          'friends': 4,
+          'request-received': 3,
+          'request-sent': 2,
+          'not-friends': 1
+        };
+        
+        const aPriority = relationshipPriority[a.relationshipStatus] || 0;
+        const bPriority = relationshipPriority[b.relationshipStatus] || 0;
+        
+        if (aPriority !== bPriority) {
+          return bPriority - aPriority;
+        }
+        
+        // Then by priority score
+        return (b.priorityScore || 0) - (a.priorityScore || 0);
+      })
+      .slice(0, parseInt(limit));
+
+    console.log(`✅ ENHANCED: Returning ${sortedResults.length} search results`);
+    
+    res.json(sortedResults);
 
   } catch (error) {
-    console.error('❌ FIXED: Friends search error:', error);
+    console.error('❌ Enhanced search error:', error);
     res.status(500).json({ 
-      message: 'Server error during friends search',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      error: 'Search failed', 
+      message: error.message 
     });
   }
 });
+
 
 
 
