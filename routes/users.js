@@ -318,31 +318,345 @@ router.get('/:userId/events', protect, async (req, res) => {
   }
 });
 
+function calculateRelevanceScore(user, searchTerm) {
+  const term = searchTerm.toLowerCase();
+  const username = (user.username || '').toLowerCase();
+  const displayName = (user.displayName || '').toLowerCase();
+  const fullName = (user.fullName || '').toLowerCase();
+  
+  let score = 0;
+  
+  // Exact matches get highest score
+  if (username === term) score += 100;
+  if (displayName === term) score += 95;
+  if (fullName === term) score += 90;
+  
+  // Starts with matches
+  if (username.startsWith(term)) score += 50;
+  if (displayName.startsWith(term)) score += 45;
+  if (fullName.startsWith(term)) score += 40;
+  
+  // Contains matches
+  if (username.includes(term)) score += 20;
+  if (displayName.includes(term)) score += 15;
+  if (fullName.includes(term)) score += 10;
+  
+  // Word boundary matches (for full names)
+  const words = fullName.split(' ');
+  words.forEach(word => {
+    if (word.startsWith(term)) score += 25;
+  });
+  
+  return score;
+}
+
+// Helper function to calculate search relevance score
+function calculateRelevanceScore(user, searchTerm) {
+  const term = searchTerm.toLowerCase();
+  const username = (user.username || '').toLowerCase();
+  const displayName = (user.displayName || '').toLowerCase();
+  const fullName = (user.fullName || '').toLowerCase();
+  
+  let score = 0;
+  
+  // Exact matches get highest score
+  if (username === term) score += 100;
+  if (displayName === term) score += 95;
+  if (fullName === term) score += 90;
+  
+  // Starts with matches
+  if (username.startsWith(term)) score += 50;
+  if (displayName.startsWith(term)) score += 45;
+  if (fullName.startsWith(term)) score += 40;
+  
+  // Contains matches
+  if (username.includes(term)) score += 20;
+  if (displayName.includes(term)) score += 15;
+  if (fullName.includes(term)) score += 10;
+  
+  // Word boundary matches (for full names)
+  const words = fullName.split(' ');
+  words.forEach(word => {
+    if (word.startsWith(term)) score += 25;
+  });
+  
+  return score;
+}
+
+// Enhanced priority scoring algorithm for friends search
+function calculatePriorityScore(user, searchTerm, relationship, mutualFriendsCount = 0) {
+  let score = 0;
+  const term = searchTerm.toLowerCase();
+  const username = (user.username || '').toLowerCase();
+  const displayName = (user.displayName || '').toLowerCase();
+  const fullName = (user.fullName || '').toLowerCase();
+
+  // === EXACT MATCH BONUSES ===
+  if (username === term) score += 100;
+  if (displayName === term) score += 90;
+  if (fullName === term) score += 85;
+
+  // === STARTS WITH BONUSES ===
+  if (username.startsWith(term)) score += 50;
+  if (displayName.startsWith(term)) score += 45;
+  if (fullName.startsWith(term)) score += 40;
+
+  // === WORD BOUNDARY BONUSES ===
+  const wordBoundaryRegex = new RegExp(`\\b${escapeRegex(term)}`, 'i');
+  if (wordBoundaryRegex.test(username)) score += 30;
+  if (wordBoundaryRegex.test(displayName)) score += 25;
+  if (wordBoundaryRegex.test(fullName)) score += 20;
+
+  // === CONTAINS BONUSES ===
+  if (username.includes(term)) score += 15;
+  if (displayName.includes(term)) score += 12;
+  if (fullName.includes(term)) score += 10;
+
+  // === RELATIONSHIP BONUSES ===
+  switch (relationship) {
+    case 'friend':
+      score += 1000; // Friends always rank highest
+      break;
+    case 'pending':
+      score += 500; // Pending requests rank high
+      break;
+    case 'non-friend':
+      // Mutual friends boost for non-friends
+      score += mutualFriendsCount * 10;
+      break;
+  }
+
+  // === LENGTH PENALTY (prefer shorter names for partial matches) ===
+  if (term.length > 0) {
+    const usernameRatio = term.length / username.length;
+    const displayNameRatio = displayName ? term.length / displayName.length : 0;
+    score += Math.max(usernameRatio, displayNameRatio) * 10;
+  }
+
+  return score;
+}
+
+
+router.get('/search/suggestions', protect, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    console.log('🎯 Getting search suggestions...');
+    
+    const currentUser = await User.findById(req.user._id);
+    const friendIds = currentUser.getAcceptedFriends().map(id => id.toString());
+    const sentRequestIds = currentUser.getSentRequests().map(req => req.user.toString());
+    const receivedRequestIds = currentUser.getPendingRequests().map(req => req.user.toString());
+    
+    const excludeIds = [
+      currentUser._id.toString(),
+      ...friendIds,
+      ...sentRequestIds,
+      ...receivedRequestIds
+    ];
+    
+    // Find users with mutual friends or recent activity
+    const suggestions = await User.find({
+      _id: { $nin: excludeIds }
+    })
+    .select('username displayName fullName profilePicture bio')
+    .limit(parseInt(limit) * 3) // Get more to filter
+    .lean();
+    
+    // Process suggestions with mutual friends
+    const processedSuggestions = [];
+    
+    for (const user of suggestions.slice(0, parseInt(limit))) {
+      try {
+        const targetUser = await User.findById(user._id);
+        if (targetUser) {
+          const targetFriends = targetUser.getAcceptedFriends().map(id => id.toString());
+          const mutualFriendsCount = friendIds.filter(friendId => 
+            targetFriends.includes(friendId)
+          ).length;
+          
+          if (mutualFriendsCount > 0 || Math.random() < 0.3) { // Include some random suggestions
+            processedSuggestions.push({
+              ...user,
+              relationshipStatus: 'not-friends',
+              priorityReason: mutualFriendsCount > 0 
+                ? `${mutualFriendsCount} mutual friend${mutualFriendsCount > 1 ? 's' : ''}`
+                : 'Suggested for you',
+              canAddFriend: true,
+              mutualFriendsCount,
+              relevanceScore: mutualFriendsCount * 10 + Math.random() * 5
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error processing suggestion:', error);
+      }
+    }
+    
+    // Sort by relevance
+    const sortedSuggestions = processedSuggestions
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, parseInt(limit));
+    
+    console.log(`✅ Returning ${sortedSuggestions.length} suggestions`);
+    
+    res.json({
+      success: true,
+      suggestions: sortedSuggestions,
+      metadata: {
+        total: sortedSuggestions.length,
+        algorithmVersion: '1.0'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Suggestions error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to get suggestions', 
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
 
 // NEW: General user search endpoint (includes all users when no friendship filter)
 router.get('/search', protect, async (req, res) => {
   try {
-    const { q, limit = 20, type = 'all' } = req.query; // type: 'all', 'friends', 'non-friends'
+    const { q, limit = 20, includeNonFriends = 'true' } = req.query;
     
-    console.log(`🔍 GENERAL: User search - Query: "${q}", Type: ${type}`);
-
-    if (!q || q.trim().length === 0) {
+    console.log(`🔍 USER SEARCH: Query: "${q}", Include Non-Friends: ${includeNonFriends}`);
+    
+    // Minimum search length
+    if (!q || q.trim().length < 1) {
       return res.json([]);
     }
-
-    const includeNonFriends = type === 'all' || type === 'non-friends';
     
-    // Use the enhanced friends search with includeNonFriends flag
-    req.query.includeNonFriends = includeNonFriends.toString();
+    const searchTerm = q.trim();
+    const currentUser = await User.findById(req.user._id);
     
-    // Call the enhanced search function
-    return router.handle(req, res);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Get user's social graph
+    const friendIds = currentUser.getAcceptedFriends().map(id => id.toString());
+    const sentRequestIds = currentUser.getSentRequests().map(req => req.user.toString());
+    const receivedRequestIds = currentUser.getPendingRequests().map(req => req.user.toString());
+    
+    console.log(`📊 User has ${friendIds.length} friends, ${sentRequestIds.length} sent requests, ${receivedRequestIds.length} received requests`);
+    
+    // Build search query with multiple matching strategies
+    const searchQuery = {
+      _id: { $ne: currentUser._id }, // Exclude self
+      $or: [
+        // Username matches
+        { username: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+        { username: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+        
+        // Display name matches
+        { displayName: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+        { displayName: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+        
+        // Full name matches
+        { fullName: { $regex: `^${escapeRegex(searchTerm)}`, $options: 'i' } },
+        { fullName: { $regex: escapeRegex(searchTerm), $options: 'i' } },
+        
+        // Word boundary matches for full names
+        { fullName: { $regex: `\\b${escapeRegex(searchTerm)}`, $options: 'i' } }
+      ]
+    };
+    
+    // Execute search
+    const users = await User.find(searchQuery)
+      .select('username displayName fullName profilePicture bio')
+      .limit(parseInt(limit) * 2) // Get more to allow for filtering and sorting
+      .lean();
+    
+    console.log(`🔍 Found ${users.length} raw matches`);
+    
+    // Process results with relationship status and relevance
+    const processedResults = [];
+    
+    for (const user of users) {
+      const userId = user._id.toString();
+      
+      // Determine relationship status
+      let relationshipStatus = 'not-friends';
+      let priorityReason = 'Suggested for you';
+      let canAddFriend = true;
+      
+      if (friendIds.includes(userId)) {
+        relationshipStatus = 'friends';
+        priorityReason = 'Your friend';
+        canAddFriend = false;
+      } else if (sentRequestIds.includes(userId)) {
+        relationshipStatus = 'request-sent';
+        priorityReason = 'Friend request sent';
+        canAddFriend = false;
+      } else if (receivedRequestIds.includes(userId)) {
+        relationshipStatus = 'request-received';
+        priorityReason = 'Wants to be friends';
+        canAddFriend = false;
+      }
+      
+      // Calculate mutual friends for non-friends
+      let mutualFriendsCount = 0;
+      if (relationshipStatus === 'not-friends') {
+        try {
+          const targetUser = await User.findById(userId);
+          if (targetUser) {
+            const targetFriends = targetUser.getAcceptedFriends().map(id => id.toString());
+            mutualFriendsCount = friendIds.filter(friendId => 
+              targetFriends.includes(friendId)
+            ).length;
+            
+            if (mutualFriendsCount > 0) {
+              priorityReason = `${mutualFriendsCount} mutual friend${mutualFriendsCount > 1 ? 's' : ''}`;
+            }
+          }
+        } catch (error) {
+          console.error('Error calculating mutual friends:', error);
+        }
+      }
+      
+      // Calculate relevance score
+      const relevanceScore = calculateRelevanceScore(user, searchTerm);
+      
+      // Add relationship priority bonus
+      let relationshipBonus = 0;
+      switch (relationshipStatus) {
+        case 'friends': relationshipBonus = 1000; break;
+        case 'request-received': relationshipBonus = 500; break;
+        case 'request-sent': relationshipBonus = 200; break;
+        case 'not-friends': relationshipBonus = mutualFriendsCount * 10; break;
+      }
+      
+      const finalScore = relevanceScore + relationshipBonus;
+      
+      processedResults.push({
+        ...user,
+        relationshipStatus,
+        priorityReason,
+        canAddFriend,
+        mutualFriendsCount,
+        relevanceScore: finalScore
+      });
+    }
+    
+    // Sort by relevance score (highest first) and limit results
+    const sortedResults = processedResults
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, parseInt(limit));
+    
+    console.log(`✅ Returning ${sortedResults.length} processed results`);
+    
+    res.json(sortedResults);
     
   } catch (error) {
-    console.error('❌ General search error:', error);
+    console.error('❌ User search error:', error);
     res.status(500).json({ 
       error: 'Search failed', 
-      message: error.message 
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 });

@@ -65,7 +65,7 @@ export default function SearchScreen({ navigation, route }) {
     });
   }, [navigation, showSuggestions]);
 
-  // Debounced search effect with improved logic
+  // Debounced search effect - Instagram/Facebook style timing
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       if (query.trim().length > 0) {
@@ -73,12 +73,12 @@ export default function SearchScreen({ navigation, route }) {
       } else {
         setResults([]);
       }
-    }, 200); // Reduced delay for faster response
+    }, 150); // Optimized timing - fast but not overwhelming
 
     return () => clearTimeout(timeoutId);
   }, [query, tab, searchType]);
 
-  // ENHANCED: Comprehensive search function
+  // CLEAN: Enhanced search function (no more infinite loops!)
   const runEnhancedSearch = async () => {
     if (!query.trim()) {
       setResults([]);
@@ -87,22 +87,25 @@ export default function SearchScreen({ navigation, route }) {
     
     setLoading(true);
     try {
-      console.log(`🔍 ENHANCED: Searching for ${tab}: "${query}", Type: ${searchType}`);
+      console.log(`🔍 CLEAN SEARCH: ${tab} - "${query}" (Type: ${searchType})`);
       
       if (tab === 'users') {
-        // Use the enhanced user search endpoint
-        const response = await api.get(`/api/users/search`, {
-          params: {
-            q: query,
-            type: searchType,
-            limit: 20
-          }
-        });
+        let endpoint = '/api/users/search';
+        let params = { q: query, limit: 20 };
         
-        let searchResults = response.data || [];
-        console.log(`✅ ENHANCED: Found ${searchResults.length} user results`);
+        // Use friends-only search if filter is set to friends
+        if (searchType === 'friends') {
+          endpoint = '/api/users/friends/search';
+        } else {
+          params.includeNonFriends = 'true';
+        }
         
-        // Additional processing for friend status tracking
+        const response = await api.get(endpoint, { params });
+        const searchResults = response.data || [];
+        
+        console.log(`✅ CLEAN SEARCH: Found ${searchResults.length} results`);
+        
+        // Update friend statuses for UI
         const statusMap = {};
         searchResults.forEach(user => {
           statusMap[user._id] = user.relationshipStatus || 'unknown';
@@ -112,17 +115,21 @@ export default function SearchScreen({ navigation, route }) {
         setResults(searchResults);
       } else {
         // Search events (existing functionality)
-        const response = await api.get(`/api/search/events?q=${encodeURIComponent(query)}`);
+        const response = await api.get(`/api/search/events`, {
+          params: { q: query }
+        });
         setResults(response.data || []);
       }
       
     } catch (error) {
-      console.error('❌ Enhanced search error:', error);
+      console.error('❌ Clean search error:', error);
       setResults([]);
       
       // Better error handling
       if (error.response?.status === 429) {
-        Alert.alert('Search Limit', 'Please wait a moment before searching again.');
+        Alert.alert('Too Many Requests', 'Please slow down your searching.');
+      } else if (error.response?.status === 500) {
+        Alert.alert('Server Error', 'Search is temporarily unavailable.');
       } else {
         Alert.alert('Search Error', 'Could not complete search. Please try again.');
       }
@@ -131,22 +138,24 @@ export default function SearchScreen({ navigation, route }) {
     }
   };
 
-  // Fetch friend suggestions using Phase 2 API
+  // Fetch friend suggestions using existing friends.js API
   const fetchFriendSuggestions = async () => {
     try {
       setLoadingSuggestions(true);
       console.log('🎯 Fetching friend suggestions...');
       
-      const { data } = await api.get('/api/friends/suggestions?limit=15');
+      const { data } = await api.get('/api/friends/suggestions', {
+        params: { limit: 15 }
+      });
       
       if (data.success) {
         setSuggestions(data.suggestions || []);
-        console.log(`📱 Loaded ${data.suggestions?.length || 0} friend suggestions`);
+        console.log(`📱 Loaded ${data.suggestions?.length || 0} suggestions`);
       } else {
         setSuggestions([]);
       }
     } catch (error) {
-      console.error('❌ Error fetching friend suggestions:', error);
+      console.error('❌ Error fetching suggestions:', error);
       setSuggestions([]);
     } finally {
       setLoadingSuggestions(false);
@@ -327,51 +336,96 @@ export default function SearchScreen({ navigation, route }) {
     );
   };
 
-  // Render suggestion item (enhanced)
-  const renderSuggestionItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.suggestionItem}
-      onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
-      activeOpacity={0.95}
-    >
-      <View style={styles.suggestionContent}>
-        <View style={styles.suggestionLeft}>
-          <Image
-            source={{
-              uri: item.profilePicture
-                ? `http://${API_BASE_URL}${item.profilePicture}`
-                : `https://placehold.co/50x50/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`
-            }}
-            style={styles.suggestionAvatar}
-          />
-          <View style={styles.suggestionInfo}>
-            <Text style={styles.suggestionUsername}>{item.username}</Text>
-            {item.displayName && (
-              <Text style={styles.suggestionDisplayName}>{item.displayName}</Text>
-            )}
-            <Text style={styles.suggestionReason} numberOfLines={1}>
-              {item.reason}
-            </Text>
-            {item.mutualFriends > 0 && (
-              <Text style={styles.mutualFriendsCount}>
-                {item.mutualFriends} mutual friend{item.mutualFriends > 1 ? 's' : ''}
+  // Render suggestion item (simplified to show either friends OR events)
+  const renderSuggestionItem = ({ item }) => {
+    // Helper function to format mutual connections display
+    const getMutualConnectionsDisplay = () => {
+      const mutualFriendsCount = item.mutualFriends || item.mutualFriendsCount || 0;
+      const mutualEventsCount = item.mutualEvents || item.mutualEventsCount || item.eventCoAttendance || 0;
+      
+      // Prioritize showing mutual friends if they exist, otherwise show events
+      if (mutualFriendsCount > 0) {
+        // Show friend names if available, otherwise just count
+        if (item.mutualFriendsDetails && item.mutualFriendsDetails.length > 0) {
+          const friendNames = item.mutualFriendsDetails.slice(0, 3).map(f => f.displayName || f.username);
+          const remaining = mutualFriendsCount - friendNames.length;
+          
+          if (friendNames.length === 1) {
+            return `Friends with ${friendNames[0]}`;
+          } else if (friendNames.length === 2) {
+            return remaining > 0 
+              ? `Friends with ${friendNames[0]}, ${friendNames[1]} and ${remaining} more`
+              : `Friends with ${friendNames[0]} and ${friendNames[1]}`;
+          } else if (friendNames.length === 3) {
+            return remaining > 0
+              ? `Friends with ${friendNames[0]}, ${friendNames[1]}, ${friendNames[2]} and ${remaining} more`
+              : `Friends with ${friendNames[0]}, ${friendNames[1]} and ${friendNames[2]}`;
+          }
+        }
+        
+        // Fallback to count only
+        return `${mutualFriendsCount} mutual friend${mutualFriendsCount > 1 ? 's' : ''}`;
+      }
+      
+      // Show events if no mutual friends
+      if (mutualEventsCount > 0) {
+        return `${mutualEventsCount} event${mutualEventsCount > 1 ? 's' : ''} attended together`;
+      }
+      
+      // Fallback
+      return item.reason || 'Suggested for you';
+    };
+
+    const connectionDisplay = getMutualConnectionsDisplay();
+    const hasStrongConnection = (item.mutualFriends || item.mutualFriendsCount || 0) > 0 || 
+                               (item.mutualEvents || item.mutualEventsCount || item.eventCoAttendance || 0) > 0;
+
+    return (
+      <TouchableOpacity
+        style={styles.suggestionItem}
+        onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
+        activeOpacity={0.95}
+      >
+        <View style={styles.suggestionContent}>
+          <View style={styles.suggestionLeft}>
+            <Image
+              source={{
+                uri: item.profilePicture
+                  ? `http://${API_BASE_URL}${item.profilePicture}`
+                  : `https://placehold.co/50x50/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`
+              }}
+              style={styles.suggestionAvatar}
+            />
+            <View style={styles.suggestionInfo}>
+              <Text style={styles.suggestionUsername}>{item.username}</Text>
+              {item.displayName && (
+                <Text style={styles.suggestionDisplayName}>{item.displayName}</Text>
+              )}
+              
+              {/* Single line showing either mutual friends OR mutual events */}
+              <Text style={[
+                styles.connectionReason, 
+                hasStrongConnection && styles.strongConnectionReason
+              ]} numberOfLines={2}>
+                {connectionDisplay}
               </Text>
-            )}
+            </View>
           </View>
+          
+          <TouchableOpacity
+            style={styles.addFriendButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              sendFriendRequest(item._id, item.username);
+            }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="person-add" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.addFriendButton}
-          onPress={(e) => {
-            e.stopPropagation();
-            sendFriendRequest(item._id, item.username);
-          }}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="person-add" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   // Render search result item (updated to use enhanced user item)
   const renderSearchResult = ({ item }) => {
@@ -598,27 +652,76 @@ export default function SearchScreen({ navigation, route }) {
               
               return (
                 <View style={styles.welcomeState}>
-                  <Ionicons name="search-outline" size={64} color="#C7C7CC" />
-                  <Text style={styles.welcomeTitle}>
-                    Search for {tab}
-                  </Text>
-                  <Text style={styles.welcomeSubtext}>
-                    {tab === 'users' 
-                      ? 'Find friends by username, name, or email' 
-                      : 'Discover events by title or location'
-                    }
-                  </Text>
-                  {tab === 'users' && (
-                    <TouchableOpacity
-                      style={styles.suggestionsButton}
-                      onPress={() => {
-                        setShowSuggestions(true);
-                        fetchFriendSuggestions();
-                      }}
-                    >
-                      <Ionicons name="people" size={20} color="#3797EF" />
-                      <Text style={styles.suggestionsButtonText}>Show Suggestions</Text>
-                    </TouchableOpacity>
+                  {/* Show friend suggestions immediately if available */}
+                  {tab === 'users' && suggestions.length > 0 ? (
+                    <View style={styles.suggestionsSection}>
+                      <View style={styles.suggestionsHeader}>
+                        <Text style={styles.suggestionsTitle}>People You May Know</Text>
+                        <TouchableOpacity onPress={() => setSuggestions([])}>
+                          <Text style={styles.clearSuggestions}>Clear</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <FlatList
+                        data={suggestions.slice(0, 5)} // Show first 5 suggestions
+                        keyExtractor={(item) => item._id}
+                        renderItem={renderSuggestionItem}
+                        showsVerticalScrollIndicator={false}
+                        ItemSeparatorComponent={() => <View style={styles.separator} />}
+                        style={styles.suggestionsList}
+                      />
+                      
+                      {suggestions.length > 5 && (
+                        <TouchableOpacity
+                          style={styles.seeAllButton}
+                          onPress={() => {
+                            setShowSuggestions(true);
+                          }}
+                        >
+                          <Text style={styles.seeAllText}>See All {suggestions.length} Suggestions</Text>
+                        </TouchableOpacity>
+                      )}
+                      
+                      <View style={styles.searchPrompt}>
+                        <Ionicons name="search-outline" size={32} color="#C7C7CC" />
+                        <Text style={styles.searchPromptTitle}>Search for People</Text>
+                        <Text style={styles.searchPromptSubtext}>
+                          Type a name or username to find friends
+                        </Text>
+                      </View>
+                    </View>
+                  ) : tab === 'users' && loadingSuggestions ? (
+                    // Loading state for suggestions
+                    <View style={styles.loadingSuggestions}>
+                      <ActivityIndicator size="large" color="#3797EF" />
+                      <Text style={styles.loadingText}>Finding people you may know...</Text>
+                    </View>
+                  ) : (
+                    // Fallback welcome state (no suggestions available)
+                    <>
+                      <Ionicons name="search-outline" size={64} color="#C7C7CC" />
+                      <Text style={styles.welcomeTitle}>
+                        Search for {tab}
+                      </Text>
+                      <Text style={styles.welcomeSubtext}>
+                        {tab === 'users' 
+                          ? 'Find friends by username, name, or email' 
+                          : 'Discover events by title or location'
+                        }
+                      </Text>
+                      {tab === 'users' && (
+                        <TouchableOpacity
+                          style={styles.suggestionsButton}
+                          onPress={() => {
+                            console.log('🔄 Manually loading friend suggestions...');
+                            fetchFriendSuggestions();
+                          }}
+                        >
+                          <Ionicons name="people" size={20} color="#3797EF" />
+                          <Text style={styles.suggestionsButtonText}>Find People You May Know</Text>
+                        </TouchableOpacity>
+                      )}
+                    </>
                   )}
                 </View>
               );
@@ -862,6 +965,68 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   
+  // Suggestions Styles (enhanced for inline display)
+  suggestionsSection: {
+    width: '100%',
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  suggestionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  suggestionsTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1D1D1F',
+  },
+  clearSuggestions: {
+    fontSize: 16,
+    color: '#8E8E93',
+    fontWeight: '500',
+  },
+  suggestionsList: {
+    width: '100%',
+    maxHeight: 300, // Limit height for inline display
+  },
+  seeAllButton: {
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#3797EF',
+    marginVertical: 15,
+  },
+  seeAllText: {
+    fontSize: 16,
+    color: '#3797EF',
+    fontWeight: '500',
+  },
+  searchPrompt: {
+    alignItems: 'center',
+    marginTop: 30,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+    width: '100%',
+  },
+  searchPromptTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1D1D1F',
+    marginTop: 10,
+    marginBottom: 5,
+  },
+  searchPromptSubtext: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
   // Suggestions Styles (unchanged but enhanced)
   suggestionsContainer: {
     flex: 1,
@@ -925,8 +1090,15 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginBottom: 2,
   },
-  mutualFriendsCount: {
-    fontSize: 12,
+  
+  // Simplified connection reason styling
+  connectionReason: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  strongConnectionReason: {
     color: '#3797EF',
     fontWeight: '500',
   },
