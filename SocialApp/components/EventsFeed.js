@@ -347,20 +347,17 @@ const renderEmptyState = useCallback(() => {
         }
       </Text>
       
-      {isForYou && (
-        <TouchableOpacity 
-          style={styles.createEventButton}
-          onPress={() => navigation.navigate('CreateEventScreen')}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="add" size={18} color="#FFFFFF" />
-          <Text style={styles.createEventButtonText}>Create Your First Event</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity 
+        style={styles.createEventButton}
+        onPress={() => navigation.navigate('CreateEventScreen')}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="add-circle" size={18} color="#3797EF" />
+        <Text style={styles.createEventButtonText}>Create an event</Text>
+      </TouchableOpacity>
     </View>
   );
 }, [loading, feedType, navigation]);
-
   // Render error state
   const renderErrorState = useCallback(() => (
     <View style={styles.errorContainer}>
@@ -389,45 +386,66 @@ const renderEmptyState = useCallback(() => {
   if (error && events.length === 0) {
     return renderErrorState();
   }
-
+console.log('🔍 EventsFeed Refresh Debug:', {
+  feedType,
+  contentPaddingTop: 190,
+  subTabPosition: 144,
+  subTabHeight: 56,
+  expectedRefreshPosition: 144 + 56,
+  currentRefreshBehavior: 'appears at scroll container top (wrong)',
+  needsContentInset: true
+});
+console.log('🔄 Refresh Distance Debug:', {
+  oldContentInset: 200,
+  newContentInset: 60,
+  contentPadding: 190,
+  totalGapBefore: '60 + 190 = 250px (much better than 390px)',
+  userExperience: 'Should be much easier to reach refresh'
+});
   // Main feed
   return (
   <View style={styles.container}>
     <FlatList
-      ref={flatListRef}
-      data={events}
-      keyExtractor={(item) => item._id}
-      renderItem={renderEvent}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor="#3797EF"
-          colors={["#3797EF"]}
-          title="Pull to refresh"
-          titleColor="#8E8E93"
-          progressBackgroundColor="#FFFFFF"
-        />
-      }
-      onEndReached={handleLoadMore}
-      onEndReachedThreshold={0.5}
-      onScroll={onScroll}
-      scrollEventThrottle={scrollEventThrottle}
-      ListFooterComponent={renderFooter}
-      ListEmptyComponent={renderEmptyState}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={[
-        styles.listContent,
-        events.length === 0 && styles.emptyListContent
-      ]}
-      bounces={true}
-      alwaysBounceVertical={true}
-      removeClippedSubviews={true}
-      maxToRenderPerBatch={5}
-      updateCellsBatchingPeriod={50}
-      windowSize={10}
-      getItemLayout={undefined}
+  ref={flatListRef}
+  data={events}
+  keyExtractor={(item) => item._id}
+  renderItem={renderEvent}
+  refreshControl={
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={() => {
+        console.log(`🔄 EventsFeed (${feedType}): Refresh triggered, should appear below sub-tabs`);
+        handleRefresh();
+      }}
+      tintColor="#3797EF"
+      colors={["#3797EF"]}
+      title="Pull to refresh"
+      titleColor="#8E8E93"
+      progressBackgroundColor="#FFFFFF"
     />
+  }
+  onEndReached={handleLoadMore}
+  onEndReachedThreshold={0.5}
+  onScroll={onScroll}
+  scrollEventThrottle={scrollEventThrottle}
+  ListFooterComponent={renderFooter}
+  ListEmptyComponent={renderEmptyState}
+  showsVerticalScrollIndicator={false}
+  contentContainerStyle={[
+    styles.listContent,
+    events.length === 0 && styles.emptyListContent
+  ]}
+  // ✅ ADD: Push refresh control below sub-tabs
+  contentInset={{ top: 20 }} // REDUCED from 200 to 60
+  scrollIndicatorInsets={{ top: 20 }} // REDUCED from 200 to 60
+  bounces={true}
+  alwaysBounceVertical={true}
+  removeClippedSubviews={true}
+  maxToRenderPerBatch={5}
+  updateCellsBatchingPeriod={50}
+  windowSize={10}
+  getItemLayout={undefined}
+/>
   </View>
 );
 }

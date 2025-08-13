@@ -293,29 +293,30 @@ const styles = StyleSheet.create({
   },
   
   // GLASSMORPHISM: Sub-tabs with frosted glass effect
-  unifiedSubTabsContainer: {
-    position: 'absolute',
-    top: 144, // Position below main tabs (safe area + fixed header + main tabs)
-    left: 0,
-    right: 0,
-    zIndex: 100,
-    // GLASSMORPHISM: Frosted glass effect
-    backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.25)' // More transparent for glass effect
-      : 'rgba(255, 255, 255, 0.3)',
-    ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(40px) saturate(200%) contrast(120%)', // Enhanced blur
-    }),
-    // GLASSMORPHISM: Subtle border and shadow
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255, 255, 255, 0.18)',
-    shadowColor: 'rgba(31, 38, 135, 0.37)',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 1,
-    shadowRadius: 32,
-    elevation: 8,
-    height: 56, // Fixed height for consistent spacing
-  },
+unifiedSubTabsContainer: {
+  position: 'absolute',
+  top: 144, // Position below main tabs (safe area + fixed header + main tabs)
+  left: 0,
+  right: 0,
+  zIndex: 100,
+  // ✅ MAKE TRANSPARENT: Remove glassmorphism background
+  backgroundColor: 'transparent', // ✅ CHANGED: From rgba background to transparent
+  // ✅ REMOVE: All glassmorphism effects for the container
+  // backgroundColor: Platform.OS === 'ios' 
+  //   ? 'rgba(255, 255, 255, 0.25)' 
+  //   : 'rgba(255, 255, 255, 0.3)',
+  // ...(Platform.OS === 'ios' && {
+  //   backdropFilter: 'blur(40px) saturate(200%) contrast(120%)',
+  // }),
+  // borderBottomWidth: 0.5,
+  // borderBottomColor: 'rgba(255, 255, 255, 0.18)',
+  // shadowColor: 'rgba(31, 38, 135, 0.37)',
+  // shadowOffset: { width: 0, height: 8 },
+  // shadowOpacity: 1,
+  // shadowRadius: 32,
+  // elevation: 8,
+  height: 56, // Fixed height for consistent spacing
+},
   
   // NEW: Horizontal scroll view for sub-tabs
   subTabScrollView: {

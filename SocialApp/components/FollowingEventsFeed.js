@@ -120,7 +120,6 @@ export default function FollowingEventsFeed({
     </TouchableOpacity>
   </View>
 );
-
   const renderFooter = () => {
     if (!loading || page === 1) return null;
     return (
@@ -139,9 +138,26 @@ export default function FollowingEventsFeed({
       </View>
     );
   }
+  console.log('🔍 FollowingEventsFeed Refresh Debug:', {
+  contentPaddingTop: 190,
+  subTabPosition: 144,
+  subTabHeight: 56,
+  expectedRefreshPosition: 144 + 56,
+  currentRefreshBehavior: 'appears at scroll container top (wrong)',
+  needsContentInset: true
+});
+
+
+console.log('🔄 Refresh Distance Debug:', {
+  oldContentInset: 200,
+  newContentInset: 60,
+  contentPadding: 190,
+  totalGapBefore: '60 + 190 = 250px (much better than 390px)',
+  userExperience: 'Should be much easier to reach refresh'
+});
 
   return (
-    // Replace the FlatList in FollowingEventsFeed.js
+    // Update the FlatList with debug-enabled refresh positioning:
 <FlatList
   data={events}
   renderItem={renderEventItem}
@@ -150,7 +166,10 @@ export default function FollowingEventsFeed({
   refreshControl={
     <RefreshControl
       refreshing={refreshing || externalRefreshing}
-      onRefresh={handleRefresh}
+      onRefresh={() => {
+        console.log('🔄 FollowingEventsFeed: Refresh triggered, should appear below sub-tabs');
+        handleRefresh();
+      }}
       tintColor="#3797EF"
       colors={["#3797EF"]}
       title="Pull to refresh events"
@@ -165,11 +184,11 @@ export default function FollowingEventsFeed({
   onEndReached={handleLoadMore}
   onEndReachedThreshold={0.1}
   contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
-  // ✅ REMOVE these conflicting properties:
-  // contentInsetAdjustmentBehavior="automatic"
-  // automaticallyAdjustContentInsets={false}
-  // contentInset={{ top: 194 }}
-  // scrollIndicatorInsets={{ top: 194 }}
+  // ✅ ADD: Push refresh control below sub-tabs
+  contentInset={{ top: 20 }} // REDUCED from 200 to 60
+  scrollIndicatorInsets={{ top: 20 }} // REDUCED from 200 to 60
+  // ✅ REMOVE: This duplicate onRefresh prop that's causing the error
+  // onRefresh={() => { ... }} ← DELETE THIS LINE
   bounces={true}
   alwaysBounceVertical={true}
   removeClippedSubviews={true}
