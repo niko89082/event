@@ -11,6 +11,7 @@ import {
   Alert,
   Animated,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons'; 
 import { useFocusEffect } from '@react-navigation/native';
 import api from '../services/api';
 import EventCard from './EventCard';
@@ -22,14 +23,15 @@ const PAGE_SIZE = 10;
 export default function EventsFeed({
   navigation,
   currentUserId,
-  feedType = 'discover', // 'discover', 'following', 'nearby', etc.
+  feedType = 'discover',
   refreshing: externalRefreshing = false,
   onRefresh: externalOnRefresh,
   onScroll,
   scrollEventThrottle = 16,
   useEventStore: useStoreFlag = true,
   activeTab,
-}) {
+}) {  
+  console.log('🔍 EventsFeed component mounted with feedType:', feedType);
   // Centralized store integration
   const {
     getFeedCache,
@@ -56,7 +58,6 @@ export default function EventsFeed({
   // Refs
   const flatListRef = useRef(null);
   const isMounted = useRef(true);
-
   // Determine data source - use store cache if available and flag is enabled
   const useStore = useStoreFlag && currentUserId;
   const feedCache = useStore ? getFeedCache(feedType) : null;
@@ -320,23 +321,45 @@ export default function EventsFeed({
   }, [loadingMore]);
 
   // Render empty state
-  const renderEmptyState = useCallback(() => {
-    if (loading) return null;
+const renderEmptyState = useCallback(() => {
+  if (loading) return null;
 
-    return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyTitle}>
-          {feedType === 'following' ? 'No events from friends' : 'No events found'}
-        </Text>
-        <Text style={styles.emptySubtitle}>
-          {feedType === 'following' 
-            ? 'Follow some friends to see their events here' 
-            : 'Check back later for new events in your area'
-          }
-        </Text>
+  const isForYou = feedType === 'discover' || feedType === 'for-you';
+  
+  return (
+    <View style={styles.emptyContainer}>
+      <View style={styles.emptyIconContainer}>
+        <Ionicons 
+          name={isForYou ? "calendar-outline" : "people-outline"} 
+          size={64} 
+          color="#C7C7CC" 
+        />
       </View>
-    );
-  }, [loading, feedType]);
+      
+      <Text style={styles.emptyTitle}>
+        {isForYou ? 'No Events Yet' : 'No Events from Friends'}
+      </Text>
+      
+      <Text style={styles.emptySubtitle}>
+        {isForYou 
+          ? 'Be the first to create something amazing in your area!'
+          : 'When you\'re friends with people who create events, they\'ll appear here.'
+        }
+      </Text>
+      
+      {isForYou && (
+        <TouchableOpacity 
+          style={styles.createEventButton}
+          onPress={() => navigation.navigate('CreateEventScreen')}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="add" size={18} color="#FFFFFF" />
+          <Text style={styles.createEventButtonText}>Create Your First Event</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}, [loading, feedType, navigation]);
 
   // Render error state
   const renderErrorState = useCallback(() => (
@@ -369,39 +392,44 @@ export default function EventsFeed({
 
   // Main feed
   return (
-    <View style={styles.container}>
-      <FlatList
-        ref={flatListRef}
-        data={events}
-        keyExtractor={(item) => item._id}
-        renderItem={renderEvent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor="#3797EF"
-            colors={["#3797EF"]}
-          />
-        }
-        onEndReached={handleLoadMore}
-        onEndReachedThreshold={0.5}
-        onScroll={onScroll}
-        scrollEventThrottle={scrollEventThrottle}
-        ListFooterComponent={renderFooter}
-        ListEmptyComponent={renderEmptyState}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.listContent,
-          events.length === 0 && styles.emptyListContent
-        ]}
-        removeClippedSubviews={true}
-        maxToRenderPerBatch={5}
-        updateCellsBatchingPeriod={50}
-        windowSize={10}
-        getItemLayout={undefined}
-      />
-    </View>
-  );
+  <View style={styles.container}>
+    <FlatList
+      ref={flatListRef}
+      data={events}
+      keyExtractor={(item) => item._id}
+      renderItem={renderEvent}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#3797EF"
+          colors={["#3797EF"]}
+          title="Pull to refresh"
+          titleColor="#8E8E93"
+          progressBackgroundColor="#FFFFFF"
+        />
+      }
+      onEndReached={handleLoadMore}
+      onEndReachedThreshold={0.5}
+      onScroll={onScroll}
+      scrollEventThrottle={scrollEventThrottle}
+      ListFooterComponent={renderFooter}
+      ListEmptyComponent={renderEmptyState}
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={[
+        styles.listContent,
+        events.length === 0 && styles.emptyListContent
+      ]}
+      bounces={true}
+      alwaysBounceVertical={true}
+      removeClippedSubviews={true}
+      maxToRenderPerBatch={5}
+      updateCellsBatchingPeriod={50}
+      windowSize={10}
+      getItemLayout={undefined}
+    />
+  </View>
+);
 }
 
 
@@ -478,21 +506,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     paddingTop: 50,      // ✅ KEEP: Relative padding within emptyListContent
   },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1C1C1E',
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 22,
-  },
-  
   // Action buttons
   actionButton: {
     backgroundColor: '#3797EF',
@@ -518,4 +531,113 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+secondaryButton: {
+  backgroundColor: 'transparent',
+  borderWidth: 1.5,
+  borderColor: '#3797EF',
+  shadowOpacity: 0,
+  elevation: 0,
+},
+secondaryButtonText: {
+  color: '#3797EF',
+  fontWeight: '600',
+},
+
+
+
+
+
+
+
+// Update/add these styles in EventsFeed.js:
+emptyContainer: {
+  flex: 1,
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 40,
+  paddingTop: 20, // ✅ MOVED UP: Reduced from 50
+},
+emptyIconContainer: {
+  width: 120,
+  height: 120,
+  borderRadius: 60,
+  backgroundColor: 'rgba(248, 249, 250, 0.8)',
+  justifyContent: 'center',
+  alignItems: 'center',
+  marginBottom: 24,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.1,
+  shadowRadius: 4,
+  elevation: 2,
+},
+emptyTitle: {
+  fontSize: 24, // ✅ MATCH ACTIVITY: Same as activity screen
+  fontWeight: '700', // ✅ MATCH ACTIVITY: Same as activity screen
+  color: '#000000', // ✅ MATCH ACTIVITY: Same as activity screen
+  marginBottom: 8,
+  textAlign: 'center',
+},
+createEventButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 20, // ✅ MATCH FRIENDS: Same as createSuggestion
+  paddingVertical: 12, // ✅ MATCH FRIENDS: Same as createSuggestion
+  borderRadius: 25, // ✅ MATCH FRIENDS: Same rounded style
+  backgroundColor: 'rgba(55, 151, 239, 0.1)', // ✅ MATCH FRIENDS: Light blue background
+  borderWidth: 1.5,
+  borderColor: 'rgba(55, 151, 239, 0.3)',
+  marginTop: 8, // ✅ KEEP: Space from subtitle
+  // Remove shadow properties to match friends style
+},
+createEventButtonText: {
+  fontSize: 15, // ✅ MATCH FRIENDS: Same as createSuggestionText
+  color: '#3797EF', // ✅ MATCH FRIENDS: Blue color
+  marginLeft: 8,
+  fontWeight: '600', // ✅ MATCH FRIENDS: Same weight
+},
+// ✅ NEW: Styles for friends tab actions
+emptyActions: {
+  alignItems: 'center',
+  gap: 16, // ✅ INCREASED: More space between buttons
+},
+discoverButton: {
+  backgroundColor: '#3797EF',
+  paddingHorizontal: 32,
+  paddingVertical: 16,
+  borderRadius: 12,
+  shadowColor: '#3797EF',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.2,
+  shadowRadius: 8,
+  elevation: 4,
+},
+discoverButtonText: {
+  color: '#FFFFFF',
+  fontSize: 16,
+  fontWeight: '600',
+},
+createSuggestion: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 20, // ✅ INCREASED: More visible
+  paddingVertical: 12, // ✅ INCREASED: More visible
+  borderRadius: 25,
+  backgroundColor: 'rgba(55, 151, 239, 0.1)', // ✅ IMPROVED: Light blue background
+  borderWidth: 1.5,
+  borderColor: 'rgba(55, 151, 239, 0.3)',
+},
+createSuggestionText: {
+  fontSize: 15, // ✅ INCREASED: More visible
+  color: '#3797EF', // ✅ IMPROVED: Blue color to match theme
+  marginLeft: 8,
+  fontWeight: '600', // ✅ IMPROVED: Bolder text
+},
+emptySubtitle: {
+  fontSize: 16, // ✅ MATCH ACTIVITY: Same as activity screen
+  color: '#8E8E93', // ✅ MATCH ACTIVITY: Same as activity screen
+  textAlign: 'center',
+  lineHeight: 22, // ✅ MATCH ACTIVITY: Same as activity screen
+  marginBottom: 32,
+},
 });

@@ -101,23 +101,25 @@ export default function FollowingEventsFeed({
   );
 
   const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <View style={styles.emptyIconContainer}>
-        <Ionicons name="people-outline" size={64} color="#C7C7CC" />
-      </View>
-      <Text style={styles.emptyTitle}>No Events from Friends</Text>
-      <Text style={styles.emptySubtitle}>
-        When people you follow create events, they'll appear here.
-      </Text>
-      <TouchableOpacity 
-        style={styles.discoverButton}
-        onPress={() => navigation.navigate('SearchScreen')}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.discoverButtonText}>Discover Events</Text>
-      </TouchableOpacity>
+  <View style={styles.emptyState}>
+    <View style={styles.emptyIconContainer}>
+      <Ionicons name="people-outline" size={64} color="#C7C7CC" />
     </View>
-  );
+    <Text style={styles.emptyTitle}>No Events from Friends</Text>
+    <Text style={styles.emptySubtitle}>
+      When you're friends with people who create events, they'll appear here.
+    </Text>
+    
+    <TouchableOpacity 
+      style={styles.createSuggestion}
+      onPress={() => navigation.navigate('CreateEventScreen')}
+      activeOpacity={0.8}
+    >
+      <Ionicons name="add-circle" size={18} color="#3797EF" />
+      <Text style={styles.createSuggestionText}>Create an event</Text>
+    </TouchableOpacity>
+  </View>
+);
 
   const renderFooter = () => {
     if (!loading || page === 1) return null;
@@ -139,43 +141,42 @@ export default function FollowingEventsFeed({
   }
 
   return (
-    <FlatList
-      data={events}
-      renderItem={renderEventItem}
-      keyExtractor={item => item._id}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing || externalRefreshing}
-          onRefresh={handleRefresh}
-          tintColor="#3797EF"
-          colors={["#3797EF"]}
-          title="Pull to refresh events"
-          titleColor="#8E8E93"
-          progressBackgroundColor="#FFFFFF"
-        />
-      }
-      onScroll={handleScroll}
-      scrollEventThrottle={scrollEventThrottle}
-      ListEmptyComponent={renderEmptyState}
-      ListFooterComponent={renderFooter}
-      onEndReached={handleLoadMore}
-      onEndReachedThreshold={0.1}
-      contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
-      // MODERN: Content flows naturally under transparent headers
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustContentInsets={false}
-      // PERFECT ALIGNMENT: Events align with bottom of sub-tabs
-      contentInset={{ top: 194 }} // Back to 194 for sub-tabs alignment
-      scrollIndicatorInsets={{ top: 194 }}
-      // Enhanced props for better performance
-      bounces={true}
-      alwaysBounceVertical={true}
-      removeClippedSubviews={true}
-      initialNumToRender={5}
-      maxToRenderPerBatch={5}
-      windowSize={10}
+    // Replace the FlatList in FollowingEventsFeed.js
+<FlatList
+  data={events}
+  renderItem={renderEventItem}
+  keyExtractor={item => item._id}
+  showsVerticalScrollIndicator={false}
+  refreshControl={
+    <RefreshControl
+      refreshing={refreshing || externalRefreshing}
+      onRefresh={handleRefresh}
+      tintColor="#3797EF"
+      colors={["#3797EF"]}
+      title="Pull to refresh events"
+      titleColor="#8E8E93"
+      progressBackgroundColor="#FFFFFF"
     />
+  }
+  onScroll={handleScroll}
+  scrollEventThrottle={scrollEventThrottle}
+  ListEmptyComponent={renderEmptyState}
+  ListFooterComponent={renderFooter}
+  onEndReached={handleLoadMore}
+  onEndReachedThreshold={0.1}
+  contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
+  // ✅ REMOVE these conflicting properties:
+  // contentInsetAdjustmentBehavior="automatic"
+  // automaticallyAdjustContentInsets={false}
+  // contentInset={{ top: 194 }}
+  // scrollIndicatorInsets={{ top: 194 }}
+  bounces={true}
+  alwaysBounceVertical={true}
+  removeClippedSubviews={true}
+  initialNumToRender={5}
+  maxToRenderPerBatch={5}
+  windowSize={10}
+/>
   );
 }
 
@@ -211,15 +212,6 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   
-  // Empty state
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 50,         // ✅ ADJUSTED: Relative padding within container
-    backgroundColor: 'transparent',
-  },
   emptyIconContainer: {
     width: 120,
     height: 120,
@@ -233,20 +225,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
-  },
-  emptyTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 32,
   },
   discoverButton: {
     backgroundColor: '#3797EF',
@@ -269,4 +247,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'transparent',
   },
+  emptyActions: {
+  alignItems: 'center',
+  gap: 12,
+},
+// Update these styles in FollowingEventsFeed.js:
+emptyState: {
+  flex: 1,
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 40,
+  paddingTop: 20, // ✅ MOVED UP: Reduced from 50
+  backgroundColor: 'transparent',
+},
+emptyTitle: {
+  fontSize: 24, // ✅ MATCH ACTIVITY: Same as activity screen
+  fontWeight: '700', // ✅ MATCH ACTIVITY: Same as activity screen
+  color: '#000000', // ✅ MATCH ACTIVITY: Same as activity screen
+  marginBottom: 8,
+  textAlign: 'center',
+},
+emptySubtitle: {
+  fontSize: 16, // ✅ MATCH ACTIVITY: Same as activity screen
+  color: '#8E8E93', // ✅ MATCH ACTIVITY: Same as activity screen
+  textAlign: 'center',
+  lineHeight: 22, // ✅ MATCH ACTIVITY: Same as activity screen
+  marginBottom: 32,
+},
+// ✅ ADD: New styles for improved actions
+emptyActions: {
+  alignItems: 'center',
+  gap: 16, // ✅ INCREASED: More space between buttons
+},
+createSuggestion: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 20, // ✅ INCREASED: More visible
+  paddingVertical: 12, // ✅ INCREASED: More visible
+  borderRadius: 25,
+  backgroundColor: 'rgba(55, 151, 239, 0.1)', // ✅ IMPROVED: Light blue background
+  borderWidth: 1.5,
+  borderColor: 'rgba(55, 151, 239, 0.3)',
+},
+createSuggestionText: {
+  fontSize: 15, // ✅ INCREASED: More visible
+  color: '#3797EF', // ✅ IMPROVED: Blue color to match theme
+  marginLeft: 8,
+  fontWeight: '600', // ✅ IMPROVED: Bolder text
+},
 });

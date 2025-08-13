@@ -10,7 +10,7 @@ import { useMemo } from 'react';
 export const useDynamicEventTabs = (hasHostingEvents, hasAttendingEvents) => {
   const dynamicTabs = useMemo(() => {
     const baseTabs = [
-      { key: 'following', label: 'Following', icon: 'people-outline' },
+      { key: 'following', label: 'Friends', icon: 'people-outline' },
       { key: 'for-you', label: 'For You', icon: 'star-outline' }
     ];
 
@@ -21,7 +21,7 @@ export const useDynamicEventTabs = (hasHostingEvents, hasAttendingEvents) => {
       additionalTabs.push({
         key: 'hosting',
         label: 'Hosting',
-        icon: 'star' // Filled star for hosting (more prominent than outline)
+        icon: 'crown-outline' 
       });
     }
 
