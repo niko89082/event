@@ -370,51 +370,51 @@ const ActivityFeed = forwardRef(({
     );
   }
 
-  if (data.length === 0) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Ionicons name="flash-outline" size={48} color="#8E8E93" />
-        <Text style={styles.emptyTitle}>No Activities Yet</Text>
-        <Text style={styles.emptySubtitle}>
-          Follow some friends or join events to see activities here!
-        </Text>
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => navigation.navigate('DiscoverScreen')}
-        >
-          <Text style={styles.actionButtonText}>Discover People</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const renderEmptyState = () => (
+  <View style={styles.emptyContainer}>
+    <Ionicons name="flash-outline" size={48} color="#8E8E93" />
+    <Text style={styles.emptyTitle}>No Activities Yet</Text>
+    <Text style={styles.emptySubtitle}>
+      Follow some friends or join events to see activities here!
+    </Text>
+    <TouchableOpacity 
+      style={styles.actionButton}
+      onPress={() => navigation.navigate('DiscoverScreen')}
+    >
+      <Text style={styles.actionButtonText}>Discover People</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 
   return (
-    <FlatList
-      ref={ref}
-      data={data}
-      keyExtractor={(item) => item._id}
-      renderItem={renderActivity}
-      onEndReached={handleLoadMore}
-      onEndReachedThreshold={0.1}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing || externalRefreshing}
-          onRefresh={handleRefresh}
-          colors={['#3797EF']}
-          tintColor="#3797EF"
-        />
-      }
-      ListFooterComponent={renderFooter}
-      onScroll={handleScroll}
-      scrollEventThrottle={scrollEventThrottle}
-      showsVerticalScrollIndicator={true}
-      contentContainerStyle={data.length === 0 ? styles.emptyContentContainer : styles.contentContainer}
-      removeClippedSubviews={true}
-      maxToRenderPerBatch={10}
-      updateCellsBatchingPeriod={50}
-      windowSize={10}
-    />
-  );
+  <FlatList
+    ref={ref}
+    data={data}
+    keyExtractor={(item) => item._id}
+    renderItem={renderActivity}
+    onEndReached={handleLoadMore}
+    onEndReachedThreshold={0.1}
+    refreshControl={
+      <RefreshControl
+        refreshing={refreshing || externalRefreshing}
+        onRefresh={handleRefresh}
+        colors={['#3797EF']}
+        tintColor="#3797EF"
+      />
+    }
+    ListEmptyComponent={renderEmptyState}  // ADD THIS LINE
+    ListFooterComponent={renderFooter}
+    onScroll={handleScroll}
+    scrollEventThrottle={scrollEventThrottle}
+    showsVerticalScrollIndicator={true}
+    contentContainerStyle={data.length === 0 ? styles.emptyContentContainer : styles.contentContainer}
+    removeClippedSubviews={true}
+    maxToRenderPerBatch={10}
+    updateCellsBatchingPeriod={50}
+    windowSize={10}
+  />
+);
 });
 
 const styles = StyleSheet.create({

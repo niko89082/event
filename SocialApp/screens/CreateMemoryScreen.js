@@ -1,5 +1,5 @@
 // screens/CreateMemoryScreen.js - Combined: Working user search + No privacy toggle
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -108,24 +109,26 @@ export default function CreateMemoryScreen({ navigation }) {
     return () => clearTimeout(delayedSearch);
   }, [searchQuery]);
 
-  const searchUsers = async (query) => {
+  const searchUsers = async () => {
   try {
     setSearching(true);
     
-    // 🆕 NEW: Search only friends instead of all users
-    const response = await axios.get(`/api/users/friends/search?q=${query}`, {
-      headers: { Authorization: `Bearer ${authToken}` }
-    });
+    const response = await api.get(`/api/users/friends/search?q=${encodeURIComponent(searchQuery)}`);
+    
+    // Handle different response structures
+    const friends = Array.isArray(response.data) ? response.data : response.data.friends || [];
     
     // Filter out current user and already selected users
     const excludeIds = [currentUser._id, ...selectedUsers.map(u => u._id)];
-    const filteredFriends = response.data.friends.filter(friend => 
+    const filteredFriends = friends.filter(friend => 
       friend && friend._id && !excludeIds.includes(friend._id)
     );
     
+    console.log('📊 Filtered friends found:', filteredFriends.length);
     setSearchResults(filteredFriends);
   } catch (error) {
     console.error('❌ Error searching friends:', error);
+    console.log('❌ API Response Error:', error.response?.data);
     setSearchResults([]);
   } finally {
     setSearching(false);
@@ -162,20 +165,23 @@ export default function CreateMemoryScreen({ navigation }) {
   };
 
   const toggleUserSelection = (user) => {
-    setSelectedUsers(prev => {
-      const isSelected = prev.some(u => u._id === user._id);
-      if (isSelected) {
-        return prev.filter(u => u._id !== user._id);
-      } else {
-        // Be more conservative - limit to 13 since creator makes 14 total
-        if (prev.length >= 13) {
-          Alert.alert('Limit Reached', 'You can add up to 13 people to a memory (including yourself makes 14 total)');
-          return prev;
-        }
-        return [...prev, user];
+  setSelectedUsers(prev => {
+    const isSelected = prev.some(u => u._id === user._id);
+    if (isSelected) {
+      return prev.filter(u => u._id !== user._id);
+    } else {
+      // ✅ FIXED: 14 friends max (15 total including creator)
+      if (prev.length >= 14) {
+        Alert.alert(
+          'Memory Limit Reached', 
+          'You can add up to 14 friends to a memory (15 people total including yourself).'
+        );
+        return prev;
       }
-    });
-  };
+      return [...prev, user];
+    }
+  });
+};
 
   const removeUser = (userId) => {
     setSelectedUsers(prev => prev.filter(u => u._id !== userId));
@@ -304,182 +310,200 @@ export default function CreateMemoryScreen({ navigation }) {
   );
 
   const renderBasicInfoStep = () => (
-    <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-      <KeyboardAvoidingView
-        style={styles.stepContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={styles.stepHeader}>
-          <Ionicons name="library" size={48} color="#3797EF" />
-          <Text style={styles.stepTitle}>Create a Memory</Text>
-          <Text style={styles.stepSubtitle}>
-            Memories are private collections that only you and people you add can see
-          </Text>
-        </View>
+  <View style={styles.stepContainer}>
+    <View style={styles.stepHeader}>
+      <Ionicons name="library" size={48} color="#3797EF" />
+      <Text style={styles.stepTitle}>Create a Memory</Text>
+      <Text style={styles.stepSubtitle}>
+        Memories are private collections that only you and people you add can see
+      </Text>
+    </View>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Memory Title *</Text>
-          <TextInput
-            style={styles.input}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="e.g., Beach Trip 2024, Birthday Party..."
-            placeholderTextColor="#8E8E93"
-            maxLength={50}
-            autoFocus
-          />
-          <Text style={styles.charCount}>{title.length}/50</Text>
-        </View>
+    <View style={styles.formGroup}>
+      <Text style={styles.label}>Memory Title *</Text>
+      <TextInput
+        style={styles.input}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="e.g., Beach Trip 2024, Birthday Party..."
+        placeholderTextColor="#8E8E93"
+        maxLength={50}
+        autoFocus
+      />
+      <Text style={styles.charCount}>{title.length}/50</Text>
+    </View>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Description (Optional)</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="What made this moment special?"
-            placeholderTextColor="#8E8E93"
-            multiline
-            maxLength={250}
-            textAlignVertical="top"
-          />
-          <Text style={styles.charCount}>{description.length}/250</Text>
-        </View>
+    <View style={styles.formGroup}>
+      <Text style={styles.label}>Description (Optional)</Text>
+      <TextInput
+        style={[styles.input, styles.textArea]}
+        value={description}
+        onChangeText={setDescription}
+        placeholder="What made this moment special?"
+        placeholderTextColor="#8E8E93"
+        multiline
+        maxLength={250}
+        textAlignVertical="top"
+      />
+      <Text style={styles.charCount}>{description.length}/250</Text>
+    </View>
 
-        <View style={styles.privacyInfo}>
-          <View style={styles.privacyIcon}>
-            <Ionicons name="lock-closed" size={20} color="#FF9500" />
-          </View>
-          <View style={styles.privacyText}>
-            <Text style={styles.privacyTitle}>Private by Design</Text>
-            <Text style={styles.privacyDescription}>
-              Only you and people you add can see this memory
-            </Text>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </ScrollView>
-  );
-
+    <View style={styles.privacyInfo}>
+      <View style={styles.privacyIcon}>
+        <Ionicons name="lock-closed" size={20} color="#FF9500" />
+      </View>
+      <View style={styles.privacyText}>
+        <Text style={styles.privacyTitle}>Private by Design</Text>
+        <Text style={styles.privacyDescription}>
+          Only you and people you add can see this memory
+        </Text>
+      </View>
+    </View>
+  </View>
+);
   const renderUserSelectionStep = () => (
-    <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.stepContainer}>
-        <View style={styles.stepHeader}>
-          <Ionicons name="people" size={48} color="#3797EF" />
-          <Text style={styles.stepTitle}>Add People</Text>
-          <Text style={styles.stepSubtitle}>
-            Add up to 13 friends to share this memory with (you can skip this step)
-          </Text>
-        </View>
+  <View style={styles.stepContainer}>
+    <View style={styles.stepHeader}>
+      <Ionicons name="people" size={48} color="#3797EF" />
+      <Text style={styles.stepTitle}>Add People</Text>
+      <Text style={styles.stepSubtitle}>
+        Add up to 14 friends to share this memory with (you can skip this step)
+      </Text>
+    </View>
 
-        <View style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search for friends..."
-            placeholderTextColor="#8E8E93"
-          />
-          {searching && (
-            <ActivityIndicator size="small" color="#8E8E93" style={styles.searchSpinner} />
-          )}
-        </View>
+    <View style={styles.searchContainer}>
+      <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
+      <TextInput
+        style={styles.searchInput}
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        placeholder="Search for friends..."
+        placeholderTextColor="#8E8E93"
+      />
+      {searching && (
+        <ActivityIndicator size="small" color="#8E8E93" style={styles.searchSpinner} />
+      )}
+    </View>
 
-        {selectedUsers.length > 0 && (
-          <View style={styles.selectedSection}>
-            <Text style={styles.selectedTitle}>
-              Added ({selectedUsers.length}/13)
-            </Text>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.selectedUsersContainer}
-            >
-              {selectedUsers.map((user) => (
-                <View key={user._id} style={styles.selectedUser}>
-                  <TouchableOpacity
-                    onPress={() => removeUser(user._id)}
-                    style={styles.removeUserButton}
-                  >
-                    <Ionicons name="close" size={16} color="#FFFFFF" />
-                  </TouchableOpacity>
-                  <Image
-                    source={{
-                      uri: user.profilePicture
-                        ? `http://${API_BASE_URL}:3000${user.profilePicture}`
-                        : 'https://placehold.co/48x48/C7C7CC/FFFFFF?text=' + 
-                          (user.username?.charAt(0).toUpperCase() || '?')
-                    }}
-                    style={styles.selectedUserImage}
-                  />
-                  <Text style={styles.selectedUserName} numberOfLines={1}>
-                    {user.username}
-                  </Text>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        <ScrollView style={styles.searchResultsContainer} showsVerticalScrollIndicator={false}>
-          {searchResults.map((user) => {
-            const isSelected = selectedUsers.some(u => u._id === user._id);
-            
-            return (
+    {selectedUsers.length > 0 && (
+      <View style={styles.selectedSection}>
+        <Text style={styles.selectedTitle}>
+          Added ({selectedUsers.length}/14)
+        </Text>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.selectedUsersContainer}
+        >
+          {selectedUsers.map((user) => (
+            <View key={user._id} style={styles.selectedUser}>
               <TouchableOpacity
-                key={user._id}
-                style={styles.userItem}
-                onPress={() => toggleUserSelection(user)}
-                activeOpacity={0.8}
+                onPress={() => removeUser(user._id)}
+                style={styles.removeUserButton}
               >
-                <Image
-                  source={{
-                    uri: user.profilePicture
-                      ? `http://${API_BASE_URL}:3000${user.profilePicture}`
-                      : 'https://placehold.co/40x40/C7C7CC/FFFFFF?text=' + 
-                        (user.username?.charAt(0).toUpperCase() || '?')
-                  }}
-                  style={styles.userAvatar}
-                />
-                <View style={styles.userInfo}>
-                  <Text style={styles.userName}>{user.username}</Text>
-                  {(user.displayName || user.fullName) && (
-                    <Text style={styles.userDisplayName}>{user.displayName || user.fullName}</Text>
-                  )}
-                </View>
-                {!isSelected && (
-                  <View style={styles.addButton}>
-                    <Ionicons name="add" size={20} color="#3797EF" />
-                  </View>
-                )}
-                {isSelected && (
-                  <View style={styles.selectedIndicator}>
-                    <Ionicons name="checkmark" size={20} color="#FFFFFF" />
-                  </View>
-                )}
+                <Ionicons name="close" size={16} color="#FFFFFF" />
               </TouchableOpacity>
-            );
-          })}
-
-          {searchQuery.trim() && searchResults.length === 0 && !searching && (
-            <View style={styles.emptySearchResults}>
-              <Ionicons name="search-outline" size={48} color="#C7C7CC" />
-              <Text style={styles.emptySearchText}>No users found</Text>
+              <Image
+                source={{
+                  uri: user.profilePicture
+                    ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                    : 'https://placehold.co/48x48/C7C7CC/FFFFFF?text=' + 
+                      (user.username?.charAt(0).toUpperCase() || '?')
+                }}
+                style={styles.selectedUserImage}
+              />
+              <Text style={styles.selectedUserName} numberOfLines={1}>
+                {user.username}
+              </Text>
             </View>
-          )}
-
-          {!searchQuery.trim() && (
-            <View style={styles.emptySearchResults}>
-              <Ionicons name="search-outline" size={48} color="#C7C7CC" />
-              <Text style={styles.emptySearchText}>Search for friends to add</Text>
-            </View>
-          )}
+          ))}
         </ScrollView>
       </View>
-    </ScrollView>
-  );
+    )}
 
+    <View style={styles.searchResultsContainer}>
+      {searchResults.map((user) => {
+        const isSelected = selectedUsers.some(u => u._id === user._id);
+        
+        return (
+          <TouchableOpacity
+            key={user._id}
+            style={styles.userItem}
+            onPress={() => toggleUserSelection(user)}
+            activeOpacity={0.8}
+          >
+            <Image
+              source={{
+                uri: user.profilePicture
+                  ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                  : 'https://placehold.co/40x40/C7C7CC/FFFFFF?text=' + 
+                    (user.username?.charAt(0).toUpperCase() || '?')
+              }}
+              style={styles.userAvatar}
+            />
+            <View style={styles.userInfo}>
+              <Text style={styles.userName}>{user.username}</Text>
+              {(user.displayName || user.fullName) && (
+                <Text style={styles.userDisplayName}>{user.displayName || user.fullName}</Text>
+              )}
+            </View>
+            {!isSelected && (
+              <View style={styles.addButton}>
+                <Ionicons name="add" size={20} color="#3797EF" />
+              </View>
+            )}
+            {isSelected && (
+              <View style={styles.selectedIndicator}>
+                <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+              </View>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+
+      {searchQuery.trim() && searchResults.length === 0 && !searching && (
+        <View style={styles.emptySearchResults}>
+          <Ionicons name="search-outline" size={48} color="#C7C7CC" />
+          <Text style={styles.emptySearchText}>No users found</Text>
+        </View>
+      )}
+
+      {!searchQuery.trim() && (
+        <View style={styles.emptySearchResults}>
+          <Ionicons name="search-outline" size={48} color="#C7C7CC" />
+          <Text style={styles.emptySearchText}>Search for friends to add</Text>
+        </View>
+      )}
+    </View>
+  </View>
+);
+const renderProgressBar = () => {
+  const progressAnim = useRef(new Animated.Value(currentStep / totalSteps)).current;
+  
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: currentStep / totalSteps,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  }, [currentStep]);
+
+  return (
+    <View style={styles.progressBarContainer}>
+      <View style={styles.progressBar}>
+        <Animated.View style={[
+          styles.progressFill,
+          { 
+            width: progressAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['0%', '100%']
+            })
+          }
+        ]} />
+      </View>
+    </View>
+  );
+};
   const renderPhotoSelectionStep = () => (
     <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
       <View style={styles.stepContainer}>
@@ -637,13 +661,28 @@ export default function CreateMemoryScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-      {renderProgressIndicator()}
-      {renderStep()}
-    </SafeAreaView>
-  );
+  <SafeAreaView style={styles.container}>
+    <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    
+    {renderProgressIndicator()}
+    {/* Remove this line: {renderProgressBar()} */}
+
+    <KeyboardAvoidingView 
+      style={styles.keyboardContainer}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+    >
+      <ScrollView 
+        style={styles.scrollContainer} 
+        contentContainerStyle={styles.scrollContentContainer}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {renderStep()}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  </SafeAreaView>
+);
 }
 
 const styles = StyleSheet.create({
@@ -689,6 +728,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#34C759',
   },
   stepContainer: {
+    flex: 1,
     padding: 20,
     minHeight: 400,
   },
@@ -1010,4 +1050,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  // Add these to the existing styles object:
+keyboardContainer: {
+  flex: 1,
+},
+scrollContentContainer: {
+  flexGrow: 1,
+  paddingBottom: 20,
+},
+progressBarContainer: {
+  paddingHorizontal: 40,
+  paddingBottom: 8,
+  backgroundColor: '#F8F9FA',
+},
+progressBar: {
+  width: '100%',
+  height: 2,
+  backgroundColor: '#E1E1E1',
+  borderRadius: 1,
+  overflow: 'hidden',
+},
+progressFill: {
+  height: '100%',
+  backgroundColor: '#3797EF',
+  borderRadius: 1,
+},
+searchResultsContainer: {
+  flex: 1,
+  maxHeight: 300, // Limit height to prevent endless scrolling
+},
 });

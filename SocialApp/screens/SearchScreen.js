@@ -73,14 +73,19 @@ export default function SearchScreen({ navigation, route }) {
   }, [navigation, showSuggestions]);
 
   // Enhanced auto-loading useEffect
-  useEffect(() => {
-    if (tab === 'users' && query.trim() === '') {
-      if (suggestions.length === 0 && !loadingSuggestions) {
-        console.log('🚀 Auto-loading friend suggestions for users tab...');
-        fetchFriendSuggestions();
-      }
+    useEffect(() => {
+    if (tab === 'users' && query.trim() === '' && suggestions.length === 0 && !loadingSuggestions) {
+      console.log('🚀 Loading friend suggestions for users tab...');
+      fetchFriendSuggestions();
     }
-  }, [tab, query, suggestions.length, loadingSuggestions]);
+  }, [tab]); // Only depend on tab change, not suggestions.length
+
+  // Separate effect to clear results when query is empty
+  useEffect(() => {
+    if (query.trim() === '') {
+      setResults([]);
+    }
+  }, [query]);
 
   // Debounced search effect - Instagram/Facebook style timing
   useEffect(() => {

@@ -354,7 +354,7 @@ function AppNavigator({ onLogout }) {
               name="CreatePostScreen" 
               component={CreatePostScreen}
               options={{ 
-                headerShown: true, 
+                headerShown: false, 
                 title: 'New Post',
                 headerStyle: {
                   backgroundColor: '#FFFFFF',

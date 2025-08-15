@@ -80,10 +80,6 @@ export default function CreatePostScreen({ navigation }) {
   };
 
   const goToStep = (newStep) => {
-    if (newStep > step && newStep === 2 && !selectedImage) {
-      Alert.alert('Select Photo', 'Please select a photo to continue.');
-      return;
-    }
     setStep(newStep);
   };
 
@@ -185,19 +181,19 @@ export default function CreatePostScreen({ navigation }) {
   };
 
   const renderProgressBar = () => (
-    <View style={styles.progressContainer}>
-      <View style={styles.progressBar}>
-        <Animated.View style={[
-          styles.progressFill,
-          { width: progressAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: ['0%', '100%']
-          })}
-        ]} />
-      </View>
-      <Text style={styles.progressText}>Step {step} of 2</Text>
+  <View style={styles.progressContainer}>
+    <View style={styles.progressBar}>
+      <Animated.View style={[
+        styles.progressFill,
+        { width: progressAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['0%', '100%']
+        })}
+      ]} />
     </View>
-  );
+    {/* Removed the progress text line completely */}
+  </View>
+);
 
   const renderStepIndicator = () => (
     <View style={styles.stepIndicator}>
@@ -483,7 +479,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 6,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
@@ -546,27 +542,21 @@ const styles = StyleSheet.create({
 
   // Progress Bar
   progressContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    backgroundColor: '#F8F9FA',
-  },
+  paddingHorizontal: 40,  // ← Changed from 20 to 40 (narrower width)
+  paddingBottom: 8,       // ← Changed from 16 to 8 (less space)
+  backgroundColor: '#F8F9FA',
+},
   progressBar: {
-    width: '100%',
-    height: 4,
-    backgroundColor: '#E1E1E1',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
+  width: '100%',
+  height: 2,              // ← Changed from 4 to 2 (thinner bar)
+  backgroundColor: '#E1E1E1',
+  borderRadius: 1,        // ← Changed from 2 to 1 (proportional to height)
+  overflow: 'hidden',
+},
   progressFill: {
     height: '100%',
     backgroundColor: '#3797EF',
     borderRadius: 2,
-  },
-  progressText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    textAlign: 'center',
-    marginTop: 8,
   },
 
   // Content
@@ -735,10 +725,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   eventSelectorText: {
+    flex:1,
     fontSize: 16,
     color: '#8E8E93',
     marginLeft: 12,
-    flex: 1,
   },
   eventSelectorTextSelected: {
     color: '#000000',
@@ -862,4 +852,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
   },
+  eventSelectorLeft: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  flex: 1,  // ← Add this line
+},
 });
