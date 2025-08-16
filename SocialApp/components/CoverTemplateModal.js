@@ -402,3 +402,341 @@
 // });
 
 // export default CoverTemplateModal;
+
+
+// components/CoverTemplateModal.js - Simplified with fewer templates for easier testing
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Modal,
+  TouchableOpacity,
+  Image,
+  Dimensions,
+  FlatList,
+  SafeAreaView,
+  StatusBar,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+
+const { width: screenWidth } = Dimensions.get('window');
+
+// Simplified template categories with fewer options for easier testing
+const TEMPLATE_CATEGORIES = [
+  {
+    id: 'party',
+    name: 'Party',
+    icon: 'sparkles',
+    color: '#FF6B9D',
+    templates: [
+      { id: 'party_1', name: 'Neon Lights', image: { uri: 'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=400&h=300&fit=crop' } },
+      { id: 'party_2', name: 'Club Vibes', image: { uri: 'https://images.unsplash.com/photo-1566737236500-c8ac43014a8e?w=400&h=300&fit=crop' } },
+    ]
+  },
+  {
+    id: 'birthday',
+    name: 'Birthday',
+    icon: 'gift',
+    color: '#FFD93D',
+    templates: [
+      { id: 'birthday_1', name: 'Birthday Balloons', image: { uri: 'https://images.unsplash.com/photo-1464207687429-7505649dae38?w=400&h=300&fit=crop' } },
+      { id: 'birthday_2', name: 'Birthday Cake', image: { uri: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=300&fit=crop' } },
+    ]
+  },
+  {
+    id: 'food',
+    name: 'Food',
+    icon: 'restaurant',
+    color: '#FF8A65',
+    templates: [
+      { id: 'food_1', name: 'Fine Dining', image: { uri: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=400&h=300&fit=crop' } },
+      { id: 'food_2', name: 'BBQ Party', image: { uri: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=400&h=300&fit=crop' } },
+    ]
+  },
+  {
+    id: 'music',
+    name: 'Music',
+    icon: 'musical-notes',
+    color: '#9C27B0',
+    templates: [
+      { id: 'music_1', name: 'Concert', image: { uri: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&h=300&fit=crop' } },
+      { id: 'music_2', name: 'DJ Night', image: { uri: 'https://images.unsplash.com/photo-1571266028243-d220c9c3980f?w=400&h=300&fit=crop' } },
+    ]
+  },
+];
+
+const CoverTemplateModal = ({ 
+  visible, 
+  onClose, 
+  onSelectTemplate,
+  eventTitle = "Your Event" 
+}) => {
+  const [selectedCategory, setSelectedCategory] = useState('party');
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+
+  const currentCategory = TEMPLATE_CATEGORIES.find(cat => cat.id === selectedCategory);
+
+  const handleTemplateSelect = (template) => {
+    setSelectedTemplate(template);
+  };
+
+  const handleConfirmSelection = () => {
+    if (selectedTemplate) {
+      onSelectTemplate(selectedTemplate);
+      onClose();
+      setSelectedTemplate(null);
+    }
+  };
+
+  const renderCategoryTab = ({ item }) => (
+    <TouchableOpacity
+      style={[
+        styles.categoryTab,
+        selectedCategory === item.id && { backgroundColor: item.color }
+      ]}
+      onPress={() => setSelectedCategory(item.id)}
+      activeOpacity={0.7}
+    >
+      <Ionicons 
+        name={item.icon} 
+        size={20} 
+        color={selectedCategory === item.id ? '#FFFFFF' : item.color} 
+      />
+      <Text style={[
+        styles.categoryTabText,
+        selectedCategory === item.id && { color: '#FFFFFF' }
+      ]}>
+        {item.name}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const renderTemplate = ({ item }) => (
+    <TouchableOpacity
+      style={[
+        styles.templateItem,
+        selectedTemplate?.id === item.id && styles.templateItemSelected
+      ]}
+      onPress={() => handleTemplateSelect(item)}
+      activeOpacity={0.8}
+    >
+      <Image source={item.image} style={styles.templateImage} />
+      
+      {/* Event Title Overlay Preview */}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.7)']}
+        style={styles.templateOverlay}
+      >
+        <Text style={styles.templatePreviewTitle} numberOfLines={2}>
+          {eventTitle}
+        </Text>
+      </LinearGradient>
+
+      {/* Selection Indicator */}
+      {selectedTemplate?.id === item.id && (
+        <View style={styles.selectionIndicator}>
+          <Ionicons name="checkmark-circle" size={24} color="#3797EF" />
+        </View>
+      )}
+
+      {/* Template Name */}
+      <View style={styles.templateNameContainer}>
+        <Text style={styles.templateName}>{item.name}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <Ionicons name="close" size={24} color="#000000" />
+          </TouchableOpacity>
+          
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>Choose Template</Text>
+            <Text style={styles.headerSubtitle}>Make your event colorful and inviting</Text>
+          </View>
+
+          {selectedTemplate && (
+            <TouchableOpacity 
+              onPress={handleConfirmSelection}
+              style={styles.selectButton}
+            >
+              <Text style={styles.selectButtonText}>Use</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Category Tabs */}
+        <View style={styles.categoriesContainer}>
+          <FlatList
+            data={TEMPLATE_CATEGORIES}
+            renderItem={renderCategoryTab}
+            keyExtractor={(item) => item.id}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoriesList}
+          />
+        </View>
+
+        {/* Templates Grid */}
+        <FlatList
+          data={currentCategory?.templates || []}
+          renderItem={renderTemplate}
+          keyExtractor={(item) => item.id}
+          numColumns={2}
+          contentContainerStyle={styles.templatesGrid}
+          columnWrapperStyle={styles.templateRow}
+          showsVerticalScrollIndicator={false}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  selectButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  selectButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Categories
+  categoriesContainer: {
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+    backgroundColor: '#FAFAFA',
+  },
+  categoriesList: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  categoryTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  categoryTabText: {
+    marginLeft: 6,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+
+  // Templates
+  templatesGrid: {
+    padding: 16,
+  },
+  templateRow: {
+    justifyContent: 'space-between',
+  },
+  templateItem: {
+    width: (screenWidth - 48) / 2,
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#F8F8F8',
+  },
+  templateItemSelected: {
+    borderWidth: 2,
+    borderColor: '#3797EF',
+  },
+  templateImage: {
+    width: '100%',
+    height: 120,
+    resizeMode: 'cover',
+  },
+  templateOverlay: {
+    position: 'absolute',
+    bottom: 28,
+    left: 0,
+    right: 0,
+    height: 60,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+  },
+  templatePreviewTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  selectionIndicator: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+  },
+  templateNameContainer: {
+    padding: 8,
+  },
+  templateName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#000000',
+    textAlign: 'center',
+  },
+});
+
+export default CoverTemplateModal;

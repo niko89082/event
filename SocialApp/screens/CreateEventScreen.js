@@ -8,15 +8,15 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-
+import { useActionSheet } from '@expo/react-native-action-sheet';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
 import PaymentSetupComponent from '../components/PaymentSetupComponent';
 import SimplifiedEventPrivacySettings from '../components/SimplifiedEventPrivacySettings';
 import { FEATURES } from '../config/features';
+import CoverPhotoSelectionModal from '../components/CoverPhotoSelectionModal';
 
-import CoverTemplateModal from '../components/CoverTemplateModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PERMISSION_PRESETS = {
@@ -171,7 +171,7 @@ export default function CreateEventScreen({ navigation, route }) {
   const [showFormModal, setShowFormModal] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showCoverModal, setShowCoverModal] = useState(false);
   const [coverSource, setCoverSource] = useState(null); // 'template' | 'upload'
   useEffect(() => {
     checkPaymentStatus();
@@ -461,12 +461,32 @@ export default function CreateEventScreen({ navigation, route }) {
       
       // Cover image
       if (cover) {
-        formData.append('coverImage', {
-          uri: cover,
-          type: 'image/jpeg',
-          name: 'cover.jpg',
-        });
-      }
+  if (coverSource === 'template') {
+    // For template assets, we need special handling
+    console.log('📷 Using template cover');
+    
+    // Templates are require() objects, convert to uploadable format
+    // We'll need to get the resolved asset URI
+    const assetId = Image.resolveAssetSource(cover).uri;
+    
+    formData.append('coverImage', {
+      uri: assetId,
+      type: 'image/jpeg',
+      name: 'template-cover.jpg',
+    });
+  } else {
+    // Regular uploads
+    console.log('📷 Using uploaded cover');
+    
+    formData.append('coverImage', {
+      uri: cover.uri || cover,
+      type: 'image/jpeg', 
+      name: 'cover.jpg',
+    });
+  }
+  
+  formData.append('coverImageSource', coverSource);
+}
 
       const response = await api.post('/api/events/create', formData, {
         headers: {
@@ -504,93 +524,60 @@ export default function CreateEventScreen({ navigation, route }) {
       setCreating(false);
     }
   };
-
-  // Replace your existing pickCoverImage function with this enhanced version
 const pickCoverImage = () => {
-  if (Platform.OS === 'ios') {
-    // iOS Action Sheet with template option
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        options: ['Cancel', 'Browse Templates', 'Choose from Gallery', 'Take Photo'],
-        cancelButtonIndex: 0,
-      },
-      (buttonIndex) => {
-        switch (buttonIndex) {
-          case 1:
-            setShowTemplateModal(true);
-            break;
-          case 2:
-            pickFromGallery();
-            break;
-          case 3:
-            takePhoto();
-            break;
-        }
-      }
-    );
-  } else {
-    // Android - show custom alert
-    Alert.alert(
-      'Choose Cover Photo',
-      'How would you like to add a cover photo?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Browse Templates', onPress: () => setShowTemplateModal(true) },
-        { text: 'Choose from Gallery', onPress: pickFromGallery },
-        { text: 'Take Photo', onPress: takePhoto }
-      ]
-    );
-  }
+  setShowCoverModal(true);
 };
 
-// Add these helper functions for gallery and camera
-const pickFromGallery = async () => {
-  const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+// // Add these helper functions for gallery and camera
+// const pickFromGallery = async () => {
+//   const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
   
-  if (permissionResult.granted === false) {
-    Alert.alert('Permission Required', 'Permission to access camera roll is required!');
-    return;
-  }
+//   if (permissionResult.granted === false) {
+//     Alert.alert('Permission Required', 'Permission to access camera roll is required!');
+//     return;
+//   }
 
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsEditing: true,
-    aspect: [16, 9],
-    quality: 0.8,
-  });
+//   const result = await ImagePicker.launchImageLibraryAsync({
+//     mediaTypes: ImagePicker.MediaTypeOptions.Images,
+//     allowsEditing: true,
+//     aspect: [16, 9],
+//     quality: 0.8,
+//   });
 
-  if (!result.canceled) {
-    setCover(result.assets[0].uri);
-    setCoverSource('upload');
-  }
-};
+//   if (!result.canceled) {
+//     setCover(result.assets[0].uri);
+//     setCoverSource('upload');
+//   }
+// };
 
-const takePhoto = async () => {
-  const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+// const takePhoto = async () => {
+//   const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
   
-  if (permissionResult.granted === false) {
-    Alert.alert('Permission Required', 'Permission to access camera is required!');
-    return;
-  }
+//   if (permissionResult.granted === false) {
+//     Alert.alert('Permission Required', 'Permission to access camera is required!');
+//     return;
+//   }
 
-  const result = await ImagePicker.launchCameraAsync({
-    allowsEditing: true,
-    aspect: [16, 9],
-    quality: 0.8,
-  });
+//   const result = await ImagePicker.launchCameraAsync({
+//     allowsEditing: true,
+//     aspect: [16, 9],
+//     quality: 0.8,
+//   });
 
-  if (!result.canceled) {
-    setCover(result.assets[0].uri);
-    setCoverSource('upload');
-  }
+//   if (!result.canceled) {
+//     setCover(result.assets[0].uri);
+//     setCoverSource('upload');
+//   }
+// };
+  const handleCoverSelect = (imageSource, sourceType) => {
+  console.log('🖼️ Cover selected:', { sourceType });
+  
+  setCover(imageSource);
+  setCoverSource(sourceType);
+  
+  console.log('📷 Cover set - Source type:', sourceType);
 };
-  const handleTemplateSelect = (template) => {
-    // Convert template image to URI format
-    // In production, you'd resolve the require() path to a proper URI
-    setCover(template.image);
-    setCoverSource('template');
-    console.log('Selected template:', template.name);
-  };
+
   const onDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
     if (selectedDate) {
@@ -659,8 +646,7 @@ const takePhoto = async () => {
 >
   {cover ? (
     <>
-      <Image source={{ uri: cover }} style={styles.coverImage} />
-      {/* Show source indicator */}
+      <Image source={cover} style={styles.coverImage} />
       <View style={styles.coverSourceIndicator}>
         <Ionicons 
           name={coverSource === 'template' ? 'color-palette' : 'camera'} 
@@ -853,10 +839,10 @@ const takePhoto = async () => {
             onClose={() => setShowPaymentSetup(false)}
           />
         )}
-        <CoverTemplateModal
-          visible={showTemplateModal}
-          onClose={() => setShowTemplateModal(false)}
-          onSelectTemplate={handleTemplateSelect}
+        <CoverPhotoSelectionModal
+          visible={showCoverModal}
+          onClose={() => setShowCoverModal(false)}
+          onSelectCover={handleCoverSelect}
           eventTitle={title || "Your Event"}
         />
       </SafeAreaView>
