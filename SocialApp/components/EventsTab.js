@@ -52,7 +52,8 @@ export default function EventsTab({ navigation, userId, isSelf, currentUserId })
       const markedShared = shared.map(event => ({
         ...event,
         isSharedEvent: true,
-        isHostedEvent: String(event.host?._id || event.host) === String(userId)
+        isHostedEvent: false, // ✅ These are friend's events, not user's hosted events
+        isFriendsEvent: String(event.host?._id || event.host) !== String(userId)
       }));
 
       const markedHosted = uniqueUpcoming.map(event => ({
