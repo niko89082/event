@@ -566,7 +566,6 @@ router.delete('/delete', protect, async (req, res) => {
 });
 
 // FIXED: Replace the existing router.get('/:userId') in routes/profile.js with this:
-
 router.get('/:userId', protect, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
@@ -575,10 +574,20 @@ router.get('/:userId', protect, async (req, res) => {
     
     console.log(`🟡 Profile request: userId=${targetUserId}, currentUserId=${currentUserId}, isSelf=${isSelf}`);
     
-    // Get basic user data
-    const user = await User.findById(targetUserId).select(
-      'username profilePicture bio createdAt displayName'
-    ).lean();
+    // ✅ FIXED: Get user with populated attendingEvents
+    const user = await User.findById(targetUserId)
+      .select('username profilePicture bio createdAt displayName attendingEvents')
+      .populate({
+        path: 'attendingEvents',
+        populate: {
+          path: 'host',
+          select: 'username profilePicture'
+        },
+        match: {
+          time: { $gte: new Date() } // Only upcoming events
+        }
+      })
+      .lean();
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -614,6 +623,16 @@ router.get('/:userId', protect, async (req, res) => {
     const targetUser = await User.findById(targetUserId);
     const friendsCount = targetUser.getAcceptedFriends().length;
     
+    // ✅ FIXED: Filter attendingEvents to exclude events where user is the host
+    let filteredAttendingEvents = [];
+    if (user.attendingEvents) {
+      filteredAttendingEvents = user.attendingEvents.filter(event => 
+        event && String(event.host?._id || event.host) !== String(targetUserId)
+      );
+    }
+    
+    console.log(`📅 Attending events: ${user.attendingEvents?.length || 0} total, ${filteredAttendingEvents.length} filtered (excluding hosted)`);
+    
     // CRITICAL FIX: Get photos based on privacy
     let photos = [];
     if (canViewPrivateContent) {
@@ -629,13 +648,14 @@ router.get('/:userId', protect, async (req, res) => {
     
     const response = {
       ...user,
+      attendingEvents: filteredAttendingEvents, // ✅ FIXED: Return filtered attending events
       photos: photos,
       friendsCount: friendsCount,
       canViewPrivateContent: canViewPrivateContent,
       friendshipStatus: friendshipStatusString // Add this for debugging
     };
     
-    console.log(`🟢 Profile data: photos=${photos.length}, friendsCount=${friendsCount}, canView=${canViewPrivateContent}, friendship=${friendshipStatusString}`);
+    console.log(`🟢 Profile data: photos=${photos.length}, friendsCount=${friendsCount}, attendingEvents=${filteredAttendingEvents.length}, canView=${canViewPrivateContent}, friendship=${friendshipStatusString}`);
     
     res.json(response);
     
