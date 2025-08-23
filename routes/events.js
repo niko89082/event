@@ -824,17 +824,17 @@ router.post('/:eventId/payments/:paymentId/refund', protect, async (req, res) =>
 
 // Get Events with Following Filter
 router.get('/following-events', protect, async (req, res) => {
-  console.log('🟡 Following events endpoint hit');
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  const skip = (page - 1) * limit;
-
   try {
-    console.log('🟡 User ID:', req.user._id);
+    console.log('👥 Following events endpoint hit - FIXED VERSION');
+    console.log('👥 User ID:', req.user._id);
     
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
+    const skip = (page - 1) * limit;
+
+    // 🔧 CRITICAL FIX: Get user's friends with proper population
     const viewer = await User.findById(req.user._id)
-      .select('following')
-      .populate('following', '_id username')
+      .select('friends')
       .lean();
     
     if (!viewer) {
@@ -842,77 +842,106 @@ router.get('/following-events', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    console.log('🟡 User following count:', viewer.following?.length || 0);
-    const followingIds = (viewer.following || []).map(user => user._id);
+    console.log('👥 Raw friends data:', viewer.friends);
+    console.log('👥 Friends count:', viewer.friends?.length || 0);
+    
+    // 🚨 CRITICAL FIX: Extract the correct friend IDs from the 'user' field
+    const friendIds = (viewer.friends || [])
+      .filter(friendship => friendship.status === 'accepted') // Only accepted friends
+      .map(friendship => friendship.user); // Use 'user' field, not '_id'
 
-    if (followingIds.length === 0) {
-      console.log('🟡 No following users, returning empty');
+    console.log('👥 CORRECTED Friend IDs extracted:', friendIds.map(id => id.toString()));
+
+    if (friendIds.length === 0) {
+      console.log('👥 No accepted friends found, returning empty');
       return res.json({
         events: [],
         page: 1,
         totalPages: 0,
-        hasMore: false
+        hasMore: false,
+        debug: { friendsCount: 0, message: 'No accepted friends' }
       });
     }
 
+    // Test query with corrected friend IDs
+    const simpleQuery = {
+      host: { $in: friendIds }
+    };
+
+    console.log('👥 CORRECTED Simple query:', JSON.stringify(simpleQuery, null, 2));
+    
+    const simpleResults = await Event.find(simpleQuery)
+      .populate('host', 'username')
+      .sort({ time: -1 })
+      .limit(3)
+      .lean();
+    
+    console.log('👥 CORRECTED Simple query results:', simpleResults.length);
+    simpleResults.forEach(event => {
+      console.log('👥 Found event:', {
+        title: event.title,
+        host: event.host.username,
+        time: event.time,
+        isUpcoming: new Date(event.time) >= new Date(),
+        isActive: event.isActive,
+        privacy: event.privacyLevel
+      });
+    });
+
+    // Full query with filters
     const query = {
-      host: { $in: followingIds },
+      host: { $in: friendIds },
       time: { $gte: new Date() },
+      isActive: true,
       $or: [
         { privacyLevel: 'public' },
         { 
           privacyLevel: 'friends',
-          host: { $in: followingIds }
+          host: { $in: friendIds }
         }
       ]
     };
 
-    console.log('🟡 Query:', JSON.stringify(query, null, 2));
+    console.log('👥 CORRECTED Full query:', JSON.stringify(query, null, 2));
 
     const events = await Event.find(query)
       .populate('host', 'username profilePicture')
-      .populate('attendees', 'username')
+      .populate('attendees', 'username profilePicture')
+      .populate('coHosts', 'username profilePicture')
       .sort({ time: 1 })
       .skip(skip)
       .limit(limit)
       .lean();
 
-    console.log('🟡 Found events:', events.length);
-
-    const eventsWithMetadata = events.map(event => {
-      const isHost = String(event.host._id) === String(req.user._id);
-      const isAttending = event.attendees.some(attendee => 
-        String(attendee._id) === String(req.user._id)
-      );
-      
-      return {
-        ...event,
-        userRelation: {
-          isHost,
-          isAttending,
-          canJoin: !isHost && !isAttending
-        },
-        attendeeCount: event.attendees.length
-      };
-    });
-
-    const totalEvents = await Event.countDocuments(query);
-    const totalPages = Math.ceil(totalEvents / limit);
-    const hasMore = skip + limit < totalEvents;
+    console.log('👥 CORRECTED Final events found:', events.length);
 
     const response = {
-      events: eventsWithMetadata,
+      events: events.map(event => ({
+        ...event,
+        isFriendsEvent: true,
+        userRelation: {
+          isHost: false,
+          isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
+          isCohost: event.coHosts && event.coHosts.some(ch => String(ch._id) === String(req.user._id)),
+          canJoin: true
+        },
+        attendeeCount: event.attendees ? event.attendees.length : 0,
+        cohostCount: event.coHosts ? event.coHosts.length : 0
+      })),
       page,
-      totalPages,
-      hasMore,
-      total: totalEvents
+      totalPages: Math.ceil(events.length / limit),
+      hasMore: false,
+      debug: {
+        friendsCount: friendIds.length,
+        correctedFriendIds: friendIds.map(id => id.toString()),
+        simpleQueryResults: simpleResults.length,
+        fullQueryResults: events.length
+      }
     };
 
-    console.log('🟢 Sending response:', { 
-      eventsCount: eventsWithMetadata.length, 
-      page, 
-      totalPages,
-      hasMore 
+    console.log('✅ CORRECTED Sending response:', {
+      eventsCount: events.length,
+      debug: response.debug
     });
     
     res.json(response);
@@ -921,7 +950,7 @@ router.get('/following-events', protect, async (req, res) => {
     console.error('❌ Following events error:', err);
     res.status(500).json({ 
       message: 'Server error', 
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      error: err.message
     });
   }
 });
@@ -956,7 +985,69 @@ router.get('/recommendations', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
+router.get('/debug-friends', protect, async (req, res) => {
+  try {
+    console.log('🐛🐛🐛 DEBUG FRIENDS ENDPOINT CALLED 🐛🐛🐛');
+    console.log('🐛 User ID:', req.user._id);
+    
+    // Get user with friends
+    const user = await User.findById(req.user._id)
+      .select('friends following') // Get both to compare
+      .populate('friends', '_id username')
+      .populate('following', '_id username')
+      .lean();
+    
+    if (!user) {
+      return res.json({ error: 'User not found' });
+    }
+    
+    console.log('🐛 Raw user data:', {
+      userId: user._id,
+      friendsArray: user.friends,
+      followingArray: user.following,
+      friendsCount: user.friends?.length || 0,
+      followingCount: user.following?.length || 0
+    });
+    
+    const friendIds = (user.friends || []).map(f => f._id);
+    console.log('🐛 Friend IDs:', friendIds.map(id => id.toString()));
+    
+    // Get ALL events from friends (no filters)
+    const allEvents = await Event.find({
+      host: { $in: friendIds }
+    })
+    .populate('host', 'username')
+    .sort({ time: -1 })
+    .limit(5)
+    .lean();
+    
+    console.log('🐛 ALL events from friends:', allEvents.length);
+    allEvents.forEach(event => {
+      console.log('🐛 Event:', {
+        title: event.title,
+        host: event.host.username,
+        time: event.time,
+        isActive: event.isActive,
+        privacy: event.privacyLevel
+      });
+    });
+    
+    res.json({
+      debug: true,
+      userId: user._id,
+      friendsCount: user.friends?.length || 0,
+      followingCount: user.following?.length || 0,
+      friends: user.friends || [],
+      following: user.following || [],
+      allEventsFromFriends: allEvents.length,
+      events: allEvents
+    });
+    
+  } catch (error) {
+    console.error('🐛 Debug error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 // Get Friends Activity
 router.get('/friends-activity', protect, async (req, res) => {
   try {
@@ -1702,35 +1793,101 @@ router.post('/create-from-group/:groupId', protect, upload.single('coverImage'),
 router.get('/', protect, async (req, res) => {
   try {
     const { 
-      page = 1, 
+      host, 
+      upcoming, 
       limit = 20, 
-      category, 
-      search, 
-      privacy,
+      skip = 0, 
+      search,
+      category,
       location,
-      radius = 50 // km
+      radius = 25,
+      privacy
     } = req.query;
 
+    console.log('🔍 GET /api/events - Query params:', { host, upcoming, limit, skip });
+
+    // 🚨 CRITICAL FIX: If host parameter is provided, ONLY return events where user is MAIN HOST
+    if (host) {
+      console.log(`🎯 STRICT HOST MODE: Fetching events where ${host} is the MAIN HOST only`);
+      
+      const query = {
+        host: host, // Only events where this user is the main host
+        isActive: true // Only active events
+      };
+
+      // Add upcoming filter if specified
+      if (upcoming === 'true') {
+        query.time = { $gte: new Date() };
+      }
+
+      // Add search filter if specified
+      if (search) {
+        query.$or = [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } }
+        ];
+      }
+
+      // Add category filter if specified  
+      if (category && category !== 'all') {
+        query.category = category;
+      }
+
+      console.log('🎯 STRICT HOST QUERY:', JSON.stringify(query, null, 2));
+
+      const events = await Event.find(query)
+        .populate('host', 'username profilePicture')
+        .populate('attendees', 'username profilePicture')  
+        .populate('coHosts', 'username profilePicture')
+        .sort({ time: upcoming === 'true' ? 1 : -1 }) // Upcoming: earliest first, Past: latest first
+        .limit(parseInt(limit))
+        .skip(parseInt(skip));
+
+      console.log(`✅ STRICT HOST MODE: Found ${events.length} events where ${host} is MAIN HOST`);
+
+      // Add user relationship metadata
+      const eventsWithMetadata = events.map(event => {
+        const eventObj = event.toObject();
+        const isMainHost = String(eventObj.host._id) === String(host);
+        const isAttending = eventObj.attendees.some(a => String(a._id) === String(host));
+        
+        return {
+          ...eventObj,
+          isHost: isMainHost, // Always true in this mode
+          isAttending: isAttending,
+          userRelationship: 'host', // Always host in this mode  
+          attendeeCount: eventObj.attendees.length,
+          cohostCount: eventObj.coHosts ? eventObj.coHosts.length : 0
+        };
+      });
+
+      return res.json({
+        events: eventsWithMetadata,
+        total: eventsWithMetadata.length,
+        hasMore: eventsWithMetadata.length === parseInt(limit),
+        query: {
+          mode: 'STRICT_HOST',
+          host,
+          upcoming,
+          limit,
+          skip
+        }
+      });
+    }
+
+    // 🔄 EXISTING LOGIC: If no host parameter, continue with complex privacy-aware logic
+    console.log('🌐 PRIVACY MODE: Using complex privacy-aware event fetching');
+
     const userId = req.user._id;
-    const skip = (page - 1) * limit;
+    const query = { $and: [{ isActive: true }] };
 
-    console.log('🔍 PHASE 2: Event discovery request');
-    console.log(`   User: ${userId}`);
-    console.log(`   Filters: category=${category}, search=${search}, privacy=${privacy}`);
-
-    // Get user's following list for privacy filtering
+    // Get user following for privacy filtering
     const user = await User.findById(userId).select('following');
-    const userFollowing = user.following.map(f => String(f));
+    const userFollowing = user.following ? user.following.map(f => String(f)) : [];
 
-    // ✅ PHASE 2: Build privacy-aware query
-    const query = { $and: [] };
-
-    // Base time filter (only future events)
-    query.$and.push({ time: { $gte: new Date() } });
-
-    // ✅ PHASE 2: Privacy filtering based on user relationship
+    // Build privacy conditions (existing logic)
     const privacyConditions = [
-      // 1. User's own events (always visible)
+      // User's own events (always visible)
       { host: userId },
       
       // 2. Events where user is co-host (always visible)
@@ -1744,30 +1901,27 @@ router.get('/', protect, async (req, res) => {
       
       // 5. Public events (visible to everyone)
       {
-        privacyLevel: PRIVACY_LEVELS.PUBLIC,
+        privacyLevel: 'public',
         'permissions.canView': { $in: ['anyone'] },
         'permissions.appearInSearch': true
       },
       
       // 6. Friends-only events (visible to followers)
       {
-        privacyLevel: PRIVACY_LEVELS.FRIENDS,
+        privacyLevel: 'friends',
         host: { $in: userFollowing },
         'permissions.canView': { $in: ['followers'] },
         'permissions.appearInSearch': true
       }
-      
-      // Note: Private events are only visible through conditions 1-4 above
     ];
 
     query.$and.push({ $or: privacyConditions });
 
-    // Category filter
+    // Add other filters (existing logic)
     if (category && category !== 'all') {
       query.$and.push({ category: category });
     }
 
-    // Search filter
     if (search) {
       query.$and.push({
         $or: [
@@ -1778,36 +1932,12 @@ router.get('/', protect, async (req, res) => {
       });
     }
 
-    // Privacy level filter (if specifically requested)
-    if (privacy && Object.values(PRIVACY_LEVELS).includes(privacy)) {
+    if (privacy && ['public', 'friends', 'private'].includes(privacy)) {
       query.$and.push({ privacyLevel: privacy });
     }
 
-    // Location filter
-    if (location) {
-      try {
-        const coords = JSON.parse(location);
-        if (Array.isArray(coords) && coords.length === 2) {
-          query.$and.push({
-            geo: {
-              $near: {
-                $geometry: {
-                  type: 'Point',
-                  coordinates: [parseFloat(coords[0]), parseFloat(coords[1])]
-                },
-                $maxDistance: radius * 1000 // Convert km to meters
-              }
-            }
-          });
-        }
-      } catch (error) {
-        console.log('Invalid location format:', location);
-      }
-    }
+    console.log('🌐 PRIVACY QUERY:', JSON.stringify(query, null, 2));
 
-    console.log('🔍 PHASE 2: Privacy-aware query:', JSON.stringify(query, null, 2));
-
-    // Execute query with privacy filtering
     const events = await Event.find(query)
       .populate('host', 'username profilePicture')
       .populate('attendees', 'username profilePicture')
@@ -1817,82 +1947,49 @@ router.get('/', protect, async (req, res) => {
         createdAt: -1      // Then by newest
       })
       .limit(parseInt(limit))
-      .skip(skip);
+      .skip(parseInt(skip));
 
-    // ✅ PHASE 2: Add privacy metadata to each event
+    // Add user relationship metadata  
     const eventsWithMetadata = events.map(event => {
       const eventObj = event.toObject();
-      const isHost = String(event.host._id) === String(userId);
-      const isCoHost = event.coHosts?.some(c => String(c._id) === String(userId));
-      const isAttending = event.attendees?.some(a => String(a._id) === String(userId));
-      const isInvited = event.invitedUsers?.some(u => String(u) === String(userId));
-      const isFollowingHost = userFollowing.includes(String(event.host._id));
-
+      const isHost = String(eventObj.host._id) === String(userId);
+      const isCohost = eventObj.coHosts && eventObj.coHosts.some(ch => String(ch._id) === String(userId));
+      const isAttending = eventObj.attendees.some(a => String(a._id) === String(userId));
+      
       return {
         ...eventObj,
-        // User relationship metadata
-        userRelationship: {
-          isHost,
-          isCoHost,
-          isAttending,
-          isInvited,
-          isFollowingHost,
-          canJoin: event.canUserJoin(userId, userFollowing),
-          canView: event.canUserView(userId, userFollowing),
-          canShare: event.canUserShare(userId),
-          canInvite: event.canUserInvite(userId)
-        },
-        // Privacy visibility explanation
-        privacyVisibility: {
-          level: event.privacyLevel,
-          reason: isHost ? 'own-event' : 
-                  isCoHost ? 'co-host' : 
-                  isAttending ? 'attendee' : 
-                  isInvited ? 'invited' :
-                  event.privacyLevel === PRIVACY_LEVELS.PUBLIC ? 'public' :
-                  event.privacyLevel === PRIVACY_LEVELS.FRIENDS && isFollowingHost ? 'following-host' :
-                  'unknown'
-        }
+        isHost,
+        isCohost,
+        isAttending,
+        userRelationship: isHost ? 'host' : isCohost ? 'cohost' : isAttending ? 'attendee' : 'none',
+        attendeeCount: eventObj.attendees.length,
+        cohostCount: eventObj.coHosts ? eventObj.coHosts.length : 0
       };
     });
 
-    console.log(`✅ PHASE 2: Found ${eventsWithMetadata.length} events for user ${userId}`);
-
-    // Get total count for pagination
-    const totalEvents = await Event.countDocuments(query);
+    console.log(`✅ PRIVACY MODE: Found ${eventsWithMetadata.length} events with privacy filtering`);
 
     res.json({
-      success: true,
       events: eventsWithMetadata,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalEvents / limit),
-        totalEvents,
-        hasMore: skip + events.length < totalEvents
-      },
-      filters: {
-        category,
-        search,
-        privacy,
-        location: location ? JSON.parse(location) : null,
-        radius
-      },
-      privacyInfo: {
-        userFollowingCount: userFollowing.length,
-        privacyLevelsSearched: Object.values(PRIVACY_LEVELS),
-        filterApplied: 'privacy-aware'
+      total: eventsWithMetadata.length,
+      hasMore: eventsWithMetadata.length === parseInt(limit),
+      query: {
+        mode: 'PRIVACY_AWARE',
+        userId,
+        limit,
+        skip
       }
     });
 
   } catch (error) {
-    console.error('❌ PHASE 2: Event discovery error:', error);
+    console.error('❌ GET /api/events error:', error);
     res.status(500).json({ 
-      success: false,
-      message: 'Failed to fetch events',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
+
 
 // ============================================
 // PHASE 1: HELPER FUNCTIONS FOR PRIVACY CALCULATIONS
@@ -3993,7 +4090,78 @@ router.post('/:eventId/invite', protect, async (req, res) => {
   }
 });
 
+router.get('/cohost-invites', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
+    const skip = (page - 1) * limit;
 
+    // Find events where:
+    // 1. User is in coHosts array
+    // 2. User is NOT the main host (friend created it)
+    // 3. Event is upcoming
+    // 4. The main host is a friend of the user
+    const events = await Event.find({
+      coHosts: userId,
+      host: { $ne: userId }, // Not the main host
+      time: { $gte: new Date() }, // Upcoming only
+      isActive: true
+    })
+    .populate('host', 'firstName lastName profileImage')
+    .populate('coHosts', 'firstName lastName profileImage')
+    .populate('attendees', 'firstName lastName profileImage')
+    .sort({ time: 1 })
+    .skip(skip)
+    .limit(limit + 1); // Get one extra to check if there are more
+
+    // Filter to only include events where the host is a friend
+    const User = require('../models/User');
+    const currentUser = await User.findById(userId);
+    const friendIds = currentUser.friends.map(id => id.toString());
+    
+    const friendCohostedEvents = events.filter(event => 
+      friendIds.includes(event.host._id.toString())
+    );
+
+    const hasMore = friendCohostedEvents.length > limit;
+    const eventsToReturn = hasMore ? friendCohostedEvents.slice(0, limit) : friendCohostedEvents;
+
+    // Add user relationship info to each event
+    const eventsWithRelationship = eventsToReturn.map(event => {
+      const isAttending = event.attendees.some(attendee => 
+        attendee._id.toString() === userId.toString()
+      );
+      const isCohost = event.coHosts.some(cohost => 
+        cohost._id.toString() === userId.toString()
+      );
+
+      return {
+        ...event.toObject(),
+        userRelationship: isCohost ? 'cohost' : isAttending ? 'attendee' : 'none',
+        isAttending,
+        isHost: false, // User is never host in this endpoint
+        isCohost: true, // Always true for this endpoint
+        attendeeCount: event.attendees.length,
+        cohostCount: event.coHosts.length
+      };
+    });
+
+    res.json({
+      events: eventsWithRelationship,
+      page,
+      hasMore,
+      total: friendCohostedEvents.length
+    });
+
+  } catch (error) {
+    console.error('Cohost invites fetch error:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch cohost events',
+      error: error.message 
+    });
+  }
+});
 
 // Ban User from Event
 router.post('/:eventId/banUser', protect, async (req, res) => {

@@ -1,4 +1,4 @@
-// SocialApp/components/FollowingEventsFeed.js - FIXED: Content flows naturally under transparent headers
+// SocialApp/components/FollowingEventsFeed.js - FIXED: Now includes cohosted events in Friends tab
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, ActivityIndicator,
@@ -27,33 +27,121 @@ export default function FollowingEventsFeed({
   }, []);
 
   const fetchEvents = async (pageNum, isRefresh = false) => {
-    try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else if (pageNum === 1) {
-        setLoading(true);
-      }
-
-      // Correct API endpoint for following events
-      const { data } = await api.get(`/api/events/following-events?page=${pageNum}&limit=12`);
-      
-      if (pageNum === 1) {
-        setEvents(data.events || []);
-      } else {
-        setEvents(prev => [...prev, ...(data.events || [])]);
-      }
-      
-      setPage(data.page || pageNum);
-      setHasMore(data.hasMore || false);
-
-    } catch (error) {
-      console.error('Following events fetch error:', error);
-      if (pageNum === 1) setEvents([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  try {
+    console.log('🔥🔥🔥 FRONTEND: Starting fetchEvents 🔥🔥🔥');
+    console.log('🔥 pageNum:', pageNum, 'isRefresh:', isRefresh);
+    
+    if (isRefresh) {
+      setRefreshing(true);
+    } else if (pageNum === 1) {
+      setLoading(true);
     }
-  };
+
+    // STEP 1: Test the debug endpoint first
+    console.log('🔥 CALLING DEBUG ENDPOINT...');
+    try {
+      const debugResponse = await api.get('/api/events/debug-friends');
+      console.log('🔥 DEBUG RESPONSE:', debugResponse.data);
+    } catch (debugError) {
+      console.log('🔥 DEBUG ENDPOINT ERROR:', debugError.message);
+    }
+
+    // STEP 2: Call the main endpoints
+    console.log('🔥 CALLING MAIN ENDPOINTS...');
+    
+    const [friendsResponse, cohostResponse] = await Promise.all([
+      api.get(`/api/events/following-events?page=${pageNum}&limit=12`).then(response => {
+        console.log('🔥 FOLLOWING-EVENTS RESPONSE:', response.data);
+        return response;
+      }).catch(error => {
+        console.log('🔥 FOLLOWING-EVENTS ERROR:', error.message);
+        return { data: { events: [], page: pageNum, hasMore: false } };
+      }),
+      
+      api.get(`/api/events/cohost-invites?page=${pageNum}&limit=12`).then(response => {
+        console.log('🔥 COHOST-INVITES RESPONSE:', response.data);
+        return response;
+      }).catch(error => {
+        console.log('🔥 COHOST-INVITES ERROR:', error.message);
+        return { data: { events: [], page: pageNum, hasMore: false } };
+      })
+    ]);
+
+    const friendsEvents = friendsResponse.data.events || [];
+    const cohostEvents = cohostResponse.data.events || [];
+
+    console.log('🔥 EXTRACTED EVENTS:', {
+      friendsEvents: friendsEvents.length,
+      cohostEvents: cohostEvents.length
+    });
+
+    // Combine and deduplicate events
+    const eventMap = new Map();
+    
+    // Add friends' events
+    friendsEvents.forEach(event => {
+      console.log('🔥 Adding friend event:', event.title);
+      eventMap.set(event._id, {
+        ...event,
+        isFriendsEvent: true,
+        isCohostedByMe: false
+      });
+    });
+    
+    // Add cohosted events
+    cohostEvents.forEach(event => {
+      console.log('🔥 Adding cohost event:', event.title);
+      const existing = eventMap.get(event._id);
+      eventMap.set(event._id, {
+        ...event,
+        isFriendsEvent: !existing ? true : existing.isFriendsEvent,
+        isCohostedByMe: true
+      });
+    });
+
+    const combinedEvents = Array.from(eventMap.values());
+    
+    console.log('🔥 FINAL COMBINED EVENTS:', {
+      totalUnique: combinedEvents.length,
+      eventTitles: combinedEvents.map(e => e.title)
+    });
+    
+    // Sort by event time (nearest first)
+    combinedEvents.sort((a, b) => new Date(a.time) - new Date(b.time));
+    
+    if (pageNum === 1) {
+      setEvents(combinedEvents);
+    } else {
+      setEvents(prev => {
+        const prevMap = new Map(prev.map(e => [e._id, e]));
+        combinedEvents.forEach(event => {
+          prevMap.set(event._id, event);
+        });
+        return Array.from(prevMap.values()).sort((a, b) => new Date(a.time) - new Date(b.time));
+      });
+    }
+    
+    // Use the more restrictive hasMore to avoid infinite loading
+    const hasMoreFriends = friendsResponse.data.hasMore || false;
+    const hasMoreCohosts = cohostResponse.data.hasMore || false;
+    setHasMore(hasMoreFriends || hasMoreCohosts);
+    setPage(Math.max(friendsResponse.data.page || pageNum, cohostResponse.data.page || pageNum));
+
+    console.log('✅ FollowingEventsFeed: Combined events loaded', {
+      friendsCount: friendsEvents.length,
+      cohostsCount: cohostEvents.length,
+      totalUnique: combinedEvents.length,
+      page: pageNum
+    });
+
+  } catch (error) {
+    console.error('🔥 MAIN fetchEvents error:', error);
+    if (pageNum === 1) setEvents([]);
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
 
   const handleAttend = async (event) => {
     try {
@@ -89,6 +177,7 @@ export default function FollowingEventsFeed({
     // Add any internal scroll logic here if needed
   }, [parentOnScroll]);
 
+  // 🔧 FIX: Enhanced event item with cohost indicator
   const renderEventItem = ({ item }) => (
     <View style={styles.eventWrapper}>
       <EventCard 
@@ -96,30 +185,37 @@ export default function FollowingEventsFeed({
         currentUserId={currentUserId}
         navigation={navigation}
         onAttend={handleAttend}
+        // 🆕 NEW: Show cohost badge in friends feed
+        showFriendsBadge={true}
+        friendsContext={{
+          isFriendsEvent: item.isFriendsEvent,
+          isCohostedByMe: item.isCohostedByMe
+        }}
       />
     </View>
   );
 
   const renderEmptyState = () => (
-  <View style={styles.emptyState}>
-    <View style={styles.emptyIconContainer}>
-      <Ionicons name="people-outline" size={64} color="#C7C7CC" />
+    <View style={styles.emptyState}>
+      <View style={styles.emptyIconContainer}>
+        <Ionicons name="people-outline" size={64} color="#C7C7CC" />
+      </View>
+      <Text style={styles.emptyTitle}>No Events from Friends</Text>
+      <Text style={styles.emptySubtitle}>
+        When friends create events or add you as a co-host, they'll appear here.
+      </Text>
+      
+      <TouchableOpacity 
+        style={styles.createSuggestion}
+        onPress={() => navigation.navigate('CreateEventScreen')}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="add-circle" size={18} color="#3797EF" />
+        <Text style={styles.createSuggestionText}>Create an event</Text>
+      </TouchableOpacity>
     </View>
-    <Text style={styles.emptyTitle}>No Events from Friends</Text>
-    <Text style={styles.emptySubtitle}>
-      When you're friends with people who create events, they'll appear here.
-    </Text>
-    
-    <TouchableOpacity 
-      style={styles.createSuggestion}
-      onPress={() => navigation.navigate('CreateEventScreen')}
-      activeOpacity={0.8}
-    >
-      <Ionicons name="add-circle" size={18} color="#3797EF" />
-      <Text style={styles.createSuggestionText}>Create an event</Text>
-    </TouchableOpacity>
-  </View>
-);
+  );
+
   const renderFooter = () => {
     if (!loading || page === 1) return null;
     return (
@@ -138,180 +234,121 @@ export default function FollowingEventsFeed({
       </View>
     );
   }
+
   console.log('🔍 FollowingEventsFeed Refresh Debug:', {
-  contentPaddingTop: 190,
-  subTabPosition: 144,
-  subTabHeight: 56,
-  expectedRefreshPosition: 144 + 56,
-  currentRefreshBehavior: 'appears at scroll container top (wrong)',
-  needsContentInset: true
-});
+    contentPaddingTop: 190,
+    subTabPosition: 144,
+    subTabHeight: 56,
+    expectedRefreshPosition: 144 + 56,
+    currentRefreshBehavior: 'appears at scroll container top (wrong)',
+    needsContentInset: true
+  });
 
-
-console.log('🔄 Refresh Distance Debug:', {
-  oldContentInset: 200,
-  newContentInset: 60,
-  contentPadding: 190,
-  totalGapBefore: '60 + 190 = 250px (much better than 390px)',
-  userExperience: 'Should be much easier to reach refresh'
-});
+  console.log('🔄 Refresh Distance Debug:', {
+    oldContentInset: 200,
+    newContentInset: 60,
+    contentPadding: 190,
+    totalGapBefore: '60 + 190 = 250px (much better than 390px)',
+    userExperience: 'Should be much easier to reach refresh'
+  });
 
   return (
-    // Update the FlatList with debug-enabled refresh positioning:
-<FlatList
-  data={events}
-  renderItem={renderEventItem}
-  keyExtractor={item => item._id}
-  showsVerticalScrollIndicator={false}
-  refreshControl={
-    <RefreshControl
-      refreshing={refreshing || externalRefreshing}
-      onRefresh={() => {
-        console.log('🔄 FollowingEventsFeed: Refresh triggered, should appear below sub-tabs');
-        handleRefresh();
-      }}
-      tintColor="#3797EF"
-      colors={["#3797EF"]}
-      title="Pull to refresh events"
-      titleColor="#8E8E93"
-      progressBackgroundColor="#FFFFFF"
+    <FlatList
+      data={events}
+      renderItem={renderEventItem}
+      keyExtractor={item => item._id}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing || externalRefreshing}
+          onRefresh={() => {
+            console.log('🔄 FollowingEventsFeed: Refresh triggered, should appear below sub-tabs');
+            handleRefresh();
+          }}
+          tintColor="#3797EF"
+          colors={["#3797EF"]}
+          title="Pull to refresh events"
+          titleColor="#8E8E93"
+          progressBackgroundColor="#FFFFFF"
+        />
+      }
+      onScroll={handleScroll}
+      scrollEventThrottle={scrollEventThrottle}
+      ListEmptyComponent={renderEmptyState}
+      ListFooterComponent={renderFooter}
+      onEndReached={handleLoadMore}
+      onEndReachedThreshold={0.1}
+      contentContainerStyle={events.length === 0 ? 
+        { flexGrow: 1, paddingTop: 190 } : 
+        { paddingTop: 190, paddingBottom: 100 }
+      }
     />
-  }
-  onScroll={handleScroll}
-  scrollEventThrottle={scrollEventThrottle}
-  ListEmptyComponent={renderEmptyState}
-  ListFooterComponent={renderFooter}
-  onEndReached={handleLoadMore}
-  onEndReachedThreshold={0.1}
-  contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.container}
-  // ✅ ADD: Push refresh control below sub-tabs
-  contentInset={{ top: 20 }} // REDUCED from 200 to 60
-  scrollIndicatorInsets={{ top: 20 }} // REDUCED from 200 to 60
-  // ✅ REMOVE: This duplicate onRefresh prop that's causing the error
-  // onRefresh={() => { ... }} ← DELETE THIS LINE
-  bounces={true}
-  alwaysBounceVertical={true}
-  removeClippedSubviews={true}
-  initialNumToRender={5}
-  maxToRenderPerBatch={5}
-  windowSize={10}
-/>
   );
 }
 
 const styles = StyleSheet.create({
-  // ✅ STANDARDIZED: Use paddingTop instead of contentInset for consistency
-  container: {
-    paddingTop: 190,        // ✅ NEW: Standard top padding like other feeds
-    paddingBottom: 20,      // ✅ KEEP: Existing bottom padding
-    backgroundColor: 'transparent',
-  },
-  emptyContainer: {
-    flexGrow: 1,
-    paddingTop: 190,        // ✅ NEW: Consistent empty state padding
-    backgroundColor: 'transparent',
-  },
   eventWrapper: {
-    marginBottom: 12,
     marginHorizontal: 16,
-    backgroundColor: 'transparent',
+    marginBottom: 16,
   },
-  
-  // Loading states
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'transparent',
-    paddingTop: 250,        // ✅ KEEP: Higher padding for loading states
+    paddingTop: 190,
   },
   loadingText: {
-    marginTop: 16,
-    fontSize: 16,
+    marginTop: 12,
+    fontSize: 14,
     color: '#8E8E93',
+    textAlign: 'center',
   },
-  
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingTop: 60,
+  },
   emptyIconContainer: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(248, 249, 250, 0.8)',
+    backgroundColor: '#F2F2F7',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  discoverButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 32,
-    paddingVertical: 16,
-    borderRadius: 12,
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  discoverButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  emptyTitle: {
+    fontSize: 22,
     fontWeight: '600',
+    color: '#1C1C1E',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  createSuggestion: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F2F2F7',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  createSuggestionText: {
+    marginLeft: 8,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#3797EF',
   },
   footer: {
     paddingVertical: 20,
     alignItems: 'center',
-    backgroundColor: 'transparent',
   },
-  emptyActions: {
-  alignItems: 'center',
-  gap: 12,
-},
-// Update these styles in FollowingEventsFeed.js:
-emptyState: {
-  flex: 1,
-  justifyContent: 'center',
-  alignItems: 'center',
-  paddingHorizontal: 40,
-  paddingTop: 20, // ✅ MOVED UP: Reduced from 50
-  backgroundColor: 'transparent',
-},
-emptyTitle: {
-  fontSize: 24, // ✅ MATCH ACTIVITY: Same as activity screen
-  fontWeight: '700', // ✅ MATCH ACTIVITY: Same as activity screen
-  color: '#000000', // ✅ MATCH ACTIVITY: Same as activity screen
-  marginBottom: 8,
-  textAlign: 'center',
-},
-emptySubtitle: {
-  fontSize: 16, // ✅ MATCH ACTIVITY: Same as activity screen
-  color: '#8E8E93', // ✅ MATCH ACTIVITY: Same as activity screen
-  textAlign: 'center',
-  lineHeight: 22, // ✅ MATCH ACTIVITY: Same as activity screen
-  marginBottom: 32,
-},
-// ✅ ADD: New styles for improved actions
-emptyActions: {
-  alignItems: 'center',
-  gap: 16, // ✅ INCREASED: More space between buttons
-},
-createSuggestion: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  paddingHorizontal: 20, // ✅ INCREASED: More visible
-  paddingVertical: 12, // ✅ INCREASED: More visible
-  borderRadius: 25,
-  backgroundColor: 'rgba(55, 151, 239, 0.1)', // ✅ IMPROVED: Light blue background
-  borderWidth: 1.5,
-  borderColor: 'rgba(55, 151, 239, 0.3)',
-},
-createSuggestionText: {
-  fontSize: 15, // ✅ INCREASED: More visible
-  color: '#3797EF', // ✅ IMPROVED: Blue color to match theme
-  marginLeft: 8,
-  fontWeight: '600', // ✅ IMPROVED: Bolder text
-},
 });

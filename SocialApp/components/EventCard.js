@@ -20,6 +20,11 @@ export default function EventCard({
   compact = false,
   showRecommendationReason = false,
   onAttend, // Keep for backward compatibility but won't use
+  // 🆕 NEW: Add these props
+  showHostingBadge = false,
+  hostingType = 'hosting', // 'hosting' or 'cohosting'
+  showFriendsBadge = false,
+  friendsContext = null, // { isFriendsEvent: boolean, isCohostedByMe: boolean }
 }) {
   const { currentUser } = useCurrentUser();
   // Get event data and actions from centralized store
@@ -358,61 +363,115 @@ const handleInviteSuccess = (inviteData) => {
 
         {/* Actions */}
         {!past && (
-          <View style={styles.actionRow}>
-            {canAttend ? (
-              <TouchableOpacity
-                style={[styles.attendButton, processing && styles.attendButtonDisabled]}
-                onPress={handleAttendPress}
-                activeOpacity={0.8}
-                disabled={processing}
-              >
-                <LinearGradient
-                  colors={['#3797EF', '#3797EF']}
-                  style={styles.attendButtonGradient}
-                >
-                  {processing ? (
-                    <ActivityIndicator size={16} color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="add" size={16} color="#FFFFFF" />
-                      <Text style={styles.attendButtonText}>
-                        {getAttendButtonInfo().text}
-                      </Text>
-                    </>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-            ) : isAttending ? (
-              <View style={styles.attendingBadge}>
-                <Ionicons name="checkmark" size={16} color="#34C759" />
-                <Text style={styles.attendingText}>Attending</Text>
-              </View>
-            ) : isHost ? (
+  <View style={styles.actionRow}>
+    {canAttend ? (
+      <TouchableOpacity
+        style={[styles.attendButton, processing && styles.attendButtonDisabled]}
+        onPress={handleAttendPress}
+        activeOpacity={0.8}
+        disabled={processing}
+      >
+        <LinearGradient
+          colors={['#3797EF', '#3797EF']}
+          style={styles.attendButtonGradient}
+        >
+          {processing ? (
+            <ActivityIndicator size={16} color="#FFFFFF" />
+          ) : (
+            <>
+              <Ionicons name="add" size={16} color="#FFFFFF" />
+              <Text style={styles.attendButtonText}>
+                {getAttendButtonInfo().text}
+              </Text>
+            </>
+          )}
+        </LinearGradient>
+      </TouchableOpacity>
+    ) : isAttending ? (
+      <View style={styles.attendingBadge}>
+        <Ionicons name="checkmark" size={16} color="#34C759" />
+        <Text style={styles.attendingText}>Attending</Text>
+      </View>
+    ) : isHost ? (
+      <View style={styles.hostBadge}>
+        <Ionicons name="star" size={16} color="#FF9500" />
+        <Text style={styles.hostText}>Hosting</Text>
+      </View>
+    ) : joinRequestSent ? (
+      <View style={styles.requestSentBadge}>
+        <Ionicons name="time" size={16} color="#FF9500" />
+        <Text style={styles.requestSentText}>Request Sent</Text>
+      </View>
+    ) : (
+      // 🆕 NEW: Check for special badge types first
+      (() => {
+        // Hosting tab badges (showHostingBadge = true)
+        if (showHostingBadge) {
+          const isMainHost = String(event.host?._id || event.host) === String(currentUserId);
+          const isCohost = event.coHosts?.some(cohost => 
+            String(cohost._id || cohost) === String(currentUserId)
+          );
+
+          if (isMainHost) {
+            return (
               <View style={styles.hostBadge}>
-                <Ionicons name="star" size={16} color="#FF9500" />
+                <Ionicons name="crown" size={16} color="#FF9500" />
                 <Text style={styles.hostText}>Hosting</Text>
               </View>
-            ) : joinRequestSent ? (
-              <View style={styles.requestSentBadge}>
-                <Ionicons name="time" size={16} color="#FF9500" />
-                <Text style={styles.requestSentText}>Request Sent</Text>
+            );
+          } else if (isCohost) {
+            return (
+              <View style={styles.cohostBadge}>
+                <Ionicons name="people" size={16} color="#FF9500" />
+                <Text style={styles.cohostText}>Co-hosting</Text>
               </View>
-            ) : (
-              <View style={styles.privateEventBadge}>
-                <Ionicons name="lock-closed" size={16} color="#8E8E93" />
-                <Text style={styles.privateEventText}>Private</Text>
-              </View>
-            )}
+            );
+          }
+        }
 
-            <TouchableOpacity 
-              onPress={handleSharePress} 
-              style={styles.shareButton} 
-              activeOpacity={0.8}
-            >
-              <Ionicons name="share-outline" size={18} color="#3797EF" />
-            </TouchableOpacity>
+        // Friends tab badges (showFriendsBadge = true)
+        if (showFriendsBadge && friendsContext) {
+          const { isFriendsEvent, isCohostedByMe } = friendsContext;
+          
+          if (isCohostedByMe && isFriendsEvent) {
+            // User is cohost on friend's event
+            return (
+              <View style={styles.friendCohostBadge}>
+                <Ionicons name="people" size={16} color="#FF9500" />
+                <Text style={styles.friendCohostText}>Co-hosting</Text>
+              </View>
+            );
+          } else if (isFriendsEvent) {
+            // Just a friend's event
+            return (
+              <View style={styles.friendsEventBadge}>
+                <Ionicons name="person" size={16} color="#34C759" />
+                <Text style={styles.friendsEventText}>Friend's Event</Text>
+              </View>
+            );
+          }
+        }
+
+        // Default private event badge
+        return (
+          <View style={styles.privateEventBadge}>
+            <Ionicons name="lock-closed" size={16} color="#8E8E93" />
+            <Text style={styles.privateEventText}>Private</Text>
           </View>
-        )}
+        );
+      })()
+    )}
+
+    <TouchableOpacity 
+      onPress={handleSharePress} 
+      style={styles.shareButton} 
+      activeOpacity={0.8}
+    >
+      <Ionicons name="share-outline" size={18} color="#3797EF" />
+    </TouchableOpacity>
+  </View>
+)}
+
 
         {/* Past event indicator */}
         {past && (
@@ -763,5 +822,62 @@ const styles = StyleSheet.create({
   color: '#8E8E93',
   fontWeight: '400',
   fontSize: 13,
+},
+cohostBadge: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 12,
+  paddingHorizontal: 16,
+  backgroundColor: '#FFF3E0',
+  borderRadius: 8,
+  marginRight: 12,
+  borderWidth: 1,
+  borderColor: '#FFE0B2',
+},
+cohostText: {
+  color: '#FF9500',
+  fontSize: 16,
+  fontWeight: '600',
+  marginLeft: 4,
+},
+friendCohostBadge: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 12,
+  paddingHorizontal: 16,
+  backgroundColor: '#FFF3E0',
+  borderRadius: 8,
+  marginRight: 12,
+  borderWidth: 1,
+  borderColor: '#FFE0B2',
+},
+friendCohostText: {
+  color: '#FF9500',
+  fontSize: 16,
+  fontWeight: '600',
+  marginLeft: 4,
+},
+friendsEventBadge: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 12,
+  paddingHorizontal: 16,
+  backgroundColor: '#E8F5E8',
+  borderRadius: 8,
+  marginRight: 12,
+  borderWidth: 1,
+  borderColor: '#C8E6C9',
+},
+friendsEventText: {
+  color: '#34C759',
+  fontSize: 16,
+  fontWeight: '600',
+  marginLeft: 4,
 },
 });

@@ -1,4 +1,4 @@
-// hooks/useUserEvents.js - Centralized logic to determine user's event participation
+// hooks/useUserEvents.js - COMPREHENSIVE DEBUG VERSION
 import { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 
@@ -15,6 +15,7 @@ export const useUserEvents = (userId) => {
 
   const fetchUserEvents = useCallback(async (forceRefresh = false) => {
     if (!userId) {
+      console.log('❌ useUserEvents: No userId provided');
       setLoading(false);
       return;
     }
@@ -22,6 +23,7 @@ export const useUserEvents = (userId) => {
     // Avoid unnecessary refetches (cache for 2 minutes)
     const now = Date.now();
     if (!forceRefresh && lastFetch && (now - lastFetch) < 2 * 60 * 1000) {
+      console.log('⚡ useUserEvents: Using cached data, skipping fetch');
       setLoading(false);
       return;
     }
@@ -30,88 +32,192 @@ export const useUserEvents = (userId) => {
       setLoading(true);
       setError(null);
 
-      console.log('🔄 useUserEvents: Fetching user events for userId:', userId);
+      console.log('🔄 useUserEvents: Starting fetch for userId:', userId);
+      console.log('🔄 API calls will be made to:', {
+        hostedEventsURL: `/api/events?host=${userId}&upcoming=true&limit=50`,
+        userProfileURL: `/api/profile/${userId}`
+      });
 
-      // Parallel fetch for better performance
-      const [hostedResponse, userResponse] = await Promise.all([
-        // Fetch hosted events
+      // Fetch main hosted events and user profile
+      const [mainHostedResponse, userResponse] = await Promise.all([
         api.get(`/api/events`, {
           params: {
             host: userId,
             upcoming: true,
-            limit: 50 // Reasonable limit for tab determination
+            limit: 50
           }
         }).catch(error => {
-          console.warn('Hosted events fetch failed:', error);
+          console.warn('❌ Main hosted events fetch failed:', error.message);
+          console.warn('❌ Error details:', error.response?.data);
           return { data: { events: [] } };
         }),
 
-        // Fetch user profile for attending events
         api.get(`/api/profile/${userId}`).catch(error => {
-          console.warn('User profile fetch failed:', error);
+          console.warn('❌ User profile fetch failed:', error.message);
+          console.warn('❌ Error details:', error.response?.data);
           return { data: { attendingEvents: [] } };
         })
       ]);
 
-      const hostedEvents = hostedResponse.data.events || hostedResponse.data || [];
+      console.log('📦 Raw API Responses:', {
+        mainHostedResponse: {
+          status: mainHostedResponse.status,
+          dataKeys: Object.keys(mainHostedResponse.data),
+          eventsCount: mainHostedResponse.data.events?.length || 'undefined'
+        },
+        userResponse: {
+          status: userResponse.status,
+          dataKeys: Object.keys(userResponse.data),
+          attendingEventsCount: userResponse.data.attendingEvents?.length || 'undefined'
+        }
+      });
+
+      const mainHostedEvents = mainHostedResponse.data.events || mainHostedResponse.data || [];
       const user = userResponse.data;
       const userAttendingEvents = user.attendingEvents || [];
 
-      // Process cohosted events (user is in attendingEvents but listed as cohost)
-      const cohostEvents = userAttendingEvents.filter(event => {
-        // Must be upcoming
-        if (new Date(event.time) <= new Date()) return false;
-
-        // Must not be the main host
-        if (String(event.host._id || event.host) === String(userId)) return false;
-
-        // Must be listed as cohost
-        return event.coHosts?.some(cohost => 
-          String(cohost._id || cohost) === String(userId)
-        );
+      console.log('📊 Extracted Raw Data:', {
+        mainHostedEvents: mainHostedEvents.length,
+        userAttendingEvents: userAttendingEvents.length,
+        currentUserId: userId
       });
 
-      // Process pure attending events (not hosting, not cohosting)
-      const pureAttendingEvents = userAttendingEvents.filter(event => {
-        // Must be upcoming
-        if (new Date(event.time) <= new Date()) return false;
+      // DEBUG: Log every single event and its host
+      console.log('🔍 DEBUGGING MAIN HOSTED EVENTS:');
+      mainHostedEvents.forEach((event, index) => {
+        const eventHost = event.host?._id || event.host;
+        const isUserMainHost = String(eventHost) === String(userId);
+        console.log(`  Event ${index + 1}: "${event.title}"`, {
+          eventId: event._id,
+          hostField: eventHost,
+          currentUserId: userId,
+          isUserMainHost,
+          time: event.time,
+          coHostsCount: event.coHosts?.length || 0
+        });
+      });
 
-        // Must not be the main host
-        if (String(event.host._id || event.host) === String(userId)) return false;
-
-        // Must not be a cohost
-        const isCohost = event.coHosts?.some(cohost => 
+      console.log('🔍 DEBUGGING USER ATTENDING EVENTS:');
+      userAttendingEvents.forEach((event, index) => {
+        const eventHost = event.host?._id || event.host;
+        const isUserMainHost = String(eventHost) === String(userId);
+        const isUserCohost = event.coHosts?.some(cohost => 
           String(cohost._id || cohost) === String(userId)
+        );
+        console.log(`  Attending Event ${index + 1}: "${event.title}"`, {
+          eventId: event._id,
+          hostField: eventHost,
+          currentUserId: userId,
+          isUserMainHost,
+          isUserCohost,
+          time: event.time,
+          coHostsIds: event.coHosts?.map(ch => ch._id || ch) || []
+        });
+      });
+
+      // Process cohosted events
+      const cohostEvents = userAttendingEvents.filter((event, index) => {
+        // Must be upcoming
+        const isUpcoming = new Date(event.time) > new Date();
+        
+        // Must NOT be the main host
+        const eventHostId = String(event.host?._id || event.host);
+        const currentUserId = String(userId);
+        const isMainHost = eventHostId === currentUserId;
+        
+        // Must be listed as cohost
+        const isCohost = event.coHosts?.some(cohost => 
+          String(cohost._id || cohost) === currentUserId
         );
         
-        return !isCohost;
+        const shouldInclude = isUpcoming && !isMainHost && isCohost;
+        
+        console.log(`🎯 Cohost Filter Event ${index + 1}: "${event.title}"`, {
+          isUpcoming,
+          isMainHost,
+          isCohost,
+          shouldInclude,
+          eventHostId,
+          currentUserId,
+          comparison: eventHostId === currentUserId
+        });
+        
+        return shouldInclude;
       });
 
-      // Combine hosted + cohosted for "hosting" tab
-      const allHostingEvents = [...hostedEvents, ...cohostEvents];
+      // Process pure attending events
+      const pureAttendingEvents = userAttendingEvents.filter((event, index) => {
+        // Must be upcoming
+        const isUpcoming = new Date(event.time) > new Date();
+        
+        // Must not be the main host
+        const eventHostId = String(event.host?._id || event.host);
+        const currentUserId = String(userId);
+        const isMainHost = eventHostId === currentUserId;
+        
+        // Must not be a cohost
+        const isCohost = event.coHosts?.some(cohost => 
+          String(cohost._id || cohost) === currentUserId
+        );
+        
+        const shouldInclude = isUpcoming && !isMainHost && !isCohost;
+        
+        console.log(`👥 Attending Filter Event ${index + 1}: "${event.title}"`, {
+          isUpcoming,
+          isMainHost,
+          isCohost,
+          shouldInclude,
+          eventHostId,
+          currentUserId
+        });
+        
+        return shouldInclude;
+      });
+
+      // Combine hosting events
+      const allHostingEvents = [...mainHostedEvents, ...cohostEvents];
       
-      // Remove duplicates (in case an event appears in both lists)
+      // Remove duplicates
       const uniqueHostingEvents = allHostingEvents.filter((event, index, self) => 
         index === self.findIndex(e => e._id === event._id)
       );
+
+      console.log('🎉 FINAL CATEGORIZATION:', {
+        userId,
+        mainHostedEvents: {
+          count: mainHostedEvents.length,
+          titles: mainHostedEvents.map(e => e.title)
+        },
+        cohostEvents: {
+          count: cohostEvents.length,
+          titles: cohostEvents.map(e => e.title)
+        },
+        uniqueHostingEvents: {
+          count: uniqueHostingEvents.length,
+          titles: uniqueHostingEvents.map(e => e.title)
+        },
+        pureAttendingEvents: {
+          count: pureAttendingEvents.length,
+          titles: pureAttendingEvents.map(e => e.title)
+        }
+      });
+
+      // 🚨 CRITICAL DEBUG: Check for the problematic events
+      console.log('🚨 HOSTING TAB WILL SHOW:');
+      uniqueHostingEvents.forEach((event, index) => {
+        const eventHost = event.host?._id || event.host;
+        const isUserMainHost = String(eventHost) === String(userId);
+        console.log(`  ${index + 1}. "${event.title}" - Host: ${eventHost} (User is main host: ${isUserMainHost})`);
+      });
 
       // Update state
       setHostingEvents(uniqueHostingEvents);
       setAttendingEvents(pureAttendingEvents);
       setLastFetch(now);
 
-      console.log('✅ useUserEvents: Events categorized', {
-        userId,
-        hostedCount: hostedEvents.length,
-        cohostCount: cohostEvents.length,
-        totalHostingCount: uniqueHostingEvents.length,
-        attendingCount: pureAttendingEvents.length,
-        hasHostingEvents: uniqueHostingEvents.length > 0,
-        hasAttendingEvents: pureAttendingEvents.length > 0
-      });
-
     } catch (error) {
-      console.error('useUserEvents fetch error:', error);
+      console.error('❌ useUserEvents fetch error:', error);
+      console.error('❌ Full error object:', JSON.stringify(error, null, 2));
       setError('Failed to load user events');
       setHostingEvents([]);
       setAttendingEvents([]);
@@ -130,7 +236,7 @@ export const useUserEvents = (userId) => {
     return fetchUserEvents(true);
   }, [fetchUserEvents]);
 
-  // Clear function for cleanup (e.g., logout)
+  // Clear function for cleanup
   const clear = useCallback(() => {
     setHostingEvents([]);
     setAttendingEvents([]);
