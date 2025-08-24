@@ -50,87 +50,111 @@ export default function HostingEventsFeed({
     }
   }, [userId]);
 
-  const fetchEvents = async (pageNum = 1, isRefresh = false) => {
-    if (!userId) return;
+const fetchEvents = async (pageNum = 1, isRefresh = false) => {
+  if (!userId) return;
 
-    try {
-      if (isRefresh) {
-        setPage(1);
-        setHasMore(true);
-        setError(null);
-      }
+  try {
+    setLoading(pageNum === 1);
+    setError(null);
 
-      setLoading(pageNum === 1);
+    console.log(`🔥 HostingEventsFeed: Fetching hosting events for user ${userId}, page ${pageNum}`);
 
-      // Fetch hosted events (events user created)
-      const hostedResponse = await api.get(`/api/events`, {
+    // ✅ FIX: Use the same multi-source approach as useUserEvents
+    const [hostedResponse, userResponse] = await Promise.all([
+      // Method 1: Use the working user events endpoint (same as useUserEvents)
+      api.get(`/api/users/${userId}/events`, {
         params: {
-          host: userId,
-          upcoming: true,
-          limit: 20,
-          skip: pageNum === 1 ? 0 : (pageNum - 1) * 20
+          type: 'hosted',
+          includePast: false,
+          limit: 50  // Get all hosted events
         }
-      });
+      }).catch(error => {
+        console.warn('❌ User hosted events fetch failed:', error.message);
+        return { data: { events: [] } };
+      }),
 
-      const hostedEvents = hostedResponse.data.events || hostedResponse.data || [];
+      // Method 2: Get user profile for cohosted events
+      api.get(`/api/profile/${userId}`).catch(error => {
+        console.warn('❌ User profile fetch failed:', error.message);
+        return { data: { attendingEvents: [] } };
+      })
+    ]);
 
-      // Fetch user profile to get attending events (to find cohosted events)
-      const userResponse = await api.get(`/api/profile/${userId}`);
-      const user = userResponse.data;
+    const hostedEvents = hostedResponse.data.events || [];
+    const user = userResponse.data;
 
-      // Find events where user is cohosting (in attendingEvents but listed as cohost)
-      const cohostEvents = (user.attendingEvents || []).filter(event => {
-        // Must be upcoming
-        if (new Date(event.time) <= new Date()) return false;
+    console.log(`🎯 HostingEventsFeed Raw Data:`, {
+      directHostedEvents: hostedEvents.length,
+      userAttendingEvents: user.attendingEvents?.length || 0,
+      userId
+    });
 
-        // Must not be the main host
-        if (String(event.host._id || event.host) === String(userId)) return false;
+    // Find events where user is cohosting (in attendingEvents but listed as cohost)
+    const cohostEvents = (user.attendingEvents || []).filter(event => {
+      // Must be upcoming
+      if (new Date(event.time) <= new Date()) return false;
 
-        // Must be listed as cohost
-        return event.coHosts?.some(cohost => 
-          String(cohost._id || cohost) === String(userId)
-        );
-      });
+      // Must not be the main host
+      if (String(event.host._id || event.host) === String(userId)) return false;
 
-      // Combine hosted and cohosted events, remove duplicates
-      const allHostingEvents = [...hostedEvents, ...cohostEvents];
-      const uniqueEvents = allHostingEvents.filter((event, index, self) => 
-        index === self.findIndex(e => e._id === event._id)
+      // Must be listed as cohost
+      return event.coHosts?.some(cohost => 
+        String(cohost._id || cohost) === String(userId)
       );
+    });
 
-      // Sort by date (upcoming first)
-      uniqueEvents.sort((a, b) => new Date(a.time) - new Date(b.time));
+    console.log(`🎯 HostingEventsFeed Filtered Data:`, {
+      hostedEvents: hostedEvents.length,
+      cohostEvents: cohostEvents.length,
+      hostedTitles: hostedEvents.map(e => e.title),
+      cohostTitles: cohostEvents.map(e => e.title)
+    });
 
-      if (pageNum === 1) {
-        setEvents(uniqueEvents);
-        
-        // Update event store cache if enabled
-        if (enableStore && updateFeedCache) {
-          updateFeedCache('hosting', uniqueEvents, true);
-        }
-      } else {
-        setEvents(prev => [...prev, ...uniqueEvents]);
+    // Combine hosted and cohosted events, remove duplicates
+    const allHostingEvents = [...hostedEvents, ...cohostEvents];
+    const uniqueEvents = allHostingEvents.filter((event, index, self) => 
+      index === self.findIndex(e => e._id === event._id)
+    );
+
+    // Sort by date (upcoming first)
+    uniqueEvents.sort((a, b) => new Date(a.time) - new Date(b.time));
+
+    console.log(`🎯 HostingEventsFeed Final Events:`, {
+      totalUnique: uniqueEvents.length,
+      eventTitles: uniqueEvents.map(e => e.title),
+      eventIds: uniqueEvents.map(e => e._id)
+    });
+
+    if (pageNum === 1) {
+      setEvents(uniqueEvents);
+      
+      // Update event store cache if enabled
+      if (enableStore && updateFeedCache) {
+        updateFeedCache('hosting', uniqueEvents, true);
       }
-
-      // Update pagination
-      setHasMore(uniqueEvents.length === 20);
-      setPage(pageNum);
-
-      // Add individual events to store if enabled
-      if (enableStore && addEvent) {
-        uniqueEvents.forEach(event => addEvent(event, userId));
-      }
-
-      console.log(`✅ Hosting events fetched: ${uniqueEvents.length} events (${hostedEvents.length} hosted + ${cohostEvents.length} cohosted)`);
-
-    } catch (error) {
-      console.error('Hosting events fetch error:', error);
-      setError('Failed to load hosting events');
-      setEvents([]);
-    } finally {
-      setLoading(false);
+    } else {
+      setEvents(prev => [...prev, ...uniqueEvents]);
     }
-  };
+
+    // Update pagination
+    setHasMore(uniqueEvents.length === 20);
+    setPage(pageNum);
+
+    // Add individual events to store if enabled
+    if (enableStore && addEvent) {
+      uniqueEvents.forEach(event => addEvent(event, userId));
+    }
+
+    console.log(`✅ HostingEventsFeed: Loaded ${uniqueEvents.length} hosting events (${hostedEvents.length} hosted + ${cohostEvents.length} cohosted)`);
+
+  } catch (error) {
+    console.error('❌ HostingEventsFeed fetch error:', error);
+    setError('Failed to load hosting events');
+    setEvents([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleRefresh = async () => {
     console.log('🔄 HostingEventsFeed: Pull-to-refresh triggered');

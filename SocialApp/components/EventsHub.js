@@ -34,33 +34,77 @@ import useEventStore from '../stores/eventStore'; // Import centralized store
 //   // { key: 'trending', label: 'Trending', icon: 'trending-up-outline' },
 // ];
 
+
 const EventsHub = forwardRef(({ 
   navigation, 
   refreshing: externalRefreshing, 
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
-  getSubTabStyle, // Receive sub-tab animation style from parent
-  subTabTranslateY, // RECEIVE the actual animated value
+  getSubTabStyle,
+  subTabTranslateY,
 }, ref) => {
   const { currentUser } = useContext(AuthContext);
   
+    console.log('🏗️ EventsHub render:', {
+    currentUserId: currentUser?._id,
+    currentUserExists: !!currentUser,
+    currentUserIdExists: !!currentUser?._id
+  });
+
   // ✅ NEW: Dynamic tab logic
-  const { 
+ const { 
     hasHostingEvents, 
     hasAttendingEvents, 
+    hostingEvents,
+    attendingEvents,
     loading: userEventsLoading,
-    refresh: refreshUserEvents 
+    error: userEventsError,
+    refresh: refreshUserEvents,
+    summary // Add summary for debugging
   } = useUserEvents(currentUser?._id);
   
+   console.log('🎯 EventsHub user events state:', {
+    hasHostingEvents,
+    hasAttendingEvents,
+    hostingEventsCount: hostingEvents?.length,
+    attendingEventsCount: attendingEvents?.length,
+    userEventsLoading,
+    userEventsError,
+    summary
+  });
+  
   const { tabs: dynamicTabs } = useDynamicEventTabs(hasHostingEvents, hasAttendingEvents);
+  
+  
+  console.log('🏷️ EventsHub dynamic tabs:', {
+    tabCount: dynamicTabs.length,
+    tabKeys: dynamicTabs.map(t => t.key),
+    hasHostingTab: dynamicTabs.some(t => t.key === 'hosting'),
+    hasAttendingTab: dynamicTabs.some(t => t.key === 'attending')
+  });
   
   // ✅ NEW: Smart default tab selection (but start with 'following' to match original)
   const [activeTab, setActiveTab] = useState('following');
   
+  
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+ useEffect(() => {
+    console.log('🔄 EventsHub: Checking tab validity...', {
+      currentActiveTab: activeTab,
+      hasHostingEvents,
+      hasAttendingEvents,
+      dynamicTabsCount: dynamicTabs.length
+    });
 
+    const currentTabValid = dynamicTabs.some(tab => tab.key === activeTab);
+    if (!currentTabValid) {
+      const nextValidTab = getNextValidTab(activeTab, hasHostingEvents, hasAttendingEvents);
+      console.log(`🔄 EventsHub: Switching from invalid tab "${activeTab}" to "${nextValidTab}"`);
+      setActiveTab(nextValidTab);
+    }
+  }, [activeTab, hasHostingEvents, hasAttendingEvents, dynamicTabs]);
   // Get centralized store state and actions
   const {
     loading: storeLoading,
@@ -98,34 +142,21 @@ const EventsHub = forwardRef(({
     }
   }, [parentOnScroll]);
 
-  // Enhanced refresh handler with store integration
-  const handleRefresh = async () => {
-    console.log('🔄 EventsHub: Refresh triggered for tab:', activeTab);
-    setRefreshing(true);
-    setError(null);
-    
-    try {
-      // Add a small delay to ensure proper refresh
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // ✅ NEW: Refresh user events data (for tab visibility)
-      await refreshUserEvents();
-      
-      // Clear stale cache for current tab to force fresh data
-      const currentCache = getFeedCache(activeTab);
-      if (currentCache.lastFetch && needsRefresh(2 * 60 * 1000)) { // Force refresh if older than 2 minutes
-        updateFeedCache(activeTab, [], false);
-      }
-      
-      // The individual feed components will handle their own refresh
-      // and update the centralized store
-    } catch (error) {
-      console.error('EventsHub refresh error:', error);
-      setError('Failed to refresh events');
-    } finally {
-      setRefreshing(false);
+   useEffect(() => {
+    console.log('🔄 EventsHub: Checking tab validity...', {
+      currentActiveTab: activeTab,
+      hasHostingEvents,
+      hasAttendingEvents,
+      dynamicTabsCount: dynamicTabs.length
+    });
+
+    const currentTabValid = dynamicTabs.some(tab => tab.key === activeTab);
+    if (!currentTabValid) {
+      const nextValidTab = getNextValidTab(activeTab, hasHostingEvents, hasAttendingEvents);
+      console.log(`🔄 EventsHub: Switching from invalid tab "${activeTab}" to "${nextValidTab}"`);
+      setActiveTab(nextValidTab);
     }
-  };
+  }, [activeTab, hasHostingEvents, hasAttendingEvents, dynamicTabs]);
 
   // Internal refresh handler that works with external refresh
   const handleInternalRefresh = async () => {
@@ -242,7 +273,16 @@ const EventsHub = forwardRef(({
         return null;
     }
   };
-
+if (!currentUser?._id) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3797EF" />
+          <Text style={styles.loadingText}>Loading user data...</Text>
+        </View>
+      </View>
+    );
+  }
   // ✅ NEW: Show loading state while determining which tabs to show
   if (userEventsLoading && dynamicTabs.length === 0) {
     return (

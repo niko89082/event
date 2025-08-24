@@ -1785,7 +1785,6 @@ router.get('/', protect, async (req, res) => {
       
       const query = {
         host: host, // Only events where this user is the main host
-        isActive: true // Only active events
       };
 
       // Add upcoming filter if specified

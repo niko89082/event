@@ -13,218 +13,198 @@ export const useUserEvents = (userId) => {
   const hasHostingEvents = hostingEvents.length > 0;
   const hasAttendingEvents = attendingEvents.length > 0;
 
-  const fetchUserEvents = useCallback(async (forceRefresh = false) => {
-    if (!userId) {
-      console.log('❌ useUserEvents: No userId provided');
-      setLoading(false);
-      return;
-    }
+  
+const fetchUserEvents = useCallback(async (forceRefresh = false) => {
+  if (!userId) {
+    console.log('❌ useUserEvents: No userId provided');
+    setLoading(false);
+    return;
+  }
 
-    // Avoid unnecessary refetches (cache for 2 minutes)
-    const now = Date.now();
-    if (!forceRefresh && lastFetch && (now - lastFetch) < 2 * 60 * 1000) {
-      console.log('⚡ useUserEvents: Using cached data, skipping fetch');
-      setLoading(false);
-      return;
-    }
+  // Avoid unnecessary refetches (cache for 2 minutes)
+  const now = Date.now();
+  if (!forceRefresh && lastFetch && (now - lastFetch) < 2 * 60 * 1000) {
+    console.log('⚡ useUserEvents: Using cached data, skipping fetch');
+    setLoading(false);
+    return;
+  }
 
-    try {
-      setLoading(true);
-      setError(null);
+  try {
+    setLoading(true);
+    setError(null);
 
-      console.log('🔄 useUserEvents: Starting fetch for userId:', userId);
-      console.log('🔄 API calls will be made to:', {
-        hostedEventsURL: `/api/events?host=${userId}&upcoming=true&limit=50`,
-        userProfileURL: `/api/profile/${userId}`
-      });
+    console.log('🔄 useUserEvents: Starting fetch for userId:', userId);
+    
+    // ✅ FIX: Use multiple approaches to get hosting events
+    console.log('🔄 Making multiple API calls to ensure we catch all hosting events...');
 
-      // Fetch main hosted events and user profile
-      const [mainHostedResponse, userResponse] = await Promise.all([
-        api.get(`/api/events`, {
-          params: {
-            host: userId,
-            upcoming: true,
-            limit: 50
-          }
-        }).catch(error => {
-          console.warn('❌ Main hosted events fetch failed:', error.message);
-          console.warn('❌ Error details:', error.response?.data);
-          return { data: { events: [] } };
-        }),
-
-        api.get(`/api/profile/${userId}`).catch(error => {
-          console.warn('❌ User profile fetch failed:', error.message);
-          console.warn('❌ Error details:', error.response?.data);
-          return { data: { attendingEvents: [] } };
-        })
-      ]);
-
-      console.log('📦 Raw API Responses:', {
-        mainHostedResponse: {
-          status: mainHostedResponse.status,
-          dataKeys: Object.keys(mainHostedResponse.data),
-          eventsCount: mainHostedResponse.data.events?.length || 'undefined'
-        },
-        userResponse: {
-          status: userResponse.status,
-          dataKeys: Object.keys(userResponse.data),
-          attendingEventsCount: userResponse.data.attendingEvents?.length || 'undefined'
+    // 1. Try the main hosted events endpoint (remove isActive requirement)
+    // 2. Try the user's events endpoint specifically  
+    // 3. Get user profile for attending events
+    const [hostedEventsResponse, userEventsResponse, userResponse] = await Promise.all([
+      // Method 1: Direct hosted events query (most reliable)
+      api.get(`/api/events`, {
+        params: {
+          host: userId,
+          upcoming: true,
+          limit: 50
         }
-      });
-
-      const mainHostedEvents = mainHostedResponse.data.events || mainHostedResponse.data || [];
-      const user = userResponse.data;
-      const userAttendingEvents = user.attendingEvents || [];
-
-      console.log('📊 Extracted Raw Data:', {
-        mainHostedEvents: mainHostedEvents.length,
-        userAttendingEvents: userAttendingEvents.length,
-        currentUserId: userId
-      });
-
-      // DEBUG: Log every single event and its host
-      console.log('🔍 DEBUGGING MAIN HOSTED EVENTS:');
-      mainHostedEvents.forEach((event, index) => {
-        const eventHost = event.host?._id || event.host;
-        const isUserMainHost = String(eventHost) === String(userId);
-        console.log(`  Event ${index + 1}: "${event.title}"`, {
-          eventId: event._id,
-          hostField: eventHost,
-          currentUserId: userId,
-          isUserMainHost,
-          time: event.time,
-          coHostsCount: event.coHosts?.length || 0
-        });
-      });
-
-      console.log('🔍 DEBUGGING USER ATTENDING EVENTS:');
-      userAttendingEvents.forEach((event, index) => {
-        const eventHost = event.host?._id || event.host;
-        const isUserMainHost = String(eventHost) === String(userId);
-        const isUserCohost = event.coHosts?.some(cohost => 
-          String(cohost._id || cohost) === String(userId)
-        );
-        console.log(`  Attending Event ${index + 1}: "${event.title}"`, {
-          eventId: event._id,
-          hostField: eventHost,
-          currentUserId: userId,
-          isUserMainHost,
-          isUserCohost,
-          time: event.time,
-          coHostsIds: event.coHosts?.map(ch => ch._id || ch) || []
-        });
-      });
-
-      // Process cohosted events
-      const cohostEvents = userAttendingEvents.filter((event, index) => {
-        // Must be upcoming
-        const isUpcoming = new Date(event.time) > new Date();
-        
-        // Must NOT be the main host
-        const eventHostId = String(event.host?._id || event.host);
-        const currentUserId = String(userId);
-        const isMainHost = eventHostId === currentUserId;
-        
-        // Must be listed as cohost
-        const isCohost = event.coHosts?.some(cohost => 
-          String(cohost._id || cohost) === currentUserId
-        );
-        
-        const shouldInclude = isUpcoming && !isMainHost && isCohost;
-        
-        console.log(`🎯 Cohost Filter Event ${index + 1}: "${event.title}"`, {
-          isUpcoming,
-          isMainHost,
-          isCohost,
-          shouldInclude,
-          eventHostId,
-          currentUserId,
-          comparison: eventHostId === currentUserId
-        });
-        
-        return shouldInclude;
-      });
-
-      // Process pure attending events
-      const pureAttendingEvents = userAttendingEvents.filter((event, index) => {
-        // Must be upcoming
-        const isUpcoming = new Date(event.time) > new Date();
-        
-        // Must not be the main host
-        const eventHostId = String(event.host?._id || event.host);
-        const currentUserId = String(userId);
-        const isMainHost = eventHostId === currentUserId;
-        
-        // Must not be a cohost
-        const isCohost = event.coHosts?.some(cohost => 
-          String(cohost._id || cohost) === currentUserId
-        );
-        
-        const shouldInclude = isUpcoming && !isMainHost && !isCohost;
-        
-        console.log(`👥 Attending Filter Event ${index + 1}: "${event.title}"`, {
-          isUpcoming,
-          isMainHost,
-          isCohost,
-          shouldInclude,
-          eventHostId,
-          currentUserId
-        });
-        
-        return shouldInclude;
-      });
-
-      // Combine hosting events
-      const allHostingEvents = [...mainHostedEvents, ...cohostEvents];
+      }).catch(error => {
+        console.warn('❌ Hosted events fetch failed:', error.message);
+        return { data: { events: [] } };
+      }),
       
-      // Remove duplicates
-      const uniqueHostingEvents = allHostingEvents.filter((event, index, self) => 
-        index === self.findIndex(e => e._id === event._id)
-      );
-
-      console.log('🎉 FINAL CATEGORIZATION:', {
-        userId,
-        mainHostedEvents: {
-          count: mainHostedEvents.length,
-          titles: mainHostedEvents.map(e => e.title)
-        },
-        cohostEvents: {
-          count: cohostEvents.length,
-          titles: cohostEvents.map(e => e.title)
-        },
-        uniqueHostingEvents: {
-          count: uniqueHostingEvents.length,
-          titles: uniqueHostingEvents.map(e => e.title)
-        },
-        pureAttendingEvents: {
-          count: pureAttendingEvents.length,
-          titles: pureAttendingEvents.map(e => e.title)
+      // Method 2: User events endpoint (backup)
+      api.get(`/api/users/${userId}/events`, {
+        params: {
+          type: 'hosted',
+          includePast: false,
+          limit: 50
         }
+      }).catch(error => {
+        console.warn('❌ User events fetch failed:', error.message);
+        return { data: { events: [] } };
+      }),
+      
+      // Method 3: Profile for attending events
+      api.get(`/api/profile/${userId}`).catch(error => {
+        console.warn('❌ User profile fetch failed:', error.message);
+        return { data: { attendingEvents: [] } };
+      })
+    ]);
+
+    console.log('📦 Raw API Responses:', {
+      hostedEventsResponse: {
+        status: hostedEventsResponse.status,
+        eventsCount: hostedEventsResponse.data.events?.length || 0,
+        dataKeys: Object.keys(hostedEventsResponse.data)
+      },
+      userEventsResponse: {
+        status: userEventsResponse.status, 
+        eventsCount: userEventsResponse.data.events?.length || 0,
+        dataKeys: Object.keys(userEventsResponse.data)
+      },
+      userResponse: {
+        status: userResponse.status,
+        attendingEventsCount: userResponse.data.attendingEvents?.length || 0
+      }
+    });
+
+    // Combine all possible hosted events sources
+    const method1Events = hostedEventsResponse.data.events || [];
+    const method2Events = userEventsResponse.data.events || [];
+    const user = userResponse.data;
+    const userAttendingEvents = user.attendingEvents || [];
+
+    // Combine and deduplicate hosted events
+    const allPotentialHostedEvents = [...method1Events, ...method2Events];
+    const uniqueHostedEvents = allPotentialHostedEvents.filter((event, index, self) => 
+      index === self.findIndex(e => e._id === event._id)
+    );
+
+    console.log('📊 Combined Data Sources:', {
+      method1Events: method1Events.length,
+      method2Events: method2Events.length, 
+      uniqueHostedEvents: uniqueHostedEvents.length,
+      userAttendingEvents: userAttendingEvents.length,
+      currentUserId: userId
+    });
+
+    // Process main hosted events (filter for upcoming and where user is actually host)
+    const mainHostedEvents = uniqueHostedEvents.filter(event => {
+      const isUpcoming = new Date(event.time) > new Date();
+      const eventHostId = String(event.host?._id || event.host);
+      const currentUserId = String(userId);
+      const isUserMainHost = eventHostId === currentUserId;
+      
+      console.log(`🎯 Main Host Filter: "${event.title}"`, {
+        isUpcoming,
+        eventHostId,
+        currentUserId,
+        isUserMainHost,
+        shouldInclude: isUpcoming && isUserMainHost
       });
+      
+      return isUpcoming && isUserMainHost;
+    });
 
-      // 🚨 CRITICAL DEBUG: Check for the problematic events
-      console.log('🚨 HOSTING TAB WILL SHOW:');
-      uniqueHostingEvents.forEach((event, index) => {
-        const eventHost = event.host?._id || event.host;
-        const isUserMainHost = String(eventHost) === String(userId);
-        console.log(`  ${index + 1}. "${event.title}" - Host: ${eventHost} (User is main host: ${isUserMainHost})`);
+    // Process cohosted events (from attending events where user is cohost)
+    const cohostEvents = userAttendingEvents.filter(event => {
+      const isUpcoming = new Date(event.time) > new Date();
+      const eventHostId = String(event.host?._id || event.host);
+      const currentUserId = String(userId);
+      const isMainHost = eventHostId === currentUserId;
+      const isCohost = event.coHosts?.some(cohost => 
+        String(cohost._id || cohost) === currentUserId
+      );
+      
+      const shouldInclude = isUpcoming && !isMainHost && isCohost;
+      
+      console.log(`🎯 Cohost Filter: "${event.title}"`, {
+        isUpcoming,
+        isMainHost,
+        isCohost,
+        shouldInclude
       });
+      
+      return shouldInclude;
+    });
 
-      // Update state
-      setHostingEvents(uniqueHostingEvents);
-      setAttendingEvents(pureAttendingEvents);
-      setLastFetch(now);
+    // Process pure attending events
+    const pureAttendingEvents = userAttendingEvents.filter(event => {
+      const isUpcoming = new Date(event.time) > new Date();
+      const eventHostId = String(event.host?._id || event.host);
+      const currentUserId = String(userId);
+      const isMainHost = eventHostId === currentUserId;
+      const isCohost = event.coHosts?.some(cohost => 
+        String(cohost._id || cohost) === currentUserId
+      );
+      
+      const shouldInclude = isUpcoming && !isMainHost && !isCohost;
+      
+      return shouldInclude;
+    });
 
-    } catch (error) {
-      console.error('❌ useUserEvents fetch error:', error);
-      console.error('❌ Full error object:', JSON.stringify(error, null, 2));
-      setError('Failed to load user events');
-      setHostingEvents([]);
-      setAttendingEvents([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId, lastFetch]);
+    // Combine hosting events (main hosted + cohosted)
+    const allHostingEvents = [...mainHostedEvents, ...cohostEvents];
+    const uniqueHostingEvents = allHostingEvents.filter((event, index, self) => 
+      index === self.findIndex(e => e._id === event._id)
+    );
+
+    console.log('🎉 FINAL CATEGORIZATION:', {
+      userId,
+      mainHostedEvents: {
+        count: mainHostedEvents.length,
+        titles: mainHostedEvents.map(e => e.title)
+      },
+      cohostEvents: {
+        count: cohostEvents.length,
+        titles: cohostEvents.map(e => e.title)
+      },
+      uniqueHostingEvents: {
+        count: uniqueHostingEvents.length,
+        titles: uniqueHostingEvents.map(e => e.title)
+      },
+      pureAttendingEvents: {
+        count: pureAttendingEvents.length,
+        titles: pureAttendingEvents.map(e => e.title)
+      }
+    });
+
+    // Update state
+    setHostingEvents(uniqueHostingEvents);
+    setAttendingEvents(pureAttendingEvents);
+    setLastFetch(now);
+
+  } catch (error) {
+    console.error('❌ useUserEvents fetch error:', error);
+    setError('Failed to load user events');
+    setHostingEvents([]);
+    setAttendingEvents([]);
+  } finally {
+    setLoading(false);
+  }
+}, [userId]);
 
   // Initial fetch when userId changes
   useEffect(() => {
