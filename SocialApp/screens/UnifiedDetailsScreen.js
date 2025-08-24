@@ -281,13 +281,27 @@ export default function UnifiedDetailsScreen() {
   };
 
   const handleMemoryPress = () => {
-    if (currentPost?.memoryInfo?.memoryId) {
-      navigation.navigate('MemoryDetailsScreen', { 
-        memoryId: currentPost.memoryInfo.memoryId 
-      });
-    }
-  };
-
+  console.log('🐛 DEBUG: handleMemoryPress called with:', {
+    memoryInfo: currentPost?.memoryInfo,
+    memoryId: currentPost?.memoryInfo?.memoryId,
+    hasMemoryInfo: !!currentPost?.memoryInfo
+  });
+  
+  // ✅ FIXED: Check for memory info and navigate properly
+  if (currentPost?.memoryInfo?.memoryId) {
+    navigation.navigate('MemoryDetailsScreen', { 
+      memoryId: currentPost.memoryInfo.memoryId 
+    });
+  } else if (isMemoryPost && currentPost?.memoryId) {
+    // Fallback: use direct memoryId if available
+    navigation.navigate('MemoryDetailsScreen', { 
+      memoryId: currentPost.memoryId 
+    });
+  } else {
+    console.warn('No memory ID available for navigation');
+    Alert.alert('Error', 'Unable to navigate to memory details');
+  }};
+  
   const handleEventPress = () => {
     if (currentPost?.event?._id) {
       navigation.navigate('EventDetailsScreen', { 
@@ -333,46 +347,67 @@ export default function UnifiedDetailsScreen() {
     }
   }, [selectedComment, isMemoryPost, postId, decrementCommentCount]);
 const handlePostActions = React.useCallback(() => {
-  // ✅ FIXED: Handle both string ID and object user
   const userId = typeof currentPost.user === 'string' ? currentPost.user : currentPost.user?._id;
   const isOwner = userId === currentUser?._id;
   
-  console.log('🐛 DEBUG: handlePostActions ownership check:', {
-    currentPostUser: currentPost.user,
-    userId,
-    currentUserId: currentUser?._id,
-    isOwner
-  });
-  
   if (!isOwner) return;
   
-  if (Platform.OS === 'ios') {
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        options: ['Cancel', 'Edit Caption', 'Delete Post'],
-        destructiveButtonIndex: 2,
-        cancelButtonIndex: 0,
-      },
-      (buttonIndex) => {
-        if (buttonIndex === 1) {
-          handleEditPost();
-        } else if (buttonIndex === 2) {
-          handleDeletePost();
+  // ✅ FIXED: Memory photos should not allow caption editing
+  if (isMemoryPost) {
+    // For memory photos, only show delete option
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Delete Photo'],
+          destructiveButtonIndex: 1,
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            handleDeletePost();
+          }
         }
-      }
-    );
+      );
+    } else {
+      Alert.alert(
+        'Photo Options',
+        'What would you like to do?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete Photo', style: 'destructive', onPress: handleDeletePost },
+        ]
+      );
+    }
   } else {
-    Alert.alert(
-      'Post Options',
-      'What would you like to do?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Edit Caption', onPress: handleEditPost },
-        { text: 'Delete Post', style: 'destructive', onPress: handleDeletePost },
-      ]
-    );
+    // For regular posts, show both edit and delete options
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Edit Caption', 'Delete Post'],
+          destructiveButtonIndex: 2,
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            handleEditPost();
+          } else if (buttonIndex === 2) {
+            handleDeletePost();
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Post Options',
+        'What would you like to do?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Edit Caption', onPress: handleEditPost },
+          { text: 'Delete Post', style: 'destructive', onPress: handleDeletePost },
+        ]
+      );
+    }
   }
-}, [currentPost, currentUser]);
+}, [currentPost, currentUser, isMemoryPost]);
 
 const handleEditPost = () => {
   // Navigate to edit screen or show inline editor
@@ -426,23 +461,55 @@ const handleDeletePost = () => {
 
 const confirmDeletePost = async () => {
   try {
-    const endpoint = isMemoryPost 
-      ? `/api/memories/photos/${postId}`
-      : `/api/photos/${postId}`;
+    let endpoint;
     
+    // ✅ FIXED: Use correct API endpoints for deletion
+    if (isMemoryPost) {
+      // For memory photos: DELETE /api/memories/:memoryId/photos/:photoId
+      // Need to get the memory ID from the post data
+      const memoryId = currentPost?.memoryInfo?.memoryId || 
+                       currentPost?.memoryId || 
+                       currentPost?.memory?._id || 
+                       currentPost?.memory;
+      
+      if (!memoryId) {
+        throw new Error('Memory ID not found - cannot delete photo');
+      }
+      
+      endpoint = `/api/memories/${memoryId}/photos/${postId}`;
+    } else {
+      // For regular posts: DELETE /api/photos/:photoId
+      endpoint = `/api/photos/${postId}`;
+    }
+    
+    console.log('Deleting post via:', endpoint);
     await api.delete(endpoint);
     
     // Remove from store
     usePostsStore.getState().removePost(postId);
     
-    Alert.alert('Success', 'Post deleted successfully!', [
+    const successMessage = isMemoryPost ? 'Photo deleted successfully!' : 'Post deleted successfully!';
+    Alert.alert('Success', successMessage, [
       { text: 'OK', onPress: () => navigation.goBack() }
     ]);
   } catch (error) {
     console.error('Error deleting post:', error);
-    Alert.alert('Error', 'Failed to delete post');
+    
+    // Provide more specific error messages
+    let errorMessage = isMemoryPost ? 'Failed to delete photo' : 'Failed to delete post';
+    
+    if (error.message?.includes('Memory ID not found')) {
+      errorMessage = 'Cannot delete photo: Memory information is missing';
+    } else if (error.response?.status === 404) {
+      errorMessage = isMemoryPost ? 'Photo not found' : 'Post not found';
+    } else if (error.response?.status === 403) {
+      errorMessage = 'You do not have permission to delete this item';
+    }
+    
+    Alert.alert('Error', errorMessage);
   }
 };
+
   const formatDate = (iso) => {
     try {
       if (isMemoryPost) {
@@ -517,90 +584,84 @@ useEffect(() => {
     setLoading(true);
     let response;
       
-      if (isMemoryPost) {
-        try {
-          console.log('Fetching memory photo details for:', postId);
-          
-          // Try the new endpoint for individual memory photos
-          response = await api.get(`/api/memories/photos/${postId}`);
-          console.log('Memory photo details fetched successfully');
-          
-          const photoData = response.data.photo || response.data;
-          const transformedPost = {
-  ...photoData,
-  _id: postId,
-  postType: 'memory',
-  user: photoData.uploadedBy || photoData.user || currentPost?.user || {
-    username: currentUser?.username || 'You',
-    _id: currentUser?._id || '',
-    profilePicture: currentUser?.profilePicture
-  },
-  createdAt: photoData.uploadedAt || photoData.createdAt,
-  paths: photoData.url ? [photoData.url] : (photoData.paths || [])
-};
+    if (isMemoryPost) {
+      try {
+        console.log('Fetching memory photo details for:', postId);
+        
+        // Try the new endpoint for individual memory photos
+        response = await api.get(`/api/memories/photos/${postId}`);
+        console.log('Memory photo details fetched successfully');
+        
+        const photoData = response.data.photo || response.data;
+        
+        // ✅ FIXED: Properly transform memory photo data with correct structure
+        const transformedPost = {
+          ...photoData,
+          _id: postId,
+          postType: 'memory',
+          user: photoData.uploadedBy || photoData.user || currentPost?.user || {
+            username: currentUser?.username || 'You',
+            _id: currentUser?._id || '',
+            profilePicture: currentUser?.profilePicture
+          },
+          createdAt: photoData.uploadedAt || photoData.createdAt,
+          paths: photoData.url ? [photoData.url] : (photoData.paths || []),
+          // ✅ FIXED: Ensure memory info is properly structured for navigation
+          memoryInfo: photoData.memoryInfo || {
+            memoryId: photoData.memoryId,
+            memoryTitle: photoData.memoryTitle || 'Memory'
+          },
+          // Preserve existing memory data if available
+          memoryId: photoData.memoryId || currentPost?.memoryId,
+          memoryTitle: photoData.memoryTitle || currentPost?.memoryTitle
+        };
 
-console.log('🐛 DEBUG: Created transformedPost with user:', transformedPost.user);
-          
+        console.log('🐛 DEBUG: Created transformedPost with memoryInfo:', transformedPost.memoryInfo);
+        
+        setPost(transformedPost);
+        usePostsStore.getState().addPost(transformedPost);
+        
+      } catch (apiError) {
+        console.log('Individual photo endpoint not available, using fallback...');
+        
+        // Fallback: Use existing post data if available
+        if (currentPost) {
+          console.log('Using existing post data for memory photo');
+          const transformedPost = {
+            ...currentPost,
+            _id: postId,
+            postType: 'memory',
+            user: currentPost.uploadedBy || currentPost.user,
+            createdAt: currentPost.uploadedAt || currentPost.createdAt,
+            url: currentPost.url,
+            paths: currentPost.url ? [currentPost.url] : (currentPost.paths || []),
+            // ✅ FIXED: Preserve memory navigation data
+            memoryInfo: currentPost.memoryInfo || {
+              memoryId: currentPost.memoryId,
+              memoryTitle: currentPost.memoryTitle || 'Memory'
+            }
+          };
           setPost(transformedPost);
           usePostsStore.getState().addPost(transformedPost);
-          
-        } catch (apiError) {
-          console.log('Individual photo endpoint not available, using fallback...');
-          
-          // Fallback: Use existing post data if available
-          if (currentPost) {
-            console.log('Using existing post data for memory photo');
-            const transformedPost = {
-              ...currentPost,
-              _id: postId,
-              postType: 'memory',
-              user: currentPost.uploadedBy || currentPost.user,
-              createdAt: currentPost.uploadedAt || currentPost.createdAt,
-              url: currentPost.url,
-              paths: currentPost.url ? [currentPost.url] : (currentPost.paths || [])
-            };
-            setPost(transformedPost);
-            usePostsStore.getState().addPost(transformedPost);
-          } else {
-            // Last resort: Try to get likes data to confirm photo exists
-            try {
-              const photoResponse = await api.get(`/api/memories/photos/${postId}/likes`);
-              console.log('Photo exists, creating minimal post object');
-              const minimalPost = {
-                _id: postId,
-                postType: 'memory',
-                url: '', // Will be empty until we find more data
-                user: currentPost?.user || currentPost?.uploadedBy || { 
-                  username: 'Unknown', 
-                  _id: currentUser?._id || '',
-                  profilePicture: currentUser?.profilePicture 
-                },
-                createdAt: new Date().toISOString(),
-                caption: '',
-                userLiked: photoResponse.data?.userLiked || false,
-                likeCount: photoResponse.data?.likeCount || 0,
-                commentCount: 0
-              };
-              setPost(minimalPost);
-            } catch (likesError) {
-              throw new Error('Memory photo not found and no fallback data available');
-            }
-          }
+        } else {
+          throw new Error('Memory photo not found and no fallback data available');
         }
-      } else {
-        response = await api.get(`/api/photos/${postId}`);
-        setPost(response.data);
-        usePostsStore.getState().addPost(response.data);
       }
-      
-    } catch (error) {
-      console.error('Error fetching post details:', error);
-      Alert.alert('Error', 'Failed to load post details');
-      navigation.goBack();
-    } finally {
-      setLoading(false);
+    } else {
+      response = await api.get(`/api/photos/${postId}`);
+      setPost(response.data);
+      usePostsStore.getState().addPost(response.data);
     }
-  };
+      
+  } catch (error) {
+    console.error('Error fetching post details:', error);
+    Alert.alert('Error', 'Failed to load post details');
+    navigation.goBack();
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const fetchComments = async () => {
     try {
@@ -691,172 +752,185 @@ console.log('🐛 DEBUG: Created transformedPost with user:', transformedPost.us
 const renderHeader = () => {
   if (!currentPost) return null;
 
-  // ✅ FIXED: Handle both string ID and object user
+  // ✅ FIXED: Handle both string ID and object user for ownership
   const userId = typeof currentPost.user === 'string' ? currentPost.user : currentPost.user?._id;
   const isOwner = userId === currentUser?._id;
   
-  console.log('🐛 DEBUG: renderHeader - fixed ownership check:', {
+  // Also check uploadedBy for memory photos
+  const uploadedById = typeof currentPost.uploadedBy === 'string' ? currentPost.uploadedBy : currentPost.uploadedBy?._id;
+  const isUploader = uploadedById === currentUser?._id;
+  
+  // Owner is either the user or the uploader (for memory photos)
+  const canEdit = isOwner || isUploader;
+  
+  console.log('🐛 DEBUG: renderHeader - ownership check:', {
     currentPostUser: currentPost.user,
+    currentPostUploadedBy: currentPost.uploadedBy,
     userId,
+    uploadedById,
     currentUserId: currentUser?._id,
     isOwner,
-    userType: typeof currentPost.user
+    isUploader,
+    canEdit
   });
 
   const memoryMood = isMemoryPost ? getMemoryMood(currentPost.createdAt || currentPost.uploadedAt) : null;
-    return (
-      <View style={styles.postContainer}>
-        {/* Author Info */}
-        <View style={styles.authorContainer}>
-          <TouchableOpacity 
-            onPress={() => handleUserPress(currentPost.user?._id)}
-            style={styles.authorInfo}
-          >
-            <Image
-              source={{
-                uri: currentPost.user?.profilePicture
-                  ? `http://${API_BASE_URL}:3000${currentPost.user.profilePicture}`
-                  : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
-              }}
-              style={styles.authorAvatar}
-            />
-            <View style={styles.authorTextContainer}>
-              <View style={styles.usernameRow}>
-                <Text style={styles.authorUsername}>
-                  {typeof currentPost.user === 'string' 
-                    ? (currentUser?.username || 'Unknown') 
-                    : (currentPost.user?.username || 'Unknown')
-                  }
-                </Text>
-                
-                {/* Context Links */}
-                {isMemoryPost && currentPost.memoryInfo?.memoryTitle && (
-                  <>
-                    <Text style={styles.contextText}> in </Text>
-                    <TouchableOpacity onPress={handleMemoryPress}>
-                      <Text style={styles.memoryLink}>{currentPost.memoryInfo.memoryTitle}</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-                
-                {!isMemoryPost && currentPost.event && (
-                  <>
-                    <Text style={styles.contextText}> at </Text>
-                    <TouchableOpacity onPress={handleEventPress}>
-                      <Text style={styles.eventLink}>{currentPost.event.title}</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-              
-              <Text style={styles.postTime}>
-                {formatDate(currentPost.createdAt || currentPost.uploadedAt)}
-              </Text>
-            </View>
-            {isOwner && (
-              <TouchableOpacity 
-                onPress={handlePostActions}
-                style={styles.postMenuButton}
-              >
-                <Ionicons name="ellipsis-horizontal" size={20} color="#8E8E93" />
-              </TouchableOpacity>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Image with tap to zoom and loading states */}
+  
+  return (
+    <View style={styles.postContainer}>
+      {/* Author Info */}
+      <View style={styles.authorContainer}>
         <TouchableOpacity 
-          onPress={() => setShowImageModal(true)}
-          style={[
-            styles.imageContainer,
-            {
-              width: imageDimensions.width,
-              height: imageDimensions.height
-            }
-          ]}
-          disabled={imageLoading || imageError}
+          onPress={() => handleUserPress(currentPost.user?._id || currentPost.uploadedBy?._id)}
+          style={styles.authorInfo}
         >
-          {imageLoading && (
-            <View style={styles.imageLoadingContainer}>
-              <ActivityIndicator size="large" color="#3797EF" />
-              <Text style={styles.imageLoadingText}>Loading image...</Text>
-            </View>
-          )}
-          
-          {imageError && (
-            <View style={styles.imagePlaceholder}>
-              <Ionicons name="image" size={50} color="#C7C7CC" />
-              <Text style={styles.placeholderText}>Failed to load image</Text>
-            </View>
-          )}
-          
-          {imgURL && !imageError && (
-            <Image
-              source={{ uri: imgURL }}
-              style={[
-                styles.postImage,
-                { opacity: imageLoading ? 0 : 1 }
-              ]}
-              resizeMode={isMemoryPost ? "contain" : "cover"}
-              onLoad={() => {
-                if (imageLoading) {
-                  setImageLoading(false);
+          <Image
+            source={{
+              uri: (currentPost.user?.profilePicture || currentPost.uploadedBy?.profilePicture)
+                ? `http://${API_BASE_URL}:3000${currentPost.user?.profilePicture || currentPost.uploadedBy?.profilePicture}`
+                : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
+            }}
+            style={styles.authorAvatar}
+          />
+          <View style={styles.authorTextContainer}>
+            <View style={styles.usernameRow}>
+              <Text style={styles.authorUsername}>
+                {typeof currentPost.user === 'string' 
+                  ? (currentUser?.username || 'Unknown') 
+                  : (currentPost.user?.username || currentPost.uploadedBy?.username || 'Unknown')
                 }
-              }}
-              onError={() => {
-                if (!imageError) {
-                  setImageError(true);
-                  setImageLoading(false);
-                }
-              }}
-              // Prevent re-rendering when modal state changes
-              key={`image-${imgURL}`}
-            />
-          )}
-          
-          {!imgURL && !imageLoading && (
-            <View style={styles.imagePlaceholder}>
-              <Ionicons name="image" size={50} color="#C7C7CC" />
-              <Text style={styles.placeholderText}>No image</Text>
+              </Text>
+              
+              {/* Context Links */}
+              {isMemoryPost && (currentPost.memoryInfo?.memoryTitle || currentPost.memoryTitle) && (
+                <>
+                  <Text style={styles.contextText}> in </Text>
+                  <TouchableOpacity onPress={handleMemoryPress}>
+                    <Text style={styles.memoryLink}>
+                      {currentPost.memoryInfo?.memoryTitle || currentPost.memoryTitle}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              
+              {!isMemoryPost && currentPost.event && (
+                <>
+                  <Text style={styles.contextText}> at </Text>
+                  <TouchableOpacity onPress={handleEventPress}>
+                    <Text style={styles.eventLink}>{currentPost.event.title}</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
-          )}
-        </TouchableOpacity>
-
-        {/* Actions - Removed like, share, and comment icons */}
-        <View style={styles.actionsContainer}>
-          {/* Memory explore button */}
-          {isMemoryPost && (
-            <TouchableOpacity onPress={handleMemoryPress} style={styles.memoryExploreBtn}>
-              <Text style={styles.memoryExploreBtnText}>Explore Memory</Text>
-              <Ionicons name="arrow-forward" size={16} color={MEMORY_BLUE} />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Caption */}
-        {currentPost.caption && (
-          <View style={styles.captionContainer}>
-            <Text style={styles.captionText}>
-             <Text style={styles.captionUsername}>
-              {typeof currentPost.user === 'string' 
-                ? (currentUser?.username || 'Unknown') 
-                : (currentPost.user?.username || 'Unknown')
-              }
-            </Text>
-              {currentPost.caption}
+            
+            <Text style={styles.postTime}>
+              {formatDate(currentPost.createdAt || currentPost.uploadedAt)}
             </Text>
           </View>
-        )}
+          {/* ✅ FIXED: Only show menu if user can edit */}
+          {canEdit && (
+            <TouchableOpacity 
+              onPress={handlePostActions}
+              style={styles.postMenuButton}
+            >
+              <Ionicons name="ellipsis-horizontal" size={20} color="#8E8E93" />
+            </TouchableOpacity>
+          )}
+        </TouchableOpacity>
+      </View>
 
-        {/* Comments Header */}
-        <View style={styles.commentsHeader}>
-          <Text style={styles.commentsTitle}>
-            Comments ({commentCount})
+      {/* Image with tap to zoom and loading states */}
+      <TouchableOpacity 
+        onPress={() => setShowImageModal(true)}
+        style={[
+          styles.imageContainer,
+          {
+            width: imageDimensions.width,
+            height: imageDimensions.height
+          }
+        ]}
+        disabled={imageLoading || imageError}
+      >
+        {imageLoading && (
+          <View style={styles.imageLoadingContainer}>
+            <ActivityIndicator size="large" color="#3797EF" />
+            <Text style={styles.imageLoadingText}>Loading image...</Text>
+          </View>
+        )}
+        
+        {imageError && (
+          <View style={styles.imagePlaceholder}>
+            <Ionicons name="image" size={50} color="#C7C7CC" />
+            <Text style={styles.placeholderText}>Failed to load image</Text>
+          </View>
+        )}
+        
+        {imgURL && !imageError && (
+          <Image
+            source={{ uri: imgURL }}
+            style={[
+              styles.postImage,
+              { opacity: imageLoading ? 0 : 1 }
+            ]}
+            resizeMode={isMemoryPost ? "contain" : "cover"}
+            onLoad={() => {
+              if (imageLoading) {
+                setImageLoading(false);
+              }
+            }}
+            onError={() => {
+              if (!imageError) {
+                setImageError(true);
+                setImageLoading(false);
+              }
+            }}
+            key={`image-${imgURL}`}
+          />
+        )}
+        
+        {!imgURL && !imageLoading && (
+          <View style={styles.imagePlaceholder}>
+            <Ionicons name="image" size={50} color="#C7C7CC" />
+            <Text style={styles.placeholderText}>No image</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+
+      {/* Actions */}
+      <View style={styles.actionsContainer}>
+        {/* Memory explore button */}
+        {isMemoryPost && (
+          <TouchableOpacity onPress={handleMemoryPress} style={styles.memoryExploreBtn}>
+            <Text style={styles.memoryExploreBtnText}>Explore Memory</Text>
+            <Ionicons name="arrow-forward" size={16} color={MEMORY_BLUE} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Caption */}
+      {currentPost.caption && (
+        <View style={styles.captionContainer}>
+          <Text style={styles.captionText}>
+            <Text style={styles.captionUsername}>
+              {typeof currentPost.user === 'string' 
+                ? (currentUser?.username || 'Unknown') 
+                : (currentPost.user?.username || currentPost.uploadedBy?.username || 'Unknown')
+              }
+            </Text>
+            {' '}{currentPost.caption}
           </Text>
         </View>
+      )}
+
+      {/* Comments Header */}
+      <View style={styles.commentsHeader}>
+        <Text style={styles.commentsTitle}>
+          Comments ({commentCount})
+        </Text>
       </View>
-    );
-  };
+    </View>
+  );
+};
 
   const renderEmptyComments = () => (
     <View style={styles.emptyCommentsContainer}>
