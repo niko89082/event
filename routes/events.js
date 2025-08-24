@@ -825,132 +825,105 @@ router.post('/:eventId/payments/:paymentId/refund', protect, async (req, res) =>
 // Get Events with Following Filter
 router.get('/following-events', protect, async (req, res) => {
   try {
-    console.log('👥 Following events endpoint hit - FIXED VERSION');
-    console.log('👥 User ID:', req.user._id);
-    
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 12;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 12 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // 🔧 CRITICAL FIX: Get user's friends with proper population
-    const viewer = await User.findById(req.user._id)
+    console.log(`👥 === FETCHING FRIENDS' EVENTS ===`);
+    console.log(`👥 User: ${req.user._id}, Page: ${page}, Limit: ${limit}`);
+
+    // Get user with friends data
+    const user = await User.findById(req.user._id)
       .select('friends')
       .lean();
-    
-    if (!viewer) {
-      console.log('❌ User not found');
+
+    if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    console.log('👥 Raw friends data:', viewer.friends);
-    console.log('👥 Friends count:', viewer.friends?.length || 0);
-    
-    // 🚨 CRITICAL FIX: Extract the correct friend IDs from the 'user' field
-    const friendIds = (viewer.friends || [])
-      .filter(friendship => friendship.status === 'accepted') // Only accepted friends
-      .map(friendship => friendship.user); // Use 'user' field, not '_id'
+    // ✅ CRITICAL FIX: Extract user IDs from friendship objects
+    const friendIds = (user.friends || [])
+      .filter(friendship => friendship.status === 'accepted')
+      .map(friendship => friendship.user); // ✅ Use .user, not ._id
 
-    console.log('👥 CORRECTED Friend IDs extracted:', friendIds.map(id => id.toString()));
+    console.log(`👥 ✅ CORRECTED Friend IDs extracted:`, friendIds.map(id => id.toString()));
 
     if (friendIds.length === 0) {
-      console.log('👥 No accepted friends found, returning empty');
+      console.log(`👥 No accepted friends found, returning empty`);
       return res.json({
         events: [],
-        page: 1,
+        page: parseInt(page),
         totalPages: 0,
         hasMore: false,
         debug: { friendsCount: 0, message: 'No accepted friends' }
       });
     }
 
-    // Test query with corrected friend IDs
-    const simpleQuery = {
-      host: { $in: friendIds }
-    };
-
-    console.log('👥 CORRECTED Simple query:', JSON.stringify(simpleQuery, null, 2));
-    
-    const simpleResults = await Event.find(simpleQuery)
-      .populate('host', 'username')
-      .sort({ time: -1 })
-      .limit(3)
-      .lean();
-    
-    console.log('👥 CORRECTED Simple query results:', simpleResults.length);
-    simpleResults.forEach(event => {
-      console.log('👥 Found event:', {
-        title: event.title,
-        host: event.host.username,
-        time: event.time,
-        isUpcoming: new Date(event.time) >= new Date(),
-        isActive: event.isActive,
-        privacy: event.privacyLevel
-      });
-    });
-
-    // Full query with filters
+    // ✅ MAJOR FIX: Remove isActive filter since it doesn't exist in your Event model
     const query = {
       host: { $in: friendIds },
-      time: { $gte: new Date() },
-      isActive: true,
+      time: { $gte: new Date() }, // Only future events
+      // ❌ REMOVED: isActive: true, - This was filtering out all events!
       $or: [
         { privacyLevel: 'public' },
         { 
           privacyLevel: 'friends',
-          host: { $in: friendIds }
+          host: { $in: friendIds } // Friends can see friends-only events
         }
       ]
     };
 
-    console.log('👥 CORRECTED Full query:', JSON.stringify(query, null, 2));
+    console.log(`👥 ✅ FINAL CORRECTED query:`, JSON.stringify(query, null, 2));
 
     const events = await Event.find(query)
-      .populate('host', 'username profilePicture')
+      .populate('host', 'username profilePicture displayName')
       .populate('attendees', 'username profilePicture')
       .populate('coHosts', 'username profilePicture')
-      .sort({ time: 1 })
+      .sort({ time: 1 }) // Upcoming events first
       .skip(skip)
-      .limit(limit)
+      .limit(parseInt(limit))
       .lean();
 
-    console.log('👥 CORRECTED Final events found:', events.length);
+    console.log(`👥 ✅ Final events found: ${events.length}`);
 
-    const response = {
-      events: events.map(event => ({
-        ...event,
-        isFriendsEvent: true,
-        userRelation: {
-          isHost: false,
-          isAttending: event.attendees.some(a => String(a._id) === String(req.user._id)),
-          isCohost: event.coHosts && event.coHosts.some(ch => String(ch._id) === String(req.user._id)),
-          canJoin: true
-        },
-        attendeeCount: event.attendees ? event.attendees.length : 0,
-        cohostCount: event.coHosts ? event.coHosts.length : 0
-      })),
-      page,
-      totalPages: Math.ceil(events.length / limit),
-      hasMore: false,
+    // Add metadata to events
+    const eventsWithMetadata = events.map(event => ({
+      ...event,
+      isFriendsEvent: true,
+      userRelation: {
+        isHost: false,
+        isAttending: event.attendees?.some(a => String(a._id) === String(req.user._id)) || false,
+        isCohost: event.coHosts?.some(ch => String(ch._id) === String(req.user._id)) || false,
+        canJoin: true
+      },
+      attendeeCount: event.attendees?.length || 0,
+      cohostCount: event.coHosts?.length || 0
+    }));
+
+    // Calculate pagination
+    const totalEvents = await Event.countDocuments(query);
+    const totalPages = Math.ceil(totalEvents / parseInt(limit));
+    const hasMore = parseInt(page) < totalPages;
+
+    console.log(`👥 ✅ SUCCESS: Returning ${eventsWithMetadata.length} events (${totalEvents} total)`);
+
+    res.json({
+      events: eventsWithMetadata,
+      page: parseInt(page),
+      totalPages,
+      hasMore,
       debug: {
         friendsCount: friendIds.length,
-        correctedFriendIds: friendIds.map(id => id.toString()),
-        simpleQueryResults: simpleResults.length,
-        fullQueryResults: events.length
+        totalEvents,
+        isActiveFilterRemoved: true, // ✅ Indicates we fixed this
+        query: query
       }
-    };
-
-    console.log('✅ CORRECTED Sending response:', {
-      eventsCount: events.length,
-      debug: response.debug
     });
-    
-    res.json(response);
 
-  } catch (err) {
-    console.error('❌ Following events error:', err);
+  } catch (error) {
+    console.error(`❌ Following events error:`, error);
     res.status(500).json({ 
-      message: 'Server error', 
-      error: err.message
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
