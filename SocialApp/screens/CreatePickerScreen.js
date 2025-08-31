@@ -5,8 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 const OPTIONS = [
   { key:'event', label:'Event', desc:'Create an event for others to join', icon:'calendar' },
-  { key:'photo', label:'Photo', desc:'Share photos and moments', icon:'image' },
-  { key:'memory', label:'Memory', desc:'Create a shared memory with friends', icon:'images' }, // NEW
+  // { key:'photo', label:'Photo', desc:'Share photos and moments', icon:'image' }, // TEMPORARILY HIDDEN
+  { key:'memory', label:'Memory', desc:'Create a shared memory with friends', icon:'images' },
 ];
 
 export default function CreatePickerScreen({ navigation }) {
@@ -39,22 +39,19 @@ export default function CreatePickerScreen({ navigation }) {
   }, [navigation]);
 
   const onSelect = (key) => {
-    console.log('🟡 CreatePickerScreen: Selected option:', key);
-    
-    if (key === 'event') {
-      // Navigate to CreateEventScreen (global screen)
-      navigation.navigate('CreateEventScreen');
-    }
-    if (key === 'photo') {
-      // Navigate to CreatePostScreen (global screen)  
-      navigation.navigate('CreatePostScreen');
-    }
-    if (key === 'memory') {
-      // Navigate to new CreateMemoryScreen (global screen)
-      navigation.navigate('CreateMemoryScreen');
-    }
-  };
-
+  console.log('🟡 CreatePickerScreen: Selected option:', key);
+  
+  if (key === 'event') {
+    navigation.navigate('CreateEventScreen');
+  }
+  // COMMENTED OUT PHOTO OPTION
+  // if (key === 'photo') {
+  //   navigation.navigate('CreatePostScreen');
+  // }
+  if (key === 'memory') {
+    navigation.navigate('CreateMemoryScreen');
+  }
+};
   const renderItem = ({ item }) => (
     <TouchableOpacity 
       style={styles.optionCard} 

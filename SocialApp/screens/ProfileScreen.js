@@ -53,7 +53,7 @@ export default function ProfileScreen() {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [memoriesLoading, setMemoriesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  
+  const [eventsCount, setEventsCount] = useState(0);
   // NEW: Friends system state
   const [friendshipStatus, setFriendshipStatus] = useState('not-friends');
   const [friendshipData, setFriendshipData] = useState(null);
@@ -71,13 +71,13 @@ export default function ProfileScreen() {
   const currentTabIndex = useRef(0);
 
   // Dynamic tab array based on conditions
-  const getTabs = () => {
-    const tabs = ['Posts', 'Events'];
-    if (isSelf || showMemoriesTab) {
-      tabs.push('Memories');
-    }
-    return tabs;
-  };
+const getTabs = () => {
+  const tabs = ['Events']; // Removed 'Posts' from array
+  if (isSelf || showMemoriesTab) {
+    tabs.push('Memories');
+  }
+  return tabs;
+};
 
   const tabs = getTabs();
 
@@ -238,32 +238,32 @@ useEffect(() => {
 
   // Switch to tab function (same as before)
   const switchToTab = useCallback((index) => {
-    const targetIndex = Math.max(0, Math.min(tabs.length - 1, index));
-    
-    if (isAnimating.current) return;
-    
-    isAnimating.current = true;
-    
-    const targetContentOffset = -targetIndex * SCREEN_WIDTH;
-    
-    setActiveTabIndex(targetIndex);
-    
-    Animated.timing(scrollX, {
-      toValue: targetContentOffset,
-      duration: ANIMATION_DURATION,
-      useNativeDriver: true,
-    }).start((finished) => {
-      if (finished) {
-        isAnimating.current = false;
-        if (targetIndex === 1 && events.length === 0) {
-          fetchUserEvents();
-        } else if (targetIndex === 2 && memories.length === 0) {
-          fetchUserMemories();
-        }
+  const targetIndex = Math.max(0, Math.min(tabs.length - 1, index));
+  
+  if (isAnimating.current) return;
+  
+  isAnimating.current = true;
+  
+  const targetContentOffset = -targetIndex * SCREEN_WIDTH;
+  
+  setActiveTabIndex(targetIndex);
+  
+  Animated.timing(scrollX, {
+    toValue: targetContentOffset,
+    duration: ANIMATION_DURATION,
+    useNativeDriver: true,
+  }).start((finished) => {
+    if (finished) {
+      isAnimating.current = false;
+      // Updated: Events are now at index 0, Memories at index 1
+      if (targetIndex === 0 && events.length === 0) {
+        fetchUserEvents();
+      } else if (targetIndex === 1 && memories.length === 0) {
+        fetchUserMemories();
       }
-    });
-  }, [tabs.length, events.length, memories.length]);
-
+    }
+  });
+}, [tabs.length, events.length, memories.length]);
   // Handle tab press
   const handleTabPress = useCallback((index) => {
     switchToTab(index);
@@ -439,14 +439,11 @@ const fetchUserProfile = async (isRefresh = false) => {
       await fetchFriendsCount();
     }
 
-    // Fetch events if on Events tab
-    if (activeTabIndex === 1) {
-      console.log('📅 On events tab, fetching events...');
-      await fetchUserEvents();
-    }
+    // ALWAYS fetch events to get the count (regardless of active tab)
+    await fetchUserEvents();
 
     // Fetch memories if on Memories tab
-    if (activeTabIndex === 2) {
+    if (activeTabIndex === 1) {
       console.log('📚 On memories tab, fetching memories...');
       await fetchUserMemories();
     }
@@ -483,7 +480,7 @@ const fetchUserProfile = async (isRefresh = false) => {
 
 
 useEffect(() => {
-  if (activeTabIndex === 1 && !eventsLoading) { // Only on Events tab
+  if (activeTabIndex === 0 && !eventsLoading) { // Events tab is now index 0
     console.log('🔄 Re-checking events due to friendship status change:', friendshipStatus);
     
     if (!isSelf && friendshipStatus !== 'friends') {
@@ -495,6 +492,7 @@ useEffect(() => {
     }
   }
 }, [friendshipStatus, activeTabIndex, isSelf]);
+
   // FIXED: Fetch user events with better synchronization
 const fetchUserEvents = async () => {
   try {
@@ -504,6 +502,7 @@ const fetchUserEvents = async () => {
     if (!isSelf && friendshipStatus !== 'friends') {
       console.log('🔒 Not fetching events - user is not a friend. Status:', friendshipStatus);
       setEvents([]);
+      setEventsCount(0); // Reset count for non-friends
       return;
     }
     
@@ -529,6 +528,8 @@ const fetchUserEvents = async () => {
     });
     
     setEvents(userEvents);
+    // NEW: Set events count (hosted + attended)
+    setEventsCount(userEvents.length);
     
     if (isSelf && data.sharedEventIds) {
       setSharedEventIds(new Set(data.sharedEventIds));
@@ -540,6 +541,7 @@ const fetchUserEvents = async () => {
     console.error('❌ Error fetching events:', error);
     if (error.response?.status === 403) {
       setEvents([]);
+      setEventsCount(0); // Reset count on error
       console.log('📝 Events restricted by backend privacy filtering');
     } else {
       Alert.alert('Error', 'Failed to load events. Please try again.');
@@ -548,6 +550,7 @@ const fetchUserEvents = async () => {
     setEventsLoading(false);
   }
 };
+
 
   // Fetch user memories (same as before)
   const fetchUserMemories = async () => {
@@ -804,9 +807,9 @@ const fetchUserEvents = async () => {
   };
 
   // UPDATED: Profile header with friends system
-  const renderProfileHeader = () => {
-  // Show post count based on friendship status
-  const visiblePostsCount = (!isSelf && friendshipStatus !== 'friends') ? '—' : posts.length;
+const renderProfileHeader = () => {
+  // Show events count based on friendship status
+  const visibleEventsCount = (!isSelf && friendshipStatus !== 'friends') ? '—' : eventsCount;
   
   return (
     <View style={styles.profileHeader}>
@@ -830,12 +833,15 @@ const fetchUserEvents = async () => {
         )}
       </View>
 
-      {/* Stats Container with Privacy-Aware Counts */}
+      {/* Stats Container WITH Events count */}
       <View style={styles.statsContainer}>
+        {/* Events Count */}
         <View style={styles.statItem}>
-          <Text style={styles.statNumber}>{visiblePostsCount}</Text>
-          <Text style={styles.statLabel}>Posts</Text>
+          <Text style={styles.statNumber}>{visibleEventsCount}</Text>
+          <Text style={styles.statLabel}>Events</Text>
         </View>
+        
+        {/* Friends Count */}
         <TouchableOpacity
           style={styles.statItem}
           onPress={() => navigation.navigate('FriendsListScreen', { 
@@ -847,6 +853,7 @@ const fetchUserEvents = async () => {
           <Text style={styles.statNumber}>{friendsCount}</Text>
           <Text style={styles.statLabel}>Friends</Text>
         </TouchableOpacity>
+        
         {/* Show mutual friends for non-friends */}
         {!isSelf && friendshipStatus === 'not-friends' && mutualFriends.length > 0 && (
           <TouchableOpacity
@@ -930,45 +937,48 @@ const fetchUserEvents = async () => {
 
   // Event filter bar (same as before)
   const renderEventFilterBar = () => {
-    if (activeTabIndex !== 1 || !isSelf) return null;
+  // FIXED: Change activeTabIndex !== 1 to activeTabIndex !== 0 since Events is now index 0
+  if (activeTabIndex !== 0 || !isSelf) return null;
 
-    return (
-      <View style={styles.eventFilterBar}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.eventFilters}
-        >
-          {EVENT_FILTERS.map((filter) => (
-            <TouchableOpacity
-              key={filter.key}
-              style={[
-                styles.eventFilterButton,
-                eventFilter === filter.key && styles.eventFilterButtonActive
-              ]}
-              onPress={() => setEventFilter(filter.key)}
-              activeOpacity={0.8}
-            >
-              <Ionicons 
-                name={filter.icon} 
-                size={16} 
-                color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
-              />
-              <Text style={[
-                styles.eventFilterText,
-                eventFilter === filter.key && styles.eventFilterTextActive
-              ]}>
-                {filter.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  };
+  return (
+    <View style={styles.eventFilterBar}>
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.eventFilters}
+      >
+        {EVENT_FILTERS.map((filter) => (
+          <TouchableOpacity
+            key={filter.key}
+            style={[
+              styles.eventFilterButton,
+              eventFilter === filter.key && styles.eventFilterButtonActive
+            ]}
+            onPress={() => setEventFilter(filter.key)}
+            activeOpacity={0.8}
+          >
+            <Ionicons 
+              name={filter.icon} 
+              size={16} 
+              color={eventFilter === filter.key ? '#FFFFFF' : '#8E8E93'} 
+            />
+            <Text style={[
+              styles.eventFilterText,
+              eventFilter === filter.key && styles.eventFilterTextActive
+            ]}>
+              {filter.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+};
+
 
   // Post grid renderer (same as before)
-  
+
+  /*
 const renderPostGrid = ({ item }) => (
   <TouchableOpacity
     style={styles.postGridItem}
@@ -991,7 +1001,7 @@ const renderPostGrid = ({ item }) => (
       style={styles.postGridImage}
     />
   </TouchableOpacity>
-);
+);*/
 
   // Event card renderer (same as before)
   const renderEventCard = ({ item: event }) => {
@@ -1150,27 +1160,22 @@ const renderPostGrid = ({ item }) => (
   const renderTabContent = (tabIndex) => {
   let contentData;
   
-  if (tabIndex === 0) { // Posts
-    // BACKUP CHECK: If not friends and not self, don't show posts
-    if (!isSelf && friendshipStatus !== 'friends') {
-      contentData = 'private';
-    } else {
-      contentData = posts;
-    }
-  } else if (tabIndex === 1) { // Events
+  // Since Posts tab is removed, tab indices shift:
+  // tabIndex 0 = Events (was previously 1)
+  // tabIndex 1 = Memories (was previously 2)
+  
+  if (tabIndex === 0) { // Events (was previously index 1)
     if (eventsLoading) {
       contentData = 'loading';
     } else if (!isSelf && friendshipStatus !== 'friends') {
-      // BACKUP CHECK: Don't show events for non-friends
       contentData = 'private';
     } else {
       contentData = isSelf ? filteredEvents : events;
     }
-  } else if (tabIndex === 2) { // Memories
+  } else if (tabIndex === 1) { // Memories (was previously index 2)
     if (memoriesLoading) {
       contentData = 'loading';
     } else {
-      // Memories are OK to show if shared (backend filters properly)
       contentData = memories;
     }
   } else {
@@ -1234,7 +1239,7 @@ const renderPostGrid = ({ item }) => (
       <View style={styles.emptyContainer}>
         <ActivityIndicator size="large" color="#3797EF" />
         <Text style={styles.loadingText}>
-          {tabIndex === 1 ? 'Loading events...' : 'Loading memories...'}
+          {tabIndex === 0 ? 'Loading events...' : 'Loading memories...'}
         </Text>
       </View>
     );
@@ -1313,20 +1318,8 @@ const renderPostGrid = ({ item }) => (
     return null;
   }
 
-  // Render the appropriate list based on tab
-  if (tabIndex === 0) {
-    return (
-      <FlatList
-        data={contentData}
-        renderItem={renderPostGrid}
-        keyExtractor={(item) => item._id}
-        numColumns={2}
-        scrollEnabled={false}
-        columnWrapperStyle={styles.postGridRow}
-        contentContainerStyle={styles.postsGrid}
-      />
-    );
-  } else if (tabIndex === 1) {
+  // Render the appropriate list based on NEW tab indices
+  if (tabIndex === 0) { // Events
     return (
       <FlatList
         data={contentData}
@@ -1336,7 +1329,7 @@ const renderPostGrid = ({ item }) => (
         contentContainerStyle={styles.eventsGrid}
       />
     );
-  } else if (tabIndex === 2) {
+  } else if (tabIndex === 1) { // Memories
     return (
       <FlatList
         data={contentData}
