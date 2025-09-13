@@ -1,4 +1,5 @@
-// components/MinimalEventCard.js - Phase 1: Minimal event card for category search
+// Replace your entire MinimalEventCard.js with this fixed version:
+
 import React from 'react';
 import {
   View,
@@ -6,8 +7,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CARD_WIDTH = SCREEN_WIDTH * 0.55; // ~55% of screen = shows 1.8 cards per screen
 
 export default function MinimalEventCard({ event, onPress, currentUserId }) {
   // Format date and time
@@ -56,21 +61,40 @@ export default function MinimalEventCard({ event, onPress, currentUserId }) {
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   };
 
-  // Get privacy indicator
-  const getPrivacyIndicator = () => {
-    if (event.privacyLevel === 'private') {
-      return <Ionicons name="lock-closed" size={14} color="#8E8E93" style={styles.privacyIcon} />;
-    }
-    if (event.privacyLevel === 'friends') {
-      return <Ionicons name="people" size={14} color="#8E8E93" style={styles.privacyIcon} />;
-    }
-    return null;
-  };
-
   // Check if user is attending
   const isUserAttending = event.attendees && event.attendees.some(
     attendee => (typeof attendee === 'string' ? attendee : attendee._id) === currentUserId
   );
+
+  // Get image URL with proper IP configuration
+  const getImageUrl = () => {
+    if (!event.coverImage) {
+      console.log(`No coverImage for event: ${event.title}`);
+      return null;
+    }
+    
+    console.log(`Original coverImage: ${event.coverImage}`);
+    
+    // If coverImage already has full URL, use it
+    if (event.coverImage.startsWith('http')) {
+      console.log(`Using full URL: ${event.coverImage}`);
+      return event.coverImage;
+    }
+    
+    // Use environment API URL or fallback
+    const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 
+                         process.env.API_BASE_URL || 
+                         '192.168.1.100:3000'; // Replace with your actual IP
+    
+    const baseUrl = API_BASE_URL.includes(':') ? API_BASE_URL : `${API_BASE_URL}:3000`;
+    const imagePath = event.coverImage.startsWith('/') ? event.coverImage : `/${event.coverImage}`;
+    const finalUrl = `http://${baseUrl}${imagePath}`;
+    
+    console.log(`Final image URL: ${finalUrl}`);
+    return finalUrl;
+  };
+
+  const imageUrl = getImageUrl();
 
   return (
     <TouchableOpacity 
@@ -78,64 +102,55 @@ export default function MinimalEventCard({ event, onPress, currentUserId }) {
       onPress={() => onPress(event)}
       activeOpacity={0.7}
     >
-      {/* Event Image or Category Icon */}
+      {/* ✅ FIXED: Image First (Top) - Larger Size */}
       <View style={styles.imageContainer}>
-        {event.coverImage ? (
+        {imageUrl ? (
           <Image 
-            source={{ uri: event.coverImage }} 
+            source={{ uri: imageUrl }} 
             style={styles.eventImage}
             resizeMode="cover"
+            onError={(error) => {
+              console.log('Image load error:', error.nativeEvent.error);
+              console.log('Failed URL:', imageUrl);
+            }}
+            onLoad={() => {
+              console.log('Image loaded successfully:', imageUrl);
+            }}
           />
         ) : (
           <View style={styles.placeholderImage}>
             <Ionicons 
               name="calendar-outline" 
-              size={24} 
+              size={28} 
               color="#8E8E93" 
             />
           </View>
         )}
         
-        {/* Attending Indicator */}
+        {/* Attending Badge */}
         {isUserAttending && (
           <View style={styles.attendingBadge}>
-            <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
+            <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
           </View>
         )}
       </View>
 
-      {/* Event Details */}
-      <View style={styles.content}>
+      {/* ✅ FIXED: Text Content Second (Bottom) - Compact */}
+      <View style={styles.textContent}>
         {/* Title */}
-        <Text style={styles.title} numberOfLines={2}>
+        <Text style={styles.title} numberOfLines={1}>
           {event.title}
         </Text>
 
         {/* Date & Time */}
-        <View style={styles.detailRow}>
-          <Ionicons name="time-outline" size={14} color="#8E8E93" />
-          <Text style={styles.detailText}>
-            {formatDateTime(event.time)}
-          </Text>
-          {getPrivacyIndicator()}
-        </View>
+        <Text style={styles.dateTime} numberOfLines={1}>
+          {formatDateTime(event.time)}
+        </Text>
 
         {/* Location */}
-        <View style={styles.detailRow}>
-          <Ionicons name="location-outline" size={14} color="#8E8E93" />
-          <Text style={styles.detailText} numberOfLines={1}>
-            {truncateText(event.location, 30)}
-          </Text>
-        </View>
-
-        {/* Category Tag */}
-        {event.category && event.category !== 'General' && (
-          <View style={styles.categoryContainer}>
-            <View style={styles.categoryTag}>
-              <Text style={styles.categoryText}>{event.category}</Text>
-            </View>
-          </View>
-        )}
+        <Text style={styles.location} numberOfLines={1}>
+          {truncateText(event.location || 'Location TBD', 25)}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -143,8 +158,8 @@ export default function MinimalEventCard({ event, onPress, currentUserId }) {
 
 const styles = StyleSheet.create({
   container: {
-    width: 280,
-    height: 120,
+    width: CARD_WIDTH,
+    height: 160, // Increased height for larger image
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     marginRight: 12,
@@ -156,18 +171,22 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-    flexDirection: 'row',
+    flexDirection: 'column', // Column layout: image above, text below
     overflow: 'hidden',
   },
+  
+  // ✅ FIXED: Image section (top) - Slightly smaller to give text more room
   imageContainer: {
-    width: 80,
-    height: '100%',
+    flex: 0.65, // Reduced from 70% to 65% to give text more space
     position: 'relative',
+    width: '100%',
   },
+  
   eventImage: {
     width: '100%',
     height: '100%',
   },
+  
   placeholderImage: {
     width: '100%',
     height: '100%',
@@ -175,6 +194,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  
   attendingBadge: {
     position: 'absolute',
     top: 6,
@@ -186,45 +206,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  content: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  
+  // ✅ FIXED: Text content section (bottom) - Compact
+  textContent: {
+    flex: 0.3, // Takes up 30% of height (compact text area)
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     justifyContent: 'space-between',
   },
+  
   title: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#000000',
-    lineHeight: 18,
+    lineHeight: 16,
   },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  detailText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginLeft: 4,
-    flex: 1,
-  },
-  privacyIcon: {
-    marginLeft: 4,
-  },
-  categoryContainer: {
-    marginTop: 4,
-  },
-  categoryTag: {
-    backgroundColor: '#F0F0F0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-  },
-  categoryText: {
-    fontSize: 10,
+  
+  dateTime: {
+    fontSize: 11,
     color: '#8E8E93',
     fontWeight: '500',
+    marginTop: 1,
+  },
+  
+  location: {
+    fontSize: 10,
+    color: '#8E8E93',
+    marginTop: 1,
   },
 });

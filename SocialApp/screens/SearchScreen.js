@@ -7,6 +7,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
+import CategoryManager from '../components/CategoryManager';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'localhost:3000';
 
@@ -25,7 +26,11 @@ export default function SearchScreen({ navigation, route }) {
   const [suggestions, setSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  
+  const [showingCategories, setShowingCategories] = useState(false);
+  const [categoryLimit, setCategoryLimit] = useState(5);
+  const [showAllCategories, setShowAllCategories] = useState(false);
+  const [categoryRefreshTrigger, setCategoryRefreshTrigger] = useState(0);
+
   // Auth context
   const { currentUser } = useContext(AuthContext);
 
@@ -375,7 +380,24 @@ export default function SearchScreen({ navigation, route }) {
       </TouchableOpacity>
     );
   };
+const shouldShowCategories = () => {
+  return (
+    tab === 'events' && 
+    query.trim() === '' && 
+    results.length === 0 &&
+    !loading &&
+    !showSuggestions
+  );
+};
+// ✅ NEW: Category refresh handler
+const handleCategoryRefresh = () => {
+  setCategoryRefreshTrigger(prev => prev + 1);
+};
 
+// ✅ NEW: Toggle show all categories
+const toggleShowAllCategories = () => {
+  setShowAllCategories(prev => !prev);
+};
   // Render search result item (updated to use enhanced user item)
   const renderSearchResult = ({ item }) => {
     if (tab === 'users') {
@@ -661,14 +683,28 @@ export default function SearchScreen({ navigation, route }) {
                       </View>
                     )
                   ) : (
-                    // Events tab
-                    <View style={styles.emptyState}>
-                      <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
-                      <Text style={styles.emptyTitle}>Search Events</Text>
-                      <Text style={styles.emptySubtext}>
-                        Discover events by title or location
-                      </Text>
-                    </View>
+                    // Events tab - show categories when empty, search results when typing
+                    shouldShowCategories() ? (
+                      <CategoryManager
+                        navigation={navigation}
+                        currentUserId={currentUser?._id}
+                        refreshTrigger={categoryRefreshTrigger}
+                        maxCategories={showAllCategories ? undefined : categoryLimit}
+                        onRefresh={handleCategoryRefresh}
+                        style={styles.categoryContainer}
+                        showToggle={true}
+                        onToggleShowAll={toggleShowAllCategories}
+                        showAllState={showAllCategories}
+                      />
+                    ) : (
+                      <View style={styles.emptyState}>
+                        <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
+                        <Text style={styles.emptyTitle}>Search Events</Text>
+                        <Text style={styles.emptySubtext}>
+                          Discover events by title or location
+                        </Text>
+                      </View>
+                    )
                   )}
                 </View>
               );
@@ -996,5 +1032,9 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 22,
+  },
+  categoryContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
   },
 });

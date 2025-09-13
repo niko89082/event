@@ -673,6 +673,62 @@ router.post('/webhooks/paypal', express.raw({ type: 'application/json' }), async
   }
 });
 
+
+
+router.get('/category-counts', protect, async (req, res) => {
+  try {
+    console.log('📊 GET /api/events/category-counts - Getting category counts');
+    
+    const userId = req.user._id;
+    
+    // Get all events that the user can see based on privacy levels
+    const events = await Event.find({
+      time: { $gte: new Date() }, // Only upcoming events
+      $or: [
+        // Public events
+        { privacyLevel: 'public' },
+        // Friends-only events from people user follows
+        { 
+          privacyLevel: 'friends',
+          host: { $in: req.user.following || [] }
+        },
+        // Private events user is invited to
+        {
+          privacyLevel: 'private',
+          invitedUsers: userId
+        },
+        // Events user is hosting or attending
+        { host: userId },
+        { attendees: userId }
+      ]
+    }).select('category').lean();
+
+    // Count events by category
+    const categoryCounts = {};
+    
+    events.forEach(event => {
+      const category = event.category || 'General';
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+    });
+
+    console.log('✅ Category counts calculated:', categoryCounts);
+
+    res.json({
+      success: true,
+      categoryCounts,
+      totalEvents: events.length
+    });
+
+  } catch (error) {
+    console.error('❌ Category counts error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get category counts',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
+  }
+});
+
 // ============================================
 // PAYMENT MANAGEMENT ROUTES
 // ============================================
@@ -7815,6 +7871,81 @@ router.post('/:eventId/bulk-remove', protect, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to perform bulk remove' 
+    });
+  }
+});
+router.get('/discover', protect, async (req, res) => {
+  try {
+    console.log('🔍 GET /api/events/discover - Event discovery');
+    
+    const { 
+      category, 
+      limit = 20, 
+      skip = 0, 
+      upcoming = true 
+    } = req.query;
+    
+    const userId = req.user._id;
+    
+    // Build query for discoverable events
+    const query = {
+      $or: [
+        // Public events
+        { privacyLevel: 'public' },
+        // Friends-only events from people user follows  
+        { 
+          privacyLevel: 'friends',
+          host: { $in: req.user.following || [] }
+        },
+        // Private events user is invited to
+        {
+          privacyLevel: 'private',
+          invitedUsers: userId
+        }
+      ]
+    };
+    
+    // Add upcoming filter
+    if (upcoming === 'true') {
+      query.time = { $gte: new Date() };
+    }
+    
+    // Add category filter
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+    
+    const events = await Event.find(query)
+      .populate('host', 'username profilePicture')
+      .populate('attendees', 'username')
+      .sort({ time: 1, createdAt: -1 })
+      .skip(parseInt(skip))
+      .limit(parseInt(limit))
+      .lean();
+
+    // Add user metadata
+    const eventsWithMetadata = events.map(event => ({
+      ...event,
+      isAttending: event.attendees?.some(a => String(a._id) === String(userId)),
+      attendeeCount: event.attendees?.length || 0,
+      isHost: String(event.host._id) === String(userId)
+    }));
+
+    console.log(`✅ Discovery: Found ${eventsWithMetadata.length} events`);
+
+    res.json({
+      success: true,
+      events: eventsWithMetadata,
+      hasMore: eventsWithMetadata.length === parseInt(limit),
+      query: { category, limit, skip, upcoming }
+    });
+
+  } catch (error) {
+    console.error('❌ Events discover error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to discover events',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
 });
