@@ -10,7 +10,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRoute, useNavigation } from '@react-navigation/native';
-
+import CoverPhotoSelectionModal from '../components/CoverPhotoSelectionModal';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
@@ -53,6 +53,9 @@ export default function EditEventScreen() {
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
   const { eventId } = route.params;
+const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+const [coverModalVisible, setCoverModalVisible] = useState(false);
+const [coverSource, setCoverSource] = useState('upload');
 
   // Basic event fields
   const [title, setTitle] = useState('');
@@ -88,7 +91,8 @@ export default function EditEventScreen() {
   const [allowPhotos, setAllowPhotos] = useState(true);
   const allowPhotosRef = useRef(true); 
   const coHostsRef = useRef([]);
-
+const descriptionRef = useRef('');
+const categoryRef = useRef('General');
   // ADDED: Missing pricing fields that might be causing the issue
   const [isPaidEvent, setIsPaidEvent] = useState(false);
   const [refundPolicy, setRefundPolicy] = useState('no-refund');
@@ -118,6 +122,24 @@ export default function EditEventScreen() {
   }, [eventId]);
 const PrivacyDebugPanel = ({ privacyLevel, onPrivacyChange }) => {
   if (process.env.NODE_ENV !== 'development') return null;
+
+
+  const updatedEvent = response.data.event;
+if (updatedEvent) {
+  setTitle(updatedEvent.title || '');
+  setDescription(updatedEvent.description || '');
+  setCategory(updatedEvent.category || 'General');
+  setAllowPhotos(updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true);
+  setMaxAttendees(String(updatedEvent.maxAttendees || 50));
+  setLocation(updatedEvent.location || '');
+  setPrivacyLevel(updatedEvent.privacyLevel || 'public');
+  
+  // Update refs too
+  allowPhotosRef.current = updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true;
+  privacyLevelRef.current = updatedEvent.privacyLevel || 'public';
+  
+  console.log('✅ Local state updated with fresh data from backend');
+}
 
   return (
     <View style={{
@@ -243,19 +265,31 @@ const handlePrivacySelect = (newPrivacyLevel) => {
     const response = await api.get(`/api/events/${eventId}`);
     const eventData = response.data;
 
-    console.log('📥 Event data received:', {
-      privacyLevel: eventData.privacyLevel,
-      permissions: eventData.permissions
-    });
+    console.log('📥 RAW EVENT DATA from server:', JSON.stringify(eventData, null, 2));
 
     // Set basic fields
     setEvent(eventData);
     setTitle(eventData.title || '');
-    setDescription(eventData.description || '');
+    
+    // 🔍 DEBUG: Log description specifically
+    console.log('🔍 DESCRIPTION DEBUG:');
+    console.log('  - eventData.description (raw):', JSON.stringify(eventData.description));
+    console.log('  - eventData.description type:', typeof eventData.description);
+    console.log('  - eventData.description length:', eventData.description?.length);
+    
+   const descriptionValue = eventData.description || '';
+setDescription(descriptionValue);
+descriptionRef.current = descriptionValue; // ✅ Set ref immediately
+console.log('  - Setting description state to:', JSON.stringify(descriptionValue));
+
+const categoryValue = eventData.category || 'General';
+setCategory(categoryValue);
+categoryRef.current = categoryValue; // ✅ Set ref immediately
+console.log('  - Setting category state to:', JSON.stringify(categoryValue));
+
     setDateTime(new Date(eventData.time));
     setLocation(eventData.location || '');
     setLocQuery(eventData.location || '');
-    setCategory(eventData.category || 'General');
     setMaxAttendees(String(eventData.maxAttendees || 50));
     setTags(eventData.tags?.join(', ') || '');
     
@@ -281,15 +315,10 @@ const handlePrivacySelect = (newPrivacyLevel) => {
     setAllowPhotos(allowPhotosValue);
     allowPhotosRef.current = allowPhotosValue;
     
-    // Pricing logic...
-    if (eventData.pricing) {
-      setPrice(String((eventData.pricing.amount || 0) / 100));
-      setIsPaidEvent(!eventData.pricing.isFree);
-      setRefundPolicy(eventData.pricing.refundPolicy || 'no-refund');
-    } else {
-      setPrice(String(eventData.price || 0));
-      setIsPaidEvent((eventData.price || 0) > 0);
-      setRefundPolicy('no-refund');
+    // Cover image handling
+    setOriginalCoverImage(eventData.coverImage);
+    if (eventData.coverImageSource) {
+      setCoverSource(eventData.coverImageSource);
     }
     
     if (eventData.coordinates) {
@@ -307,6 +336,7 @@ const handlePrivacySelect = (newPrivacyLevel) => {
   }
 };
 
+
 // ✅ FIXED: Helper function to check if current user is the host
 const isEventHost = () => {
   return currentUser && event && String(event.host._id || event.host) === String(currentUser._id);
@@ -323,10 +353,11 @@ const canEditField = (fieldName) => {
   if (isEventHost()) return true; // Host can edit everything
   if (!isEventCoHost()) return false; // Non-co-hosts can't edit anything
   
-  // Co-host restrictions
+  // Co-host restrictions - CHECK IF 'allowPhotos' is in this list
   const restrictedFields = [
     'title', 'pricing', 'maxAttendees', 'privacyLevel', 
-    'coHosts', 'deleteEvent', 'coverImage'
+    'coHosts', 'deleteEvent', 'coverImage', 'category'
+    // Notice: 'allowPhotos' is NOT in this list, so co-hosts CAN edit it
   ];
   
   return !restrictedFields.includes(fieldName);
@@ -522,9 +553,16 @@ useEffect(() => {
 }, [coHosts]);
   
 const handleSaveEvent = async () => {
+  console.log('🔍 ===== SAVE EVENT DEBUG - STATE CHECK =====');
+  console.log('🔍 title state:', JSON.stringify(title));
+  console.log('🔍 description state:', JSON.stringify(description));
+  console.log('🔍 description length:', description?.length);
+  console.log('🔍 description type:', typeof description);
+  console.log('🔍 category state:', JSON.stringify(category));
+
   const currentAllowPhotos = allowPhotosRef.current;
   const currentCoHosts = coHostsRef.current;
-  const currentPrivacyLevel = privacyLevelRef.current; // Use ref for immediate access
+  const currentPrivacyLevel = privacyLevelRef.current;
   
   // Validation
   if (!title || !title.trim()) {
@@ -532,42 +570,32 @@ const handleSaveEvent = async () => {
     return;
   }
 
+  // Add validation for description
+  if (description === undefined || description === null) {
+    console.log('⚠️ WARNING: Description is undefined/null, setting to empty string');
+    setDescription('');
+  }
+
   try {
     setSaving(true);
     
-    const priceInCents = Math.round(parseFloat(price || 0) * 100);
-    
-    // PHASE 2: Enhanced update data with ref-based privacy level
     const updateData = {
-      title: title.trim(),
-      description: description.trim(),
-      time: dateTime.toISOString(),
-      location: location.trim(),
-      category: category,
-      maxAttendees: parseInt(maxAttendees) || 0,
-      privacyLevel: currentPrivacyLevel, // FIXED: Use ref instead of state
-      allowPhotos: currentAllowPhotos,
-      allowGuestPasses: true,
-      coHosts: currentCoHosts.map(coHost => coHost._id),
-      pricing: {
-        isFree: priceInCents === 0,
-        amount: priceInCents,
-        currency: 'USD',
-        refundPolicy: refundPolicy
-      },
-      price: parseFloat(price || 0),
-      isPaidEvent: priceInCents > 0,
-      eventPrice: parseFloat(price || 0),
-      refundPolicy: refundPolicy
-    };
+  title: title.trim(),
+  description: (descriptionRef.current || '').trim(), // ✅ Use ref
+  category: categoryRef.current || 'General', // ✅ Use ref
+  time: dateTime.toISOString(),
+  location: location.trim(),
+  maxAttendees: parseInt(maxAttendees) || 0,
+  privacyLevel: currentPrivacyLevel,
+  allowPhotos: currentAllowPhotos,
+  allowGuestPasses: true,
+  coHosts: currentCoHosts.map(coHost => coHost._id),
+};
 
-    // PHASE 2: Debug logging for privacy level
-    console.log('💾 ===== FRONTEND UPDATE DATA DEBUG =====');
-    console.log('💾 Current privacyLevel state:', privacyLevel);
-    console.log('💾 Current privacyLevel ref:', currentPrivacyLevel);
-    console.log('💾 updateData.privacyLevel:', updateData.privacyLevel);
-    console.log('💾 privacyLevel type:', typeof updateData.privacyLevel);
-    console.log('💾 State vs Ref match:', privacyLevel === currentPrivacyLevel);
+    console.log('🔍 ===== UPDATE DATA DEBUG =====');
+    console.log('🔍 updateData.description:', JSON.stringify(updateData.description));
+    console.log('🔍 updateData.category:', JSON.stringify(updateData.category));
+    console.log('🔍 updateData.title:', JSON.stringify(updateData.title));
 
     // Add tags if provided
     if (tags && tags.trim()) {
@@ -581,8 +609,7 @@ const handleSaveEvent = async () => {
     }
 
     console.log('🔄 ===== SENDING REQUEST =====');
-    console.log('🔄 Request URL:', `/api/events/${eventId}`);
-    console.log('🔄 Privacy level being sent:', updateData.privacyLevel);
+    console.log('🔄 Full updateData:', JSON.stringify(updateData, null, 2));
 
     let response;
 
@@ -593,7 +620,7 @@ const handleSaveEvent = async () => {
       
       // Add all the regular fields
       Object.keys(updateData).forEach(key => {
-        if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates' || key === 'pricing') {
+        if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates') {
           const jsonValue = JSON.stringify(updateData[key]);
           console.log(`📸 FormData ${key}:`, jsonValue);
           formData.append(key, jsonValue);
@@ -603,12 +630,22 @@ const handleSaveEvent = async () => {
         }
       });
       
-      // Add the cover image
-      formData.append('coverImage', {
-        uri: cover,
-        type: 'image/jpeg',
-        name: 'cover.jpg',
-      });
+      // Handle cover image based on source
+      if (coverSource === 'template') {
+        formData.append('coverImage', {
+          uri: cover,
+          type: 'image/jpeg',
+          name: 'template-cover.jpg',
+        });
+      } else {
+        formData.append('coverImage', {
+          uri: cover,
+          type: 'image/jpeg',
+          name: 'cover.jpg',
+        });
+      }
+      
+      formData.append('coverImageSource', coverSource);
 
       response = await api.put(`/api/events/${eventId}`, formData, {
         headers: {
@@ -630,15 +667,23 @@ const handleSaveEvent = async () => {
     console.log('✅ Response status:', response.status);
     console.log('✅ Response data:', JSON.stringify(response.data, null, 2));
 
-    // PHASE 2: Check if privacy was actually updated
-    if (response.data.privacyUpdate) {
-      console.log('🔒 Privacy update verification:', response.data.privacyUpdate);
+    // Update local state with fresh data from backend
+    const updatedEvent = response.data.event;
+    if (updatedEvent) {
+      console.log('🔄 Updating local state with backend response');
+      setTitle(updatedEvent.title || '');
+      setDescription(updatedEvent.description || '');
+      setCategory(updatedEvent.category || 'General');
+      setAllowPhotos(updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true);
+      setMaxAttendees(String(updatedEvent.maxAttendees || 50));
+      setLocation(updatedEvent.location || '');
+      setPrivacyLevel(updatedEvent.privacyLevel || 'public');
       
-      if (response.data.privacyUpdate.privacyLevelChanged) {
-        console.log('✅ Privacy level was successfully changed!');
-      } else {
-        console.log('📋 Privacy level remained the same');
-      }
+      // Update refs too
+      allowPhotosRef.current = updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true;
+      privacyLevelRef.current = updatedEvent.privacyLevel || 'public';
+      
+      console.log('✅ Local state updated with fresh data from backend');
     }
 
     Alert.alert(
@@ -648,7 +693,6 @@ const handleSaveEvent = async () => {
         {
           text: 'OK',
           onPress: () => {
-            // PHASE 2: Navigate back and refresh
             navigation.goBack();
           }
         }
@@ -661,42 +705,21 @@ const handleSaveEvent = async () => {
     console.error('❌ Error message:', error.message);
     console.error('❌ Error response:', error.response?.data);
     
-    // PHASE 2: Enhanced error handling for privacy issues
-    if (error.response?.data?.message?.includes('privacy')) {
-      Alert.alert(
-        'Privacy Update Error',
-        error.response.data.message || 'Failed to update privacy settings. Please try again.'
-      );
-    } else {
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to update event. Please try again.'
-      );
-    }
+    Alert.alert(
+      'Error',
+      error.response?.data?.message || 'Failed to update event. Please try again.'
+    );
   } finally {
     setSaving(false);
   }
 };
-
-
-  const pickCoverImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [16, 9],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        setCover(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Image picker error:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
-
+  const pickCoverImage = () => {
+  setCoverModalVisible(true);
+};
+const handleCoverSelection = (coverImage, source) => {
+  setCover(coverImage.uri || coverImage);
+  setCoverSource(source);
+};
   const onDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
     if (selectedDate) {
@@ -829,30 +852,48 @@ const handleSaveEvent = async () => {
   )}
 </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Description</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Tell people what your event is about..."
-                placeholderTextColor="#C7C7CC"
-                multiline
-                numberOfLines={4}
-                maxLength={500}
-              />
-            </View>
+           <View style={styles.inputGroup}>
+  <Text style={styles.label}>Description</Text>
+  <TextInput
+  style={[styles.input, styles.textArea]}
+  value={description}
+  onChangeText={(text) => {
+    console.log('🔍 DESCRIPTION INPUT CHANGE:', JSON.stringify(text));
+    setDescription(text);
+    descriptionRef.current = text; // ✅ Update ref immediately
+  }}
+  placeholder="Tell people what your event is about..."
+  placeholderTextColor="#C7C7CC"
+  multiline
+  numberOfLines={4}
+  maxLength={500}
+/>
+  {__DEV__ && (
+    <Text style={{fontSize: 12, color: '#999', marginTop: 4}}>
+      DEBUG - Description length: {description?.length || 0} | Value: "{description}"
+    </Text>
+  )}
+</View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Category</Text>
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => setShowCategoryModal(true)}
-              >
-                <Text style={styles.selectButtonText}>{category}</Text>
-                <Ionicons name="chevron-down" size={20} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
+  <Text style={styles.label}>
+    Category *
+    {!canEditField('category') && (
+      <Text style={styles.restrictedLabel}> (Host Only)</Text>
+    )}
+  </Text>
+  <TouchableOpacity
+    style={[
+      styles.selectButton,
+      !canEditField('category') && styles.inputDisabled
+    ]}
+    onPress={canEditField('category') ? () => setCategoryModalVisible(true) : undefined}
+    disabled={!canEditField('category')}
+  >
+    <Text style={styles.selectButtonText}>{category || 'Select Category'}</Text>
+    <Ionicons name="chevron-down" size={20} color="#8E8E93" />
+  </TouchableOpacity>
+</View>
           </View>
 
           {/* Date & Time */}
@@ -1075,7 +1116,7 @@ const handleSaveEvent = async () => {
 
   {/* Ticket Price - Host Only */}
   
-  {/* Ticket Price - Host Only */}
+  {/* Ticket Price - Host Only
 {FEATURES.PAYMENTS && (
   <>
     {canEditField('pricing') ? (
@@ -1104,7 +1145,7 @@ const handleSaveEvent = async () => {
       </View>
     )}
   </>
-)}
+)} */}
 
   {/* Tags - Co-hosts CAN edit this */}
   <View style={styles.inputGroup}>
@@ -1233,6 +1274,13 @@ const handleSaveEvent = async () => {
               </View>
             </View>
           )}
+
+          <CoverPhotoSelectionModal
+  visible={coverModalVisible}
+  onClose={() => setCoverModalVisible(false)}
+  onSelectCover={handleCoverSelection}
+  eventTitle={title}
+/>
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -1327,45 +1375,44 @@ const handleSaveEvent = async () => {
 
       {/* Category Modal */}
       <Modal
-        visible={showCategoryModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowCategoryModal(false)}
+  visible={categoryModalVisible}
+  animationType="slide"
+  presentationStyle="pageSheet"
+  onRequestClose={() => setCategoryModalVisible(false)}
+>
+  <SafeAreaView style={styles.modalContainer}>
+    <View style={styles.modalHeader}>
+      <TouchableOpacity
+        onPress={() => setCategoryModalVisible(false)}
+        style={styles.modalCloseButton}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Category</Text>
-              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={CATEGORIES}
-              keyExtractor={(item) => item}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.categoryItem}
-                  onPress={() => {
-                    setCategory(item);
-                    setShowCategoryModal(false);
-                  }}
-                >
-                  <Text style={[
-                    styles.categoryText,
-                    category === item && styles.categoryTextSelected
-                  ]}>
-                    {item}
-                  </Text>
-                  {category === item && (
-                    <Ionicons name="checkmark" size={20} color="#3797EF" />
-                  )}
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        </View>
-      </Modal>
+        <Text style={styles.modalCloseText}>Cancel</Text>
+      </TouchableOpacity>
+      <Text style={styles.modalTitle}>Select Category</Text>
+      <View style={styles.modalSpacer} />
+    </View>
+
+    <FlatList
+      data={CATEGORIES}
+      keyExtractor={(item) => item}
+      renderItem={({ item }) => (
+        <TouchableOpacity
+          style={styles.categoryOption}
+         onPress={() => {
+  setCategory(item);
+  categoryRef.current = item; // ✅ Update ref immediately
+  setCategoryModalVisible(false);
+}}
+        >
+          <Text style={styles.categoryOptionText}>{item}</Text>
+          {category === item && (
+            <Ionicons name="checkmark" size={20} color="#3797EF" />
+          )}
+        </TouchableOpacity>
+      )}
+    />
+  </SafeAreaView>
+</Modal>
 
       {/* Privacy Level Modal */}
      <Modal
@@ -2278,4 +2325,45 @@ privacyButtonDisabled: {
   opacity: 0.7,
   backgroundColor: '#F0F0F0',
 },
+modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  modalCloseButton: {
+    padding: 8,
+  },
+  modalCloseText: {
+    fontSize: 16,
+    color: '#3797EF',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  modalSpacer: {
+    width: 60,
+  },
+  categoryOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  categoryOptionText: {
+    fontSize: 16,
+    color: '#000000',
+  },
 });
