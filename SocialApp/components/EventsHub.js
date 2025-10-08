@@ -130,7 +130,7 @@ const EventsHub = forwardRef(({
   useImperativeHandle(ref, () => ({
     refresh: async () => {
       console.log('🔄 EventsHub: Manual refresh triggered');
-      await handleRefresh();
+      await refreshUserEvents();
     }
   }));
 
@@ -164,7 +164,7 @@ const EventsHub = forwardRef(({
     if (externalOnRefresh) {
       await externalOnRefresh();
     } else {
-      await handleRefresh();
+      await refreshUserEvents();
     }
   };
 
@@ -218,7 +218,7 @@ const EventsHub = forwardRef(({
       <Ionicons name="cloud-offline-outline" size={64} color="#8E8E93" />
       <Text style={styles.errorTitle}>Connection Error</Text>
       <Text style={styles.errorMessage}>{error}</Text>
-      <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+      <TouchableOpacity style={styles.retryButton} onPress={refreshUserEvents}>
         <Text style={styles.retryButtonText}>Try Again</Text>
       </TouchableOpacity>
     </View>

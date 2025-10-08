@@ -265,8 +265,8 @@ const styles = StyleSheet.create({
 
   // Event Card
   eventCard: {
-    marginHorizontal: 16,
-    borderRadius: 12,
+    marginHorizontal: 0,
+    borderRadius: 0,
     backgroundColor: '#F8F9FA',
     borderWidth: 1,
     borderColor: '#E5E5EA',

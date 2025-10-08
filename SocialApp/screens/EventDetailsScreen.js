@@ -1425,55 +1425,33 @@ const handleInviteSuccess = (result) => {
             {/* Enhanced Description with Read More */}
             {renderDescription()}
 
-            {/* Enhanced Host Information with Co-hosts */}
+            {/* Enhanced Host Information - Equal Treatment */}
             <View style={styles.hostSection}>
-              <TouchableOpacity
-                style={styles.hostInfo}
-                onPress={() => navigation.navigate('ProfileScreen', { userId: event.host?._id })}
-                activeOpacity={0.8}
-              >
-                <Image
-                  source={{
-                    uri: event.host?.profilePicture
-                      ? `http://${API_BASE_URL}:3000${event.host.profilePicture}`
-                      : 'https://placehold.co/48x48.png?text=👤'
-                  }}
-                  style={styles.hostAvatar}
-                />
-                <View style={styles.hostDetails}>
-                  <Text style={styles.hostName}>Hosted by {event.host?.username}</Text>
-                  {event.coHosts && event.coHosts.length > 0 && (
-                    <View style={styles.coHostsContainer}>
-                      <Text style={styles.coHostLabel}>Co-hosts: </Text>
-                      <View style={styles.coHostAvatars}>
-                        {event.coHosts.slice(0, 3).map((coHost, index) => (
-                          <TouchableOpacity 
-                            key={coHost._id || index}
-                            onPress={() => navigation.navigate('ProfileScreen', { userId: coHost._id })}
-                            style={[styles.coHostAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
-                            activeOpacity={0.8}
-                          >
-                            <Image
-                              source={{
-                                uri: coHost.profilePicture
-                                  ? `http://${API_BASE_URL}:3000${coHost.profilePicture}`
-                                  : 'https://placehold.co/24x24.png?text=👤'
-                              }}
-                              style={styles.coHostAvatarImage}
-                            />
-                          </TouchableOpacity>
-                        ))}
-                        {event.coHosts.length > 3 && (
-                          <View style={[styles.coHostAvatar, styles.coHostOverflow, { marginLeft: -8 }]}>
-                            <Text style={styles.coHostOverflowText}>+{event.coHosts.length - 3}</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
+              <View style={styles.hostInfo}>
+                <Text style={styles.hostSectionTitle}>Hosted by</Text>
+                <FlatList
+                  data={[event.host, ...(event.coHosts || [])]}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item, index) => `${item._id || item}-${index}`}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.hostProfilePhoto}
+                      onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
+                      activeOpacity={0.8}
+                    >
+                      <Image
+                        source={{
+                          uri: item.profilePicture
+                            ? `http://${API_BASE_URL}:3000${item.profilePicture}`
+                            : 'https://placehold.co/48x48.png?text=👤'
+                        }}
+                        style={styles.hostProfileImage}
+                      />
+                    </TouchableOpacity>
                   )}
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
-              </TouchableOpacity>
+                />
+              </View>
             </View>
 
             {/* Enhanced Event Details Cards */}
@@ -1799,63 +1777,25 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   hostInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
     padding: 16,
     backgroundColor: '#F8F9FA',
     borderRadius: 16,
   },
-  hostAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    marginRight: 12,
-  },
-  hostDetails: {
-    flex: 1,
-  },
-  hostName: {
+  hostSectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 12,
   },
-  coHostsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
+  hostProfilePhoto: {
+    marginRight: 12,
   },
-  coHostLabel: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginRight: 8,
-  },
-  coHostAvatars: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  coHostAvatar: {
+  hostProfileImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24, // Circular
     borderWidth: 2,
     borderColor: '#FFFFFF',
-    borderRadius: 12,
-  },
-  coHostAvatarImage: {
-    width: 24,
-    height: 24,
-    borderRadius: 10,
-  },
-  coHostOverflow: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#E1E8ED',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  coHostOverflowText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#666666',
   },
 
   // Enhanced Detail Cards

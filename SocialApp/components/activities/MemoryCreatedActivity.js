@@ -204,8 +204,8 @@ const styles = StyleSheet.create({
 
   // Memory Card
   memoryCard: {
-    marginHorizontal: 16,
-    borderRadius: 12,
+    marginHorizontal: 0,
+    borderRadius: 0,
     backgroundColor: '#FFF9E6',
     borderWidth: 1,
     borderColor: '#FFE066',
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    marginHorizontal: 16,
+    marginHorizontal: 0,
     marginBottom: 16,
     backgroundColor: '#F8F9FA',
     borderRadius: 8,

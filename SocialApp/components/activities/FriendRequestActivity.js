@@ -284,9 +284,9 @@ const FriendRequestActivity = ({
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
+    marginHorizontal: 0,
     marginVertical: 8,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     shadowColor: '#000',
     shadowOffset: {

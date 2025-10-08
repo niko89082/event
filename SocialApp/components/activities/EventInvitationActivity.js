@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
 
   // Event Card
   eventCard: {
-    marginHorizontal: 16,
+    marginHorizontal: 0,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#F2F2F7',

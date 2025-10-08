@@ -13,7 +13,7 @@ import ActivityHeader from './ActivityHeader';
 import ActivityActionButton from './ActivityActionButton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const PHOTO_SIZE = SCREEN_WIDTH - 32;
+const PHOTO_SIZE = SCREEN_WIDTH;
 
 const EventPhotoActivity = ({ 
   activity, 
@@ -159,8 +159,8 @@ const styles = StyleSheet.create({
 
   // Photo
   photoContainer: {
-    marginHorizontal: 16,
-    borderRadius: 12,
+    marginHorizontal: 0,
+    borderRadius: 0,
     overflow: 'hidden',
     marginBottom: 12,
     position: 'relative',
@@ -225,8 +225,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginBottom: 12,
     backgroundColor: '#F8F9FA',
-    marginHorizontal: 16,
-    borderRadius: 8,
+    marginHorizontal: 0,
+    borderRadius: 0,
   },
   eventInfo: {
     flexDirection: 'row',

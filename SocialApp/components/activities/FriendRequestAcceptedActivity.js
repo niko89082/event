@@ -122,7 +122,7 @@ const styles = StyleSheet.create({
 
   // Celebration Card
   celebrationCard: {
-    marginHorizontal: 16,
+    marginHorizontal: 0,
     borderRadius: 12,
     backgroundColor: '#F0FDF4',
     borderWidth: 1,

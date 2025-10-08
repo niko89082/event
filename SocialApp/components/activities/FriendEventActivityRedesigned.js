@@ -1,4 +1,4 @@
-// components/activities/EventCreatedActivity.js - Event Created Activity Card
+// components/activities/FriendEventActivityRedesigned.js - Redesigned Friend Event Join Activity
 import React from 'react';
 import {
   View,
@@ -15,24 +15,22 @@ import api from '../../services/api';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const EVENT_IMAGE_WIDTH = SCREEN_WIDTH;
 const EVENT_IMAGE_HEIGHT = 200; // Match EventCard's normal height
-const EVENT_IMAGE_HEIGHT_COMPACT = 140; // Match EventCard's compact height
 
-const EventCreatedActivity = ({ 
+const FriendEventActivityRedesigned = ({ 
   activity, 
   currentUserId, 
   navigation, 
   onAction 
 }) => {
   const { data, metadata, timestamp } = activity;
-  const { event } = data;
-  const creator = activity.user;
+  const { event, friends, groupCount, isGrouped } = data;
 
   const handleViewEvent = () => {
     navigation.navigate('EventDetailsScreen', { eventId: event._id });
   };
 
-  const handleViewProfile = () => {
-    navigation.navigate('ProfileScreen', { userId: creator._id });
+  const handleViewProfile = (userId) => {
+    navigation.navigate('ProfileScreen', { userId });
   };
 
   const formatEventTime = (eventTime) => {
@@ -45,15 +43,27 @@ const EventCreatedActivity = ({
       return 'Today';
     } else if (diffDays === 1) {
       return 'Tomorrow';
-    } else if (diffDays <= 7) {
+    } else if (diffDays > 0) {
       return `In ${diffDays} days`;
     } else {
-      return date.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric',
-        year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-      });
+      return 'Past event';
     }
+  };
+
+  const getCategoryIcon = (category) => {
+    const icons = {
+      'Music': 'musical-notes-outline',
+      'Sports': 'football-outline',
+      'Food': 'restaurant-outline',
+      'Art': 'brush-outline',
+      'Technology': 'laptop-outline',
+      'Education': 'school-outline',
+      'Health': 'fitness-outline',
+      'Business': 'briefcase-outline',
+      'Social': 'people-outline',
+      'Other': 'ellipse-outline'
+    };
+    return icons[category] || 'calendar-outline';
   };
 
   const getPrivacyIcon = (privacyLevel) => {
@@ -69,39 +79,91 @@ const EventCreatedActivity = ({
     }
   };
 
-  const getCategoryIcon = (category) => {
-    const categoryIcons = {
-      'Party': 'musical-notes-outline',
-      'Business': 'briefcase-outline',
-      'Sports': 'football-outline',
-      'Arts': 'brush-outline',
-      'Food': 'restaurant-outline',
-      'Gaming': 'game-controller-outline',
-      'General': 'calendar-outline',
-    };
-    return categoryIcons[category] || 'calendar-outline';
+  const privacyIcon = getPrivacyIcon(event.privacyLevel);
+
+  const renderJoinMessage = () => {
+    if (isGrouped && groupCount > 1) {
+      return (
+        <Text style={styles.messageText}>
+          <Text style={styles.boldText}>{friends[0].username}</Text>
+          <Text> and </Text>
+          <Text style={styles.boldText}>{groupCount - 1} other{groupCount - 1 > 1 ? 's' : ''}</Text>
+          <Text> joined an event</Text>
+        </Text>
+      );
+    } else {
+      return (
+        <Text style={styles.messageText}>
+          <Text style={styles.boldText}>{friends[0].username}</Text>
+          <Text> joined an event</Text>
+        </Text>
+      );
+    }
   };
 
-  const privacyIcon = getPrivacyIcon(event.privacyLevel);
+  const renderFriendAvatars = () => {
+    const maxVisible = 3;
+    const visibleFriends = friends.slice(0, maxVisible);
+    const remainingCount = friends.length - maxVisible;
+
+    return (
+      <View style={styles.friendsAvatars}>
+        {visibleFriends.map((friend, index) => (
+          <TouchableOpacity
+            key={friend._id}
+            style={[
+              styles.friendAvatar,
+              { marginLeft: index > 0 ? -8 : 0 }
+            ]}
+            onPress={() => handleViewProfile(friend._id)}
+            activeOpacity={0.8}
+          >
+            <Image
+              source={{
+                uri: friend.profilePicture
+                  ? `${api.defaults.baseURL}${friend.profilePicture}`
+                  : 'https://placehold.co/32x32.png?text=👤'
+              }}
+              style={styles.friendAvatarImage}
+            />
+          </TouchableOpacity>
+        ))}
+        {remainingCount > 0 && (
+          <View style={[styles.friendAvatar, styles.friendAvatarOverflow]}>
+            <Text style={styles.friendAvatarOverflowText}>+{remainingCount}</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
       {/* Activity Header */}
       <ActivityHeader
-        user={creator}
+        user={friends[0]}
         timestamp={timestamp}
-        activityType="event_created"
-        onUserPress={handleViewProfile}
-        customIcon={{ name: 'add-circle-outline', color: '#34C759' }}
+        activityType="friend_event_join"
+        onUserPress={() => handleViewProfile(friends[0]._id)}
+        customIcon={{ name: 'people-outline', color: '#34C759' }}
       />
 
-      {/* Creation Message */}
+      {/* Join Message */}
       <View style={styles.messageContainer}>
-        <Text style={styles.messageText}>
-          <Text style={styles.boldText}>{creator.username}</Text>
-          <Text> created a new event</Text>
-        </Text>
+        {renderJoinMessage()}
       </View>
+
+      {/* Friend Avatars */}
+      {isGrouped && (
+        <View style={styles.friendsContainer}>
+          {renderFriendAvatars()}
+          <View style={styles.friendsInfo}>
+            <Text style={styles.friendsLabel}>
+              {groupCount} {groupCount === 1 ? 'friend' : 'friends'} joined
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* Event Card */}
       <TouchableOpacity 
@@ -140,6 +202,12 @@ const EventCreatedActivity = ({
                 {event.privacyLevel}
               </Text>
             </View>
+
+            {/* Join Status Badge */}
+            <View style={styles.joinStatusBadge}>
+              <Ionicons name="checkmark-circle" size={12} color="#FFFFFF" />
+              <Text style={styles.joinStatusText}>Joined</Text>
+            </View>
           </View>
         </View>
 
@@ -174,11 +242,11 @@ const EventCreatedActivity = ({
               </View>
             )}
 
-            {/* Attendees */}
+            {/* Attendee Count */}
             <View style={styles.metaRow}>
               <Ionicons name="people-outline" size={16} color="#8E8E93" />
               <Text style={styles.metaText}>
-                {event.attendeeCount || 0} going
+                {event.attendeeCount || 0} attending
               </Text>
             </View>
           </View>
@@ -210,19 +278,61 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   messageText: {
-    fontSize: 15,
+    fontSize: 16,
     color: '#1C1C1E',
-    lineHeight: 20,
+    lineHeight: 22,
   },
   boldText: {
     fontWeight: '600',
+  },
+
+  // Friends
+  friendsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  friendsAvatars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  friendAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  friendAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 14,
+  },
+  friendAvatarOverflow: {
+    backgroundColor: '#E1E8ED',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  friendAvatarOverflowText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  friendsInfo: {
+    flex: 1,
+  },
+  friendsLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '500',
   },
 
   // Event Card
   eventCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 0,
-    marginHorizontal: 0,
     marginBottom: 16,
     overflow: 'hidden',
     borderWidth: 1,
@@ -252,6 +362,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 12,
     right: 12,
+    flexDirection: 'row',
+    gap: 8,
   },
   privacyBadge: {
     flexDirection: 'row',
@@ -265,7 +377,20 @@ const styles = StyleSheet.create({
   privacyText: {
     fontSize: 12,
     fontWeight: '600',
-    textTransform: 'capitalize',
+  },
+  joinStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(52, 199, 89, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  joinStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 
   // Event Info
@@ -276,14 +401,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#1C1C1E',
+    marginBottom: 8,
     lineHeight: 24,
-    marginBottom: 6,
   },
   eventDescription: {
     fontSize: 14,
     color: '#8E8E93',
-    lineHeight: 18,
     marginBottom: 12,
+    lineHeight: 20,
   },
   eventMeta: {
     gap: 8,
@@ -300,4 +425,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default EventCreatedActivity;
+export default FriendEventActivityRedesigned;

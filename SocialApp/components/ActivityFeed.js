@@ -26,6 +26,9 @@ import FriendRequestAcceptedActivity from './activities/FriendRequestAcceptedAct
 import EventReminderActivity from './activities/EventReminderActivity';
 import MemoryCreatedActivity from './activities/MemoryCreatedActivity';
 import EventCreatedActivity from './activities/EventCreatedActivity';
+import EventCreatedActivityAlternative from './activities/EventCreatedActivityAlternative';
+import FriendEventActivityRedesigned from './activities/FriendEventActivityRedesigned';
+import FriendEventActivityAlternative from './activities/FriendEventActivityAlternative';
 import MemoryPhotoUploadActivity from './activities/MemoryPhotoUploadActivity';
 import PhotoCommentActivity from './activities/PhotoCommentActivity';              // ✅ NEW
 import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
@@ -39,6 +42,10 @@ const ActivityFeed = forwardRef(({
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
 }, ref) => {
+  
+  // Testing toggle for different layouts
+  const USE_ALTERNATIVE_LAYOUT = true; // Set to true to test alternative layout
+  const USE_REDESIGNED_JOIN = true; // Set to true to use redesigned join activity
   const { currentUser } = useContext(AuthContext);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -239,7 +246,11 @@ const ActivityFeed = forwardRef(({
     case 'event_created':
       return (
         <View style={styles.activityWrapper}>
-          <EventCreatedActivity {...commonProps} />
+          {USE_ALTERNATIVE_LAYOUT ? (
+            <EventCreatedActivityAlternative {...commonProps} />
+          ) : (
+            <EventCreatedActivity {...commonProps} />
+          )}
         </View>
       );
 
@@ -253,7 +264,15 @@ const ActivityFeed = forwardRef(({
     case 'friend_event_join':
       return (
         <View style={styles.activityWrapper}>
-          <FriendEventActivity {...commonProps} />
+          {USE_ALTERNATIVE_LAYOUT ? (
+            <FriendEventActivityAlternative {...commonProps} />
+          ) : (
+            USE_REDESIGNED_JOIN ? (
+              <FriendEventActivityRedesigned {...commonProps} />
+            ) : (
+              <FriendEventActivity {...commonProps} />
+            )
+          )}
         </View>
       );
 
@@ -421,27 +440,22 @@ const styles = StyleSheet.create({
   contentContainer: {
     paddingTop: 190,
     paddingBottom: 100,
+    backgroundColor: '#F8F9FA', // Add consistent background
   },
   emptyContentContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingTop: 190, 
+    paddingTop: 190,
+    backgroundColor: '#F8F9FA', // Add consistent background
   },
   
   // Activity wrappers
   activityWrapper: {
-    marginBottom: 12,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    marginHorizontal: 16,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    marginBottom: 8, // Add small gap between activities
+    backgroundColor: '#FFFFFF', // Bring back white background
+    borderRadius: 0,
+    marginHorizontal: 0,
+    // Remove shadows to eliminate divider lines
   },
   unknownActivityWrapper: {
     padding: 16,
