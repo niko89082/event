@@ -1403,6 +1403,8 @@ const handleCoverSelection = (coverImage, source) => {
   categoryRef.current = item; // ✅ Update ref immediately
   setCategoryModalVisible(false);
 }}
+
+
         >
           <Text style={styles.categoryOptionText}>{item}</Text>
           {category === item && (
