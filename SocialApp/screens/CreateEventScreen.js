@@ -114,6 +114,9 @@ export default function CreateEventScreen({ navigation, route }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dateTime, setDateTime] = useState(new Date());
+  const [endDateTime, setEndDateTime] = useState(null);  // Optional
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [locQuery, setLocQuery] = useState('');
@@ -126,7 +129,6 @@ export default function CreateEventScreen({ navigation, route }) {
   // Advanced fields (Step 2)
   const [maxAttendees, setMaxAttendees] = useState('50');
   const [price, setPrice] = useState('0');
-  const [tags, setTags] = useState('');
   
   // PHASE 2: Simplified privacy (no redundant toggles)
   const [privacyLevel, setPrivacyLevel] = useState('public');
@@ -374,6 +376,12 @@ export default function CreateEventScreen({ navigation, route }) {
   // Basic validation for all required fields
   const basicValidation = title.trim() && location.trim() && dateTime > new Date();
   
+  // End time validation
+  if (endDateTime && endDateTime <= dateTime) {
+    Alert.alert('Error', 'End time must be after start time');
+    return false;
+  }
+  
   // Form requirement validation
   if (requiresCheckInForm && !selectedForm) {
     return false;
@@ -399,6 +407,9 @@ export default function CreateEventScreen({ navigation, route }) {
     formData.append('title', title.trim());
     formData.append('description', description.trim());
     formData.append('time', dateTime.toISOString());
+    if (endDateTime) {
+      formData.append('endTime', endDateTime.toISOString());
+    }
     formData.append('location', location.trim());
     formData.append('category', category);
     formData.append('maxAttendees', parseInt(maxAttendees) || 0);
@@ -718,6 +729,59 @@ const pickCoverImage = () => {
               </View>
             </View>
 
+            {/* End Time Picker - only show if start time is set */}
+            {dateTime && (
+              <View style={styles.inputGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>End Time (Optional)</Text>
+                  {endDateTime && (
+                    <TouchableOpacity 
+                      onPress={() => setEndDateTime(null)}
+                      style={styles.clearButton}
+                    >
+                      <Text style={styles.clearButtonText}>Clear</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                
+                {endDateTime ? (
+                  <View style={styles.dateTimeRow}>
+                    <TouchableOpacity
+                      style={[styles.dateTimeButton, { flex: 1, marginRight: 8 }]}
+                      onPress={() => setShowEndDatePicker(true)}
+                    >
+                      <Ionicons name="calendar-outline" size={20} color="#3797EF" />
+                      <Text style={styles.dateTimeText}>
+                        {endDateTime.toLocaleDateString()}
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[styles.dateTimeButton, { flex: 1, marginLeft: 8 }]}
+                      onPress={() => setShowEndTimePicker(true)}
+                    >
+                      <Ionicons name="time-outline" size={20} color="#3797EF" />
+                      <Text style={styles.dateTimeText}>
+                        {endDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.addEndTimeButton}
+                    onPress={() => {
+                      // Default to 2 hours after start
+                      const defaultEnd = new Date(dateTime.getTime() + 2 * 60 * 60 * 1000);
+                      setEndDateTime(defaultEnd);
+                    }}
+                  >
+                    <Ionicons name="add-circle-outline" size={20} color="#3797EF" />
+                    <Text style={styles.addEndTimeText}>Add End Time</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Location *</Text>
               <TextInput
@@ -926,6 +990,43 @@ const pickCoverImage = () => {
           mode="time"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={onTimeChange}
+        />
+      )}
+
+      {/* Date/Time Pickers for End Time */}
+      {showEndDatePicker && endDateTime && (
+        <DateTimePicker
+          value={endDateTime}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(event, selectedDate) => {
+            setShowEndDatePicker(false);
+            if (selectedDate) {
+              const newEndDateTime = new Date(endDateTime);
+              newEndDateTime.setFullYear(selectedDate.getFullYear());
+              newEndDateTime.setMonth(selectedDate.getMonth());
+              newEndDateTime.setDate(selectedDate.getDate());
+              setEndDateTime(newEndDateTime);
+            }
+          }}
+          minimumDate={dateTime}
+        />
+      )}
+
+      {showEndTimePicker && endDateTime && (
+        <DateTimePicker
+          value={endDateTime}
+          mode="time"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(event, selectedTime) => {
+            setShowEndTimePicker(false);
+            if (selectedTime) {
+              const newEndDateTime = new Date(endDateTime);
+              newEndDateTime.setHours(selectedTime.getHours());
+              newEndDateTime.setMinutes(selectedTime.getMinutes());
+              setEndDateTime(newEndDateTime);
+            }
+          }}
         />
       )}
 
@@ -2007,5 +2108,37 @@ privacyOptionLabel: {
 privacyOptionDesc: {
   fontSize: 14,
   color: '#8E8E93',
+},
+labelRow: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  marginBottom: 8,
+},
+clearButton: {
+  paddingHorizontal: 12,
+  paddingVertical: 4,
+},
+clearButtonText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#FF3B30',
+},
+addEndTimeButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: '#F8F8F8',
+  borderRadius: 12,
+  paddingVertical: 14,
+  borderWidth: 1,
+  borderColor: '#E5E5EA',
+  borderStyle: 'dashed',
+},
+addEndTimeText: {
+  marginLeft: 8,
+  fontSize: 16,
+  fontWeight: '600',
+  color: '#3797EF',
 },
 });

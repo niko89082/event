@@ -298,14 +298,16 @@ export default function EventsFeed({
 
   // Render event item
   const renderEvent = useCallback(({ item, index }) => (
-    <EventCard
-      event={item}
-      currentUserId={currentUserId}
-      navigation={navigation}
-      onAttend={handleAttend}
-      showRecommendationReason={feedType === 'discover'}
-      compact={false}
-    />
+    <View style={styles.eventWrapper}>
+      <EventCard
+        event={item}
+        currentUserId={currentUserId}
+        navigation={navigation}
+        onAttend={handleAttend}
+        showRecommendationReason={feedType === 'discover'}
+        compact={false}
+      />
+    </View>
   ), [currentUserId, navigation, handleAttend, feedType]);
 
   // Render loading footer
@@ -460,6 +462,11 @@ const styles = StyleSheet.create({
   listContent: {
     paddingTop: 190,     // ✅ CHANGED: From 200 to 190 to match other event feeds
     paddingBottom: 100,
+  },
+  // ✅ ADDED: Consistent event wrapper styling
+  eventWrapper: {
+    marginBottom: 16,
+    paddingHorizontal: 16,
   },
   // ✅ STANDARDIZED: Also update empty state for consistency
   emptyListContent: {

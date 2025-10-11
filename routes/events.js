@@ -1482,7 +1482,7 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
 
     const {
       title, description, category = 'General',
-      time, location, maxAttendees = 10,
+      time, endTime, location, maxAttendees = 10,
       privacyLevel, // ✅ Handle privacy level directly
 
       // Enhanced pricing fields
@@ -1501,6 +1501,13 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       requiresFormForCheckIn = false,
 
     } = req.body;
+
+    // Validate endTime if provided
+    if (endTime && new Date(endTime) <= new Date(time)) {
+      return res.status(400).json({ 
+        message: 'End time must be after start time' 
+      });
+    }
 
     // ✅ MANUAL PRIVACY VALIDATION (same as edit route)
     const PRIVACY_PRESETS = {
@@ -1616,6 +1623,7 @@ router.post('/create', protect, uploadCover.single('coverImage'), async (req, re
       title: title.trim(),
       description: description?.trim() || '',
       time: new Date(time),
+      endTime: endTime ? new Date(endTime) : null,
       location: location.trim(),
       category,
       host: req.user._id,
@@ -5784,6 +5792,7 @@ router.put('/:eventId', protect, async (req, res) => {
       description,
       category,
       time,
+      endTime,
       location,
       maxAttendees,
       privacyLevel,
@@ -5846,6 +5855,23 @@ router.put('/:eventId', protect, async (req, res) => {
     
     if (time !== undefined && time !== null && time !== '') {
       updateData.time = new Date(time);
+    }
+    
+    // Validate endTime if provided
+    if (endTime !== undefined) {
+      if (endTime === null || endTime === '') {
+        updateData.endTime = null;
+      } else {
+        const endTimeDate = new Date(endTime);
+        const startTimeDate = updateData.time || existingEvent.time;
+        
+        if (endTimeDate <= startTimeDate) {
+          return res.status(400).json({ 
+            message: 'End time must be after start time' 
+          });
+        }
+        updateData.endTime = endTimeDate;
+      }
     }
     
     if (location !== undefined) {
@@ -7853,9 +7879,12 @@ router.get('/discover', protect, async (req, res) => {
       ]
     };
     
-    // Add upcoming filter
+    // Add upcoming filter - show events whose START date is today or future
     if (upcoming === 'true') {
-      query.time = { $gte: new Date() };
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      query.time = { $gte: startOfDay };
     }
     
     // Add category filter

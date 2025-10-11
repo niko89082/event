@@ -39,6 +39,23 @@ import { FEATURES } from '../config/features';
 
 const PHOTO_FEATURES_ENABLED = false;
 
+// Overlay configuration - toggle between options
+const OVERLAY_CONFIG = {
+  // Option 1: Dynamic content sliding over static image (default)
+  // Content overlaps the bottom 40% of the cover image, creating a card-style layout
+  // As user scrolls, content slides down revealing more of the image behind it
+  DYNAMIC_CONTENT: false,
+  
+  // Option 2: Show entire image with no overlay
+  // Content appears below the full cover image with no overlap
+  // Shows the complete uploaded photo without any cropping
+  NO_OVERLAY: false,
+};
+
+// TO TEST DIFFERENT OPTIONS:
+// For Option 1 (Dynamic content sliding over image): Set DYNAMIC_CONTENT: true, NO_OVERLAY: false
+// For Option 2 (Show entire image): Set DYNAMIC_CONTENT: false, NO_OVERLAY: true
+
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function EventDetailsScreen() {
@@ -98,6 +115,10 @@ export default function EventDetailsScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState([]);
   const [moderatingPhotos, setModeratingPhotos] = useState(false);
+
+  // Enhanced image handling state
+  const [coverImageDimensions, setCoverImageDimensions] = useState(null);
+  const [coverImageLoading, setCoverImageLoading] = useState(false);
 
   // Get current state from store or local fallback
   const attendeeCount = event?.attendeeCount || event?.attendees?.length || 0;
@@ -265,6 +286,64 @@ export default function EventDetailsScreen() {
     return unsubscribe;
   }, [eventId]);
 
+  // Enhanced image handling - calculate optimal dimensions
+  useEffect(() => {
+    if (event?.coverImage && !coverImageDimensions) {
+      setCoverImageLoading(true);
+      const imageUrl = `http://${API_BASE_URL}:3000${event.coverImage}`;
+      
+      console.log('🖼️ DEBUG: Starting image dimension calculation for:', imageUrl);
+      
+      Image.getSize(
+        imageUrl,
+        (width, height) => {
+          const aspectRatio = width / height;
+          const screenWidth = SCREEN_WIDTH;
+          
+          console.log('🖼️ DEBUG: Original image dimensions:', { width, height, aspectRatio });
+          console.log('🖼️ DEBUG: Screen width:', screenWidth);
+          
+          // Calculate height based on aspect ratio
+          let calculatedHeight = screenWidth / aspectRatio;
+          
+          console.log('🖼️ DEBUG: Initial calculated height:', calculatedHeight);
+          
+          // Apply constraints - more flexible for different image types
+          const MIN_HEIGHT = 200;  // Reduced minimum for better small image display
+          const MAX_HEIGHT = 500;  // Reduced maximum to prevent excessive overlap
+          
+          if (calculatedHeight < MIN_HEIGHT) {
+            console.log('🖼️ DEBUG: Height too small, applying MIN_HEIGHT:', MIN_HEIGHT);
+            calculatedHeight = MIN_HEIGHT;
+          } else if (calculatedHeight > MAX_HEIGHT) {
+            console.log('🖼️ DEBUG: Height too large, applying MAX_HEIGHT:', MAX_HEIGHT);
+            calculatedHeight = MAX_HEIGHT;
+          }
+          
+          console.log('🖼️ DEBUG: Final calculated height:', calculatedHeight);
+          
+          setCoverImageDimensions({
+            width: screenWidth,
+            height: calculatedHeight,
+            aspectRatio: aspectRatio
+          });
+          setCoverImageLoading(false);
+        },
+        (error) => {
+          console.warn('🖼️ DEBUG: Failed to get image dimensions:', error);
+          setCoverImageLoading(false);
+          // Fallback to default height
+          console.log('🖼️ DEBUG: Using fallback dimensions');
+          setCoverImageDimensions({
+            width: SCREEN_WIDTH,
+            height: 300,
+            aspectRatio: 1.5
+          });
+        }
+      );
+    }
+  }, [event?.coverImage, coverImageDimensions]);
+
   // Enhanced animations
   useEffect(() => {
     Animated.parallel([
@@ -416,9 +495,14 @@ export default function EventDetailsScreen() {
   const getEventStatus = () => {
     const now = new Date();
     const eventTime = new Date(event?.time);
-    const eventEndTime = new Date(eventTime.getTime() + (2 * 60 * 60 * 1000)); // Assume 2 hours duration
     
     if (now < eventTime) return 'upcoming';
+    
+    // Use endTime if available
+    const eventEndTime = event?.endTime 
+      ? new Date(event.endTime)
+      : new Date(eventTime.getTime() + (2 * 60 * 60 * 1000));
+    
     if (now >= eventTime && now < eventEndTime) return 'live';
     return 'ended';
   };
@@ -1362,13 +1446,22 @@ const handleInviteSuccess = (result) => {
           }
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Enhanced Cover Image Header - No overlays */}
-          <View style={styles.coverContainer}>
+          {/* Enhanced Cover Image Header - Dynamic height */}
+          <View style={[
+            styles.coverContainer,
+            coverImageDimensions && { height: coverImageDimensions.height }
+          ]}>
             {event.coverImage ? (
               <Image
                 source={{ uri: `http://${API_BASE_URL}:3000${event.coverImage}` }}
                 style={styles.coverImage}
                 resizeMode="cover"
+                onLoad={() => {
+                  console.log('🖼️ DEBUG: Cover image loaded successfully');
+                }}
+                onError={(error) => {
+                  console.log('🖼️ DEBUG: Cover image failed to load:', error);
+                }}
               />
             ) : (
               <LinearGradient
@@ -1376,17 +1469,65 @@ const handleInviteSuccess = (result) => {
                 style={styles.coverImage}
               />
             )}
+            
+            {/* Loading overlay */}
+            {coverImageLoading && (
+              <View style={styles.imageLoadingOverlay}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              </View>
+            )}
+            
+            {/* Debug overlay showing dimensions */}
+            {__DEV__ && coverImageDimensions && (
+              <View style={styles.debugOverlay}>
+                <Text style={styles.debugText}>
+                  H: {Math.round(coverImageDimensions.height)}px
+                </Text>
+                <Text style={styles.debugText}>
+                  AR: {coverImageDimensions.aspectRatio.toFixed(2)}
+                </Text>
+                <Text style={styles.debugText}>
+                  Overlay: {OVERLAY_CONFIG.NO_OVERLAY 
+                    ? `Full image (${Math.round(coverImageDimensions.height)}px)` 
+                    : `-${Math.round(coverImageDimensions.height * 0.4)}px`
+                  }
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Enhanced Content with integrated badges */}
           <Animated.View 
             style={[
               styles.contentContainer,
+              // Option 1: Dynamic content sliding over static image
+              OVERLAY_CONFIG.DYNAMIC_CONTENT && !OVERLAY_CONFIG.NO_OVERLAY && {
+                marginTop: coverImageDimensions 
+                  ? -(coverImageDimensions.height * 0.4) // Reduced overlay percentage for better visibility
+                  : -120 // Reduced fallback for better default experience
+              },
+              // Option 2: Show entire image with no overlay
+              OVERLAY_CONFIG.NO_OVERLAY && {
+                marginTop: coverImageDimensions 
+                  ? coverImageDimensions.height // Position content below the full image
+                  : 300 // Fallback height
+              },
               { transform: [{ translateY: slideAnim }] }
             ]}
           >
             {/* Integrated Badges Row */}
             <View style={styles.integratedBadgeRow}>
+              {/* Debug info for content positioning */}
+              {__DEV__ && coverImageDimensions && (
+                <View style={styles.contentDebugInfo}>
+                  <Text style={styles.contentDebugText}>
+                    Content overlay: {OVERLAY_CONFIG.NO_OVERLAY 
+                      ? `Full image (${Math.round(coverImageDimensions.height)}px)` 
+                      : `-${Math.round(coverImageDimensions.height * 0.4)}px`
+                    }
+                  </Text>
+                </View>
+              )}
               <View style={styles.leftBadges}>
                 {renderPrivacyBadge()}
                 {renderStatusBadge()}
@@ -1468,7 +1609,16 @@ const handleInviteSuccess = (result) => {
                   )}
                 </View>
                 <Text style={styles.detailCardContent}>{formattedDate}</Text>
-                <Text style={styles.detailCardSubContent}>{formattedTime}</Text>
+                <Text style={styles.detailCardSubContent}>
+                  {formattedTime}
+                  {event.endTime && (
+                    <> - {new Date(event.endTime).toLocaleTimeString([], { 
+                      hour: 'numeric', 
+                      minute: '2-digit', 
+                      hour12: true 
+                    })}</>
+                  )}
+                </Text>
               </View>
 
               {/* Location Card */}
@@ -1626,14 +1776,58 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Enhanced Cover Image - No overlays
+  // Enhanced Cover Image - Responsive sizing
   coverContainer: {
-    height: 300,
+    height: 300, // Default height, will be overridden dynamically
     position: 'relative',
+    width: '100%',
+    overflow: 'hidden', // Ensure proper clipping
   },
   coverImage: {
     width: '100%',
     height: '100%',
+    backgroundColor: '#F0F0F0', // Light background while loading
+    resizeMode: 'cover', // Ensure proper scaling
+  },
+  imageLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  debugOverlay: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    padding: 8,
+    borderRadius: 6,
+    zIndex: 2,
+  },
+  debugText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
+  contentDebugInfo: {
+    position: 'absolute',
+    top: -20,
+    left: 0,
+    backgroundColor: 'rgba(255, 0, 0, 0.8)',
+    padding: 4,
+    borderRadius: 4,
+    zIndex: 10,
+  },
+  contentDebugText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
   },
   leftBadges: {
     flexDirection: 'row',
@@ -1694,8 +1888,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
-    marginTop: -32, // Pull up to overlap cover image
-    paddingTop: 24, // Add top padding for badges
+    // marginTop removed - will be set inline with fixed position
+    paddingTop: 24,
     paddingHorizontal: 20,
     paddingBottom: 20,
     shadowColor: '#000',
@@ -1703,6 +1897,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 8,
+    minHeight: SCREEN_HEIGHT * 0.6, // Ensures content takes enough space
   },
   integratedBadgeRow: {
     flexDirection: 'row',

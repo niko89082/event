@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet,
-  Dimensions, Alert
+  Dimensions, Alert, ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -48,6 +48,12 @@ export default function EventCard({
   );
   const [processing, setProcessing] = useState(false);
 
+  // Enhanced image handling state
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  const [imageDimensions, setImageDimensions] = useState(null);
+  const [imageAspectRatio, setImageAspectRatio] = useState(null);
+
   // Get current RSVP state from store (always up to date)
   const isAttending = event.isAttending || false;
   const attendeeCount = event.attendeeCount || 0;
@@ -57,6 +63,54 @@ export default function EventCard({
   const past = new Date(event.time) <= new Date();
   const isHost = (event.host?._id || event.host) === currentUserId;
   const canAttend = !past && !isHost && !isAttending && !joinRequestSent;
+
+  // Enhanced image handling - calculate optimal dimensions
+  useEffect(() => {
+    if (cover && !imageDimensions) {
+      setImageLoading(true);
+      setImageError(false);
+      
+      Image.getSize(
+        cover,
+        (width, height) => {
+          const aspectRatio = width / height;
+          setImageAspectRatio(aspectRatio);
+          
+          // Calculate optimal dimensions for the container
+          const containerWidth = SCREEN_WIDTH - 32; // Account for margins
+          const maxHeight = compact ? 140 : 200;
+          const minHeight = compact ? 100 : 150;
+          
+          let optimalHeight = containerWidth / aspectRatio;
+          
+          // Constrain height within reasonable bounds
+          if (optimalHeight > maxHeight) {
+            optimalHeight = maxHeight;
+          } else if (optimalHeight < minHeight) {
+            optimalHeight = minHeight;
+          }
+          
+          setImageDimensions({
+            width: containerWidth,
+            height: optimalHeight,
+            aspectRatio: aspectRatio
+          });
+          setImageLoading(false);
+        },
+        (error) => {
+          console.warn('Failed to get image dimensions:', error);
+          setImageError(true);
+          setImageLoading(false);
+          // Use default dimensions
+          setImageDimensions({
+            width: SCREEN_WIDTH - 32,
+            height: compact ? 140 : 200,
+            aspectRatio: 1.5 // Default aspect ratio
+          });
+        }
+      );
+    }
+  }, [cover, compact, imageDimensions]);
 const handleInviteSuccess = (inviteData) => {
   // Optional: Update local state or show success message
   console.log('✅ Invites sent successfully:', inviteData);
@@ -259,13 +313,48 @@ const handleInviteSuccess = (inviteData) => {
       onPress={handleCardPress} 
       activeOpacity={0.95}
     >
-      {/* Cover Image with Gradient Overlay */}
-      <View style={[styles.imageContainer, compact && styles.compactImageContainer]}>
-        {cover ? (
-          <Image source={{ uri: cover }} style={styles.coverImage} />
+      {/* Enhanced Cover Image with Gradient Overlay */}
+      <View style={[
+        styles.imageContainer, 
+        compact && styles.compactImageContainer,
+        imageDimensions && { height: imageDimensions.height }
+      ]}>
+        {cover && !imageError ? (
+          <>
+            <Image 
+              source={{ uri: cover }} 
+              style={[
+                styles.coverImage,
+                imageDimensions && {
+                  width: imageDimensions.width,
+                  height: imageDimensions.height
+                }
+              ]}
+              resizeMode="cover"
+              onLoad={() => setImageLoading(false)}
+              onError={() => {
+                setImageError(true);
+                setImageLoading(false);
+              }}
+            />
+            
+            {/* Loading overlay */}
+            {imageLoading && (
+              <View style={styles.imageLoadingOverlay}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              </View>
+            )}
+          </>
         ) : (
           <View style={styles.placeholderImage}>
-            <Ionicons name="calendar-outline" size={40} color="#C7C7CC" />
+            <Ionicons 
+              name={imageError ? "image-outline" : "calendar-outline"} 
+              size={40} 
+              color="#C7C7CC" 
+            />
+            {imageError && (
+              <Text style={styles.imageErrorText}>Image failed to load</Text>
+            )}
           </View>
         )}
         
@@ -495,7 +584,6 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    marginHorizontal: 16,
     marginBottom: 20,
     borderWidth: 0.5,
     borderColor: 'rgba(0, 0, 0, 0.06)',
@@ -531,6 +619,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#F6F6F6',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  imageLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageErrorText: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 8,
+    textAlign: 'center',
   },
   gradient: {
     position: 'absolute',

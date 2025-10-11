@@ -61,6 +61,9 @@ const [coverSource, setCoverSource] = useState('upload');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dateTime, setDateTime] = useState(new Date());
+  const [endDateTime, setEndDateTime] = useState(null);  // Optional
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [locQuery, setLocQuery] = useState('');
@@ -76,7 +79,6 @@ const [coverSource, setCoverSource] = useState('upload');
   // Advanced fields
   const [maxAttendees, setMaxAttendees] = useState('50');
   const [price, setPrice] = useState('0');
-  const [tags, setTags] = useState('');
   const [privacyLevel, setPrivacyLevel] = useState('public');
   const [permissions, setPermissions] = useState({
     appearInFeed: true,
@@ -288,10 +290,10 @@ categoryRef.current = categoryValue; // ✅ Set ref immediately
 console.log('  - Setting category state to:', JSON.stringify(categoryValue));
 
     setDateTime(new Date(eventData.time));
+    setEndDateTime(eventData.endTime ? new Date(eventData.endTime) : null);
     setLocation(eventData.location || '');
     setLocQuery(eventData.location || '');
     setMaxAttendees(String(eventData.maxAttendees || 50));
-    setTags(eventData.tags?.join(', ') || '');
     
     // PHASE 2: Enhanced privacy level setting with validation
     const incomingPrivacyLevel = eventData.privacyLevel || 'public';
@@ -570,6 +572,12 @@ const handleSaveEvent = async () => {
     return;
   }
 
+  // End time validation
+  if (endDateTime && endDateTime <= dateTime) {
+    Alert.alert('Error', 'End time must be after start time');
+    return;
+  }
+
   // Add validation for description
   if (description === undefined || description === null) {
     console.log('⚠️ WARNING: Description is undefined/null, setting to empty string');
@@ -584,6 +592,7 @@ const handleSaveEvent = async () => {
   description: (descriptionRef.current || '').trim(), // ✅ Use ref
   category: categoryRef.current || 'General', // ✅ Use ref
   time: dateTime.toISOString(),
+  endTime: endDateTime ? endDateTime.toISOString() : null,
   location: location.trim(),
   maxAttendees: parseInt(maxAttendees) || 0,
   privacyLevel: currentPrivacyLevel,
@@ -597,11 +606,6 @@ const handleSaveEvent = async () => {
     console.log('🔍 updateData.category:', JSON.stringify(updateData.category));
     console.log('🔍 updateData.title:', JSON.stringify(updateData.title));
 
-    // Add tags if provided
-    if (tags && tags.trim()) {
-      const tagArray = tags.split(',').map(tag => tag.trim()).filter(Boolean);
-      updateData.tags = tagArray;
-    }
 
     // Add coordinates if available
     if (coords) {
@@ -620,7 +624,7 @@ const handleSaveEvent = async () => {
       
       // Add all the regular fields
       Object.keys(updateData).forEach(key => {
-        if (key === 'coHosts' || key === 'permissions' || key === 'tags' || key === 'coordinates') {
+        if (key === 'coHosts' || key === 'permissions' || key === 'coordinates') {
           const jsonValue = JSON.stringify(updateData[key]);
           console.log(`📸 FormData ${key}:`, jsonValue);
           formData.append(key, jsonValue);
@@ -678,6 +682,24 @@ const handleSaveEvent = async () => {
       setMaxAttendees(String(updatedEvent.maxAttendees || 50));
       setLocation(updatedEvent.location || '');
       setPrivacyLevel(updatedEvent.privacyLevel || 'public');
+      
+      // Update date/time fields
+      if (updatedEvent.time) {
+        setDateTime(new Date(updatedEvent.time));
+      }
+      if (updatedEvent.endTime) {
+        setEndDateTime(new Date(updatedEvent.endTime));
+      } else {
+        setEndDateTime(null);
+      }
+      
+      // Update cover image if it was changed
+      if (updatedEvent.coverImage) {
+        setOriginalCoverImage(updatedEvent.coverImage);
+        // Clear the cover state since we're using the original image
+        setCover(null);
+        setCoverSource('original');
+      }
       
       // Update refs too
       allowPhotosRef.current = updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true;
@@ -940,7 +962,97 @@ const handleCoverSelection = (coverImage, source) => {
                 onChange={onTimeChange}
               />
             )}
+
+            {/* Date/Time Pickers for End Time */}
+            {showEndDatePicker && endDateTime && (
+              <DateTimePicker
+                value={endDateTime}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedDate) => {
+                  setShowEndDatePicker(false);
+                  if (selectedDate) {
+                    const newEndDateTime = new Date(endDateTime);
+                    newEndDateTime.setFullYear(selectedDate.getFullYear());
+                    newEndDateTime.setMonth(selectedDate.getMonth());
+                    newEndDateTime.setDate(selectedDate.getDate());
+                    setEndDateTime(newEndDateTime);
+                  }
+                }}
+                minimumDate={dateTime}
+              />
+            )}
+
+            {showEndTimePicker && endDateTime && (
+              <DateTimePicker
+                value={endDateTime}
+                mode="time"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedTime) => {
+                  setShowEndTimePicker(false);
+                  if (selectedTime) {
+                    const newEndDateTime = new Date(endDateTime);
+                    newEndDateTime.setHours(selectedTime.getHours());
+                    newEndDateTime.setMinutes(selectedTime.getMinutes());
+                    setEndDateTime(newEndDateTime);
+                  }
+                }}
+              />
+            )}
           </View>
+
+          {/* End Time Picker - only show if start time is set */}
+          {dateTime && (
+            <View style={styles.section}>
+              <View style={styles.labelRow}>
+                <Text style={styles.sectionTitle}>End Time (Optional)</Text>
+                {endDateTime && (
+                  <TouchableOpacity 
+                    onPress={() => setEndDateTime(null)}
+                    style={styles.clearButton}
+                  >
+                    <Text style={styles.clearButtonText}>Clear</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              
+              {endDateTime ? (
+                <View style={styles.dateTimeContainer}>
+                  <TouchableOpacity
+                    style={styles.dateTimeButton}
+                    onPress={() => setShowEndDatePicker(true)}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
+                    <Text style={styles.dateTimeText}>
+                      {endDateTime.toLocaleDateString()}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.dateTimeButton}
+                    onPress={() => setShowEndTimePicker(true)}
+                  >
+                    <Ionicons name="time-outline" size={20} color="#8E8E93" />
+                    <Text style={styles.dateTimeText}>
+                      {endDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.addEndTimeButton}
+                  onPress={() => {
+                    // Default to 2 hours after start
+                    const defaultEnd = new Date(dateTime.getTime() + 2 * 60 * 60 * 1000);
+                    setEndDateTime(defaultEnd);
+                  }}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#3797EF" />
+                  <Text style={styles.addEndTimeText}>Add End Time</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {/* Location */}
           <View style={styles.section}>
@@ -973,60 +1085,6 @@ const handleCoverSelection = (coverImage, source) => {
             </View>
           </View>
 
-          {/* ADDED: Photo Sharing Settings */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Photo Sharing</Text>
-            <Text style={styles.sectionDescription}>
-              Allow attendees to share photos and create memories from your event
-            </Text>
-
-            <View style={styles.photoToggleContainer}>
-              <View style={styles.photoToggleRow}>
-                <View style={styles.photoToggleContent}>
-                  <View style={styles.photoToggleIcon}>
-                    <Ionicons 
-                      name={allowPhotos ? "camera" : "camera-outline"} 
-                      size={24} 
-                      color={allowPhotos ? "#3797EF" : "#8E8E93"} 
-                    />
-                  </View>
-                  <View style={styles.photoToggleText}>
-                    <Text style={styles.photoToggleLabel}>Enable Photo Sharing</Text>
-                    <Text style={styles.photoToggleDesc}>
-                      {allowPhotos 
-                        ? 'Attendees can post photos and create shared memories'
-                        : 'Photo sharing is disabled for this event'
-                      }
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={allowPhotos}
-                  onValueChange={handlePhotoToggle}
-                  trackColor={{ false: '#E5E5EA', true: '#34C759' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-
-              {/* Photo sharing benefits */}
-              {allowPhotos && (
-                <View style={styles.photoBenefitsContainer}>
-                  <View style={styles.photoBenefit}>
-                    <Ionicons name="people" size={16} color="#34C759" />
-                    <Text style={styles.photoBenefitText}>Build community through shared memories</Text>
-                  </View>
-                  <View style={styles.photoBenefit}>
-                    <Ionicons name="heart" size={16} color="#34C759" />
-                    <Text style={styles.photoBenefitText}>Increase engagement and event satisfaction</Text>
-                  </View>
-                  <View style={styles.photoBenefit}>
-                    <Ionicons name="time" size={16} color="#34C759" />
-                    <Text style={styles.photoBenefitText}>Create lasting memories after the event</Text>
-                  </View>
-                </View>
-              )}
-            </View>
-          </View>
 
           {/* Co-hosts Section - Only show if user can edit co-hosts */}
           {canEditField('coHosts') && (
@@ -1147,17 +1205,6 @@ const handleCoverSelection = (coverImage, source) => {
   </>
 )} */}
 
-  {/* Tags - Co-hosts CAN edit this */}
-  <View style={styles.inputGroup}>
-    <Text style={styles.label}>Tags (optional)</Text>
-    <TextInput
-      style={styles.input}
-      value={tags}
-      onChangeText={setTags}
-      placeholder="music, party, fun (separated by commas)"
-      placeholderTextColor="#C7C7CC"
-    />
-  </View>
 </View>
 
           {/* Privacy Settings */}
@@ -2367,5 +2414,37 @@ modalContainer: {
   categoryOptionText: {
     fontSize: 16,
     color: '#000000',
+  },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  clearButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  clearButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF3B30',
+  },
+  addEndTimeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    borderStyle: 'dashed',
+  },
+  addEndTimeText: {
+    marginLeft: 8,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
   },
 });

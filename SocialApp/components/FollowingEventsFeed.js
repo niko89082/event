@@ -288,8 +288,8 @@ export default function FollowingEventsFeed({
 
 const styles = StyleSheet.create({
   eventWrapper: {
-    marginHorizontal: 16,
     marginBottom: 16,
+    paddingHorizontal: 16,
   },
   centered: {
     flex: 1,

@@ -91,6 +91,10 @@ const EventSchema = new mongoose.Schema({
     type: Date,
     required: true,
   },
+  endTime: {
+    type: Date,
+    required: false,  // Optional field
+  },
   location: {
     type: String,
     required: true,
@@ -776,6 +780,25 @@ EventSchema.methods.deactivateCheckInQR = function() {
 };
 
 /**
+ * Get event status considering end time
+ * @returns {string} 'upcoming', 'live', or 'ended'
+ */
+EventSchema.methods.getEventStatus = function() {
+  const now = new Date();
+  const startTime = new Date(this.time);
+  
+  if (now < startTime) return 'upcoming';
+  
+  // Use endTime if available, otherwise default to 2 hours
+  const endTime = this.endTime 
+    ? new Date(this.endTime) 
+    : new Date(startTime.getTime() + (2 * 60 * 60 * 1000));
+  
+  if (now >= startTime && now < endTime) return 'live';
+  return 'ended';
+};
+
+/**
  * Can user check in to this event?
  * @param {string} userId - User ID to check
  * @returns {Promise<Object>} Check-in eligibility info
@@ -806,9 +829,13 @@ EventSchema.methods.canUserCheckIn = async function(userId) {
     };
   }
   
-  // Check if event has ended (allow check-in up to 2 hours after start)
-  const twoHoursAfter = new Date(eventTime.getTime() + 2 * 60 * 60 * 1000);
-  if (now > twoHoursAfter) {
+  // Check if event has ended (allow check-in until end time + 30 min buffer)
+  const endTime = this.endTime 
+    ? new Date(this.endTime) 
+    : new Date(eventTime.getTime() + 2 * 60 * 60 * 1000);
+  
+  const thirtyMinutesAfterEnd = new Date(endTime.getTime() + 30 * 60 * 1000);
+  if (now > thirtyMinutesAfterEnd) {
     return {
       canCheckIn: false,
       reason: 'too_late',
