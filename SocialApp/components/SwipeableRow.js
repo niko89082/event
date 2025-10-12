@@ -33,7 +33,7 @@ export default function SwipeableRow({
   isCheckedIn = false,
   isCheckInLoading = false,
   style = {},
-  debugMode = true,
+  debugMode = false,
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const [isFirstActionRevealed, setIsFirstActionRevealed] = useState(false);
@@ -166,10 +166,7 @@ export default function SwipeableRow({
         // UPDATED: Simplified state management with MINIMAL haptics
         if (!isFirstActionRevealed && absDistance > REVEAL_THRESHOLD) {
           debugLog('Actions revealed');
-          // REDUCED: Minimal haptic for action reveal
-          if (Haptics.impactAsync) {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }
+          // REMOVED: No haptic for action reveal to reduce vibration
           setIsFirstActionRevealed(true);
           setIsSecondActionRevealed(true);
           setShouldAutoDelete(false);
@@ -178,7 +175,7 @@ export default function SwipeableRow({
         // Auto-delete threshold with minimal haptic
         if (isFirstActionRevealed && !shouldAutoDelete && absDistance > AUTO_DELETE_THRESHOLD) {
           debugLog('Auto-delete threshold reached');
-          // REDUCED: Light haptic instead of Medium
+          // REDUCED: Only haptic for auto-delete threshold
           if (Haptics.impactAsync) {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           }
@@ -329,7 +326,7 @@ export default function SwipeableRow({
     
     // Strong haptic feedback for auto-delete
     if (Haptics.impactAsync) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     
     try {
@@ -357,9 +354,9 @@ export default function SwipeableRow({
     
     debugLog('Check-in button pressed');
     
-    // Medium haptic feedback for button press
+    // Reduced haptic feedback for button press
     if (Haptics.impactAsync) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     
     try {
@@ -378,9 +375,9 @@ export default function SwipeableRow({
     debugLog('Delete button pressed');
     setIsDeleting(true);
     
-    // Medium haptic feedback for button press
+    // Reduced haptic feedback for button press
     if (Haptics.impactAsync) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     
     try {
@@ -401,12 +398,14 @@ export default function SwipeableRow({
     }
   };
 
-  // Close row when tapped outside
+  // Close row when tapped
   const handleContentPress = () => {
     if ((isFirstActionRevealed || isSecondActionRevealed) && !isDeleting) {
-      debugLog('Content pressed, closing row');
+      debugLog('Content tapped - closing row');
       closeRow();
+      return true; // Indicate that we handled the tap
     }
+    return false;
   };
 
   // Determine check-in button text and icon
@@ -503,14 +502,16 @@ export default function SwipeableRow({
           {
             transform: [{ translateX }],
             backgroundColor: shouldAutoDelete ? '#FFE5E5' : '#FFFFFF',
+            opacity: (isFirstActionRevealed || isSecondActionRevealed) && !shouldAutoDelete ? 0.98 : 1,
           },
         ]}
         {...(disabled || isDeleting ? {} : panResponder.panHandlers)}
       >
         <TouchableOpacity
-          activeOpacity={1}
+          activeOpacity={isFirstActionRevealed || isSecondActionRevealed ? 0.9 : 1}
           onPress={handleContentPress}
           style={styles.touchableContent}
+          disabled={isDeleting}
         >
           {children}
         </TouchableOpacity>

@@ -53,7 +53,7 @@ export default function UserSettingsScreen({ navigation }) {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/profile');
+      const res = await api.get('/api/profile');
       setIsPublic(res.data.isPublic);
       
       if (res.data.profilePicture) {

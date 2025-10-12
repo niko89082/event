@@ -100,6 +100,10 @@ export default function EventDetailsScreen() {
   const [payPalOrderId, setPayPalOrderId] = useState(null);
   const [payPalApprovalUrl, setPayPalApprovalUrl] = useState(null);
   
+  // NEW: Attendee profile photos state
+  const [attendeePhotos, setAttendeePhotos] = useState([]);
+  const [attendeePhotosLoading, setAttendeePhotosLoading] = useState(false);
+  
   // Enhanced modal
 
   const [showShareModal, setShowShareModal] = useState(false);
@@ -474,6 +478,76 @@ export default function EventDetailsScreen() {
     );
   };
 
+  // NEW: Instagram-style text generation for who's going
+  const generateWhosGoingText = () => {
+    if (!attendeePhotos.length) return null;
+    
+    // Get all friends attending (not just visible ones)
+    const friendsAttending = attendeePhotos.filter(attendee => attendee.isFriend);
+    const nonFriendsAttending = attendeePhotos.filter(attendee => !attendee.isFriend);
+    
+    // If no friends are attending, don't show text
+    if (friendsAttending.length === 0) return null;
+    
+    // Get friend usernames
+    const friendNames = friendsAttending.map(friend => friend.username || friend.displayName || 'Unknown');
+    const remainingCount = realTimeAttendeeCount - attendeePhotos.length;
+    const totalOthers = remainingCount + nonFriendsAttending.length;
+    
+    // Smart text generation
+    let text = '';
+    
+    if (friendNames.length === 1 && totalOthers === 0) {
+      // Just one friend, no others
+      text = `${friendNames[0]} is going`;
+    } else if (friendNames.length === 1 && totalOthers === 1) {
+      // One friend and one other
+      text = `${friendNames[0]} and 1 other friend are going`;
+    } else if (friendNames.length === 1 && totalOthers > 1) {
+      // One friend and multiple others
+      text = `${friendNames[0]} and ${totalOthers} other friends are going`;
+    } else if (friendNames.length === 2 && totalOthers === 0) {
+      // Just two friends, no others
+      text = `${friendNames[0]} and ${friendNames[1]} are going`;
+    } else if (friendNames.length === 2 && totalOthers === 1) {
+      // Two friends and one other
+      text = `${friendNames[0]}, ${friendNames[1]} and 1 other friend are going`;
+    } else if (friendNames.length === 2 && totalOthers > 1) {
+      // Two friends and multiple others
+      text = `${friendNames[0]}, ${friendNames[1]} and ${totalOthers} other friends are going`;
+    } else {
+      // More than 2 friends - truncate intelligently
+      const totalOthersWithExtra = totalOthers + (friendNames.length - 2);
+      text = `${friendNames[0]}, ${friendNames[1]} and ${totalOthersWithExtra} other friends are going`;
+    }
+    
+    // If text is too long, truncate to 2 names max
+    if (text.length > 60) {
+      const totalOthersWithExtra = totalOthers + (friendNames.length - 1);
+      if (totalOthersWithExtra === 0) {
+        text = `${friendNames[0]} is going`;
+      } else if (totalOthersWithExtra === 1) {
+        text = `${friendNames[0]} and 1 other friend are going`;
+      } else {
+        text = `${friendNames[0]} and ${totalOthersWithExtra} other friends are going`;
+      }
+    }
+    
+    // If still too long, truncate to 1 name max
+    if (text.length > 80) {
+      const totalOthersWithExtra = totalOthers + (friendNames.length - 1);
+      if (totalOthersWithExtra === 0) {
+        text = `${friendNames[0]} is going`;
+      } else if (totalOthersWithExtra === 1) {
+        text = `${friendNames[0]} and 1 other friend are going`;
+      } else {
+        text = `${friendNames[0]} and ${totalOthersWithExtra} other friends are going`;
+      }
+    }
+    
+    return text;
+  };
+
   // NEW: Photo permission helpers
   const canUploadPhotos = () => {
     if (!event?.allowPhotos) return false;
@@ -582,11 +656,57 @@ export default function EventDetailsScreen() {
   }
 };
 
+  // NEW: Fetch attendee profile photos with prioritization
+  const fetchAttendeePhotos = async () => {
+    try {
+      setAttendeePhotosLoading(true);
+      
+      // Fetch attendees
+      const attendeesResponse = await api.get(`/api/events/${eventId}/attendees`);
+      const attendees = attendeesResponse.data.attendees || [];
+      
+      // Fetch current user's friends for prioritization
+      const friendsResponse = await api.get('/api/friends/list?status=accepted');
+      const friends = friendsResponse.data.friends || [];
+      const friendIds = friends.map(f => f._id);
+      
+      // Prioritize attendees: friends first, then users with profile pictures
+      const prioritizedAttendees = attendees
+        .map(attendee => ({
+          ...attendee,
+          isFriend: friendIds.includes(attendee._id),
+          hasProfilePicture: !!attendee.profilePicture
+        }))
+        .sort((a, b) => {
+          // Friends first
+          if (a.isFriend && !b.isFriend) return -1;
+          if (!a.isFriend && b.isFriend) return 1;
+          
+          // Then users with profile pictures
+          if (a.hasProfilePicture && !b.hasProfilePicture) return -1;
+          if (!a.hasProfilePicture && b.hasProfilePicture) return 1;
+          
+          return 0;
+        })
+        .slice(0, 4); // Show only first 4 attendees
+      
+      console.log(`✅ Attendee photos fetched: ${prioritizedAttendees.length} attendees`);
+      setAttendeePhotos(prioritizedAttendees);
+      
+    } catch (error) {
+      console.error('❌ Error fetching attendee photos:', error);
+      setAttendeePhotos([]);
+    } finally {
+      setAttendeePhotosLoading(false);
+    }
+  };
+
   // PHASE 4: Refresh on focus (instead of polling)
   useFocusEffect(
     React.useCallback(() => {
       fetchEvent();
       fetchEventPhotos();
+      fetchAttendeePhotos();
     }, [eventId])
   );
 
@@ -1440,6 +1560,7 @@ const handleInviteSuccess = (result) => {
               onRefresh={() => {
                 fetchEvent(true);
                 fetchEventPhotos();
+                fetchAttendeePhotos();
               }}
               tintColor="#3797EF"
             />
@@ -1656,7 +1777,7 @@ const handleInviteSuccess = (result) => {
                 </View>
               )}
 
-              {/* Enhanced Attendees Card with real-time data */}
+              {/* Enhanced Attendees Card with real-time data and profile photos */}
               <TouchableOpacity 
                 style={styles.detailCard}
                 onPress={() => navigation.navigate('AttendeeListScreen', { 
@@ -1673,13 +1794,55 @@ const handleInviteSuccess = (result) => {
                     <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
                   )}
                 </View>
-                <Text style={styles.detailCardContent}>
-                  {realTimeAttendeeCount} {realTimeAttendeeCount === 1 ? 'person' : 'people'} attending
-                </Text>
-                {/* Show check-in status for hosts */}
-                {(isHost || isCoHost) && checkedInCount > 0 && (
-                  <Text style={styles.detailCardSubContent}>
-                    {checkedInCount} checked in ({Math.round((checkedInCount / realTimeAttendeeCount) * 100) || 0}%)
+                {/* Attendee Profile Photos */}
+                {attendeePhotos.length > 0 && (
+                  <View style={styles.attendeePhotosContainer}>
+                    <View style={styles.attendeePhotosRow}>
+                      {attendeePhotos.map((attendee, index) => {
+                        const isLastVisible = index === attendeePhotos.length - 1;
+                        const remainingCount = realTimeAttendeeCount - attendeePhotos.length;
+                        const showOverlay = isLastVisible && remainingCount > 0;
+                        
+                        return (
+                          <TouchableOpacity
+                            key={attendee._id}
+                            style={styles.attendeePhotoContainer}
+                            onPress={() => navigation.navigate('ProfileScreen', { userId: attendee._id })}
+                            activeOpacity={0.8}
+                          >
+                            <Image
+                              source={{
+                                uri: attendee.profilePicture
+                                  ? `http://${API_BASE_URL}:3000${attendee.profilePicture}`
+                                  : 'https://placehold.co/48x48.png?text=👤'
+                              }}
+                              style={styles.attendeePhoto}
+                            />
+                            {showOverlay && (
+                              <View style={styles.moreAttendeesOverlay}>
+                                <Text style={styles.moreAttendeesOverlayText}>
+                                  +{remainingCount}
+                                </Text>
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+                
+                {/* Fallback text when no photos available */}
+                {attendeePhotos.length === 0 && (
+                  <Text style={styles.detailCardContent}>
+                    {realTimeAttendeeCount} {realTimeAttendeeCount === 1 ? 'person' : 'people'} attending
+                  </Text>
+                )}
+                
+                {/* Instagram-style who's going text */}
+                {generateWhosGoingText() && (
+                  <Text style={styles.whosGoingText}>
+                    {generateWhosGoingText()}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -2036,7 +2199,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     marginLeft: 36,
-    marginTop: 2,
+    marginTop: 8,
   },
   paidStatus: {
     flexDirection: 'row',
@@ -2049,6 +2212,70 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 4,
+  },
+
+  // Attendee Profile Photos Styles
+  attendeePhotosContainer: {
+    marginTop: 8,
+    marginLeft: 0,
+    paddingHorizontal: 16,
+  },
+  attendeePhotosRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  attendeePhotoContainer: {
+    position: 'relative',
+  },
+  attendeePhoto: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: '#F6F6F6',
+  },
+  friendIndicator: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    width: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  moreAttendeesOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreAttendeesOverlayText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  whosGoingText: {
+    fontSize: 14,
+    color: '#000000',
+    marginTop: 8,
+    marginLeft: 0,
+    paddingHorizontal: 16,
+    fontWeight: '500',
   },
 
   // Enhanced Photos Section

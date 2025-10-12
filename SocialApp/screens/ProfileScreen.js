@@ -58,6 +58,7 @@ export default function ProfileScreen() {
   const [friendshipStatus, setFriendshipStatus] = useState('not-friends');
   const [friendshipData, setFriendshipData] = useState(null);
   const [mutualFriends, setMutualFriends] = useState([]);
+  const [mutualEventsCount, setMutualEventsCount] = useState(0);
   const [friendsCount, setFriendsCount] = useState(0);
   
   const [eventFilter, setEventFilter] = useState('all');
@@ -371,13 +372,22 @@ const fetchUserProfile = async (isRefresh = false) => {
         console.log('🔒 Friendship status fetched and set:', currentFriendshipStatus);
         
         // Fetch mutual friends if not friends yet
-        if (currentFriendshipStatus === 'not-friends') {
+        if (currentFriendshipStatus === 'not-friends' || !isSelf) {
           try {
             const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
             setMutualFriends(mutualRes.data.mutualFriends || []);
             console.log('👥 Mutual friends:', mutualRes.data.mutualFriends?.length || 0);
           } catch (mutualError) {
             console.log('Could not fetch mutual friends:', mutualError);
+          }
+
+          // Fetch mutual events count
+          try {
+            const mutualEventsRes = await api.get(`/api/events/mutual/${userId}`);
+            setMutualEventsCount(mutualEventsRes.data.count || 0);
+            console.log('🎉 Mutual events:', mutualEventsRes.data.count || 0);
+          } catch (mutualEventsError) {
+            console.log('Could not fetch mutual events:', mutualEventsError);
           }
         }
       } catch (error) {
@@ -770,10 +780,10 @@ const fetchUserEvents = async () => {
               friendshipStatus === 'friends' && styles.friendsButtonText,
               friendshipStatus === 'request-sent' && styles.requestSentButtonText
             ]}>
-              {friendshipStatus === 'friends' ? 'Friends' :
+              {friendshipStatus === 'friends' ? 'Unfriend' :
                friendshipStatus === 'request-received' ? 'Respond' :
                friendshipStatus === 'request-sent' ? 'Requested' :
-               'Add Friend'}
+               'Friend'}
             </Text>
           </>
         )}
@@ -854,18 +864,27 @@ const renderProfileHeader = () => {
           <Text style={styles.statLabel}>Friends</Text>
         </TouchableOpacity>
         
-        {/* Show mutual friends for non-friends */}
-        {!isSelf && friendshipStatus === 'not-friends' && mutualFriends.length > 0 && (
+        {/* Show mutual friends or events - whichever is greater */}
+        {!isSelf && (mutualFriends.length > 0 || mutualEventsCount > 0) && (
           <TouchableOpacity
             style={styles.statItem}
-            onPress={() => navigation.navigate('FriendsListScreen', { 
-              userId, 
-              mode: 'mutual'
-            })}
-            activeOpacity={0.7}
+            onPress={() => {
+              if (mutualFriends.length >= mutualEventsCount) {
+                navigation.navigate('FriendsListScreen', { 
+                  userId, 
+                  mode: 'mutual'
+                });
+              }
+            }}
+            activeOpacity={mutualFriends.length >= mutualEventsCount ? 0.7 : 1}
+            disabled={mutualFriends.length < mutualEventsCount}
           >
-            <Text style={styles.statNumber}>{mutualFriends.length}</Text>
-            <Text style={styles.statLabel}>Mutual</Text>
+            <Text style={styles.statNumber}>
+              {mutualFriends.length >= mutualEventsCount ? mutualFriends.length : mutualEventsCount}
+            </Text>
+            <Text style={styles.statLabel}>
+              {mutualFriends.length >= mutualEventsCount ? 'Mutual' : 'Events'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -890,6 +909,7 @@ const renderProfileHeader = () => {
               <Ionicons name="qr-code-outline" size={20} color="#FFFFFF" />
             </TouchableOpacity>
             
+            {/* Temporarily removed settings screen
             <TouchableOpacity
               style={styles.shareEventsButton}
               onPress={() => navigation.navigate('UserSettingsScreen')}
@@ -897,6 +917,7 @@ const renderProfileHeader = () => {
             >
               <Ionicons name="settings-outline" size={20} color="#000000" />
             </TouchableOpacity>
+            */}
           </View>
         ) : (
           renderFriendButton()
@@ -1475,7 +1496,7 @@ const styles = StyleSheet.create({
   profileImage: {
     width: 100,
     height: 100,
-    borderRadius: 25,
+    borderRadius: 50,
     backgroundColor: '#F6F6F6',
     borderWidth: 1,
     borderColor: '#E1E1E1',

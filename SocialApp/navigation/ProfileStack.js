@@ -55,6 +55,7 @@ export default function ProfileStack({ onLogout }) {
         }}
       />
       
+      {/* Temporarily removed settings screen
       <Stack.Screen 
         name="UserSettingsScreen" 
         component={UserSettingsScreen}
@@ -63,6 +64,7 @@ export default function ProfileStack({ onLogout }) {
           headerShown: true,
         }}
       />
+      */}
       
       <Stack.Screen 
         name="SelectShareableEventsScreen" 
@@ -77,8 +79,7 @@ export default function ProfileStack({ onLogout }) {
         name="EditProfileScreen" 
         component={EditProfileScreen}
         options={{
-          title: 'Edit Profile',
-          headerShown: true,
+          headerShown: false,
         }}
       />
 

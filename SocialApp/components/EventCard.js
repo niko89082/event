@@ -12,6 +12,7 @@ import { FEATURES } from '../config/features';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 import ShareEventModal from './ShareEventModal';
 import { useCurrentUser } from '../hooks/useCurrentUser'; // Adjust import path
+import api from '../services/api';
 
 export default function EventCard({
   event: initialEvent,
@@ -47,12 +48,44 @@ export default function EventCard({
     event.joinRequestSent || false
   );
   const [processing, setProcessing] = useState(false);
+  
+  // Friends count state
+  const [friendsGoingCount, setFriendsGoingCount] = useState(0);
 
   // Enhanced image handling state
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [imageDimensions, setImageDimensions] = useState(null);
   const [imageAspectRatio, setImageAspectRatio] = useState(null);
+
+  // Fetch friends count for this event
+  useEffect(() => {
+    const fetchFriendsCount = async () => {
+      if (!currentUser?._id || !event.attendees?.length) {
+        setFriendsGoingCount(0);
+        return;
+      }
+
+      try {
+        // Fetch current user's friends
+        const friendsResponse = await api.get('/api/friends/list?status=accepted');
+        const friends = friendsResponse.data.friends || [];
+        const friendIds = friends.map(f => f._id);
+
+        // Count how many friends are attending
+        const friendsAttending = event.attendees.filter(attendee => 
+          friendIds.includes(attendee._id || attendee)
+        ).length;
+
+        setFriendsGoingCount(friendsAttending);
+      } catch (error) {
+        console.error('Error fetching friends count:', error);
+        setFriendsGoingCount(0);
+      }
+    };
+
+    fetchFriendsCount();
+  }, [event.attendees, currentUser?._id]);
 
   // Get current RSVP state from store (always up to date)
   const isAttending = event.isAttending || false;
@@ -62,7 +95,10 @@ export default function EventCard({
   const cover = event.coverImage ? `http://${API_BASE_URL}:3000${event.coverImage}` : null;
   const past = new Date(event.time) <= new Date();
   const isHost = (event.host?._id || event.host) === currentUserId;
-  const canAttend = !past && !isHost && !isAttending && !joinRequestSent;
+  const isCoHost = event.coHosts?.some(cohost => 
+    String(cohost._id || cohost) === String(currentUserId)
+  );
+  const canAttend = !past && !isHost && !isCoHost && !isAttending && !joinRequestSent;
 
   // Enhanced image handling - calculate optimal dimensions
   useEffect(() => {
@@ -436,6 +472,9 @@ const handleInviteSuccess = (inviteData) => {
             </View>
             <Text style={styles.attendeesText}>
               {attendeeCount} going
+              {friendsGoingCount > 0 && (
+                <Text style={styles.friendsCountText}> • {friendsGoingCount} friend{friendsGoingCount === 1 ? '' : 's'}</Text>
+              )}
               {spotsLeft && <Text style={styles.spotsLeft}> • {spotsLeft} spots left</Text>}
             </Text>
           </View>
@@ -485,6 +524,11 @@ const handleInviteSuccess = (inviteData) => {
       <View style={styles.hostBadge}>
         <Ionicons name="star" size={16} color="#FF9500" />
         <Text style={styles.hostText}>Hosting</Text>
+      </View>
+    ) : isCoHost ? (
+      <View style={styles.cohostBadge}>
+        <Ionicons name="people" size={16} color="#FF9500" />
+        <Text style={styles.cohostText}>Co-hosting</Text>
       </View>
     ) : joinRequestSent ? (
       <View style={styles.requestSentBadge}>
@@ -782,13 +826,18 @@ const styles = StyleSheet.create({
   attendeeAvatar: {
     width: 24,
     height: 24,
-    borderRadius: 6,
+    borderRadius: 12,
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },
   attendeesText: {
     fontSize: 14,
     color: '#000',
+    fontWeight: '500',
+  },
+  friendsCountText: {
+    fontSize: 14,
+    color: '#3797EF',
     fontWeight: '500',
   },
   spotsLeft: {

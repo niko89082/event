@@ -262,6 +262,59 @@ class FriendRequestManager {
     }
   }
 
+  static async removeFriend(targetUserId, currentUserId, options = {}) {
+    const operationId = `remove_${targetUserId}_${Date.now()}`;
+    
+    console.log(`💔 FriendRequestManager: Starting remove friend operation ${operationId}`, {
+      targetUserId,
+      currentUserId,
+      options
+    });
+
+    try {
+      this.broadcastStateChange('friend_removing', {
+        targetUserId,
+        currentUserId,
+        operationId,
+        status: 'processing'
+      });
+
+      console.log(`📡 FriendRequestManager: Making API call to remove friend`);
+      const response = await api.delete(`/api/friends/${targetUserId}`);
+
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to remove friend');
+      }
+
+      const removeData = {
+        targetUserId,
+        currentUserId,
+        operationId,
+        status: 'removed',
+        message: response.data.message || 'Friend removed',
+        timestamp: new Date().toISOString()
+      };
+
+      this.broadcastStateChange('friend_removed', removeData);
+
+      console.log(`✅ FriendRequestManager: Remove operation ${operationId} completed successfully`);
+      return removeData;
+
+    } catch (error) {
+      console.error(`❌ FriendRequestManager: Remove operation ${operationId} failed:`, error);
+
+      this.broadcastStateChange('friend_request_error', {
+        targetUserId,
+        currentUserId,
+        operationId,
+        action: 'remove',
+        error: error.message || 'Failed to remove friend'
+      });
+
+      throw error;
+    }
+  }
+
   static async getFriendshipStatus(userId, currentUserId) {
     try {
       const response = await api.get(`/api/friends/status/${userId}`);

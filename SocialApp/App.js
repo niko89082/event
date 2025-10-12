@@ -257,18 +257,7 @@ function AppNavigator({ onLogout }) {
               name="EditProfileScreen" 
               component={EditProfileScreen}
               options={{ 
-                headerShown: true, 
-                title: 'Edit Profile',
-                headerStyle: {
-                  backgroundColor: '#FFFFFF',
-                  shadowOpacity: 0.1,
-                  elevation: 2,
-                },
-                headerTitleStyle: {
-                  fontWeight: '600',
-                  fontSize: 18,
-                },
-                headerBackTitleVisible: false,
+                headerShown: false,
               }}
             />
             

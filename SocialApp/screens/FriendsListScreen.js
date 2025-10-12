@@ -41,7 +41,7 @@ export default function FriendsListScreen({ route, navigation }) {
         elevation: 0,
         borderBottomWidth: 0.33,
         borderBottomColor: '#E1E1E1',
-        height: 88,
+        height: 100,
       },
       headerTitleStyle: {
         fontWeight: '700',
@@ -58,6 +58,10 @@ export default function FriendsListScreen({ route, navigation }) {
           <Ionicons name="chevron-back" size={26} color="#000000" />
         </TouchableOpacity>
       ),
+      headerLeftContainerStyle: {
+        paddingLeft: 16,
+        paddingTop: 8,
+      },
     });
   }, [navigation, mode, isSelf]);
 
@@ -394,14 +398,6 @@ export default function FriendsListScreen({ route, navigation }) {
         </View>
       ) : (
         <View style={styles.content}>
-          <View style={styles.statsHeader}>
-            <Text style={styles.statsText}>
-              {users.length} {mode === 'friends' ? 'friends' : 
-                           mode === 'mutual' ? 'mutual friends' :
-                           mode === 'requests' ? 'friend requests' :
-                           'sent requests'}
-            </Text>
-          </View>
           
           <FlatList
             data={users}
@@ -424,8 +420,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF' 
   },
   headerButton: {
-    padding: 8,
-    marginHorizontal: 8,
+    padding: 12,
+    marginHorizontal: 4,
+    zIndex: 1000,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   centered: {
     flex: 1,
@@ -472,7 +471,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 56,
     height: 56,
-    borderRadius: 16,
+    borderRadius: 28,
     backgroundColor: '#F6F6F6',
     marginRight: 12,
   },

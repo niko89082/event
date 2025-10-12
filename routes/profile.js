@@ -20,6 +20,23 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+// Get current user's profile
+router.get('/', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select('username profilePicture bio displayName pronouns isPublic createdAt');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    console.error('Get current profile error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Upload profile picture
 router.post('/upload', protect, upload.single('profilePicture'), async (req, res) => {
   try {
@@ -380,12 +397,14 @@ router.put('/primary-payment', protect, async (req, res) => {
 
 // Update profile
 router.put('/', protect, async (req, res) => {
-  const { bio, socialMediaLinks, backgroundImage, theme, colorScheme } = req.body;
+  const { bio, displayName, socialMediaLinks, backgroundImage, theme, colorScheme, profilePicture } = req.body;
   try {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    if (bio) user.bio = bio;
+    if (bio !== undefined) user.bio = bio;
+    if (displayName) user.username = displayName;
+    if (profilePicture) user.profilePicture = profilePicture;
     if (socialMediaLinks) {
       user.socialMediaLinks = typeof socialMediaLinks === 'string'
         ? JSON.parse(socialMediaLinks)

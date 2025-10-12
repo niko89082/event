@@ -1,6 +1,6 @@
 // SocialApp/screens/AttendeeListScreen.js - Simplified Version
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import {
   View,
   Text,
@@ -24,9 +24,12 @@ import api from '../services/api';
 import { API_BASE_URL } from '../services/api';
 import QRCode from 'react-native-qrcode-svg';
 import SwipeableRow from '../components/SwipeableRow'; // Enhanced Apple-style swipe component
+import { AuthContext } from '../services/AuthContext';
+import { useFriendRequestManager } from '../hooks/useFriendRequestManager';
 
 const AttendeeListScreen = ({ route, navigation }) => {
   const { eventId } = route.params;
+  const { currentUser } = useContext(AuthContext);
   
   // Core state variables
   const [attendees, setAttendees] = useState([]);
@@ -44,6 +47,51 @@ const AttendeeListScreen = ({ route, navigation }) => {
   // Loading states
   const [toggleLoadingUsers, setToggleLoadingUsers] = useState(new Set());
   const [removingUsers, setRemovingUsers] = useState(new Set());
+  
+  // Friendship states
+  const [friendshipStatuses, setFriendshipStatuses] = useState({});
+  const [friendActionLoading, setFriendActionLoading] = useState(new Set());
+  
+  // Friend request manager
+  const friendRequestManager = useFriendRequestManager('AttendeeListScreen', {
+    showSuccessAlerts: true,
+    onAcceptSuccess: (data) => {
+      console.log('Friend request accepted:', data);
+      // Update friendship status locally
+      setFriendshipStatuses(prev => ({
+        ...prev,
+        [data.requesterId]: 'friends'
+      }));
+    },
+    onRejectSuccess: (data) => {
+      console.log('Friend request rejected:', data);
+      setFriendshipStatuses(prev => ({
+        ...prev,
+        [data.requesterId]: 'not-friends'
+      }));
+    },
+    onSendSuccess: (data) => {
+      console.log('Friend request sent:', data);
+      setFriendshipStatuses(prev => ({
+        ...prev,
+        [data.targetUserId]: 'request-sent'
+      }));
+    },
+    onCancelSuccess: (data) => {
+      console.log('Friend request cancelled:', data);
+      setFriendshipStatuses(prev => ({
+        ...prev,
+        [data.targetUserId]: 'not-friends'
+      }));
+    },
+    onRemoveSuccess: (data) => {
+      console.log('Friend removed:', data);
+      setFriendshipStatuses(prev => ({
+        ...prev,
+        [data.targetUserId]: 'not-friends'
+      }));
+    }
+  });
 
   // Fetch attendees and event data
   const fetchAttendees = useCallback(async (silent = false) => {
@@ -70,7 +118,27 @@ const AttendeeListScreen = ({ route, navigation }) => {
       // Or we can get it from the event data
       setCanManage(attendeesData.canManage || false);
       
-      // We don't need to fetch current user separately since canManage tells us what we need
+      // Fetch friendship statuses for all attendees (except current user)
+      if (currentUser && attendeesData.attendees) {
+        const friendshipPromises = attendeesData.attendees
+          .filter(attendee => attendee._id !== currentUser._id)
+          .map(async (attendee) => {
+            try {
+              const response = await api.get(`/api/friends/status/${attendee._id}`);
+              return { userId: attendee._id, status: response.data.status };
+            } catch (error) {
+              console.log(`Could not fetch friendship status for ${attendee.username}:`, error);
+              return { userId: attendee._id, status: 'not-friends' };
+            }
+          });
+        
+        const friendshipResults = await Promise.all(friendshipPromises);
+        const statusMap = {};
+        friendshipResults.forEach(result => {
+          statusMap[result.userId] = result.status;
+        });
+        setFriendshipStatuses(statusMap);
+      }
       
     } catch (error) {
       console.error('Error fetching attendees:', error);
@@ -79,7 +147,7 @@ const AttendeeListScreen = ({ route, navigation }) => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [eventId]);
+  }, [eventId, currentUser]);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,11 +162,11 @@ const AttendeeListScreen = ({ route, navigation }) => {
     try {
       setToggleLoadingUsers(prev => new Set(prev).add(userId));
       
-      // Add haptic feedback
+      // Add minimal haptic feedback
       if (Haptics.impactAsync) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } else {
-        Vibration.vibrate(50);
+        Vibration.vibrate(25);
       }
       
       if (isCheckedIn) {
@@ -304,6 +372,107 @@ const AttendeeListScreen = ({ route, navigation }) => {
     });
   };
 
+  // Friend action handlers
+  const handleFriendAction = async (attendeeId, currentStatus) => {
+    if (friendRequestManager.isProcessing() || friendActionLoading.has(attendeeId)) {
+      return;
+    }
+
+    try {
+      setFriendActionLoading(prev => new Set(prev).add(attendeeId));
+
+      switch (currentStatus) {
+        case 'not-friends':
+          await friendRequestManager.sendRequest(attendeeId, 'I would like to add you as a friend.');
+          break;
+          
+        case 'request-sent':
+          Alert.alert(
+            'Cancel Friend Request',
+            'Cancel your friend request?',
+            [
+              { text: 'Keep Request', style: 'cancel' },
+              { 
+                text: 'Cancel Request', 
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await friendRequestManager.cancelSentRequest(attendeeId);
+                  } catch (error) {
+                    console.error('Cancel request failed:', error);
+                  }
+                }
+              }
+            ]
+          );
+          break;
+          
+        case 'request-received':
+          Alert.alert(
+            'Friend Request',
+            'Accept this friend request?',
+            [
+              {
+                text: 'Decline',
+                style: 'cancel',
+                onPress: async () => {
+                  try {
+                    await friendRequestManager.rejectRequest(attendeeId);
+                  } catch (error) {
+                    console.error('Reject request failed:', error);
+                  }
+                }
+              },
+              {
+                text: 'Accept',
+                onPress: async () => {
+                  try {
+                    await friendRequestManager.acceptRequest(attendeeId);
+                  } catch (error) {
+                    console.error('Accept request failed:', error);
+                  }
+                }
+              }
+            ]
+          );
+          break;
+          
+        case 'friends':
+          Alert.alert(
+            'Unfriend',
+            'Are you sure you want to unfriend this person?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Unfriend',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await friendRequestManager.removeFriend(attendeeId);
+                  } catch (error) {
+                    console.error('Remove friend failed:', error);
+                  }
+                }
+              }
+            ]
+          );
+          break;
+          
+        default:
+          console.log('Unknown friendship status:', currentStatus);
+      }
+    } catch (error) {
+      console.error('Friend action failed:', error);
+      Alert.alert('Error', 'Failed to perform friend action. Please try again.');
+    } finally {
+      setFriendActionLoading(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(attendeeId);
+        return newSet;
+      });
+    }
+  };
+
   // Filter attendees based on search only
   const filteredAttendees = attendees.filter(attendee => {
     const matchesSearch = attendee.username?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -315,6 +484,9 @@ const AttendeeListScreen = ({ route, navigation }) => {
     const isCheckedIn = event?.checkedIn?.includes(item._id);
     const isToggleLoading = toggleLoadingUsers.has(item._id);
     const isRemoving = removingUsers.has(item._id);
+    const isCurrentUser = currentUser && item._id === currentUser._id;
+    const friendshipStatus = friendshipStatuses[item._id] || 'not-friends';
+    const isFriendActionLoading = friendActionLoading.has(item._id);
 
     // Show loading state for removing users
     if (isRemoving) {
@@ -358,39 +530,52 @@ const AttendeeListScreen = ({ route, navigation }) => {
           </View>
         </TouchableOpacity>
 
-        {/* Check-in Toggle Button */}
-        {canManage && (
-          <TouchableOpacity
-            style={[
-              styles.checkInButton,
-              isCheckedIn && styles.checkedInButton,
-              isToggleLoading && styles.loadingButton
-            ]}
-            onPress={() => handleCheckInToggle(item._id, isCheckedIn)}
-            disabled={isToggleLoading}
-            activeOpacity={0.7}
-          >
-            {isToggleLoading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons 
-                  name={isCheckedIn ? "checkmark-circle" : "radio-button-off"} 
-                  size={20} 
-                  color="#FFFFFF" 
-                />
-                <Text style={styles.checkInButtonText}>
-                  {isCheckedIn ? 'Undo' : 'Check In'}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
+        {/* Action Buttons */}
+        <View style={styles.actionButtons}>
+          {/* Friend Action Button (for non-current users) */}
+          {!isCurrentUser && (
+            <TouchableOpacity
+              style={[
+                styles.friendButton,
+                friendshipStatus === 'friends' && styles.friendsButton,
+                friendshipStatus === 'request-sent' && styles.pendingButton,
+                friendshipStatus === 'request-received' && styles.acceptButton,
+                isFriendActionLoading && styles.loadingButton
+              ]}
+              onPress={() => handleFriendAction(item._id, friendshipStatus)}
+              disabled={isFriendActionLoading}
+              activeOpacity={0.7}
+            >
+              {isFriendActionLoading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons 
+                    name={
+                      friendshipStatus === 'friends' ? "people" :
+                      friendshipStatus === 'request-sent' ? "time" :
+                      friendshipStatus === 'request-received' ? "checkmark" :
+                      "person-add"
+                    }
+                    size={16} 
+                    color="#FFFFFF" 
+                  />
+                  <Text style={styles.friendButtonText}>
+                    {friendshipStatus === 'friends' ? 'Friends' :
+                     friendshipStatus === 'request-sent' ? 'Pending' :
+                     friendshipStatus === 'request-received' ? 'Accept' :
+                     'Add Friend'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     );
 
-    // ENHANCED: Wrap with SwipeableRow only if user can manage and not in bulk mode
-    if (canManage) {
+    // ENHANCED: Wrap with SwipeableRow only if user can manage and not current user
+    if (canManage && !isCurrentUser) {
       console.log('🔧 Rendering swipeable row for attendee:', item.username);
       return (
         <SwipeableRow
@@ -398,9 +583,17 @@ const AttendeeListScreen = ({ route, navigation }) => {
             console.log('🗑️ SwipeableRow onDelete triggered for:', item.username);
             return handleSwipeRemove(item._id);
           }}
+          onCheckIn={() => {
+            console.log('✅ SwipeableRow onCheckIn triggered for:', item.username);
+            return handleCheckInToggle(item._id, isCheckedIn);
+          }}
           deleteText="Remove"
+          checkInText={isCheckedIn ? "Undo Check-in" : "Check In"}
           deleteColor="#FF3B30"
+          checkInColor="#34C759"
           disabled={isRemoving}
+          isCheckedIn={isCheckedIn}
+          isCheckInLoading={isToggleLoading}
           style={{ backgroundColor: '#FFFFFF' }}
         >
           {renderAttendeeContent()}
@@ -674,7 +867,7 @@ const styles = {
     marginLeft: 8,
   },
 
-  // Attendee Item Styles (simplified - no check-in button)
+  // Attendee Item Styles
   attendeeItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -688,6 +881,11 @@ const styles = {
   attendeeContent: {
     flex: 1,
     flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 8,
     alignItems: 'center',
   },
   
@@ -722,6 +920,36 @@ const styles = {
     fontSize: 12,
     color: '#34C759',
     fontWeight: '500',
+  },
+
+  // Friend Button Styles
+  friendButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3797EF',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 4,
+    minWidth: 80,
+  },
+  friendsButton: {
+    backgroundColor: '#5856D6',
+  },
+  pendingButton: {
+    backgroundColor: '#FF9500',
+  },
+  acceptButton: {
+    backgroundColor: '#34C759',
+  },
+  friendButtonText: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  loadingButton: {
+    opacity: 0.7,
   },
 
   // Removing Item Styles

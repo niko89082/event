@@ -1267,6 +1267,37 @@ router.post('/upload-cover', protect, uploadCover.single('coverImage'), async (r
   }
 });
 
+// Get mutual events count between current user and another user
+router.get('/mutual/:userId', protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id;
+
+    console.log(`🎉 Getting mutual events between ${currentUserId} and ${userId}`);
+
+    // Find events where both users are attendees
+    const mutualEvents = await Event.find({
+      attendees: { $all: [currentUserId, userId] }
+    }).select('_id title time');
+
+    console.log(`✅ Found ${mutualEvents.length} mutual events`);
+
+    res.json({
+      success: true,
+      count: mutualEvents.length,
+      events: mutualEvents
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting mutual events:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get mutual events',
+      count: 0
+    });
+  }
+});
+
 // Get User Events
 router.get('/user/:userId', protect, async (req, res) => {
   try {

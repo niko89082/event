@@ -119,6 +119,33 @@ export const useFriendRequestManager = (componentId, options = {}) => {
         }
         break;
 
+      case 'friend_removing':
+        if (operationId) {
+          setProcessingActions(prev => new Set(prev).add(operationId));
+        }
+        break;
+
+      case 'friend_removed':
+        if (operationId) {
+          setProcessingActions(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(operationId);
+            return newSet;
+          });
+        }
+        
+        setLastActionResult({
+          type: 'success',
+          action: 'removed',
+          data,
+          timestamp: Date.now()
+        });
+
+        if (options.onRemoveSuccess) {
+          options.onRemoveSuccess(data);
+        }
+        break;
+
       case 'friend_request_error':
         if (operationId) {
           setProcessingActions(prev => {
@@ -240,6 +267,23 @@ export const useFriendRequestManager = (componentId, options = {}) => {
     }
   }, [currentUser, componentId]);
 
+  const removeFriend = useCallback(async (targetUserId, options = {}) => {
+    if (!currentUser?._id) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      return await FriendRequestManager.removeFriend(
+        targetUserId,
+        currentUser._id,
+        options
+      );
+    } catch (error) {
+      console.error(`❌ ${componentId}: Remove friend failed:`, error);
+      throw error;
+    }
+  }, [currentUser, componentId]);
+
   const getFriendshipStatus = useCallback(async (userId) => {
     if (!currentUser?._id) {
       throw new Error('User not authenticated');
@@ -273,6 +317,7 @@ export const useFriendRequestManager = (componentId, options = {}) => {
     rejectRequest,
     cancelSentRequest,
     sendRequest,
+    removeFriend,
     getFriendshipStatus,
     refreshComponents,
     
