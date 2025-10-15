@@ -22,8 +22,7 @@ export default function NotificationScreen({ navigation }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeCategory, setActiveCategory] = useState('all');
-  const [unreadCounts, setUnreadCounts] = useState({ total: 0, social: 0, events: 0 });
+  const [unreadCounts, setUnreadCounts] = useState({ total: 0 });
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -34,11 +33,6 @@ export default function NotificationScreen({ navigation }) {
       onRejectSuccess: handleFriendRequestRejected,
       onRefreshRequired: () => fetchNotifications(true)
     });
-  const CATEGORIES = [
-    { key: 'all', label: 'All', icon: 'notifications-outline' },
-    { key: 'social', label: 'Social', icon: 'people-outline' },
-    { key: 'events', label: 'Events', icon: 'calendar-outline' }
-  ];
 
   useEffect(() => {
     navigation.setOptions({
@@ -64,15 +58,6 @@ export default function NotificationScreen({ navigation }) {
           <Ionicons name="chevron-back" size={26} color="#000000" />
         </TouchableOpacity>
       ),
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={markAllAsRead}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.markAllReadText}>Mark All Read</Text>
-        </TouchableOpacity>
-      ),
     });
   }, []);
 
@@ -81,7 +66,7 @@ export default function NotificationScreen({ navigation }) {
       fetchNotifications(true);
       fetchUnreadCounts();
     }
-  }, [isFocused, activeCategory]);
+  }, [isFocused]);
 
   function handleFriendRequestAccepted(data) {
   console.log('🎉 NotificationScreen: Friend request accepted', data);
@@ -149,11 +134,8 @@ export default function NotificationScreen({ navigation }) {
       
       // Update unread counts optimistically
       if (deletedNotification && !deletedNotification.isRead) {
-        const category = getNotificationCategory(deletedNotification.type);
         setUnreadCounts(prev => ({
-          total: Math.max(0, prev.total - 1),
-          social: category === 'social' ? Math.max(0, prev.social - 1) : prev.social,
-          events: category === 'events' ? Math.max(0, prev.events - 1) : prev.events,
+          total: Math.max(0, prev.total - 1)
         }));
       }
 
@@ -335,9 +317,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
       }
 
       const targetPage = reset ? 1 : page;
-      const categoryParam = activeCategory !== 'all' ? `&category=${activeCategory}` : '';
-      
-      const response = await api.get(`/api/notifications?page=${targetPage}&limit=20${categoryParam}`);
+      const response = await api.get(`/api/notifications?page=${targetPage}&limit=20`);
       
       if (reset) {
         setNotifications(response.data.notifications || []);
@@ -349,7 +329,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
       setPage(targetPage + 1);
       
       if (response.data.unreadCounts) {
-        setUnreadCounts(response.data.unreadCounts);
+        setUnreadCounts({ total: response.data.unreadCounts.total || 0 });
       }
       
     } catch (error) {
@@ -365,7 +345,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
   const fetchUnreadCounts = async () => {
     try {
       const response = await api.get('/api/notifications/unread-count');
-      setUnreadCounts(response.data);
+      setUnreadCounts({ total: response.data.total || 0 });
     } catch (error) {
       console.error('Error fetching unread counts:', error);
     }
@@ -375,7 +355,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchNotifications(true);
-  }, [activeCategory]);
+  }, []);
 
   const loadMore = () => {
     if (!loadingMore && hasMore) {
@@ -387,30 +367,6 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
      NOTIFICATION MANAGEMENT
   ═══════════════════════════════════════════════════════════════════ */
 
-  const markAllAsRead = async () => {
-    try {
-      const categoryParam = activeCategory !== 'all' ? `?category=${activeCategory}` : '';
-      await api.put(`/api/notifications/mark-all-read${categoryParam}`);
-      
-      setNotifications(prev => 
-        prev.map(notif => ({ ...notif, isRead: true }))
-      );
-      
-      if (activeCategory === 'all') {
-        setUnreadCounts({ total: 0, social: 0, events: 0 });
-      } else {
-        setUnreadCounts(prev => ({
-          ...prev,
-          [activeCategory]: 0,
-          total: prev.total - prev[activeCategory]
-        }));
-      }
-      
-    } catch (error) {
-      console.error('Error marking all as read:', error);
-      Alert.alert('Error', 'Failed to mark notifications as read');
-    }
-  };
 
   const markAsRead = async (notificationId) => {
     try {
@@ -424,11 +380,8 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
       
       const notification = notifications.find(n => n._id === notificationId);
       if (notification && !notification.isRead) {
-        const category = getNotificationCategory(notification.type);
         setUnreadCounts(prev => ({
-          total: Math.max(0, prev.total - 1),
-          social: category === 'social' ? Math.max(0, prev.social - 1) : prev.social,
-          events: category === 'events' ? Math.max(0, prev.events - 1) : prev.events
+          total: Math.max(0, prev.total - 1)
         }));
       }
       
@@ -526,14 +479,6 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     return '#8E44AD';
   };
 
-  const getNotificationCategory = (type) => {
-    const socialTypes = ['friend_request', 'friend_request_accepted', 'new_follower', 'memory_photo_added'];
-    const eventTypes = ['event_invitation', 'event_reminder', 'event_update', 'event_cancelled'];
-    
-    if (socialTypes.includes(type)) return 'social';
-    if (eventTypes.includes(type)) return 'events';
-    return 'social'; // default
-  };
 
   const getTimeAgo = (dateString) => {
     const now = new Date();
@@ -549,43 +494,76 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
   };
 
   /* ═══════════════════════════════════════════════════════════════════
-     RENDER FUNCTIONS
+     FRIEND REQUEST ORGANIZATION MODES
   ═══════════════════════════════════════════════════════════════════ */
 
-  const renderCategoryTabs = () => (
-    <View style={styles.categoryContainer}>
-      {CATEGORIES.map(category => {
-        const count = category.key === 'all' ? unreadCounts.total : unreadCounts[category.key];
-        const isActive = activeCategory === category.key;
-        
-        return (
-          <TouchableOpacity
-            key={category.key}
-            style={[styles.categoryTab, isActive && styles.activeCategoryTab]}
-            onPress={() => setActiveCategory(category.key)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.categoryTabContent}>
-              <Ionicons 
-                name={category.icon} 
-                size={20} 
-                color={isActive ? '#3797EF' : '#8E8E93'} 
-              />
-              <Text style={[
-                styles.categoryTabText,
-                isActive && styles.activeCategoryTabText
-              ]}>
-                {category.label}
-              </Text>
-              {count > 0 && (
-                <View style={styles.categoryBadge}>
-                  <Text style={styles.categoryBadgeText}>{count > 9 ? '9+' : count}</Text>
-                </View>
-              )}
-            </View>
-          </TouchableOpacity>
-        );
-      })}
+  // Friend request organization modes
+  const FRIEND_REQUEST_MODES = {
+    INLINE: 'inline',           // Mode A: Friend requests appear inline with other notifications
+    GROUPED_TOP: 'grouped_top', // Mode B: All pending friend requests grouped at top
+    SEPARATE_SECTION: 'separate_section' // Mode C: Dedicated "Friend Requests" section
+  };
+
+  // Default to Mode A (inline) - can be changed via user preference
+  const [friendRequestMode] = useState(FRIEND_REQUEST_MODES.INLINE);
+
+  // Helper function to organize notifications based on mode
+  const organizeNotifications = (notifications) => {
+    if (friendRequestMode === FRIEND_REQUEST_MODES.INLINE) {
+      // Mode A: Return notifications as-is (inline)
+      return notifications;
+    }
+    
+    if (friendRequestMode === FRIEND_REQUEST_MODES.GROUPED_TOP) {
+      // Mode B: Group friend requests at top
+      const friendRequests = notifications.filter(n => n.type === 'friend_request' && !n.data?.actionTaken);
+      const otherNotifications = notifications.filter(n => !(n.type === 'friend_request' && !n.data?.actionTaken));
+      return [...friendRequests, ...otherNotifications];
+    }
+    
+    if (friendRequestMode === FRIEND_REQUEST_MODES.SEPARATE_SECTION) {
+      // Mode C: Separate sections (implemented in render)
+      return notifications;
+    }
+    
+    return notifications;
+  };
+
+  // Helper function to get friend request notifications
+  const getFriendRequestNotifications = (notifications) => {
+    return notifications.filter(n => n.type === 'friend_request' && !n.data?.actionTaken);
+  };
+
+  // Helper function to get non-friend request notifications
+  const getOtherNotifications = (notifications) => {
+    return notifications.filter(n => !(n.type === 'friend_request' && !n.data?.actionTaken));
+  };
+
+
+  /* ═══════════════════════════════════════════════════════════════════
+     SECTION HEADERS FOR FRIEND REQUEST MODES
+  ═══════════════════════════════════════════════════════════════════ */
+
+  const renderFriendRequestSectionHeader = (count) => (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionHeaderContent}>
+        <Ionicons name="people" size={20} color="#3797EF" />
+        <Text style={styles.sectionHeaderTitle}>Friend Requests</Text>
+        {count > 0 && (
+          <View style={styles.sectionBadge}>
+            <Text style={styles.sectionBadgeText}>{count > 9 ? '9+' : count}</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
+  const renderOtherNotificationsSectionHeader = () => (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionHeaderContent}>
+        <Ionicons name="notifications" size={20} color="#8E8E93" />
+        <Text style={styles.sectionHeaderTitle}>Other Notifications</Text>
+      </View>
     </View>
   );
 
@@ -666,7 +644,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
             isFriendRequest && styles.friendRequestNotification
           ]}
           onPress={handleRegularNotificationPress}
-          activeOpacity={isFriendRequest && !hasActionTaken ? 1 : 0.8}
+          activeOpacity={isFriendRequest && !hasActionTaken ? 1 : 0.7}
           disabled={isFriendRequest && !hasActionTaken}
         >
           <View style={styles.notificationRow}>
@@ -722,10 +700,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
       <Ionicons name="notifications-outline" size={64} color="#C7C7CC" />
       <Text style={styles.emptyTitle}>No Notifications</Text>
       <Text style={styles.emptySubtitle}>
-        {activeCategory === 'all' 
-          ? "You're all caught up! We'll notify you when something new happens."
-          : `No ${activeCategory} notifications yet.`
-        }
+        You're all caught up! We'll notify you when something new happens.
       </Text>
     </View>
   );
@@ -734,7 +709,6 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        {renderCategoryTabs()}
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3797EF" />
           <Text style={styles.loadingText}>Loading notifications...</Text>
@@ -747,10 +721,8 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {renderCategoryTabs()}
-      
       <FlatList
-        data={notifications}
+        data={organizeNotifications(notifications)}
         keyExtractor={(item) => item._id}
         renderItem={renderNotificationItem}
         contentContainerStyle={notifications.length === 0 ? styles.emptyContainer : styles.listContainer}
@@ -812,16 +784,16 @@ const enhancedStyles = {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 22, // More rounded for modern look
-    minWidth: 100,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 25,
+    minWidth: 110,
     gap: 6,
-    elevation: 1, // Android shadow
-    shadowColor: '#000000', // iOS shadow
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    elevation: 2,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
   },
   
   acceptButton: {
@@ -831,7 +803,7 @@ const enhancedStyles = {
   
   rejectButton: {
     backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: '#FF3B30',
     flex: 1,
   },
@@ -884,29 +856,34 @@ const enhancedStyles = {
   
   // Enhanced profile picture styles
   profilePicture: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
   },
   
   defaultIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
   
   unreadDot: {
     position: 'absolute',
-    top: -2,
-    right: -2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    top: -3,
+    right: -3,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
     backgroundColor: '#3797EF',
-    borderWidth: 2,
+    borderWidth: 2.5,
     borderColor: '#FFFFFF',
+    shadowColor: '#3797EF',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
   },
 
   // Enhanced notification row layout
@@ -917,12 +894,12 @@ const enhancedStyles = {
   },
   
   notificationIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 16,
     position: 'relative',
     marginTop: 4, // Slight adjustment for visual alignment
   },
@@ -930,14 +907,16 @@ const enhancedStyles = {
   // Enhanced notification item container
   notificationItem: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 16, // Increased padding for friend request actions
+    paddingHorizontal: 20,
+    paddingVertical: 18,
     borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    borderBottomColor: '#EFEFEF',
   },
   
   unreadNotification: {
     backgroundColor: '#F8F9FA',
+    borderLeftWidth: 3,
+    borderLeftColor: '#3797EF',
   },
   
   // Title and message styling enhancements
@@ -973,57 +952,6 @@ const styles = StyleSheet.create({
   headerButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-  },
-  markAllReadText: {
-    color: '#3797EF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  categoryContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  categoryTab: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    marginHorizontal: 4,
-  },
-  activeCategoryTab: {
-    backgroundColor: '#F0F8FF',
-  },
-  categoryTabContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  categoryTabText: {
-    marginLeft: 6,
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#8E8E93',
-  },
-  activeCategoryTabText: {
-    color: '#3797EF',
-  },
-  categoryBadge: {
-    backgroundColor: '#FF3B30',
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginLeft: 6,
-    minWidth: 20,
-    alignItems: 'center',
-  },
-  categoryBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
   },
   listContainer: {
     paddingBottom: 20,
@@ -1082,10 +1010,47 @@ const styles = StyleSheet.create({
       fontSize: 13,
       fontWeight: '500',
     },
-    friendshipMessage: {
-      fontSize: 14,
-      color: '#1C1C1E',
-      textAlign: 'center',
-      marginTop: 8,
-    },
+  friendshipMessage: {
+    fontSize: 14,
+    color: '#1C1C1E',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  
+  // Section header styles for friend request modes
+  sectionHeader: {
+    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  
+  sectionHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  
+  sectionHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginLeft: 8,
+  },
+  
+  sectionBadge: {
+    backgroundColor: '#3797EF',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginLeft: 8,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  
+  sectionBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });

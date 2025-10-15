@@ -40,6 +40,8 @@ const NotificationSchema = new mongoose.Schema({
       'event_cancelled',
       'event_announcement',
       'event_rsvp_batch', // Batched RSVP notifications
+      'cohost_added',                         // 🆕 NEW: When user is added as cohost
+      'cohost_left',                          // 🆕 NEW: When cohost leaves event
       
       // Engagement (simplified - could be merged with social)
       'post_liked',

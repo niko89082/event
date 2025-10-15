@@ -822,6 +822,305 @@ router.get('/status/:userId', protect, async (req, res) => {
  * Get friend suggestions for current user
  * TODO: Implement advanced suggestion algorithm
  */
+/**
+ * GET /friends/recommendations
+ * Get friend recommendations for current user (alias for suggestions)
+ */
+router.get('/recommendations', protect, async (req, res) => {
+  try {
+    // Use the same logic as suggestions endpoint
+    const requestedLimit = parseInt(req.query.limit) || 10;
+    const limit = Math.min(requestedLimit, 15);
+    const offset = parseInt(req.query.offset) || 0;
+    const includeEventData = req.query.includeEventData === 'true';
+    
+    const currentUserId = req.user._id;
+
+    console.log(`🎯 Getting friend recommendations for user ${currentUserId} (limit: ${limit})`);
+
+    const currentUser = await User.findById(currentUserId);
+    
+    if (!currentUser || !currentUser.privacy?.allowSuggestions) {
+      return res.status(200).json({
+        success: true,
+        suggestions: [],
+        message: 'Friend recommendations are disabled',
+        total: 0
+      });
+    }
+
+    // Get current friends and users to exclude
+    const currentFriends = currentUser.getAcceptedFriends();
+    const blockedUsers = currentUser.blockedUsers || [];
+    const pendingUsers = currentUser.friends.map(f => String(f.user));
+    
+    // Get users I've sent friend requests to (for fallback suggestions)
+    const sentRequests = currentUser.friends
+      .filter(f => f.status === 'pending' && String(f.initiatedBy) === String(currentUserId))
+      .map(f => String(f.user));
+
+    // Get user's event attendance history
+    const userAttendedEvents = await Event.find({
+      attendees: currentUserId
+    }).select('_id attendees category tags time').lean();
+
+    const attendedEventIds = userAttendedEvents.map(e => e._id);
+
+    // Build co-attendance map
+    const eventCoAttendanceMap = new Map();
+    const eventAttendees = new Set();
+
+    userAttendedEvents.forEach(event => {
+      if (event.attendees && Array.isArray(event.attendees)) {
+        event.attendees.forEach(attendee => {
+          const attendeeStr = String(attendee);
+          if (attendeeStr !== String(currentUserId)) {
+            eventAttendees.add(attendeeStr);
+            const currentCount = eventCoAttendanceMap.get(attendeeStr) || 0;
+            eventCoAttendanceMap.set(attendeeStr, currentCount + 1);
+          }
+        });
+      }
+    });
+
+    // Convert to ObjectIds for MongoDB aggregation
+    const currentFriendsObjectIds = currentFriends.map(id => new mongoose.Types.ObjectId(id));
+    const excludeIds = [
+      currentUserId, 
+      ...currentFriends.map(id => new mongoose.Types.ObjectId(id)),
+      ...blockedUsers.map(id => new mongoose.Types.ObjectId(id)),
+      ...pendingUsers.map(id => new mongoose.Types.ObjectId(id))
+    ];
+
+    // MongoDB aggregation pipeline
+    const aggregationPipeline = [
+      {
+        $match: {
+          _id: { $nin: excludeIds },
+          isPublic: true,
+          $or: [
+            { 'friends.status': 'accepted' },
+            { _id: { $in: Array.from(eventAttendees).map(id => new mongoose.Types.ObjectId(id)) } }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'events',
+          let: { userId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $in: ['$$userId', '$attendees'] },
+                _id: { $in: attendedEventIds }
+              }
+            },
+            { $project: { _id: 1, category: 1, time: 1 } }
+          ],
+          as: 'sharedEvents'
+        }
+      },
+      {
+        $addFields: {
+          acceptedFriends: {
+            $map: {
+              input: { $filter: { input: '$friends', cond: { $eq: ['$$this.status', 'accepted'] } } },
+              as: 'friend',
+              in: '$$friend.user'
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          mutualFriendsCount: {
+            $size: { $setIntersection: ['$acceptedFriends', currentFriendsObjectIds] }
+          },
+          mutualEventsCount: { $size: '$sharedEvents' },
+          mutualFriendIds: {
+            $setIntersection: ['$acceptedFriends', currentFriendsObjectIds]
+          }
+        }
+      },
+      {
+        $match: {
+          $or: [
+            { mutualFriendsCount: { $gte: 1 } },
+            { mutualEventsCount: { $gte: 1 } }
+          ]
+        }
+      },
+      {
+        $addFields: {
+          mutualFriendsScore: { $multiply: ['$mutualFriendsCount', 10] },
+          mutualEventsScore: { $multiply: ['$mutualEventsCount', 5] },
+          strongMutualFriendsBonus: { $cond: [{ $gte: ['$mutualFriendsCount', 3] }, 15, 0] },
+          highEventOverlapBonus: { $cond: [{ $gte: ['$mutualEventsCount', 3] }, 10, 0] },
+          hybridBonus: {
+            $cond: [
+              { $and: [
+                { $gte: ['$mutualFriendsCount', 1] },
+                { $gte: ['$mutualEventsCount', 1] }
+              ]},
+              20, 0
+            ]
+          }
+        }
+      },
+      {
+        $addFields: {
+          suggestionScore: {
+            $add: [
+              '$mutualFriendsScore',
+              '$mutualEventsScore',
+              '$strongMutualFriendsBonus', 
+              '$highEventOverlapBonus',
+              '$hybridBonus'
+            ]
+          },
+          primaryReason: {
+            $cond: [
+              { $gt: ['$mutualFriendsCount', 0] },
+              'mutual_friends',
+              'mutual_events'
+            ]
+          }
+        }
+      },
+      { 
+        $sort: { 
+          suggestionScore: -1, 
+          mutualFriendsCount: -1,
+          mutualEventsCount: -1,
+          createdAt: -1
+        }
+      },
+      { $skip: offset },
+      { $limit: limit }
+    ];
+
+    // Execute the aggregation
+    const suggestions = await User.aggregate(aggregationPipeline);
+
+    // If we don't have enough suggestions, add users I've sent requests to
+    let fallbackSuggestions = [];
+    if (suggestions.length < limit && sentRequests.length > 0) {
+      console.log(`🔄 Adding ${sentRequests.length} sent requests as fallback suggestions`);
+      
+      const sentRequestUsers = await User.find({
+        _id: { $in: sentRequests.map(id => new mongoose.Types.ObjectId(id)) }
+      }).select('username displayName profilePicture bio').lean();
+
+      fallbackSuggestions = sentRequestUsers.map(user => ({
+        _id: user._id,
+        username: user.username,
+        firstName: user.displayName?.split(' ')[0] || user.username,
+        lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+        displayName: user.displayName,
+        profilePicture: user.profilePicture,
+        bio: user.bio,
+        mutualFriends: 0,
+        mutualEvents: 0,
+        eventCoAttendance: 0,
+        mutualFriendsDetails: [],
+        reason: 'Friend request sent',
+        reasonType: 'sent_request',
+        score: 1,
+        suggestionType: 'sent_request_fallback'
+      }));
+    }
+
+    // Enhance suggestions with detailed frontend-friendly data
+    const enhancedSuggestions = await Promise.all(
+      suggestions.map(async (user) => {
+        const mutualFriendsDetails = user.mutualFriendsCount > 0 
+          ? await User.find({
+              _id: { $in: user.mutualFriendIds.slice(0, 3) }
+            }).select('username displayName profilePicture').lean()
+          : [];
+
+        const eventCoAttendanceCount = eventCoAttendanceMap.get(String(user._id)) || 0;
+
+        let reason = '';
+        let reasonType = '';
+        
+        if (user.mutualFriendsCount > 0 && user.mutualEventsCount > 0) {
+          reasonType = 'hybrid';
+          const friendNames = mutualFriendsDetails.slice(0, 2).map(f => f.displayName || f.username);
+          if (friendNames.length === 1) {
+            reason = `Friends with ${friendNames[0]} • ${user.mutualEventsCount} event${user.mutualEventsCount > 1 ? 's' : ''} together`;
+          } else {
+            reason = `Friends with ${friendNames.join(', ')} • ${user.mutualEventsCount} event${user.mutualEventsCount > 1 ? 's' : ''} together`;
+          }
+        } else if (user.mutualFriendsCount > 0) {
+          reasonType = 'mutual_friends';
+          const friendNames = mutualFriendsDetails.map(f => f.displayName || f.username);
+          if (friendNames.length === 1) {
+            reason = `Friends with ${friendNames[0]}`;
+          } else if (friendNames.length === 2) {
+            reason = `Friends with ${friendNames[0]} and ${friendNames[1]}`;
+          } else {
+            reason = `Friends with ${friendNames[0]}, ${friendNames[1]} and ${user.mutualFriendsCount - 2} other${user.mutualFriendsCount - 2 > 1 ? 's' : ''}`;
+          }
+        } else if (user.mutualEventsCount > 0) {
+          reasonType = 'mutual_events';
+          reason = user.mutualEventsCount === 1 
+            ? `Attended an event together`
+            : `Attended ${user.mutualEventsCount} events together`;
+        }
+
+        return {
+          _id: user._id,
+          username: user.username,
+          firstName: user.displayName?.split(' ')[0] || user.username,
+          lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+          displayName: user.displayName,
+          profilePicture: user.profilePicture,
+          bio: user.bio,
+          mutualFriends: user.mutualFriendsCount,
+          mutualEvents: user.mutualEventsCount,
+          eventCoAttendance: eventCoAttendanceCount,
+          mutualFriendsDetails: mutualFriendsDetails,
+          reason: reason,
+          reasonType: reasonType,
+          score: user.suggestionScore,
+          suggestionType: 'enhanced_algorithm_v2'
+        };
+      })
+    );
+
+    const allSuggestions = [...enhancedSuggestions, ...fallbackSuggestions];
+
+    res.status(200).json({
+      success: true,
+      suggestions: allSuggestions,
+      total: allSuggestions.length,
+      metadata: {
+        algorithmVersion: '2.0',
+        maxLimit: 15,
+        actualLimit: limit,
+        enhancedSuggestions: enhancedSuggestions.length,
+        fallbackSuggestions: fallbackSuggestions.length,
+        userEventProfile: {
+          attendedEvents: attendedEventIds.length,
+          uniqueCategories: [...new Set(userAttendedEvents.map(e => e.category).filter(Boolean))],
+          coAttendees: eventAttendees.size
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Friend recommendations error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error',
+      suggestions: [],
+      total: 0,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 router.get('/suggestions', protect, async (req, res) => {
   try {
     // Enforce 15-user maximum limit for college rollout

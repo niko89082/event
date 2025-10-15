@@ -266,6 +266,65 @@ const onEventInvitation = async (eventId, inviterId, inviteeId) => {
   }
 };
 
+/**
+ * Hook for when someone is added as a cohost to an event
+ * Usage: Add to event update route in routes/events.js
+ */
+const onCoHostAdded = async (eventId, hostId, coHostId) => {
+  try {
+    const Event = require('../models/Event');
+    const User = require('../models/User');
+    
+    // Get event and cohost info
+    const event = await Event.findById(eventId).select('title host time privacyLevel');
+    const coHost = await User.findById(coHostId).select('username');
+    const host = await User.findById(hostId).select('username');
+    
+    if (!event || !coHost || !host) return;
+    
+    // Find friends of the cohost to notify them
+    const coHostUser = await User.findById(coHostId).populate('friends');
+    const friendIds = coHostUser.getAcceptedFriends();
+    
+    // Only create activity for public or friends-only events
+    if (event.privacyLevel === 'private') return;
+    
+    console.log(`🎯 Creating cohost activity for ${coHost.username} added as cohost to ${event.title}`);
+    
+    // Create activity entries for friends
+    const activities = friendIds.map(friendId => ({
+      userId: friendId,
+      type: 'friend_cohost_added',
+      eventId: event._id,
+      actorId: coHostId,
+      actorUsername: coHost.username,
+      actorProfilePicture: coHost.profilePicture,
+      eventTitle: event.title,
+      eventTime: event.time,
+      eventCoverImage: event.coverImage,
+      hostId: hostId,
+      hostUsername: host.username,
+      timestamp: new Date(),
+      metadata: {
+        privacyLevel: event.privacyLevel,
+        actionable: false,
+        grouped: false,
+        priority: 'medium'
+      }
+    }));
+    
+    if (activities.length > 0) {
+      // Insert directly into MongoDB activities collection
+      const mongoose = require('mongoose');
+      await mongoose.connection.db.collection('activities').insertMany(activities);
+      console.log(`✅ Created ${activities.length} cohost activity entries`);
+    }
+    
+  } catch (error) {
+    console.error('Error in onCoHostAdded hook:', error);
+  }
+};
+
 module.exports = {
   onEventJoin,
   onEventPhotoUpload, 
@@ -274,5 +333,7 @@ module.exports = {
   // ✅ NEW EXPORTS - PHASE 1
   onMemoryPhotoUpload,
   onPhotoComment,
-  onMemoryPhotoComment
+  onMemoryPhotoComment,
+  onEventInvitation,
+  onCoHostAdded
 };

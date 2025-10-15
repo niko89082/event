@@ -21,6 +21,8 @@ import ActivityFeed from '../components/ActivityFeed'; // ✅ CHANGED: Import Ac
 import EventsHub from '../components/EventsHub';
 import { useDynamicType } from '../hooks/useDynamicType';
 import ResponsiveText from '../components/ResponsiveText';
+import api from '../services/api';
+import { useIsFocused } from '@react-navigation/native';
 
 // Disable automatic font scaling - we handle it manually
 Text.defaultProps = Text.defaultProps || {};
@@ -46,8 +48,10 @@ const SHOW_THRESHOLD = 30;
 export default function FeedScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { getScaledSpacing, getScaledLineHeight, fontScale } = useDynamicType();
+  const isFocused = useIsFocused();
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const activityRef = useRef(null); // ✅ CHANGED: Renamed from postsRef to activityRef
   const eventsRef = useRef(null);
   const isAnimating = useRef(false);
@@ -125,6 +129,13 @@ export default function FeedScreen({ navigation }) {
   useEffect(() => {
     currentTabIndex.current = activeTabIndex;
   }, [activeTabIndex]);
+
+  // Fetch unread notification count when screen is focused
+  useEffect(() => {
+    if (isFocused) {
+      fetchUnreadNotificationCount();
+    }
+  }, [isFocused]);
 
   // FIXED: Animation logic with proper distances
   const animateTabBars = useCallback((mainTabOpacity, subTabToValue) => {
@@ -380,6 +391,15 @@ export default function FeedScreen({ navigation }) {
     })
   ).current;
 
+  const fetchUnreadNotificationCount = async () => {
+    try {
+      const response = await api.get('/api/notifications/unread-count');
+      setUnreadNotificationCount(response.data.total || 0);
+    } catch (error) {
+      console.error('Error fetching unread notification count:', error);
+    }
+  };
+
   const handleNotificationPress = () => {
     try {
       navigation.navigate('NotificationScreen');
@@ -488,7 +508,16 @@ export default function FeedScreen({ navigation }) {
               onPress={handleNotificationPress}
               activeOpacity={0.8}
             >
-              <Ionicons name="notifications-outline" size={24} color="#3797EF" />
+              <View style={styles.notificationIconContainer}>
+                <Ionicons name="notifications-outline" size={24} color="#3797EF" />
+                {unreadNotificationCount > 0 && (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationBadgeText}>
+                      {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -647,6 +676,38 @@ const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 8,
     elevation: 4,
+  },
+  
+  notificationIconContainer: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  notificationBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#FF3B30',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  
+  notificationBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 
   // Fixed height containers to prevent excessive growth

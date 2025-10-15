@@ -188,7 +188,8 @@ const fetchEvents = async (pageNum = 1, isRefresh = false) => {
   const handleAttend = async (event) => {
     try {
       await api.post(`/api/events/attend/${event._id}`);
-      await fetchEvents(1, true); // Refresh to get updated data
+      // ✅ IMPROVED: Force refresh to get updated data immediately
+      await fetchEvents(1, true);
     } catch (error) {
       console.error('Attend event error:', error);
       Alert.alert('Error', 'Failed to join event');
@@ -308,6 +309,10 @@ const fetchEvents = async (pageNum = 1, isRefresh = false) => {
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.contentContainer}
+      contentInset={{ top: 20 }}
+      scrollIndicatorInsets={{ top: 20 }}
+      bounces={true}
+      alwaysBounceVertical={true}
       removeClippedSubviews={true}
       maxToRenderPerBatch={10}
       windowSize={10}

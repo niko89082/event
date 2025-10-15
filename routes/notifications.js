@@ -394,4 +394,171 @@ router.patch('/read-all', protect, async (req, res) => {
   }
 });
 
+/* ═══════════════════════════════════════════════════════════════════
+   POST /api/notifications/test - Create test notifications for testing UI
+═══════════════════════════════════════════════════════════════════ */
+router.post('/test', protect, async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    const User = require('../models/User');
+    
+    console.log(`🧪 Creating test notifications for user ${req.user._id}`);
+    
+    // Create various types of test notifications
+    const testNotifications = [
+      {
+        user: req.user._id,
+        type: 'friend_request',
+        title: 'New Friend Request',
+        message: 'John Doe sent you a friend request',
+        category: 'social',
+        data: {
+          requester: {
+            _id: '507f1f77bcf86cd799439011',
+            username: 'johndoe',
+            displayName: 'John Doe',
+            profilePicture: null
+          }
+        }
+      },
+      {
+        user: req.user._id,
+        type: 'friend_request_accepted',
+        title: 'Friend Request Accepted',
+        message: 'Jane Smith accepted your friend request',
+        category: 'social',
+        data: {
+          accepter: {
+            _id: '507f1f77bcf86cd799439012',
+            username: 'janesmith',
+            displayName: 'Jane Smith',
+            profilePicture: null
+          }
+        }
+      },
+      {
+        user: req.user._id,
+        type: 'event_invitation',
+        title: 'Event Invitation',
+        message: 'You\'re invited to "Tech Meetup 2024"',
+        category: 'events',
+        data: {
+          event: {
+            _id: '507f1f77bcf86cd799439013',
+            title: 'Tech Meetup 2024',
+            time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+            location: 'San Francisco, CA'
+          },
+          inviter: {
+            _id: '507f1f77bcf86cd799439014',
+            username: 'alextech',
+            displayName: 'Alex Tech'
+          }
+        }
+      },
+      {
+        user: req.user._id,
+        type: 'event_reminder',
+        title: 'Event Reminder',
+        message: 'Tech Meetup 2024 starts in 1 hour',
+        category: 'events',
+        data: {
+          event: {
+            _id: '507f1f77bcf86cd799439013',
+            title: 'Tech Meetup 2024',
+            time: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+            location: 'San Francisco, CA'
+          }
+        }
+      },
+      {
+        user: req.user._id,
+        type: 'photo_comment',
+        title: 'New Comment',
+        message: 'Mike Johnson commented on your photo',
+        category: 'social',
+        data: {
+          commenter: {
+            _id: '507f1f77bcf86cd799439015',
+            username: 'mikejohnson',
+            displayName: 'Mike Johnson',
+            profilePicture: null
+          },
+          photo: {
+            _id: '507f1f77bcf86cd799439016',
+            caption: 'Great event last night!'
+          }
+        }
+      }
+    ];
+
+    // Create notifications with different timestamps
+    const createdNotifications = [];
+    for (let i = 0; i < testNotifications.length; i++) {
+      const notification = new Notification({
+        ...testNotifications[i],
+        createdAt: new Date(Date.now() - i * 60 * 60 * 1000), // Each notification 1 hour apart
+        isRead: i % 3 === 0 // Make some read, some unread
+      });
+      
+      await notification.save();
+      createdNotifications.push(notification);
+    }
+
+    console.log(`✅ Created ${createdNotifications.length} test notifications`);
+
+    res.json({
+      success: true,
+      message: `Created ${createdNotifications.length} test notifications`,
+      notifications: createdNotifications.map(n => ({
+        _id: n._id,
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        category: n.category,
+        isRead: n.isRead,
+        createdAt: n.createdAt
+      }))
+    });
+
+  } catch (error) {
+    console.error('Error creating test notifications:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error',
+      error: error.message 
+    });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   DELETE /api/notifications/test - Clear all test notifications
+═══════════════════════════════════════════════════════════════════ */
+router.delete('/test', protect, async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    
+    console.log(`🧹 Clearing test notifications for user ${req.user._id}`);
+    
+    // Delete all notifications for this user (be careful in production!)
+    const result = await Notification.deleteMany({ user: req.user._id });
+    
+    console.log(`✅ Deleted ${result.deletedCount} notifications`);
+
+    res.json({
+      success: true,
+      message: `Cleared ${result.deletedCount} notifications`,
+      deletedCount: result.deletedCount
+    });
+
+  } catch (error) {
+    console.error('Error clearing test notifications:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error',
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;

@@ -166,7 +166,8 @@ export default function AttendingEventsFeed({
           onPress: async () => {
             try {
               await api.delete(`/api/events/attend/${event._id}`);
-              await fetchEvents(1, true); // Refresh to get updated data
+              // ✅ IMPROVED: Force refresh to get updated data immediately
+              await fetchEvents(1, true);
             } catch (error) {
               console.error('Leave event error:', error);
               Alert.alert('Error', 'Failed to leave event');
@@ -285,6 +286,10 @@ export default function AttendingEventsFeed({
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.contentContainer}
+      contentInset={{ top: 20 }}
+      scrollIndicatorInsets={{ top: 20 }}
+      bounces={true}
+      alwaysBounceVertical={true}
       removeClippedSubviews={true}
       maxToRenderPerBatch={10}
       windowSize={10}

@@ -213,6 +213,14 @@ const fetchUserEvents = useCallback(async (forceRefresh = false) => {
 
   // Refresh function for external use
   const refresh = useCallback(() => {
+    console.log('🔄 useUserEvents: Manual refresh triggered');
+    return fetchUserEvents(true);
+  }, [fetchUserEvents]);
+
+  // Force refresh function that bypasses cache
+  const forceRefresh = useCallback(() => {
+    console.log('🔄 useUserEvents: Force refresh triggered (bypassing cache)');
+    setLastFetch(null); // Clear cache timestamp
     return fetchUserEvents(true);
   }, [fetchUserEvents]);
 
@@ -241,6 +249,7 @@ const fetchUserEvents = useCallback(async (forceRefresh = false) => {
     
     // Actions
     refresh,
+    forceRefresh,
     clear,
     
     // Summary for debugging

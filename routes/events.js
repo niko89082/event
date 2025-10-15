@@ -6050,6 +6050,47 @@ router.put('/:eventId', protect, async (req, res) => {
     console.log('  updated category:', JSON.stringify(updatedEvent.category));
     console.log('  updated allowPhotos:', updatedEvent.allowPhotos);
 
+    // ✅ NEW: Check for cohost changes and send notifications
+    if (updateData.coHosts !== undefined) {
+      const oldCoHosts = existingEvent.coHosts ? existingEvent.coHosts.map(id => String(id)) : [];
+      const newCoHosts = updatedEvent.coHosts ? updatedEvent.coHosts.map(id => String(id)) : [];
+      
+      // Find newly added cohosts
+      const addedCoHosts = newCoHosts.filter(id => !oldCoHosts.includes(id));
+      
+      if (addedCoHosts.length > 0) {
+        console.log(`🔔 Detected ${addedCoHosts.length} new cohosts:`, addedCoHosts);
+        
+        // Send notifications to new cohosts (non-blocking)
+        setImmediate(async () => {
+          try {
+            const notificationService = require('../services/notificationService');
+            
+            for (const coHostId of addedCoHosts) {
+              await notificationService.sendCoHostAdded(req.user._id, coHostId, updatedEvent);
+              console.log(`🔔 Sent cohost notification to ${coHostId}`);
+            }
+          } catch (notifError) {
+            console.error('Failed to send cohost notifications:', notifError);
+          }
+        });
+
+        // Create activity feed entries for friends (non-blocking)
+        setImmediate(async () => {
+          try {
+            const { onCoHostAdded } = require('../utils/activityHooks');
+            
+            for (const coHostId of addedCoHosts) {
+              await onCoHostAdded(eventId, req.user._id, coHostId);
+              console.log(`🎯 Activity hook executed for cohost addition: ${coHostId} -> ${eventId}`);
+            }
+          } catch (activityError) {
+            console.error('Failed to create cohost activity:', activityError);
+          }
+        });
+      }
+    }
+
     // Return success response
     res.json({
       message: 'Event updated successfully',

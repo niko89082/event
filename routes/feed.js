@@ -88,6 +88,11 @@ const ACTIVITY_TYPES = {
     priority: 'medium', // ✅ FIXED: Increased from 'low' to 'medium'
     weight: 1.2,
     maxAge: 7 * 24 * 60 * 60 * 1000 // ✅ FIXED: Increased from 3 to 7 days
+  },
+  'friend_cohost_added': { 
+    priority: 'medium', 
+    weight: 1.3,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   }
 };
 
@@ -984,6 +989,60 @@ const fetchEventInvitations = async (userId, timeRange) => {
     score: calculateActivityScore(invitation, 'event_invitation', userId)
   }));
 };
+
+const fetchCoHostActivities = async (userId, friendIds, timeRange) => {
+  console.log('👥 Fetching cohost activities...');
+  
+  try {
+    const mongoose = require('mongoose');
+    
+    // Fetch cohost activities
+    const cohostActivities = await mongoose.connection.db.collection('activities').find({
+      userId: { $in: friendIds.map(id => new mongoose.Types.ObjectId(id)) },
+      type: 'friend_cohost_added',
+      timestamp: { $gte: timeRange.start }
+    }).sort({ timestamp: -1 }).limit(20).toArray();
+
+    console.log(`🔍 Found ${cohostActivities.length} cohost activities`);
+
+    return cohostActivities.map(activity => ({
+      _id: `cohost_${activity._id}`,
+      activityType: 'friend_cohost_added',
+      timestamp: activity.timestamp,
+      user: {
+        _id: activity.actorId,
+        username: activity.actorUsername,
+        profilePicture: activity.actorProfilePicture
+      },
+      data: {
+        event: {
+          _id: activity.eventId,
+          title: activity.eventTitle,
+          time: activity.eventTime,
+          coverImage: activity.eventCoverImage
+        },
+        host: {
+          _id: activity.hostId,
+          username: activity.hostUsername
+        },
+        cohost: {
+          _id: activity.actorId,
+          username: activity.actorUsername,
+          profilePicture: activity.actorProfilePicture
+        }
+      },
+      metadata: {
+        actionable: false,
+        grouped: false,
+        priority: 'medium'
+      },
+      score: calculateActivityScore(activity, 'friend_cohost_added', userId)
+    }));
+  } catch (error) {
+    console.error('❌ Error fetching cohost activities:', error);
+    return [];
+  }
+};
 // const fetchEventPhotoUploads = async (userId, friendIds, timeRange) => {
 //   console.log('📷 Fetching event photo uploads...');
   
@@ -1459,7 +1518,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       eventCreations,
       memoryPhotoUploads,
       photoComments,           // ✅ NEW: Regular photo comments
-      memoryPhotoComments      // ✅ NEW: Memory photo comments
+      memoryPhotoComments,     // ✅ NEW: Memory photo comments
+      cohostActivities         // ✅ NEW: Cohost activities
     ] = await Promise.all([
       fetchRegularPosts(userId, friendIds, timeRange),
       fetchMemoryPosts(userId, friendIds, timeRange),
@@ -1473,7 +1533,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       fetchEventCreations(userId, friendIds, timeRange),
       fetchMemoryPhotoUploads(userId, friendIds, timeRange),
       fetchPhotoComments(userId, friendIds, timeRange),           // ✅ NEW: Fetch photo comments
-      fetchMemoryPhotoComments(userId, friendIds, timeRange)      // ✅ NEW: Fetch memory photo comments
+      fetchMemoryPhotoComments(userId, friendIds, timeRange),     // ✅ NEW: Fetch memory photo comments
+      fetchCoHostActivities(userId, friendIds, timeRange)         // ✅ NEW: Fetch cohost activities
     ]);
 
     console.log('📊 Activity counts by type:', {
@@ -1489,7 +1550,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       eventCreations: eventCreations.length,
       memoryPhotoUploads: memoryPhotoUploads.length,
       photoComments: photoComments.length,              // ✅ NEW
-      memoryPhotoComments: memoryPhotoComments.length   // ✅ NEW
+      memoryPhotoComments: memoryPhotoComments.length,  // ✅ NEW
+      cohostActivities: cohostActivities.length         // ✅ NEW
     });
 
     // ✅ PHASE 2: Combine all activities including comment activities
@@ -1506,7 +1568,8 @@ router.get('/feed/activity', protect, async (req, res) => {
       ...eventCreations,
       ...memoryPhotoUploads,
       ...photoComments,           // ✅ NEW: Include photo comments
-      ...memoryPhotoComments      // ✅ NEW: Include memory photo comments
+      ...memoryPhotoComments,     // ✅ NEW: Include memory photo comments
+      ...cohostActivities         // ✅ NEW: Include cohost activities
     ];
 
     console.log(`📈 Total activities before filtering: ${allActivities.length}`);

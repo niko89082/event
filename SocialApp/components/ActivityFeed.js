@@ -33,6 +33,7 @@ import MemoryPhotoUploadActivity from './activities/MemoryPhotoUploadActivity';
 import PhotoCommentActivity from './activities/PhotoCommentActivity';              // ✅ NEW
 import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
 import PostActivityComponent from './PostActivityComponent'; // ✅ NEW: Import PostActivityComponent
+import FriendRecommendations from './FriendRecommendations'; // ✅ NEW: Import FriendRecommendations
 
 
 const ActivityFeed = forwardRef(({
@@ -389,21 +390,37 @@ const ActivityFeed = forwardRef(({
     );
   }
 
-  const renderEmptyState = () => (
-  <View style={styles.emptyContainer}>
-    <Ionicons name="flash-outline" size={48} color="#8E8E93" />
-    <Text style={styles.emptyTitle}>No Activities Yet</Text>
-    <Text style={styles.emptySubtitle}>
-      Follow some friends or join events to see activities here!
-    </Text>
-    <TouchableOpacity 
-      style={styles.actionButton}
-      onPress={() => navigation.navigate('DiscoverScreen')}
-    >
-      <Text style={styles.actionButtonText}>Discover People</Text>
-    </TouchableOpacity>
-  </View>
-);
+  const renderEmptyState = () => {
+    console.log('🎯 ActivityFeed: Rendering empty state');
+    return (
+      <View style={styles.emptyContainer}>
+        {/* ✅ NEW: Compact Friend Recommendations */}
+        <FriendRecommendations 
+          navigation={navigation}
+          onFriendAdded={(user) => {
+            console.log('🎉 Friend added:', user.username);
+            // Optionally refresh the activity feed
+            fetchPage(1, true);
+          }}
+        />
+      </View>
+    );
+  };
+
+  // ✅ NEW: Add friend recommendations as a header component
+  const renderHeader = () => {
+    console.log('🎯 ActivityFeed: Rendering header with friend recommendations');
+    return (
+      <FriendRecommendations 
+        navigation={navigation}
+        onFriendAdded={(user) => {
+          console.log('🎉 Friend added:', user.username);
+          // Optionally refresh the activity feed
+          fetchPage(1, true);
+        }}
+      />
+    );
+  };
 
 
   return (
@@ -420,16 +437,24 @@ const ActivityFeed = forwardRef(({
         onRefresh={handleRefresh}
         colors={['#3797EF']}
         tintColor="#3797EF"
+        title="Pull to refresh"
+        titleColor="#8E8E93"
+        progressBackgroundColor="#FFFFFF"
       />
     }
-    ListEmptyComponent={renderEmptyState}  // ADD THIS LINE
+    ListHeaderComponent={renderHeader}
+    ListEmptyComponent={renderEmptyState}
     ListFooterComponent={renderFooter}
     onScroll={handleScroll}
     scrollEventThrottle={scrollEventThrottle}
-    showsVerticalScrollIndicator={true}
+    showsVerticalScrollIndicator={false}
     contentContainerStyle={data.length === 0 ? styles.emptyContentContainer : styles.contentContainer}
+    contentInset={{ top: 20 }}
+    scrollIndicatorInsets={{ top: 20 }}
+    bounces={true}
+    alwaysBounceVertical={true}
     removeClippedSubviews={true}
-    maxToRenderPerBatch={10}
+    maxToRenderPerBatch={5}
     updateCellsBatchingPeriod={50}
     windowSize={10}
   />
@@ -523,9 +548,14 @@ const styles = StyleSheet.create({
   // Empty state
   emptyContainer: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingTop: 40,
+    paddingBottom: 20,
+  },
+  emptyHeader: {
     alignItems: 'center',
     paddingHorizontal: 40,
+    paddingBottom: 24,
   },
   emptyTitle: {
     fontSize: 20,
@@ -544,11 +574,16 @@ const styles = StyleSheet.create({
   
   // Action buttons
   actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#3797EF',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
-    marginTop: 24,
+    marginTop: 20,
+    marginHorizontal: 40,
+    gap: 8,
   },
   actionButtonText: {
     color: '#FFFFFF',

@@ -146,7 +146,7 @@ export default function FollowingEventsFeed({
   const handleAttend = async (event) => {
     try {
       await api.post(`/api/events/attend/${event._id}`);
-      // Refresh to show updated attendance
+      // ✅ IMPROVED: Force refresh to get updated data immediately
       fetchEvents(1, true);
     } catch (error) {
       console.error('Attend event error:', error);
@@ -282,6 +282,10 @@ export default function FollowingEventsFeed({
         { flexGrow: 1, paddingTop: 190 } : 
         { paddingTop: 190, paddingBottom: 100 }
       }
+      contentInset={{ top: 20 }}
+      scrollIndicatorInsets={{ top: 20 }}
+      bounces={true}
+      alwaysBounceVertical={true}
     />
   );
 }

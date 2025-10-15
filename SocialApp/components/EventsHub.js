@@ -13,6 +13,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { AuthContext } from '../services/AuthContext';
 import FollowingEventsFeed from './FollowingEventsFeed';
 import EventsFeed from './EventsFeed';
@@ -61,6 +62,7 @@ const EventsHub = forwardRef(({
     loading: userEventsLoading,
     error: userEventsError,
     refresh: refreshUserEvents,
+    forceRefresh: forceRefreshUserEvents,
     summary // Add summary for debugging
   } = useUserEvents(currentUser?._id);
   
@@ -131,6 +133,10 @@ const EventsHub = forwardRef(({
     refresh: async () => {
       console.log('🔄 EventsHub: Manual refresh triggered');
       await refreshUserEvents();
+    },
+    forceRefresh: async () => {
+      console.log('🔄 EventsHub: Force refresh triggered');
+      await forceRefreshUserEvents();
     }
   }));
 
@@ -164,7 +170,7 @@ const EventsHub = forwardRef(({
     if (externalOnRefresh) {
       await externalOnRefresh();
     } else {
-      await refreshUserEvents();
+      await forceRefreshUserEvents(); // Use force refresh for pull-to-refresh
     }
   };
 
@@ -188,6 +194,46 @@ const EventsHub = forwardRef(({
       clearEvents();
     }
   }, [currentUser, clearEvents]);
+
+  // ✅ NEW: Listen for event store changes and refresh user events accordingly
+  useEffect(() => {
+    if (!currentUser?._id) return;
+
+    // Subscribe to event store changes
+    const unsubscribe = useEventStore.subscribe(
+      (state) => state.events,
+      (events) => {
+        // Check if any events have been updated recently (within last 5 seconds)
+        const now = Date.now();
+        const hasRecentUpdates = Array.from(events.values()).some(event => 
+          event.lastUpdated && (now - event.lastUpdated) < 5000
+        );
+
+        if (hasRecentUpdates) {
+          console.log('🔄 EventsHub: Detected recent event updates, refreshing user events...');
+          // Use a small delay to avoid rapid refreshes
+          setTimeout(() => {
+            forceRefreshUserEvents();
+          }, 1000);
+        }
+      }
+    );
+
+    return unsubscribe;
+  }, [currentUser?._id, forceRefreshUserEvents]);
+
+  // ✅ NEW: Refresh user events when EventsHub comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (currentUser?._id) {
+        console.log('🔄 EventsHub: Screen focused, refreshing user events...');
+        // Use a small delay to avoid conflicts with other refreshes
+        setTimeout(() => {
+          refreshUserEvents();
+        }, 500);
+      }
+    }, [currentUser?._id, refreshUserEvents])
+  );
 
   const renderTabButton = (tabKey, label, icon) => (
     <TouchableOpacity
