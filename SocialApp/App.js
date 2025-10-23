@@ -37,8 +37,10 @@ import EditMemoryScreen from './screens/EditMemoryScreen';
 import MemoryParticipantsScreen from './screens/MemoryParticipantsScreen';
 import InviteUsersScreen from './screens/InviteUsersScreen';
 import NotificationScreen from './screens/NotificationScreen';
+import NotificationExamplesScreen from './screens/NotificationExamplesScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
 import PostLikesScreen from './screens/PostsLikesScreen'; 
+import CategoryEventsScreen from './screens/CategoryEventsScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
@@ -285,6 +287,24 @@ function AppNavigator({ onLogout }) {
               options={{ 
                 headerShown: true, 
                 title: 'Event Details',
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
+            />
+            <RootStack.Screen 
+              name="CategoryEventsScreen" 
+              component={CategoryEventsScreen}
+              options={{ 
+                headerShown: true, 
+                title: 'Category Events',
                 headerStyle: {
                   backgroundColor: '#FFFFFF',
                   shadowOpacity: 0.1,
@@ -579,6 +599,14 @@ function AppNavigator({ onLogout }) {
                   fontSize: 18,
                 },
                 headerBackTitleVisible: false,
+              }}
+            />
+            <RootStack.Screen 
+              name="NotificationExamples" 
+              component={NotificationExamplesScreen}
+              options={{ 
+                headerShown: false,
+                title: 'Notification Examples',
               }}
             />
           </>

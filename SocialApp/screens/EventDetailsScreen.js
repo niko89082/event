@@ -1609,8 +1609,8 @@ const handleInviteSuccess = (result) => {
                 </Text>
                 <Text style={styles.debugText}>
                   Overlay: {OVERLAY_CONFIG.NO_OVERLAY 
-                    ? `Full image (${Math.round(coverImageDimensions.height)}px)` 
-                    : `-${Math.round(coverImageDimensions.height * 0.4)}px`
+                    ? `Full image (${Math.round(coverImageDimensions.height - 10)}px)` 
+                    : `-${Math.round(coverImageDimensions.height * 0.4 - 10)}px`
                   }
                 </Text>
               </View>
@@ -1624,14 +1624,14 @@ const handleInviteSuccess = (result) => {
               // Option 1: Dynamic content sliding over static image
               OVERLAY_CONFIG.DYNAMIC_CONTENT && !OVERLAY_CONFIG.NO_OVERLAY && {
                 marginTop: coverImageDimensions 
-                  ? -(coverImageDimensions.height * 0.4) // Reduced overlay percentage for better visibility
-                  : -120 // Reduced fallback for better default experience
+                  ? -(coverImageDimensions.height * 0.4) + 10 // Move details section UP by 10px for better curvature overlay
+                  : -110 // Move details section UP by 10px for better default experience
               },
               // Option 2: Show entire image with no overlay
               OVERLAY_CONFIG.NO_OVERLAY && {
                 marginTop: coverImageDimensions 
-                  ? coverImageDimensions.height // Position content below the full image
-                  : 300 // Fallback height
+                  ? coverImageDimensions.height - 10 // Move details section UP by 10px (cover image appears lower)
+                  : 290 // Move details section UP by 10px (cover image appears lower)
               },
               { transform: [{ translateY: slideAnim }] }
             ]}
@@ -1643,8 +1643,8 @@ const handleInviteSuccess = (result) => {
                 <View style={styles.contentDebugInfo}>
                   <Text style={styles.contentDebugText}>
                     Content overlay: {OVERLAY_CONFIG.NO_OVERLAY 
-                      ? `Full image (${Math.round(coverImageDimensions.height)}px)` 
-                      : `-${Math.round(coverImageDimensions.height * 0.4)}px`
+                      ? `Full image (${Math.round(coverImageDimensions.height - 10)}px)` 
+                      : `-${Math.round(coverImageDimensions.height * 0.4 - 10)}px`
                     }
                   </Text>
                 </View>
@@ -1740,6 +1740,15 @@ const handleInviteSuccess = (result) => {
                     })}</>
                   )}
                 </Text>
+                {event.endTime && (
+                  <Text style={styles.endTimeText}>
+                    Event ends at {new Date(event.endTime).toLocaleTimeString([], { 
+                      hour: 'numeric', 
+                      minute: '2-digit', 
+                      hour12: true 
+                    })}
+                  </Text>
+                )}
               </View>
 
               {/* Location Card */}
@@ -2200,6 +2209,13 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginLeft: 36,
     marginTop: 8,
+  },
+  endTimeText: {
+    fontSize: 14,
+    color: '#3797EF',
+    marginLeft: 36,
+    marginTop: 4,
+    fontWeight: '600',
   },
   paidStatus: {
     flexDirection: 'row',

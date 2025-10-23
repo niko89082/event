@@ -605,6 +605,10 @@ const handleSaveEvent = async () => {
     console.log('🔍 updateData.description:', JSON.stringify(updateData.description));
     console.log('🔍 updateData.category:', JSON.stringify(updateData.category));
     console.log('🔍 updateData.title:', JSON.stringify(updateData.title));
+    console.log('🔍 updateData.endTime:', JSON.stringify(updateData.endTime));
+    console.log('🔍 endDateTime state:', endDateTime);
+    console.log('🔍 endDateTime type:', typeof endDateTime);
+    console.log('🔍 endDateTime toISOString:', endDateTime ? endDateTime.toISOString() : 'null');
 
 
     // Add coordinates if available

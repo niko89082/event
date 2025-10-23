@@ -31,22 +31,22 @@ export default function CategoryEventSection({
   const [error, setError] = useState(null);
   const [hasInitialized, setHasInitialized] = useState(false);
 const CATEGORY_COLORS = {
-  'Music': '#FF6B6B',
-  'Sports': '#4ECDC4', 
-  'Food': '#45B7D1',
-  'Party': '#A8E6CF',
-  'Social': '#FFD93D',
-  'Business': '#6C5CE7',
-  'Entertainment': '#FD79A8',
-  'Art': '#FDCB6E',
-  'Technology': '#74B9FF',
-  'Education': '#81ECEC',
-  'Health': '#55A3FF',
-  'Travel': '#00B894',
-  'Celebration': '#E17055',
-  'Professional': '#636E72',
-  'Meeting': '#A29BFE',
-  'General': '#DDD'
+  'Music': '#FF3B5C',       // Vibrant pink-red
+  'Sports': '#00D9A3',      // Bright teal
+  'Food': '#FF8C42',        // Vibrant orange
+  'Party': '#9D4EDD',       // Bright purple
+  'Social': '#3B82F6',      // Bright blue
+  'Business': '#6366F1',    // Indigo
+  'Entertainment': '#EC4899', // Hot pink
+  'Art': '#F59E0B',         // Amber
+  'Technology': '#0EA5E9',  // Sky blue
+  'Education': '#14B8A6',   // Teal
+  'Health': '#EF4444',      // Red
+  'Travel': '#10B981',      // Emerald
+  'Celebration': '#F97316', // Orange
+  'Professional': '#64748B', // Slate
+  'Meeting': '#8B5CF6',     // Violet
+  'General': '#94A3B8'      // Gray
 };
 
   useEffect(() => {
@@ -225,46 +225,45 @@ const CATEGORY_COLORS = {
   renderItem={renderEventCard}
   keyExtractor={(item) => item._id}
   
-  // ✅ STRICT: Horizontal scrolling only
+  // ✅ Horizontal scrolling
   horizontal={true}
   
-  // ✅ STRICT: Disable all vertical movement
+  // ✅ Hide scroll indicators
   showsHorizontalScrollIndicator={false}
   showsVerticalScrollIndicator={false}
   scrollEnabled={true}
   
-  // ✅ CRITICAL: Prevent any vertical scrolling or bouncing
-  bounces={false}           // No bouncing at all
+  // ✅ IMPROVED: Enable horizontal bouncing for better UX
+  bounces={true}
   bouncesZoom={false}
   alwaysBounceVertical={false}
-  alwaysBounceHorizontal={false}  // Also disable horizontal bounce for strict control
+  alwaysBounceHorizontal={true}  // Enable horizontal bounce for natural feel
   
-  // ✅ STRICT: Lock to horizontal only
-  directionalLockEnabled={true}   // iOS: Lock to one direction
-  pagingEnabled={false}          // Disable paging to prevent weird behavior
+  // ✅ Lock to horizontal only
+  directionalLockEnabled={true}
+  pagingEnabled={false}
   
-  // ✅ ENHANCED: Smooth horizontal scrolling
+  // ✅ Smooth horizontal scrolling
   decelerationRate="normal"
   scrollEventThrottle={16}
   
-  // ✅ OPTIONAL: Snap to cards (comment out if it feels too restrictive)
+  // ✅ Snap to cards for better UX
   snapToInterval={SCREEN_WIDTH * 0.55 + 12}
   snapToAlignment="start"
   
-  // ✅ LAYOUT: Content styling
+  // ✅ IMPROVED: Content styling with end padding
   contentContainerStyle={styles.listContainer}
-  
-  // ✅ NO REFRESH: Removed RefreshControl completely
+  style={styles.flatListStyle}
   
   // Performance optimizations
-  removeClippedSubviews={true}
+  removeClippedSubviews={false} // ✅ FIXED: Disable to prevent card clipping
   maxToRenderPerBatch={5}
   initialNumToRender={3}
   windowSize={7}
   
   // Item layout calculation
   getItemLayout={(data, index) => {
-    const CARD_WIDTH = SCREEN_WIDTH * 0.62;  // Updated for new card width
+    const CARD_WIDTH = SCREEN_WIDTH * 0.55;
     const CARD_SPACING = 12;
     const itemWidth = CARD_WIDTH + CARD_SPACING;
     return {length: itemWidth, offset: itemWidth * index, index};
@@ -277,21 +276,23 @@ const CATEGORY_COLORS = {
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 20,
-    backgroundColor: '#FFFFFF',
+    marginBottom: 0, // ✅ REMOVED: No margin between categories
+    backgroundColor: '#FAFAFA',
+    overflow: 'visible', // ✅ FIXED: Prevent clipping of event cards
   },
   loadingSection: {
-    marginBottom: 20,
-    backgroundColor: '#FFFFFF',
+    marginBottom: 0, // ✅ REMOVED: No margin between categories
+    backgroundColor: '#FAFAFA',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    paddingTop: 12,
+    paddingBottom: 6,
+    backgroundColor: '#FAFAFA',
+    // Removed border divider for cleaner look
   },
   headerLeft: {
     flexDirection: 'row',
@@ -328,7 +329,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   viewMoreText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: '#8E8E93',
     marginRight: 4,
@@ -336,10 +337,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
     listContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexGrow: 0,        // ✅ CRITICAL: Prevent container from growing vertically
-    height: 160,        // ✅ FIXED: Set exact height to match card height
+    paddingLeft: 16,
+    paddingRight: 32,    // ✅ IMPROVED: Extra padding at end for better UX
+    paddingTop: 10,
+    paddingBottom: 16, // ✅ ADJUSTED: Reduced bottom padding for tighter spacing
+    flexGrow: 0,
+    // Remove fixed height to allow cards to display fully
+  },
+  flatListStyle: {
+    overflow: 'visible', // ✅ FIXED: Ensure cards aren't clipped
   },
   loadingContainer: {
     height: 120,
@@ -348,26 +354,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   categoryTag: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: 12,
     alignSelf: 'flex-start',
   },
   categoryTagText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.5,
   },
 
-  // ✅ UPDATE: Modify existing header style
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 20,          // ✅ CHANGED: More padding for tag style
-    paddingBottom: 12,       // ✅ CHANGED: Less bottom padding
-    // Remove borderBottom for cleaner tag look
-  },
+  // Header styles are now defined above - this duplicate has been removed
 });

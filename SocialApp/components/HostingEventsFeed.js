@@ -325,7 +325,7 @@ const styles = StyleSheet.create({
   // ✅ FIXED: Increased paddingTop from 140 to 190 for consistent positioning
   contentContainer: {
     paddingTop: 190,     // ✅ CHANGED: From 140 to 190 to match standard
-    paddingBottom: 20,   // ✅ KEEP: Existing bottom padding
+    paddingBottom: 100,  // ✅ CHANGED: Increased from 20 to 100 to prevent bottom clipping
   },
   // ✅ FIXED: Also update empty container for consistency
   emptyContainer: {

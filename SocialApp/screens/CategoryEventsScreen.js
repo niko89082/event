@@ -179,16 +179,11 @@ export default function CategoryEventsScreen({ route, navigation }) {
           <View style={styles.categoryIconContainer}>
             <Ionicons 
               name={CATEGORY_ICONS[category] || 'calendar-outline'} 
-              size={24} 
+              size={28} 
               color="#3797EF" 
             />
           </View>
-          <View style={styles.categoryText}>
-            <Text style={styles.categoryTitle}>{category}</Text>
-            <Text style={styles.categorySubtitle}>
-              {events.length} event{events.length !== 1 ? 's' : ''} found
-            </Text>
-          </View>
+          <Text style={styles.categoryTitle}>{category}</Text>
         </View>
       </View>
     </View>
@@ -259,7 +254,7 @@ export default function CategoryEventsScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FAFAFA',
   },
   headerButton: {
     padding: 8,
@@ -267,42 +262,32 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 20,
+    backgroundColor: '#FFFFFF', // White header stands out from gray background
   },
   headerContent: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
   },
   categoryInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    justifyContent: 'center',
   },
   categoryIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F8F9FA',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F0F7FF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  categoryText: {
-    flex: 1,
-  },
   categoryTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 24,
+    fontWeight: '700',
     color: '#000000',
-  },
-  categorySubtitle: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 2,
+    letterSpacing: -0.5,
   },
   loadingContainer: {
     flex: 1,
@@ -315,6 +300,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   listContent: {
+    paddingHorizontal: 16,
     paddingBottom: 20,
   },
   emptyContainer: {

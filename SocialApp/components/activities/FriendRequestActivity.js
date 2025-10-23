@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ActivityHeader from './ActivityHeader';
 import ActivityActionButton from './ActivityActionButton';
 import { useFriendRequestManager } from '../../hooks/useFriendRequestManager';
+import { API_BASE_URL } from '@env';
 
 const FriendRequestActivity = ({ 
   activity, 
@@ -246,7 +247,11 @@ const FriendRequestActivity = ({
           {/* Large Profile Picture */}
           {requester.profilePicture ? (
             <Image 
-              source={{ uri: requester.profilePicture }} 
+              source={{ 
+                uri: requester.profilePicture.startsWith('http') 
+                  ? requester.profilePicture 
+                  : `http://${API_BASE_URL}:3000${requester.profilePicture}` 
+              }} 
               style={styles.largeProfilePicture}
             />
           ) : (

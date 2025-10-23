@@ -159,25 +159,32 @@ export default function MinimalEventCard({ event, onPress, currentUserId }) {
 const styles = StyleSheet.create({
   container: {
     width: CARD_WIDTH,
-    height: 160, // Increased height for larger image
+    height: 170, // Increased from 160 to 170 for better spacing
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     marginRight: 12,
+    marginBottom: 0, // ✅ REMOVED: No bottom margin for seamless category flow
+    // ✅ IMPROVED: Enhanced shadow and border for better separation
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    flexDirection: 'column', // Column layout: image above, text below
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+    // ✅ Add subtle bottom border emphasis
+    borderBottomWidth: 2,
+    borderBottomColor: 'rgba(0, 0, 0, 0.12)',
+    flexDirection: 'column',
     overflow: 'hidden',
   },
   
   // ✅ FIXED: Image section (top) - Slightly smaller to give text more room
   imageContainer: {
-    flex: 0.65, // Reduced from 70% to 65% to give text more space
+    flex: 0.60, // Adjusted from 65% to 60% to give text more space
     position: 'relative',
     width: '100%',
   },
@@ -207,11 +214,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   
-  // ✅ FIXED: Text content section (bottom) - Compact
+  // ✅ FIXED: Text content section (bottom) - More space, better padding
   textContent: {
-    flex: 0.3, // Takes up 30% of height (compact text area)
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    flex: 0.40, // Increased from 30% to 40% for more text space
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 10, // Extra bottom padding to prevent cutoff
     justifyContent: 'space-between',
   },
   

@@ -13,6 +13,7 @@ import { useFriendRequestManager } from '../hooks/useFriendRequestManager';
 
 // Import our new swipeable component
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
+import FriendRequestNotificationRedesigned from '../components/notifications/FriendRequestNotificationRedesigned';
 
 export default function NotificationScreen({ navigation }) {
   const { currentUser } = useContext(AuthContext);
@@ -27,6 +28,7 @@ export default function NotificationScreen({ navigation }) {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [processingRequests, setProcessingRequests] = useState(new Set()); // Track processing friend requests
+  const [useRedesignedFriendRequest] = useState(true); // Toggle for redesigned friend request component
   const friendRequestManager = useFriendRequestManager('NotificationScreen', {
       showSuccessAlerts: false, // We handle our own alerts
       onAcceptSuccess: handleFriendRequestAccepted,
@@ -58,6 +60,15 @@ export default function NotificationScreen({ navigation }) {
           <Ionicons name="chevron-back" size={26} color="#000000" />
         </TouchableOpacity>
       ),
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('NotificationExamples')}
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="albums-outline" size={24} color="#3797EF" />
+        </TouchableOpacity>
+      ),
     });
   }, []);
 
@@ -65,6 +76,12 @@ export default function NotificationScreen({ navigation }) {
     if (isFocused) {
       fetchNotifications(true);
       fetchUnreadCounts();
+      // Mark all notifications as read when screen is opened
+      markAllNotificationsAsRead();
+    } else {
+      // When leaving the notification screen, ensure unread count is reset
+      // This helps the FeedScreen badge update immediately
+      console.log('📍 NotificationScreen unfocused - notifications marked as read');
     }
   }, [isFocused]);
 
@@ -351,6 +368,17 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     }
   };
 
+  const markAllNotificationsAsRead = async () => {
+    try {
+      await api.post('/api/notifications/mark-all-read');
+      // Update local state to reflect all notifications as read
+      setNotifications(prev => prev.map(notif => ({ ...notif, isRead: true })));
+      setUnreadCounts({ total: 0 });
+    } catch (error) {
+      console.error('Error marking notifications as read:', error);
+    }
+  };
+
   // Pull to refresh handler
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -631,6 +659,24 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
       handleNotificationPress(item);
     };
 
+    // For friend requests with redesigned component, render it directly
+    if (isFriendRequest && useRedesignedFriendRequest) {
+      return (
+        <SwipeableNotificationItem
+          item={item}
+          onDelete={handleDeleteNotification}
+          disabled={true} // Disable swipe for redesigned friend requests
+        >
+          <FriendRequestNotificationRedesigned 
+            notification={item}
+            onActionComplete={handleActionComplete}
+            onDelete={handleDeleteNotification}
+          />
+        </SwipeableNotificationItem>
+      );
+    }
+
+    // Regular notification rendering
     return (
       <SwipeableNotificationItem
         item={item}
@@ -682,7 +728,7 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
               </View>
 
               {/* Friend Request Actions */}
-              {isFriendRequest && (
+              {isFriendRequest && !useRedesignedFriendRequest && (
                 <FriendRequestActions 
                   notification={item}
                   onActionComplete={handleActionComplete}
@@ -705,7 +751,9 @@ const FriendRequestActions = ({ notification, onActionComplete }) => {
     </View>
   );
 
-  if (loading && notifications.length === 0) {
+  // Removed separate loading state - show existing notifications while refreshing
+  // Only show loading for initial load with no data
+  if (loading && notifications.length === 0 && !refreshing) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />

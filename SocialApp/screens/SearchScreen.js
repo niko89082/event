@@ -719,7 +719,7 @@ const toggleShowAllCategories = () => {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#FFFFFF' 
+    backgroundColor: '#FAFAFA' // Changed from #FFFFFF to match app background
   },
   headerButton: {
     padding: 8,
@@ -750,32 +750,33 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   
-  // Tab Styles
+  // Tab Styles - Modern Redesign with Center Alignment
   tabContainer: { 
     flexDirection: 'row', 
-    backgroundColor: '#F8F9FA',
-    margin: 16,
-    borderRadius: 12,
-    padding: 4,
+    backgroundColor: 'transparent',
+    marginTop: 8,
+    marginBottom: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+    justifyContent: 'center', // Center the tabs
+    gap: 40, // Modern spacing between tabs
   },
   tabButton: {
-    flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    borderRadius: 8,
+    justifyContent: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
   },
   activeTab: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    borderBottomColor: '#000000', // Modern underline indicator
   },
   tabText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '500',
     color: '#8E8E93',
+    letterSpacing: -0.3, // Modern tight spacing
   },
   activeTabText: {
     color: '#000000',

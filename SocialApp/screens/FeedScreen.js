@@ -75,8 +75,8 @@ export default function FeedScreen({ navigation }) {
   const FIXED_HEADER_HEIGHT = 56;
   const SAFE_AREA_TOP = insets.top;
   
-  // ADJUSTED: Move main tabs up slightly from previous position
-  const MAIN_TAB_POSITION = SAFE_AREA_TOP + FIXED_HEADER_HEIGHT - 2; // MOVED UP from +4 to -2 (6px adjustment)
+  // ADJUSTED: Move main tabs down to lower the first tab position
+  const MAIN_TAB_POSITION = SAFE_AREA_TOP + FIXED_HEADER_HEIGHT + 8; // MOVED DOWN from -2 to +8 (10px lower)
   
   const SUB_TAB_ORIGINAL_POSITION = 144;
   const SUB_TAB_MOVE_DISTANCE = SUB_TAB_ORIGINAL_POSITION - MAIN_TAB_POSITION;
@@ -131,11 +131,20 @@ export default function FeedScreen({ navigation }) {
   }, [activeTabIndex]);
 
   // Fetch unread notification count when screen is focused
+  // Also listen to navigation events to ensure badge updates when returning from NotificationScreen
   useEffect(() => {
     if (isFocused) {
       fetchUnreadNotificationCount();
     }
-  }, [isFocused]);
+    
+    // Add listener for when user returns to this screen
+    const unsubscribe = navigation.addListener('focus', () => {
+      console.log('📍 FeedScreen focused - refreshing notification count');
+      fetchUnreadNotificationCount();
+    });
+    
+    return unsubscribe;
+  }, [isFocused, navigation]);
 
   // FIXED: Animation logic with proper distances
   const animateTabBars = useCallback((mainTabOpacity, subTabToValue) => {
@@ -393,10 +402,15 @@ export default function FeedScreen({ navigation }) {
 
   const fetchUnreadNotificationCount = async () => {
     try {
+      console.log('🔔 Fetching unread notification count...');
       const response = await api.get('/api/notifications/unread-count');
-      setUnreadNotificationCount(response.data.total || 0);
+      const count = response.data.total || 0;
+      console.log(`🔔 Unread notifications: ${count}`);
+      setUnreadNotificationCount(count);
     } catch (error) {
       console.error('Error fetching unread notification count:', error);
+      // On error, set to 0 to avoid stale data
+      setUnreadNotificationCount(0);
     }
   };
 
@@ -618,7 +632,7 @@ export default function FeedScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8F9FA',
   },
   
   fixedHeaderContainer: {

@@ -242,16 +242,6 @@ export default function CategoryManager({
         initialNumToRender={3}
         windowSize={5}
       >
-        {/* PHASE 1: Category Statistics Header */}
-        {filteredAndSortedCategories.length > 0 && (
-          <View style={styles.statsHeader}>
-            <Text style={styles.statsText}>
-              {filteredAndSortedCategories.length} categor{filteredAndSortedCategories.length === 1 ? 'y' : 'ies'} • {' '}
-              {Object.values(categoryData).reduce((sum, count) => sum + count, 0)} events
-            </Text>
-          </View>
-        )}
-
         {/* PHASE 1: Render Category Sections (only categories with events) */}
         {displayedCategories.map((category, index) => (
           <CategoryEventSection
@@ -298,7 +288,7 @@ export default function CategoryManager({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FAFAFA',
   },
   loadingContainer: {
     flex: 1,
@@ -355,20 +345,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
-  statsHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-    backgroundColor: '#F8F9FA',
-  },
-  statsText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
   showAllContainer: {
     paddingHorizontal: 16,
     paddingVertical: 20,
@@ -377,15 +353,24 @@ const styles = StyleSheet.create({
   showAllButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E1E1E1',
+    // Card-like shadow
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   showAllText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#3797EF',
     marginRight: 8,

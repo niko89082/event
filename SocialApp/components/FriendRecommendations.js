@@ -14,15 +14,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 
-export default function FriendRecommendations({ navigation, onFriendAdded }) {
+export default function FriendRecommendations({ 
+  navigation, 
+  onFriendAdded,
+  displayMode = 'header' // 'header' | 'empty' | 'featured'
+}) {
   const { currentUser } = useContext(AuthContext);
   const [recommendations, setRecommendations] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [sendingRequests, setSendingRequests] = useState(new Set());
 
   useEffect(() => {
-    fetchRecommendations();
-  }, []);
+    // Only fetch if user is authenticated
+    if (currentUser?._id) {
+      fetchRecommendations();
+    }
+  }, [currentUser?._id]);
 
   const fetchRecommendations = async () => {
     try {
@@ -36,8 +43,8 @@ export default function FriendRecommendations({ navigation, onFriendAdded }) {
       setRecommendations(response.data.suggestions || []);
     } catch (error) {
       console.error('Error fetching friend recommendations:', error);
-      // Fallback to mock data if API fails
-      setRecommendations(getMockRecommendations());
+      // Don't show error to user, just use empty array
+      setRecommendations([]);
     } finally {
       setLoading(false);
     }
@@ -124,64 +131,133 @@ export default function FriendRecommendations({ navigation, onFriendAdded }) {
   const renderRecommendationItem = (item) => {
     const isSendingRequest = sendingRequests.has(item._id);
     
-    return (
-      <View key={item._id} style={styles.recommendationCard}>
-        <View style={styles.avatarContainer}>
-          {item.profilePicture ? (
-            <Image 
-              source={{ uri: item.profilePicture }} 
-              style={styles.avatar}
-            />
-          ) : (
-            <View style={styles.defaultAvatar}>
-              <Ionicons name="person" size={24} color="#8E8E93" />
-            </View>
-          )}
+    // Different layouts based on display mode
+    if (displayMode === 'header') {
+      // Compact horizontal layout for header
+      return (
+        <View key={item._id} style={styles.headerCard}>
+          <View style={styles.headerAvatarContainer}>
+            {item.profilePicture ? (
+              <Image 
+                source={{ uri: item.profilePicture }} 
+                style={styles.headerAvatar}
+              />
+            ) : (
+              <View style={styles.headerDefaultAvatar}>
+                <Ionicons name="person" size={16} color="#8E8E93" />
+              </View>
+            )}
+          </View>
+          
+          <View style={styles.headerUserDetails}>
+            <Text style={styles.headerDisplayName}>
+              {item.firstName} {item.lastName}
+            </Text>
+            <Text style={styles.headerReason}>{item.reason}</Text>
+          </View>
+          
+          <TouchableOpacity
+            style={[
+              styles.headerAddButton,
+              isSendingRequest && styles.addButtonDisabled
+            ]}
+            onPress={() => handleSendFriendRequest(item)}
+            disabled={isSendingRequest}
+            activeOpacity={0.7}
+          >
+            {isSendingRequest ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.headerAddButtonText}>Add</Text>
+            )}
+          </TouchableOpacity>
         </View>
-        
-        <View style={styles.userDetails}>
-          <Text style={styles.displayName}>
-            {item.firstName} {item.lastName}
-          </Text>
-          <Text style={styles.username}>@{item.username}</Text>
-          <Text style={styles.reason}>{item.reason}</Text>
+      );
+    } else {
+      // Vertical layout for empty/featured modes
+      return (
+        <View key={item._id} style={styles.recommendationCard}>
+          <View style={styles.avatarContainer}>
+            {item.profilePicture ? (
+              <Image 
+                source={{ uri: item.profilePicture }} 
+                style={styles.avatar}
+              />
+            ) : (
+              <View style={styles.defaultAvatar}>
+                <Ionicons name="person" size={24} color="#8E8E93" />
+              </View>
+            )}
+          </View>
+          
+          <View style={styles.userDetails}>
+            <Text style={styles.displayName}>
+              {item.firstName} {item.lastName}
+            </Text>
+            <Text style={styles.username}>@{item.username}</Text>
+            <Text style={styles.reason}>{item.reason}</Text>
+          </View>
+          
+          <TouchableOpacity
+            style={[
+              styles.addButton,
+              isSendingRequest && styles.addButtonDisabled
+            ]}
+            onPress={() => handleSendFriendRequest(item)}
+            disabled={isSendingRequest}
+            activeOpacity={0.7}
+          >
+            {isSendingRequest ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.addButtonText}>Add</Text>
+            )}
+          </TouchableOpacity>
         </View>
-        
-        <TouchableOpacity
-          style={[
-            styles.addButton,
-            isSendingRequest && styles.addButtonDisabled
-          ]}
-          onPress={() => handleSendFriendRequest(item)}
-          disabled={isSendingRequest}
-          activeOpacity={0.7}
-        >
-          {isSendingRequest ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Text style={styles.addButtonText}>Add</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-    );
+      );
+    }
   };
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="small" color="#3797EF" />
-        <Text style={styles.loadingText}>Finding people you might know...</Text>
-      </View>
-    );
-  }
 
   if (recommendations.length === 0) {
     return null; // Don't show anything if no recommendations
   }
 
+  // Don't show anything if user is not authenticated
+  if (!currentUser?._id) {
+    return null;
+  }
+
+  if (displayMode === 'header') {
+    return (
+      <View style={styles.headerContainer}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>People you may know</Text>
+          <TouchableOpacity
+            style={styles.seeAllButton}
+            onPress={() => navigation.navigate('SearchScreen', { tab: 'users' })}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.seeAllText}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        
+        {/* Horizontal scrollable recommendations for header */}
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.headerScrollContent}
+          nestedScrollEnabled={false}
+          scrollEventThrottle={16}
+        >
+          {recommendations.map(item => renderRecommendationItem(item))}
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* Compact header */}
+      {/* Header for empty/featured modes */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>People you may know</Text>
         <TouchableOpacity
@@ -202,6 +278,86 @@ export default function FriendRecommendations({ navigation, onFriendAdded }) {
 }
 
 const styles = StyleSheet.create({
+  // Header mode styles
+  headerContainer: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginVertical: 8,
+    borderRadius: 12,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  
+  headerScrollContent: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  
+  headerCard: {
+    width: 120,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  
+  headerAvatarContainer: {
+    marginBottom: 6,
+  },
+  
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  
+  headerDefaultAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F2F2F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  headerUserDetails: {
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  
+  headerDisplayName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  
+  headerReason: {
+    fontSize: 10,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 12,
+  },
+  
+  headerAddButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  
+  headerAddButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+
+  // Container styles
   container: {
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
@@ -321,17 +477,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-  },
   
-  loadingText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#8E8E93',
-  },
 });

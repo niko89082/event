@@ -115,7 +115,8 @@ const EventsHub = forwardRef(({
     updateFeedCache,
     syncEventsFromFeed,
     needsRefresh,
-    clearEvents
+    clearEvents,
+    registerRSVPCallback
   } = useEventStore();
 
   // ✅ NEW: Update active tab when user events change
@@ -195,32 +196,54 @@ const EventsHub = forwardRef(({
     }
   }, [currentUser, clearEvents]);
 
-  // ✅ NEW: Listen for event store changes and refresh user events accordingly
+  // ✅ IMPROVED: Register callback for RSVP changes and auto-switch to Attending tab
   useEffect(() => {
-    if (!currentUser?._id) return;
+    if (!currentUser?._id || !registerRSVPCallback) return;
 
-    // Subscribe to event store changes
-    const unsubscribe = useEventStore.subscribe(
-      (state) => state.events,
-      (events) => {
-        // Check if any events have been updated recently (within last 5 seconds)
-        const now = Date.now();
-        const hasRecentUpdates = Array.from(events.values()).some(event => 
-          event.lastUpdated && (now - event.lastUpdated) < 5000
-        );
+    console.log('📢 EventsHub: Registering RSVP callback');
 
-        if (hasRecentUpdates) {
-          console.log('🔄 EventsHub: Detected recent event updates, refreshing user events...');
-          // Use a small delay to avoid rapid refreshes
-          setTimeout(() => {
-            forceRefreshUserEvents();
-          }, 1000);
-        }
+    // Register callback for RSVP changes
+    const unregister = registerRSVPCallback(async ({ eventId, attending, event }) => {
+      console.log('🔔 EventsHub: RSVP change detected:', {
+        eventId,
+        attending,
+        eventTitle: event?.title,
+        isHost: event?.isHost
+      });
+
+      // If user just joined an event (and is not the host)
+      if (attending && !event?.isHost) {
+        console.log('✅ EventsHub: User joined event as attendee, refreshing...');
+        
+        // Refresh user events to update tab visibility
+        await forceRefreshUserEvents();
+        
+        // After refresh completes, switch to Attending tab if it now has events
+        setTimeout(() => {
+          // Re-check hasAttendingEvents from the hook (it should be updated now)
+          console.log('🎯 EventsHub: Checking if should auto-switch to Attending tab', {
+            hasAttendingEvents,
+            currentTab: activeTab
+          });
+          
+          if (hasAttendingEvents && activeTab !== 'attending') {
+            console.log('✨ EventsHub: Auto-switching to Attending tab');
+            setActiveTab('attending');
+          }
+        }, 500);
       }
-    );
+      // If user left an event, just refresh without switching tabs
+      else if (!attending) {
+        console.log('👋 EventsHub: User left event, refreshing...');
+        await forceRefreshUserEvents();
+      }
+    });
 
-    return unsubscribe;
-  }, [currentUser?._id, forceRefreshUserEvents]);
+    return () => {
+      console.log('📢 EventsHub: Unregistering RSVP callback');
+      unregister();
+    };
+  }, [currentUser?._id, registerRSVPCallback, forceRefreshUserEvents, hasAttendingEvents, activeTab]);
 
   // ✅ NEW: Refresh user events when EventsHub comes into focus
   useFocusEffect(
