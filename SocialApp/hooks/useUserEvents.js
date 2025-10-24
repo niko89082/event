@@ -218,11 +218,10 @@ const fetchUserEvents = useCallback(async (forceRefresh = false) => {
   }, [fetchUserEvents]);
 
   // Force refresh function that bypasses cache
-  const forceRefresh = useCallback(async () => {
+  const forceRefresh = useCallback(() => {
     console.log('🔄 useUserEvents: Force refresh triggered (bypassing cache)');
     setLastFetch(null); // Clear cache timestamp
-    await fetchUserEvents(true);
-    console.log('✅ useUserEvents: Force refresh completed');
+    return fetchUserEvents(true);
   }, [fetchUserEvents]);
 
   // Clear function for cleanup

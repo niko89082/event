@@ -115,8 +115,7 @@ const EventsHub = forwardRef(({
     updateFeedCache,
     syncEventsFromFeed,
     needsRefresh,
-    clearEvents,
-    registerRSVPCallback
+    clearEvents
   } = useEventStore();
 
   // ✅ NEW: Update active tab when user events change
@@ -196,54 +195,32 @@ const EventsHub = forwardRef(({
     }
   }, [currentUser, clearEvents]);
 
-  // ✅ IMPROVED: Register callback for RSVP changes and auto-switch to Attending tab
+  // ✅ NEW: Listen for event store changes and refresh user events accordingly
   useEffect(() => {
-    if (!currentUser?._id || !registerRSVPCallback) return;
+    if (!currentUser?._id) return;
 
-    console.log('📢 EventsHub: Registering RSVP callback');
+    // Subscribe to event store changes
+    const unsubscribe = useEventStore.subscribe(
+      (state) => state.events,
+      (events) => {
+        // Check if any events have been updated recently (within last 5 seconds)
+        const now = Date.now();
+        const hasRecentUpdates = Array.from(events.values()).some(event => 
+          event.lastUpdated && (now - event.lastUpdated) < 5000
+        );
 
-    // Register callback for RSVP changes
-    const unregister = registerRSVPCallback(async ({ eventId, attending, event }) => {
-      console.log('🔔 EventsHub: RSVP change detected:', {
-        eventId,
-        attending,
-        eventTitle: event?.title,
-        isHost: event?.isHost
-      });
-
-      // If user just joined an event (and is not the host)
-      if (attending && !event?.isHost) {
-        console.log('✅ EventsHub: User joined event as attendee, refreshing...');
-        
-        // Refresh user events to update tab visibility
-        await forceRefreshUserEvents();
-        
-        // After refresh completes, switch to Attending tab if it now has events
-        setTimeout(() => {
-          // Re-check hasAttendingEvents from the hook (it should be updated now)
-          console.log('🎯 EventsHub: Checking if should auto-switch to Attending tab', {
-            hasAttendingEvents,
-            currentTab: activeTab
-          });
-          
-          if (hasAttendingEvents && activeTab !== 'attending') {
-            console.log('✨ EventsHub: Auto-switching to Attending tab');
-            setActiveTab('attending');
-          }
-        }, 500);
+        if (hasRecentUpdates) {
+          console.log('🔄 EventsHub: Detected recent event updates, refreshing user events...');
+          // Use a small delay to avoid rapid refreshes
+          setTimeout(() => {
+            forceRefreshUserEvents();
+          }, 1000);
+        }
       }
-      // If user left an event, just refresh without switching tabs
-      else if (!attending) {
-        console.log('👋 EventsHub: User left event, refreshing...');
-        await forceRefreshUserEvents();
-      }
-    });
+    );
 
-    return () => {
-      console.log('📢 EventsHub: Unregistering RSVP callback');
-      unregister();
-    };
-  }, [currentUser?._id, registerRSVPCallback, forceRefreshUserEvents, hasAttendingEvents, activeTab]);
+    return unsubscribe;
+  }, [currentUser?._id, forceRefreshUserEvents]);
 
   // ✅ NEW: Refresh user events when EventsHub comes into focus
   useFocusEffect(
@@ -267,6 +244,9 @@ const EventsHub = forwardRef(({
       ]}
       onPress={() => handleTabChange(tabKey)}
       activeOpacity={0.8}
+      // ✅ FIX: Prevent parent PanResponder from capturing taps
+      onStartShouldSetResponder={() => true}
+      onResponderTerminationRequest={() => false}
     >
       <Ionicons 
         name={icon} 
@@ -293,7 +273,8 @@ const EventsHub = forwardRef(({
     </View>
   );
 
-  const renderActiveTabContent = () => {
+  // ✅ IMPROVED: Render all tabs but only show active one (prevents reload on switch)
+  const renderAllTabsContent = () => {
     if (error) {
       return renderError();
     }
@@ -308,39 +289,60 @@ const EventsHub = forwardRef(({
       scrollEventThrottle,
       // Store integration props
       useEventStore: true, // Flag to enable store usage in child components
-      activeTab, // Pass active tab for cache management
     };
 
-    // ✅ UPDATED: Enhanced switch statement with new feed components
-    switch (activeTab) {
-      case 'following':
-        return (
+    return (
+      <>
+        {/* Following Tab - Always mounted, hidden when not active */}
+        <View style={[
+          styles.tabContent,
+          { display: activeTab === 'following' ? 'flex' : 'none' }
+        ]}>
           <FollowingEventsFeed
             {...commonProps}
+            activeTab={activeTab} // Pass active tab for optimization
           />
-        );
-      case 'for-you':
-        return (
+        </View>
+
+        {/* For You Tab - Always mounted, hidden when not active */}
+        <View style={[
+          styles.tabContent,
+          { display: activeTab === 'for-you' ? 'flex' : 'none' }
+        ]}>
           <EventsFeed
             {...commonProps}
             feedType="discover"
+            activeTab={activeTab}
           />
-        );
-      case 'hosting':
-        return (
-          <HostingEventsFeed
-            {...commonProps}
-          />
-        );
-      case 'attending':
-        return (
-          <AttendingEventsFeed
-            {...commonProps}
-          />
-        );
-      default:
-        return null;
-    }
+        </View>
+
+        {/* Hosting Tab - Conditionally rendered based on hasHostingEvents */}
+        {hasHostingEvents && (
+          <View style={[
+            styles.tabContent,
+            { display: activeTab === 'hosting' ? 'flex' : 'none' }
+          ]}>
+            <HostingEventsFeed
+              {...commonProps}
+              activeTab={activeTab}
+            />
+          </View>
+        )}
+
+        {/* Attending Tab - Conditionally rendered based on hasAttendingEvents */}
+        {hasAttendingEvents && (
+          <View style={[
+            styles.tabContent,
+            { display: activeTab === 'attending' ? 'flex' : 'none' }
+          ]}>
+            <AttendingEventsFeed
+              {...commonProps}
+              activeTab={activeTab}
+            />
+          </View>
+        )}
+      </>
+    );
   };
 if (!currentUser?._id) {
     return (
@@ -367,15 +369,25 @@ if (!currentUser?._id) {
   return (
     <View style={styles.container}>
       {/* 🚫 UNCHANGED: Sub-tabs with DIRECT animation value - PRESERVING ALL ANIMATIONS */}
-      <Animated.View style={[
-        styles.unifiedSubTabsContainer, 
-        { transform: [{ translateY: subTabTranslateY || 0 }] } // USE the direct animated value
-      ]}>
+      <Animated.View 
+        style={[
+          styles.unifiedSubTabsContainer, 
+          { transform: [{ translateY: subTabTranslateY || 0 }] } // USE the direct animated value
+        ]}
+        // ✅ FIX: Block parent PanResponder from capturing horizontal scrolls
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => true}
+        onResponderTerminationRequest={() => false}
+      >
         <ScrollView 
           horizontal={true}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.subTabScrollContent}
           style={styles.subTabScrollView}
+          // ✅ FIX: Prevent parent gestures from interfering
+          scrollEnabled={true}
+          bounces={false}
+          nestedScrollEnabled={true}
         >
           <View style={styles.subTabBar}>
             {/* ✅ UPDATED: Use dynamic tabs instead of static EVENTS_TABS */}
@@ -388,7 +400,7 @@ if (!currentUser?._id) {
       
       {/* Content area - flows naturally */}
       <View style={styles.contentContainer}>
-        {renderActiveTabContent()}
+        {renderAllTabsContent()}
       </View>
     </View>
   );
@@ -424,7 +436,8 @@ unifiedSubTabsContainer: {
   // shadowOpacity: 1,
   // shadowRadius: 32,
   // elevation: 8,
-  height: 56, // Fixed height for consistent spacing
+  height: 64, // ✅ INCREASED: From 56 to 64 to prevent bottom cutoff
+  overflow: 'visible', // ✅ ADDED: Allow shadows/borders to show
 },
   
   // NEW: Horizontal scroll view for sub-tabs
@@ -441,7 +454,8 @@ unifiedSubTabsContainer: {
   subTabBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 14, // ✅ INCREASED: From 12 to 14 for better spacing
+    paddingBottom: 16, // ✅ ADDED: Extra bottom padding to prevent cutoff
     gap: 12, // Space between oval tabs
   },
   
@@ -510,6 +524,13 @@ unifiedSubTabsContainer: {
   contentContainer: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+
+  // Tab content wrapper - keeps tabs mounted but hidden
+  tabContent: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
 
   // Loading and error states

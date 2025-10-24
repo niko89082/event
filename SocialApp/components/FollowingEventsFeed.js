@@ -14,17 +14,24 @@ export default function FollowingEventsFeed({
   refreshing: externalRefreshing, 
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
-  scrollEventThrottle = 16
+  scrollEventThrottle = 16,
+  activeTab // ✅ NEW: Know when this tab is visible
 }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false); // ✅ Track if we've loaded once
 
+  // ✅ IMPROVED: Only fetch on mount or when tab becomes active for first time
   useEffect(() => {
-    fetchEvents(1);
-  }, []);
+    if (activeTab === 'following' && !hasInitiallyLoaded) {
+      console.log('📱 FollowingEventsFeed: Initial load (tab is active)');
+      fetchEvents(1);
+      setHasInitiallyLoaded(true);
+    }
+  }, [activeTab, hasInitiallyLoaded]);
 
   const fetchEvents = async (pageNum, isRefresh = false) => {
   try {
@@ -279,11 +286,11 @@ export default function FollowingEventsFeed({
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? 
-        { flexGrow: 1, paddingTop: 190 } : 
-        { paddingTop: 190, paddingBottom: 100 }
+        { flexGrow: 1, paddingTop: 220 } : 
+        { paddingTop: 220, paddingBottom: 100 }
       }
-      contentInset={{ top: 20 }}
-      scrollIndicatorInsets={{ top: 20 }}
+      contentInset={{ top: 10 }}
+      scrollIndicatorInsets={{ top: 10 }}
       bounces={true}
       alwaysBounceVertical={true}
     />
@@ -299,7 +306,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 190,
+    paddingTop: 220,
   },
   loadingText: {
     marginTop: 12,

@@ -21,7 +21,7 @@ export const useDynamicEventTabs = (hasHostingEvents, hasAttendingEvents) => {
       additionalTabs.push({
         key: 'hosting',
         label: 'Hosting',
-        icon: 'ribbon-outline' // Using 'ribbon-outline' to indicate hosting/organizing
+        icon: 'calendar' // Using 'calendar' - represents organized events
       });
     }
 

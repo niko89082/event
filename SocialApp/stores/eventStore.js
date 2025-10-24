@@ -15,7 +15,6 @@ const useEventStore = create(
       discover: { data: [], lastFetch: null, hasMore: true },
       nearby: { data: [], lastFetch: null, hasMore: true }
     },
-    rsvpCallbacks: [], // Callbacks to be notified on RSVP changes
 
     // Actions
     setEvents: (eventsArray, currentUserId = null) => {
@@ -168,19 +167,6 @@ const useEventStore = create(
           serverAttending,
           serverCount
         });
-
-        // Notify all registered callbacks about the RSVP change
-        const { rsvpCallbacks } = get();
-        if (rsvpCallbacks && rsvpCallbacks.length > 0) {
-          console.log('📢 Notifying RSVP callbacks:', rsvpCallbacks.length);
-          rsvpCallbacks.forEach(callback => {
-            try {
-              callback({ eventId, attending: serverAttending, event: events.get(eventId) });
-            } catch (error) {
-              console.error('Error in RSVP callback:', error);
-            }
-          });
-        }
 
         return { type: 'attend', success: true, attending: serverAttending };
 
@@ -496,18 +482,6 @@ const useEventStore = create(
         default:
           console.log('Unhandled real-time update:', update);
       }
-    },
-
-    // Register a callback for RSVP changes
-    registerRSVPCallback: (callback) => {
-      const { rsvpCallbacks } = get();
-      set({ rsvpCallbacks: [...rsvpCallbacks, callback] });
-      
-      // Return unregister function
-      return () => {
-        const { rsvpCallbacks } = get();
-        set({ rsvpCallbacks: rsvpCallbacks.filter(cb => cb !== callback) });
-      };
     }
   }))
 );

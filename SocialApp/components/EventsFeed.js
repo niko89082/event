@@ -54,6 +54,7 @@ export default function EventsFeed({
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false); // ✅ Track if we've loaded once
 
   // Refs
   const flatListRef = useRef(null);
@@ -214,17 +215,19 @@ export default function EventsFeed({
     return false;
   }, [useStore, feedType, getFeedCache, needsRefresh]);
 
-  // Initial load and refresh on focus
-  useFocusEffect(
-    useCallback(() => {
+  // ✅ IMPROVED: Only fetch when tab becomes active for first time
+  useEffect(() => {
+    if (activeTab === 'for-you' && !hasInitiallyLoaded) {
+      console.log('📱 EventsFeed: Initial load (tab is active)');
       if (shouldFetchData()) {
         console.log(`🔄 EventsFeed: Loading ${feedType} feed...`);
         fetchEvents(false, 1);
       } else {
         console.log(`✅ EventsFeed: Using cached ${feedType} feed`);
       }
-    }, [feedType, shouldFetchData, fetchEvents])
-  );
+      setHasInitiallyLoaded(true);
+    }
+  }, [activeTab, hasInitiallyLoaded, feedType, shouldFetchData, fetchEvents]);
 
   // Handle refresh
   const handleRefresh = useCallback(async () => {
@@ -438,8 +441,8 @@ console.log('🔄 Refresh Distance Debug:', {
     events.length === 0 && styles.emptyListContent
   ]}
   // ✅ ADD: Push refresh control below sub-tabs
-  contentInset={{ top: 20 }} // REDUCED from 200 to 60
-  scrollIndicatorInsets={{ top: 20 }} // REDUCED from 200 to 60
+  contentInset={{ top: 10 }} // Positioned below sub-tabs
+  scrollIndicatorInsets={{ top: 10 }} // Match content inset
   bounces={true}
   alwaysBounceVertical={true}
   removeClippedSubviews={true}
@@ -458,9 +461,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'transparent',
   },
-  // ✅ STANDARDIZED: Reduced paddingTop from 200 to 190 for consistency
+  // ✅ STANDARDIZED: Aligned to start below sub-tabs
   listContent: {
-    paddingTop: 190,     // ✅ CHANGED: From 200 to 190 to match other event feeds
+    paddingTop: 220,     // ✅ CHANGED: From 190 to 220 to clear sub-tabs (144 + 64 + 12px gap)
     paddingBottom: 100,
   },
   // ✅ ADDED: Consistent event wrapper styling
@@ -470,7 +473,7 @@ const styles = StyleSheet.create({
   },
   // ✅ STANDARDIZED: Also update empty state for consistency
   emptyListContent: {
-    paddingTop: 190,     // ✅ CHANGED: From 200 to 190 to match other event feeds
+    paddingTop: 220,     // ✅ CHANGED: From 190 to 220 to clear sub-tabs
     paddingBottom: 100,
     minHeight: '100%',   // ✅ KEEP: From Phase 1 fix
   },

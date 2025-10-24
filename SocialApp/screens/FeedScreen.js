@@ -332,9 +332,21 @@ export default function FeedScreen({ navigation }) {
   // FIXED: Pan Responder using currentTabIndex ref
   const panResponder = useRef(
     PanResponder.create({
+      onStartShouldSetPanResponder: () => false, // Don't capture immediately
       onMoveShouldSetPanResponder: (evt, gestureState) => {
-        const { dx, dy } = gestureState;
-        return Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy) * 1.5 && !isAnimating.current;
+        const { dx, dy, y0 } = gestureState;
+        
+        // ✅ FIX: Don't capture if gesture started in sub-tabs area
+        const SUB_TAB_AREA_START = 120;
+        const SUB_TAB_AREA_END = 220; // Increased buffer zone
+        if (y0 >= SUB_TAB_AREA_START && y0 <= SUB_TAB_AREA_END) {
+          console.log('🚫 PanResponder: Ignoring gesture in sub-tabs area');
+          return false;
+        }
+        
+        // ✅ FIX: Require stronger horizontal gesture (more selective)
+        const isStrongHorizontalSwipe = Math.abs(dx) > 25 && Math.abs(dx) > Math.abs(dy) * 2.5;
+        return isStrongHorizontalSwipe && !isAnimating.current;
       },
       onPanResponderGrant: () => {
         scrollX.stopAnimation();

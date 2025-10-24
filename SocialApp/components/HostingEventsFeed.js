@@ -33,6 +33,7 @@ export default function HostingEventsFeed({
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false); // ✅ Track if we've loaded once
 
   // Event store integration (if enabled)
   const {
@@ -44,11 +45,14 @@ export default function HostingEventsFeed({
 
   const userId = currentUserId || currentUser?._id;
 
+  // ✅ IMPROVED: Only fetch when tab becomes active for first time
   useEffect(() => {
-    if (userId) {
+    if (userId && activeTab === 'hosting' && !hasInitiallyLoaded) {
+      console.log('📱 HostingEventsFeed: Initial load (tab is active)');
       fetchEvents(1, true);
+      setHasInitiallyLoaded(true);
     }
-  }, [userId]);
+  }, [userId, activeTab, hasInitiallyLoaded]);
 
 const fetchEvents = async (pageNum = 1, isRefresh = false) => {
   if (!userId) return;
@@ -309,8 +313,8 @@ const fetchEvents = async (pageNum = 1, isRefresh = false) => {
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? styles.emptyContainer : styles.contentContainer}
-      contentInset={{ top: 20 }}
-      scrollIndicatorInsets={{ top: 20 }}
+      contentInset={{ top: 10 }}
+      scrollIndicatorInsets={{ top: 10 }}
       bounces={true}
       alwaysBounceVertical={true}
       removeClippedSubviews={true}
@@ -322,15 +326,15 @@ const fetchEvents = async (pageNum = 1, isRefresh = false) => {
 }
 
 const styles = StyleSheet.create({
-  // ✅ FIXED: Increased paddingTop from 140 to 190 for consistent positioning
+  // ✅ FIXED: Aligned to start below sub-tabs (144 + 64 + 12px gap = 220)
   contentContainer: {
-    paddingTop: 190,     // ✅ CHANGED: From 140 to 190 to match standard
-    paddingBottom: 100,  // ✅ CHANGED: Increased from 20 to 100 to prevent bottom clipping
+    paddingTop: 220,     // ✅ CHANGED: From 190 to 220 to clear sub-tabs
+    paddingBottom: 100,  // ✅ CHANGED: Increased from 20 to 100 for consistency
   },
   // ✅ FIXED: Also update empty container for consistency
   emptyContainer: {
     flex: 1,
-    paddingTop: 190,     // ✅ CHANGED: From 140 to 190 to match standard
+    paddingTop: 220,     // ✅ CHANGED: From 190 to 220 to clear sub-tabs
   },
   eventWrapper: {
     marginBottom: 16,
