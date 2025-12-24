@@ -18,7 +18,8 @@
     "phase1:backup": "npm run db:backup:quick",
     "phase1:migrate": "npm run db:backup:quick && npm run migrate",
     "phase1:check": "npm run migrate:status && node scripts/validatePhase1.js",
-    "phase1:rollback": "npm run migrate:rollback 002_standardize_likes_arrays && npm run migrate:rollback 001_consolidate_photo_event_fields"
+    "phase1:rollback": "npm run migrate:rollback 002_standardize_likes_arrays && npm run migrate:rollback 001_consolidate_photo_event_fields",
+    "update-ip": "node scripts/updateIpAddress.js"
   },
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",
@@ -33,6 +34,7 @@
     "express-validator": "^7.1.0",
     "express-winston": "^4.2.0",
     "firebase-admin": "^13.4.0",
+    "gopd": "^1.2.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.5.0",
     "multer": "^1.4.5-lts.1",
@@ -47,6 +49,7 @@
     "react-calendar": "^5.0.0",
     "react-native-vision-camera": "^4.6.3",
     "redis": "^4.7.0",
+    "side-channel-list": "^1.0.0",
     "socket.io": "^4.7.5",
     "stripe": "^18.0.0",
     "winston": "^3.13.1",

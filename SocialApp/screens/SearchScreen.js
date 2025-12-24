@@ -212,8 +212,17 @@ export default function SearchScreen({ navigation, route }) {
         [userId]: 'request-sent'
       }));
       
-      // Remove from suggestions if present
-      setSuggestions(prev => prev.filter(user => user._id !== userId));
+      // Update suggestions to show "Requested" status instead of removing
+      setSuggestions(prev => prev.map(user => 
+        user._id === userId 
+          ? { 
+              ...user, 
+              relationshipStatus: 'request-sent', 
+              priorityReason: 'Friend request sent',
+              canAddFriend: false 
+            }
+          : user
+      ));
       
       try {
         // Send API request in background
@@ -238,6 +247,18 @@ export default function SearchScreen({ navigation, route }) {
           ...prev,
           [userId]: 'not-friends'
         }));
+        
+        // Revert suggestions on error
+        setSuggestions(prev => prev.map(user => 
+          user._id === userId 
+            ? { 
+                ...user, 
+                relationshipStatus: 'not-friends', 
+                priorityReason: null,
+                canAddFriend: true 
+              }
+            : user
+        ));
         
         let errorMessage = 'Could not send friend request. Please try again.';
         if (error.response?.status === 400) {
@@ -306,7 +327,7 @@ export default function SearchScreen({ navigation, route }) {
       case 'friends':
         return { text: 'Friends', color: '#34C759', bgColor: '#F0FFF0', icon: 'checkmark-circle', disabled: true };
       case 'request-sent':
-        return { text: 'Pending', color: '#FF9500', bgColor: '#FFF8F0', icon: 'time', disabled: true };
+        return { text: 'Requested', color: '#FF9500', bgColor: '#FFF8F0', icon: 'time', disabled: true };
       case 'request-received':
         return { text: 'Respond', color: '#34C759', bgColor: '#F0FFF0', icon: 'person-add', disabled: false };
       case 'not-friends':
@@ -645,22 +666,21 @@ const toggleShowAllCategories = () => {
                         </View>
                         
                         <FlatList
-                          data={suggestions.slice(0, 5)}
+                          data={suggestions}
                           keyExtractor={(item) => item._id}
                           renderItem={({ item }) => <UserRow user={item} />}
                           showsVerticalScrollIndicator={false}
                           ItemSeparatorComponent={() => <View style={styles.separator} />}
-                          scrollEnabled={false}
+                          scrollEnabled={true}
+                          nestedScrollEnabled={true}
+                          refreshControl={
+                            <RefreshControl
+                              refreshing={loadingSuggestions}
+                              onRefresh={fetchFriendSuggestions}
+                              tintColor="#3797EF"
+                            />
+                          }
                         />
-                        
-                        {suggestions.length > 5 && (
-                          <TouchableOpacity
-                            style={styles.seeAllButton}
-                            onPress={() => setShowSuggestions(true)}
-                          >
-                            <Text style={styles.seeAllText}>See All {suggestions.length} Suggestions</Text>
-                          </TouchableOpacity>
-                        )}
                       </>
                     ) : (
                       // Fallback if no suggestions available
@@ -670,16 +690,6 @@ const toggleShowAllCategories = () => {
                         <Text style={styles.emptySubtext}>
                           Search for people by username, name, or email
                         </Text>
-                        <TouchableOpacity
-                          style={styles.secondaryButton}
-                          onPress={() => {
-                            console.log('🔄 Manually loading friend suggestions...');
-                            fetchFriendSuggestions();
-                          }}
-                        >
-                          <Ionicons name="people" size={20} color="#3797EF" style={styles.buttonIcon} />
-                          <Text style={styles.secondaryButtonText}>Find People You May Know</Text>
-                        </TouchableOpacity>
                       </View>
                     )
                   ) : (

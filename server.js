@@ -1,7 +1,14 @@
 /*************************************************
  * server.js (main server file) - PHASE 1: UPDATED WITH FRIENDS SYSTEM + MEMORY PHOTOS
  *************************************************/
-require('dotenv').config(); 
+require('dotenv').config();
+
+// Auto-update IP address in .env files
+try {
+  require('./scripts/updateIpAddress.js');
+} catch (error) {
+  console.log('⚠️  Could not auto-update IP address:', error.message);
+} 
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');

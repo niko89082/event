@@ -286,7 +286,7 @@ export default function FollowingEventsFeed({
       onEndReached={handleLoadMore}
       onEndReachedThreshold={0.1}
       contentContainerStyle={events.length === 0 ? 
-        { flexGrow: 1, paddingTop: 220 } : 
+        { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 0, paddingBottom: 0, minHeight: '100%' } : 
         { paddingTop: 220, paddingBottom: 100 }
       }
       contentInset={{ top: 10 }}
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 220,
+    paddingTop: 0,  // ✅ FIXED: Match ActivityScreen - centered
   },
   loadingText: {
     marginTop: 12,
@@ -318,8 +318,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingTop: 60,
+    paddingHorizontal: 40,
+    paddingTop: 0,
   },
   emptyIconContainer: {
     width: 120,
@@ -331,9 +331,9 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   emptyTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#1C1C1E',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000000',
     marginBottom: 8,
     textAlign: 'center',
   },
@@ -342,20 +342,24 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 22,
-    marginBottom: 24,
+    marginBottom: 32,
   },
   createSuggestion: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F2F2F7',
+    justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 20,
+    borderRadius: 25,
+    backgroundColor: 'rgba(55, 151, 239, 0.1)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(55, 151, 239, 0.3)',
+    marginTop: 0,
   },
   createSuggestionText: {
     marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
     color: '#3797EF',
   },
   footer: {

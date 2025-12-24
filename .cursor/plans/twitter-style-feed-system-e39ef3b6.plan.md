@@ -1,4 +1,9 @@
-<!-- e39ef3b6-b370-4b0c-8ddd-4b71115cca3a ea05b43e-afeb-4431-9b5b-f291e3578322 -->
+---
+name: Twitter-Style Feed System Implementation Plan
+overview: ""
+todos: []
+---
+
 # Twitter-Style Feed System Implementation Plan
 
 ## Current State Analysis
@@ -14,9 +19,7 @@
 - ✅ Profile screen showing user posts
 - ✅ Privacy controls and permissions
 
-**The Issue**: These features are de-emphasized and event-centric. Users primarily upload to events rather than their personal feed.
-
----
+**The Issue**: These features are de-emphasized and event-centric. Users primarily upload to events rather than their personal feed.---
 
 ## What Already Works (No Changes Needed)
 
@@ -52,28 +55,28 @@
 #### Required Changes
 
 - **FeedScreen.js**: Add a "Posts" sub-tab alongside "Activity" and "Events"
-                - Posts sub-tab shows ONLY friend posts (photo posts from friends)
-                - Activity sub-tab keeps current behavior
-                - Events sub-tab keeps current behavior
-
+                                                                - Posts sub-tab shows ONLY friend posts (photo posts from friends)
+                                                                - Activity sub-tab keeps current behavior
+                                                                - Events sub-tab keeps current behavior
 - **Navigation**: Make "Create Post" more prominent
-                - Add FAB (Floating Action Button) on Posts feed
-                - Or add "+" icon in header
-
+                                                                - Add FAB (Floating Action Button) on Posts feed
+                                                                - Or add "+" icon in header
 - **ProfileScreen**: 
-                - Keep existing Posts tab functionality
-                - Ensure it shows nicely formatted photo grid
-                - Already working, might need minor UI polish
+                                                                - Keep existing Posts tab functionality
+                                                                - Ensure it shows nicely formatted photo grid
+                                                                - Already working, might need minor UI polish
 
 #### Component Structure
 
-```
+```javascript
 FeedScreen
 ├── Main Tabs: [Activity, Events]
 ├── Sub Tabs (when Activity selected): [Posts, All Activity]
 │   ├── Posts → Shows friend photo posts only
 │   └── All Activity → Current activity feed
 ```
+
+
 
 ### 2. **Backend: Optimize Feed for Posts**
 
@@ -85,21 +88,21 @@ FeedScreen
 #### Required Changes
 
 - **New Endpoint**: `/api/feed/posts` (or enhance existing)
-  ```
-  GET /api/feed/posts
- - Returns ONLY photo posts from friends
- - Sorted by recency (newest first)
- - Includes: photo URL, caption, user info, like count, comment count, userLiked
- - Privacy filtered (friends only)
- - Pagination support
+  ```javascript
+    GET /api/feed/posts
+            - Returns ONLY photo posts from friends
+            - Sorted by recency (newest first)
+            - Includes: photo URL, caption, user info, like count, comment count, userLiked
+            - Privacy filtered (friends only)
+            - Pagination support
   ```
 
 
 OR
 
 - **Enhance Existing**: Modify `/api/feed/activity` to accept `?type=posts`
-                - When `type=posts`, return only `regular_post` and `memory_post` types
-                - Filter out event-related activities
+                                                                - When `type=posts`, return only `regular_post` and `memory_post` types
+                                                                - Filter out event-related activities
 
 ### 3. **UI/UX Improvements**
 
@@ -107,12 +110,12 @@ OR
 
 - Show posts in card format (like Twitter/Instagram)
 - Each post card shows:
-                - User avatar + username
-                - Photo (full width)
-                - Caption
-                - Like button + count (❤️)
-                - Comment button + count (💬)
-                - Timestamp
+                                                                - User avatar + username
+                                                                - Photo (full width)
+                                                                - Caption
+                                                                - Like button + count (❤️)
+                                                                - Comment button + count (💬)
+                                                                - Timestamp
 
 #### Create Post Flow
 
@@ -132,9 +135,7 @@ Already good! Just make more accessible:
 
 ### Phase 1: Backend Feed Endpoint (2-3 hours)
 
-**File**: `routes/feed.js`
-
-Add new endpoint or query parameter:
+**File**: `routes/feed.js`Add new endpoint or query parameter:
 
 ```javascript
 router.get('/feed/posts', protect, async (req, res) => {
@@ -155,15 +156,18 @@ This is ~100-150 lines of code, mostly copy-pasting from existing `fetchRegularP
 
 1. Add sub-tab system when "Activity" main tab is selected:
    ```javascript
-   const SUB_TABS = ['Posts', 'All Activity'];
+      const SUB_TABS = ['Posts', 'All Activity'];
    ```
+
+
+
 
 2. Create or use existing `PostsFeed` component:
 
-                        - Fetch from `/api/feed/posts`
-                        - Render post cards with photo, caption, like/comment
-                        - Use existing `postsStore` for state management
-                        - Infinite scroll pagination
+                                                                                                - Fetch from `/api/feed/posts`
+                                                                                                - Render post cards with photo, caption, like/comment
+                                                                                                - Use existing `postsStore` for state management
+                                                                                                - Infinite scroll pagination
 
 3. Wire up sub-tab switching (similar to main tabs)
 
@@ -191,6 +195,8 @@ Simply add:
 </TouchableOpacity>
 ```
 
+
+
 ### Phase 4: Polish & Testing (2-3 hours)
 
 - Test feed loading, pagination
@@ -203,19 +209,7 @@ Simply add:
 
 ## Time Estimation
 
-| Phase | Task | Hours |
-
-|-------|------|-------|
-
-| 1 | Backend posts feed endpoint | 2-3 |
-
-| 2 | Frontend sub-tab + posts feed | 3-4 |
-
-| 3 | Create post button/access | 1-2 |
-
-| 4 | Polish, testing, bug fixes | 2-3 |
-
-| **TOTAL** | | **8-12 hours** |
+| Phase | Task | Hours ||-------|------|-------|| 1 | Backend posts feed endpoint | 2-3 || 2 | Frontend sub-tab + posts feed | 3-4 || 3 | Create post button/access | 1-2 || 4 | Polish, testing, bug fixes | 2-3 || **TOTAL** | | **8-12 hours** |
 
 ### Breakdown by Developer Level
 
@@ -233,9 +227,7 @@ Since you use a friends system (not followers), posts will only show from accept
 
 ### 2. Sub-Tab Approach
 
-Rather than replacing the Activity feed, add Posts as a sub-tab. This preserves existing functionality while adding the new feature.
-
-**Alternative**: Make Posts a main tab, move Activity under Events. This is more aggressive but cleaner.
+Rather than replacing the Activity feed, add Posts as a sub-tab. This preserves existing functionality while adding the new feature.**Alternative**: Make Posts a main tab, move Activity under Events. This is more aggressive but cleaner.
 
 ### 3. Post Types
 
@@ -245,9 +237,7 @@ Rather than replacing the Activity feed, add Posts as a sub-tab. This preserves 
 
 ### 4. No Retweets/Shares (For Now)
 
-Keep it simple initially. Users post photos, like, comment. Sharing can be added later.
-
----
+Keep it simple initially. Users post photos, like, comment. Sharing can be added later.---
 
 ## Files to Modify
 
@@ -274,26 +264,24 @@ If you want the absolute minimum viable version:
 
 1. **Backend**: Modify existing `/api/feed/activity` to accept `?filter=posts`
 
-                        - Just filter the activity types to `regular_post` and `memory_post`
-                        - **2 hours**
+                                                                                                - Just filter the activity types to `regular_post` and `memory_post`
+                                                                                                - **2 hours**
 
 2. **Frontend**: Replace "Activity" tab content with a posts-only feed
 
-                        - Fetch `/api/feed/activity?filter=posts`
-                        - Render using existing `ActivityFeed` component
-                        - **2 hours**
+                                                                                                - Fetch `/api/feed/activity?filter=posts`
+                                                                                                - Render using existing `ActivityFeed` component
+                                                                                                - **2 hours**
 
 3. **Add Create Button**: FAB on feed screen
 
-                        - **1 hour**
+                                                                                                - **1 hour**
 
 4. **Polish**: Test and fix bugs
 
-                        - **1-3 hours**
+                                                                                                - **1-3 hours**
 
-This gives you a Twitter-style feed in **6-8 hours** but loses the full activity feed (you'd need to move that elsewhere).
-
----
+This gives you a Twitter-style feed in **6-8 hours** but loses the full activity feed (you'd need to move that elsewhere).---
 
 ## Recommendations
 
@@ -318,5 +306,3 @@ After implementation:
 - ✅ Activity feed still works (events, invitations, etc.)
 
 Essentially: **Twitter + Instagram hybrid for your social event app**.
-
-The hardest part is already done. You just need to emphasize and organize existing features differently!

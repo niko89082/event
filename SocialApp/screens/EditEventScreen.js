@@ -16,6 +16,7 @@ import { AuthContext } from '../services/AuthContext';
 import { fetchNominatimSuggestions } from '../services/locationApi';
 import { API_BASE_URL } from '@env';
 import { FEATURES } from '../config/features';
+import useEventStore from '../stores/eventStore';
 
 const CATEGORIES = [
   'General', 'Music', 'Arts', 'Sports', 'Food', 'Technology', 'Business',
@@ -396,6 +397,11 @@ const handleDeleteEvent = async () => {
     
     if (response.data.success) {
       console.log('✅ Event deleted successfully');
+      
+      // ✅ NEW: Remove event from store and feed caches
+      const store = useEventStore.getState();
+      store.removeEventFromFeedCache(eventId);
+      store.removeEvent(eventId);
       
       Alert.alert(
         'Event Deleted',

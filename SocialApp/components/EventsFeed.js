@@ -229,6 +229,17 @@ export default function EventsFeed({
     }
   }, [activeTab, hasInitiallyLoaded, feedType, shouldFetchData, fetchEvents]);
 
+  // ✅ NEW: Refresh feed when screen comes into focus (e.g., after deleting an event)
+  useFocusEffect(
+    useCallback(() => {
+      if (activeTab === 'for-you' && hasInitiallyLoaded) {
+        console.log('📱 EventsFeed: Screen focused, refreshing feed to get latest data...');
+        // Force refresh to get latest data (in case event was deleted)
+        fetchEvents(true, 1);
+      }
+    }, [activeTab, hasInitiallyLoaded, fetchEvents])
+  );
+
   // Handle refresh
   const handleRefresh = useCallback(async () => {
     console.log(`🔄 EventsFeed: Refreshing ${feedType} feed...`);
@@ -471,11 +482,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 16,
   },
-  // ✅ STANDARDIZED: Also update empty state for consistency
+  // ✅ FIXED: Match ActivityScreen empty state alignment
   emptyListContent: {
-    paddingTop: 220,     // ✅ CHANGED: From 190 to 220 to clear sub-tabs
-    paddingBottom: 100,
-    minHeight: '100%',   // ✅ KEEP: From Phase 1 fix
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 0,
+    paddingBottom: 0,
+    minHeight: '100%',
   },
   
   // Loading states
@@ -483,7 +497,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 250,     // ✅ KEEP: Loading states use higher padding
+    paddingTop: 0,     // ✅ FIXED: Match ActivityScreen - centered
   },
   loadingText: {
     marginTop: 16,
@@ -509,7 +523,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 250,     // ✅ KEEP: Error states use higher padding
+    paddingTop: 0,     // ✅ FIXED: Match ActivityScreen - centered
   },
   errorTitle: {
     fontSize: 20,
@@ -532,7 +546,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingTop: 50,      // ✅ KEEP: Relative padding within emptyListContent
+    paddingTop: 0,      // ✅ FIXED: Match ActivityScreen - no top padding
   },
   // Action buttons
   actionButton: {
@@ -583,46 +597,41 @@ emptyContainer: {
   justifyContent: 'center',
   alignItems: 'center',
   paddingHorizontal: 40,
-  paddingTop: 20, // ✅ MOVED UP: Reduced from 50
+  paddingTop: 0,
 },
 emptyIconContainer: {
   width: 120,
   height: 120,
   borderRadius: 60,
-  backgroundColor: 'rgba(248, 249, 250, 0.8)',
+  backgroundColor: '#F2F2F7',
   justifyContent: 'center',
   alignItems: 'center',
   marginBottom: 24,
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.1,
-  shadowRadius: 4,
-  elevation: 2,
 },
 emptyTitle: {
-  fontSize: 24, // ✅ MATCH ACTIVITY: Same as activity screen
-  fontWeight: '700', // ✅ MATCH ACTIVITY: Same as activity screen
-  color: '#000000', // ✅ MATCH ACTIVITY: Same as activity screen
+  fontSize: 24,
+  fontWeight: '700',
+  color: '#000000',
   marginBottom: 8,
   textAlign: 'center',
 },
 createEventButton: {
   flexDirection: 'row',
   alignItems: 'center',
-  paddingHorizontal: 20, // ✅ MATCH FRIENDS: Same as createSuggestion
-  paddingVertical: 12, // ✅ MATCH FRIENDS: Same as createSuggestion
-  borderRadius: 25, // ✅ MATCH FRIENDS: Same rounded style
-  backgroundColor: 'rgba(55, 151, 239, 0.1)', // ✅ MATCH FRIENDS: Light blue background
+  justifyContent: 'center',
+  paddingHorizontal: 20,
+  paddingVertical: 12,
+  borderRadius: 25,
+  backgroundColor: 'rgba(55, 151, 239, 0.1)',
   borderWidth: 1.5,
   borderColor: 'rgba(55, 151, 239, 0.3)',
-  marginTop: 8, // ✅ KEEP: Space from subtitle
-  // Remove shadow properties to match friends style
+  marginTop: 0,
 },
 createEventButtonText: {
-  fontSize: 15, // ✅ MATCH FRIENDS: Same as createSuggestionText
-  color: '#3797EF', // ✅ MATCH FRIENDS: Blue color
+  fontSize: 15,
+  color: '#3797EF',
   marginLeft: 8,
-  fontWeight: '600', // ✅ MATCH FRIENDS: Same weight
+  fontWeight: '600',
 },
 // ✅ NEW: Styles for friends tab actions
 emptyActions: {
@@ -662,10 +671,10 @@ createSuggestionText: {
   fontWeight: '600', // ✅ IMPROVED: Bolder text
 },
 emptySubtitle: {
-  fontSize: 16, // ✅ MATCH ACTIVITY: Same as activity screen
-  color: '#8E8E93', // ✅ MATCH ACTIVITY: Same as activity screen
+  fontSize: 16,
+  color: '#8E8E93',
   textAlign: 'center',
-  lineHeight: 22, // ✅ MATCH ACTIVITY: Same as activity screen
+  lineHeight: 22,
   marginBottom: 32,
 },
 });

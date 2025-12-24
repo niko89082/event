@@ -447,6 +447,34 @@ const useEventStore = create(
       return feedCache[feedType] || { data: [], lastFetch: null, hasMore: true };
     },
 
+    // Remove event from all feed caches (when event is deleted)
+    removeEventFromFeedCache: (eventId) => {
+      const { feedCache } = get();
+      const newFeedCache = { ...feedCache };
+      
+      // Remove event from all feed types
+      Object.keys(newFeedCache).forEach(feedType => {
+        if (newFeedCache[feedType]?.data) {
+          newFeedCache[feedType] = {
+            ...newFeedCache[feedType],
+            data: newFeedCache[feedType].data.filter(event => event._id !== eventId)
+          };
+        }
+      });
+      
+      set({ feedCache: newFeedCache });
+      console.log(`🗑️ Removed event ${eventId} from all feed caches`);
+    },
+
+    // Remove event from main events store
+    removeEvent: (eventId) => {
+      const { events } = get();
+      const newEvents = new Map(events);
+      newEvents.delete(eventId);
+      set({ events: newEvents });
+      console.log(`🗑️ Removed event ${eventId} from events store`);
+    },
+
     // Set loading state
     setLoading: (loading) => set({ loading }),
 
