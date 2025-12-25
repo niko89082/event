@@ -7,7 +7,9 @@ import PostDetailsScreen from '../screens/PostDetailsScreen';
 import CreateEventScreen from '../screens/CreateEventScreen';
 import CreatePostScreen  from '../screens/CreatePostScreen';
 import ProfileScreen     from '../screens/ProfileScreen';
-import EventDetailsScreen  from '../screens/EventDetailsScreen'; 
+import EventDetailsScreen  from '../screens/EventDetailsScreen';
+import MoviePageScreen   from '../screens/MoviePageScreen';
+import SongPageScreen    from '../screens/SongPageScreen';
 const Stack = createStackNavigator();
 
 export default function FeedStack() {
@@ -33,6 +35,16 @@ export default function FeedStack() {
       <Stack.Screen
         name="ProfileScreen"
         component={ProfileScreen}
+      />
+      <Stack.Screen
+        name="MoviePageScreen"
+        component={MoviePageScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SongPageScreen"
+        component={SongPageScreen}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );

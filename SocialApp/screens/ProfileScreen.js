@@ -11,6 +11,8 @@ import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 import { useFriendRequestManager } from '../hooks/useFriendRequestManager';
+import PostCard from '../components/PostCard';
+import PhotoGrid from '../components/PhotoGrid';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -71,9 +73,9 @@ export default function ProfileScreen() {
   const isAnimating = useRef(false);
   const currentTabIndex = useRef(0);
 
-  // Dynamic tab array based on conditions
+  // ✅ UPDATED: Dynamic tab array with Posts and Photos tabs
 const getTabs = () => {
-  const tabs = ['Events']; // Removed 'Posts' from array
+  const tabs = ['Posts', 'Photos', 'Events'];
   if (isSelf || showMemoriesTab) {
     tabs.push('Memories');
   }
@@ -95,35 +97,7 @@ const getTabs = () => {
       fetchUserProfile(true);
     }
   }
- // FIXED: Re-filter posts when friendship status changes
-useEffect(() => {
-  if (user && !loading) {
-    console.log('🔄 === FRIENDSHIP STATUS CHANGE EFFECT ===');
-    console.log('🔄 Friendship status changed, re-filtering posts:', friendshipStatus);
-    console.log('🔄 User photos available:', user.photos?.length || 0);
-    console.log('🔄 isSelf:', isSelf);
-    
-    let filteredPosts = user.photos || [];
-    const shouldShowPosts = isSelf || friendshipStatus === 'friends';
-    
-    console.log('🔄 shouldShowPosts:', shouldShowPosts);
-    
-    if (!shouldShowPosts) {
-      console.log('🔒 Hiding posts due to friendship status change');
-      filteredPosts = [];
-    } else {
-      console.log('✅ Showing posts due to friendship status change');
-    }
-    
-    const sortedPosts = filteredPosts.sort((a, b) => 
-      new Date(b.createdAt) - new Date(a.createdAt)
-    );
-    setPosts(sortedPosts);
-    
-    console.log('🔄 Posts after effect:', sortedPosts.length);
-    console.log('🔄 === END FRIENDSHIP STATUS CHANGE EFFECT ===');
-  }
-}, [friendshipStatus, user, isSelf, loading]);
+ // ✅ REMOVED: No need to re-filter posts - everything is public
   function handleFriendRequestRejected(data) {
     console.log('❌ ProfileScreen: Friend request rejected', data);
     if (data.requesterId === userId) {
@@ -407,38 +381,31 @@ const fetchUserProfile = async (isRefresh = false) => {
     console.log('✅ Profile data received:', { 
       username: data.username, 
       friendsCount: data.friendsCount,
-      postsCount: data.photos?.length || 0,
+      postsCount: data.postsCount || data.photos?.length || 0,
       canViewContent: data.photos?.length > 0 || 'backend-filtered',
-      backendFriendshipStatus: data.friendshipStatus, // Check if backend returns this
+      backendFriendshipStatus: data.friendshipStatus,
       canViewPrivateContent: data.canViewPrivateContent
     });
     
     setUser(data);
     
-    // FIXED: Filter posts based on CURRENT friendship status (use local variable)
-    let filteredPosts = data.photos || [];
-    const shouldShowPosts = isSelf || currentFriendshipStatus === 'friends';
-    
-    console.log('📸 Post filtering logic:');
-    console.log('  - isSelf:', isSelf);
-    console.log('  - currentFriendshipStatus:', currentFriendshipStatus);
-    console.log('  - shouldShowPosts:', shouldShowPosts);
-    console.log('  - rawPhotosFromBackend:', data.photos?.length || 0);
-    console.log('  - backendCanViewPrivateContent:', data.canViewPrivateContent);
-    
-    if (!shouldShowPosts) {
-      console.log('🔒 Frontend filter: Hiding posts for non-friend, status:', currentFriendshipStatus);
-      filteredPosts = [];
-    } else {
-      console.log('✅ Frontend filter: Showing posts, status:', currentFriendshipStatus);
-    }
-    
-    const sortedPosts = filteredPosts.sort((a, b) => 
-      new Date(b.createdAt) - new Date(a.createdAt)
+    // ✅ SIMPLIFIED: Show all posts (everything is public by default)
+    const allPosts = data.photos || [];
+    // ✅ FIX: Ensure all posts have user data populated
+    const postsWithUser = allPosts.map(post => ({
+      ...post,
+      user: post.user || {
+        _id: data._id,
+        username: data.username,
+        profilePicture: data.profilePicture
+      }
+    }));
+    const sortedPosts = postsWithUser.sort((a, b) => 
+      new Date(b.createdAt || b.uploadDate) - new Date(a.createdAt || a.uploadDate)
     );
     setPosts(sortedPosts);
     
-    console.log('📸 Final posts set:', sortedPosts.length);
+    console.log('📸 Showing all posts (public by default):', sortedPosts.length);
     
     // Set friends count from profile data or fetch separately
     if (data.friendsCount !== undefined) {
@@ -453,7 +420,7 @@ const fetchUserProfile = async (isRefresh = false) => {
     await fetchUserEvents();
 
     // Fetch memories if on Memories tab
-    if (activeTabIndex === 1) {
+    if (activeTabIndex === 3) {
       console.log('📚 On memories tab, fetching memories...');
       await fetchUserMemories();
     }
@@ -488,9 +455,71 @@ const fetchUserProfile = async (isRefresh = false) => {
   }
 };
 
+  // Handle like/unlike for posts
+  const handlePostLike = async (postId) => {
+    try {
+      console.log('🔄 Toggling like for post:', postId);
+      
+      // Find the post in the current posts array
+      const postIndex = posts.findIndex(p => p._id === postId);
+      if (postIndex === -1) {
+        console.warn('⚠️ Post not found in local state:', postId);
+        return;
+      }
+
+      const post = posts[postIndex];
+      const wasLiked = post.userLiked || (post.likes && post.likes.includes && post.likes.includes(currentUser?._id));
+      const newLiked = !wasLiked;
+      const newCount = wasLiked ? (post.likeCount || post.likes?.length || 0) - 1 : (post.likeCount || post.likes?.length || 0) + 1;
+
+      // Optimistic update
+      const updatedPosts = [...posts];
+      updatedPosts[postIndex] = {
+        ...post,
+        userLiked: newLiked,
+        likeCount: newCount,
+        likes: newLiked 
+          ? [...(post.likes || []), currentUser?._id].filter(Boolean)
+          : (post.likes || []).filter(id => String(id) !== String(currentUser?._id))
+      };
+      setPosts(updatedPosts);
+
+      // Make API call
+      const response = await api.post(`/api/photos/like/${postId}`);
+      
+      // Update with server response
+      const finalPosts = [...updatedPosts];
+      finalPosts[postIndex] = {
+        ...finalPosts[postIndex],
+        userLiked: response.data.userLiked || response.data.liked,
+        likeCount: response.data.likeCount || response.data.likes?.length || 0,
+        likes: response.data.likes || finalPosts[postIndex].likes
+      };
+      setPosts(finalPosts);
+
+      console.log('✅ Like toggled successfully');
+    } catch (error) {
+      console.error('❌ Error toggling like:', error.response?.data || error);
+      
+      // Revert optimistic update on error
+      const postIndex = posts.findIndex(p => p._id === postId);
+      if (postIndex !== -1) {
+        const post = posts[postIndex];
+        const updatedPosts = [...posts];
+        updatedPosts[postIndex] = {
+          ...post,
+          userLiked: !post.userLiked,
+          likeCount: post.userLiked ? (post.likeCount || 0) - 1 : (post.likeCount || 0) + 1
+        };
+        setPosts(updatedPosts);
+      }
+      
+      Alert.alert('Error', 'Failed to like post. Please try again.');
+    }
+  };
 
 useEffect(() => {
-  if (activeTabIndex === 0 && !eventsLoading) { // Events tab is now index 0
+  if (activeTabIndex === 2 && !eventsLoading) { // Events tab is now index 2
     console.log('🔄 Re-checking events due to friendship status change:', friendshipStatus);
     
     if (!isSelf && friendshipStatus !== 'friends') {
@@ -958,8 +987,8 @@ const renderProfileHeader = () => {
 
   // Event filter bar (same as before)
   const renderEventFilterBar = () => {
-  // FIXED: Change activeTabIndex !== 1 to activeTabIndex !== 0 since Events is now index 0
-  if (activeTabIndex !== 0 || !isSelf) return null;
+  // ✅ UPDATED: Events tab is now index 2
+  if (activeTabIndex !== 2 || !isSelf) return null;
 
   return (
     <View style={styles.eventFilterBar}>
@@ -1159,33 +1188,41 @@ const renderPostGrid = ({ item }) => (
     );
   };
 
-  // Get content data for current tab (UPDATED for friends system)
+  // ✅ UPDATED: Get content data for current tab (Posts, Photos, Events, Memories)
   const getContentData = () => {
   if (activeTabIndex === 0) { // Posts
-    return posts; // Backend already filtered these
-  } else if (activeTabIndex === 1) { // Events
+    return posts; // All posts (public by default)
+  } else if (activeTabIndex === 1) { // Photos
+    return posts.filter(post => post.paths && post.paths.length > 0); // Only photo posts
+  } else if (activeTabIndex === 2) { // Events
     if (eventsLoading) {
       return 'loading';
     }
-    return isSelf ? filteredEvents : events; // Backend already filtered
-  } else if (activeTabIndex === 2) { // Memories
+    return isSelf ? filteredEvents : events;
+  } else if (activeTabIndex === 3) { // Memories
     if (memoriesLoading) {
       return 'loading';
     }
-    return memories; // Backend already filtered
+    return memories;
   }
   return [];
 };
 
-  // Render content for each tab
+  // ✅ UPDATED: Render content for each tab (Posts, Photos, Events, Memories)
   const renderTabContent = (tabIndex) => {
   let contentData;
   
-  // Since Posts tab is removed, tab indices shift:
-  // tabIndex 0 = Events (was previously 1)
-  // tabIndex 1 = Memories (was previously 2)
+  // Tab indices:
+  // tabIndex 0 = Posts
+  // tabIndex 1 = Photos
+  // tabIndex 2 = Events
+  // tabIndex 3 = Memories
   
-  if (tabIndex === 0) { // Events (was previously index 1)
+  if (tabIndex === 0) { // Posts
+    contentData = posts; // All posts (public by default)
+  } else if (tabIndex === 1) { // Photos
+    contentData = posts.filter(post => post.paths && post.paths.length > 0);
+  } else if (tabIndex === 2) { // Events
     if (eventsLoading) {
       contentData = 'loading';
     } else if (!isSelf && friendshipStatus !== 'friends') {
@@ -1193,7 +1230,7 @@ const renderPostGrid = ({ item }) => (
     } else {
       contentData = isSelf ? filteredEvents : events;
     }
-  } else if (tabIndex === 1) { // Memories (was previously index 2)
+  } else if (tabIndex === 3) { // Memories
     if (memoriesLoading) {
       contentData = 'loading';
     } else {
@@ -1260,7 +1297,7 @@ const renderPostGrid = ({ item }) => (
       <View style={styles.emptyContainer}>
         <ActivityIndicator size="large" color="#3797EF" />
         <Text style={styles.loadingText}>
-          {tabIndex === 0 ? 'Loading events...' : 'Loading memories...'}
+          {tabIndex === 0 ? 'Loading posts...' : tabIndex === 1 ? 'Loading photos...' : tabIndex === 2 ? 'Loading events...' : 'Loading memories...'}
         </Text>
       </View>
     );
@@ -1339,8 +1376,55 @@ const renderPostGrid = ({ item }) => (
     return null;
   }
 
-  // Render the appropriate list based on NEW tab indices
-  if (tabIndex === 0) { // Events
+  // ✅ UPDATED: Render the appropriate list based on tab indices (Posts, Photos, Events, Memories)
+  if (tabIndex === 0) { // Posts
+    if (contentData.length === 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="document-text-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.emptyTitle}>No posts yet</Text>
+          <Text style={styles.emptySubtitle}>Posts will appear here</Text>
+        </View>
+      );
+    }
+    return (
+      <FlatList
+        data={contentData}
+        renderItem={({ item }) => (
+          <PostCard
+            post={item}
+            currentUserId={currentUser?._id}
+            navigation={navigation}
+            onLike={handlePostLike}
+            profileUser={user ? {
+              _id: user._id,
+              username: user.username,
+              profilePicture: user.profilePicture
+            } : null}
+          />
+        )}
+        keyExtractor={(item) => item._id}
+        scrollEnabled={false}
+        showsVerticalScrollIndicator={false}
+      />
+    );
+  } else if (tabIndex === 1) { // Photos
+    if (contentData.length === 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="images-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.emptyTitle}>No photos yet</Text>
+          <Text style={styles.emptySubtitle}>Photos will appear here</Text>
+        </View>
+      );
+    }
+    return (
+      <PhotoGrid
+        photos={contentData}
+        navigation={navigation}
+      />
+    );
+  } else if (tabIndex === 2) { // Events
     return (
       <FlatList
         data={contentData}
@@ -1350,7 +1434,7 @@ const renderPostGrid = ({ item }) => (
         contentContainerStyle={styles.eventsGrid}
       />
     );
-  } else if (tabIndex === 1) { // Memories
+  } else if (tabIndex === 3) { // Memories
     return (
       <FlatList
         data={contentData}

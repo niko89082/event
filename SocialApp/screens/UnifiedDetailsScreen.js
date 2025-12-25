@@ -2,10 +2,11 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, TextInput, FlatList, SafeAreaView,
+  ActivityIndicator, Alert, TextInput, FlatList,
   StatusBar, KeyboardAvoidingView, Platform, Dimensions, Animated,
-  Modal, ActionSheetIOS
+  Modal, ActionSheetIOS, Linking
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { PinchGestureHandler, PanGestureHandler, State } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -29,6 +30,18 @@ const niceDate = (iso) => {
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d`;
   return new Date(iso).toLocaleDateString();
+};
+
+const getTimeAgo = (date) => {
+  const now = new Date();
+  const postDate = new Date(date);
+  const diffInSeconds = Math.floor((now - postDate) / 1000);
+  
+  if (diffInSeconds < 60) return 'now';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d`;
+  return postDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
 const formatMemoryTime = (iso) => {
@@ -109,6 +122,23 @@ export default function UnifiedDetailsScreen() {
     : currentPost?.paths?.[0] 
     ? `http://${API_BASE_URL}:3000${currentPost.paths[0]}`
     : null;
+  const hasReview = currentPost?.review && currentPost.review.type;
+  const review = currentPost?.review;
+  const repostCount = currentPost?.repostCount || 0;
+  const [likeCountState, setLikeCountState] = useState(currentPost?.likeCount || currentPost?.likes?.length || 0);
+  const [isLikedState, setIsLikedState] = useState(currentPost?.userLiked || (currentPost?.likes?.includes && currentPost.likes.includes(currentUser?._id)) || false);
+  
+  // Use state if available, otherwise use post data
+  const likeCount = likeCountState;
+  const isLiked = isLikedState;
+  
+  // Update like state when post changes
+  useEffect(() => {
+    if (currentPost) {
+      setLikeCountState(currentPost?.likeCount || currentPost?.likes?.length || 0);
+      setIsLikedState(currentPost?.userLiked || (currentPost?.likes?.includes && currentPost.likes.includes(currentUser?._id)) || false);
+    }
+  }, [currentPost, currentUser?._id]);
 
   // Use the managed comment count instead of static count
   // const commentCount = currentPost?.commentCount || comments.length || 0;
@@ -310,6 +340,54 @@ export default function UnifiedDetailsScreen() {
     }
   };
 
+  const handleLike = async () => {
+    if (!postId || !currentUser) return;
+    
+    try {
+      // Optimistic update
+      const newLiked = !isLiked;
+      const newCount = newLiked ? likeCount + 1 : likeCount - 1;
+      setIsLikedState(newLiked);
+      setLikeCountState(newCount);
+      
+      // Determine API endpoint based on post type
+      let endpoint;
+      if (isMemoryPost) {
+        endpoint = `/api/memories/photos/like/${postId}`;
+      } else {
+        endpoint = `/api/photos/like/${postId}`;
+      }
+      
+      const response = await api.post(endpoint);
+      
+      // Update with server response
+      setIsLikedState(response.data.userLiked || (response.data.likes?.includes && response.data.likes.includes(currentUser._id)) || false);
+      setLikeCountState(response.data.likeCount || response.data.likes?.length || 0);
+      
+      // Update post state
+      setPost(prev => ({
+        ...prev,
+        likes: response.data.likes,
+        likeCount: response.data.likeCount,
+        userLiked: response.data.userLiked || (response.data.likes?.includes && response.data.likes.includes(currentUser._id))
+      }));
+      
+      // Update store
+      usePostsStore.getState().updatePost(postId, {
+        likes: response.data.likes,
+        likeCount: response.data.likeCount,
+        userLiked: response.data.userLiked || (response.data.likes?.includes && response.data.likes.includes(currentUser._id))
+      });
+      
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      // Revert optimistic update
+      setIsLikedState(!isLiked);
+      setLikeCountState(isLiked ? likeCount + 1 : likeCount - 1);
+      Alert.alert('Error', 'Failed to update like');
+    }
+  };
+
   const handleCommentActions = React.useCallback((comment) => {
     setSelectedComment(comment);
     setShowCommentActions(true);
@@ -347,10 +425,13 @@ export default function UnifiedDetailsScreen() {
     }
   }, [selectedComment, isMemoryPost, postId, decrementCommentCount]);
 const handlePostActions = React.useCallback(() => {
-  const userId = typeof currentPost.user === 'string' ? currentPost.user : currentPost.user?._id;
+  const userId = typeof currentPost?.user === 'string' ? currentPost?.user : currentPost?.user?._id;
+  const uploadedById = typeof currentPost?.uploadedBy === 'string' ? currentPost?.uploadedBy : currentPost?.uploadedBy?._id;
   const isOwner = userId === currentUser?._id;
+  const isUploader = uploadedById === currentUser?._id;
+  const canEdit = isOwner || isUploader;
   
-  if (!isOwner) return;
+  if (!canEdit) return;
   
   // ✅ FIXED: Memory photos should not allow caption editing
   if (isMemoryPost) {
@@ -711,42 +792,80 @@ useEffect(() => {
     }
   };
 
-  const renderComment = React.useCallback(({ item: comment }) => (
-    <View style={styles.commentContainer}>
+  const renderComment = React.useCallback(({ item: comment }) => {
+    const isCommentOwner = comment.user?._id === currentUser?._id;
+    const userId = typeof currentPost?.user === 'string' ? currentPost?.user : currentPost?.user?._id;
+    const isPostOwner = userId === currentUser?._id;
+    const canDelete = isCommentOwner || isPostOwner;
+    
+    return (
       <TouchableOpacity 
-        onPress={() => handleUserPress(comment.user._id)}
-        style={styles.commentAvatarContainer}
+        style={styles.commentContainer}
+        activeOpacity={0.7}
       >
-        <Image
-          source={{
-            uri: comment.user?.profilePicture
-              ? `http://${API_BASE_URL}:3000${comment.user.profilePicture}`
-              : 'https://via.placeholder.com/32/CCCCCC/666666?text=U'
-          }}
-          style={styles.commentAvatar}
-        />
-      </TouchableOpacity>
-      <View style={styles.commentContent}>
-        <View style={styles.commentTextContainer}>
-          <TouchableOpacity onPress={() => handleUserPress(comment.user._id)}>
-            <Text style={styles.commentUsername}>{comment.user?.username || 'Unknown'}</Text>
-          </TouchableOpacity>
+        <TouchableOpacity 
+          onPress={() => handleUserPress(comment.user._id)}
+          style={styles.commentAvatarContainer}
+        >
+          <Image
+            source={{
+              uri: comment.user?.profilePicture
+                ? `http://${API_BASE_URL}:3000${comment.user.profilePicture}`
+                : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
+            }}
+            style={styles.commentAvatar}
+          />
+        </TouchableOpacity>
+        <View style={styles.commentContent}>
+          <View style={styles.commentHeaderRow}>
+            <View style={styles.commentNameRow}>
+              <TouchableOpacity onPress={() => handleUserPress(comment.user._id)}>
+                <Text style={styles.commentUsername}>{comment.user?.username || 'Unknown'}</Text>
+              </TouchableOpacity>
+              <Text style={styles.commentHandle}>@{comment.user?.username?.toLowerCase().replace(/\s+/g, '') || 'unknown'}</Text>
+              <Text style={styles.commentTimeDot}>•</Text>
+              <Text style={styles.commentTime}>{getTimeAgo(comment.createdAt)}</Text>
+            </View>
+            {canDelete && (
+              <TouchableOpacity
+                onPress={() => handleCommentActions(comment)}
+                style={styles.commentOptionsButton}
+              >
+                <Ionicons name="ellipsis-horizontal" size={18} color="#8E8E93" />
+              </TouchableOpacity>
+            )}
+          </View>
           <Text style={styles.commentTextContent}>{comment.text}</Text>
-        </View>
-        <View style={styles.commentMeta}>
-          <Text style={styles.commentTime}>{niceDate(comment.createdAt)}</Text>
-          {comment.user._id === currentUser?._id && (
-            <TouchableOpacity 
-              onPress={() => handleCommentActions(comment)}
-              style={styles.commentActionsButton}
-            >
-              <Ionicons name="ellipsis-horizontal" size={16} color="#8E8E93" />
+          <View style={styles.commentActions}>
+            <TouchableOpacity style={styles.commentActionButton}>
+              <Ionicons name="heart-outline" size={16} color="#8E8E93" />
             </TouchableOpacity>
-          )}
+            <TouchableOpacity style={styles.commentActionButton}>
+              <Ionicons name="chatbubble-outline" size={16} color="#8E8E93" />
+              <Text style={styles.commentActionText}>Reply</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-    </View>
-  ), [currentUser?._id, handleCommentActions]);
+      </TouchableOpacity>
+    );
+  }, [currentUser?._id, handleCommentActions, currentPost]);
+
+  // Helper to render stars for rating
+  const renderStars = (rating) => {
+    const stars = [];
+    for (let i = 1; i <= 5; i++) {
+      stars.push(
+        <Ionicons
+          key={i}
+          name={i <= rating ? "star" : "star-outline"}
+          size={20}
+          color={i <= rating ? "#FBBF24" : "#E5E7EB"}
+          style={styles.starIcon}
+        />
+      );
+    }
+    return stars;
+  };
 
   // Add this at the beginning of renderHeader function:
 const renderHeader = () => {
@@ -763,22 +882,15 @@ const renderHeader = () => {
   // Owner is either the user or the uploader (for memory photos)
   const canEdit = isOwner || isUploader;
   
-  console.log('🐛 DEBUG: renderHeader - ownership check:', {
-    currentPostUser: currentPost.user,
-    currentPostUploadedBy: currentPost.uploadedBy,
-    userId,
-    uploadedById,
-    currentUserId: currentUser?._id,
-    isOwner,
-    isUploader,
-    canEdit
-  });
-
   const memoryMood = isMemoryPost ? getMemoryMood(currentPost.createdAt || currentPost.uploadedAt) : null;
+  
+  const username = typeof currentPost.user === 'string' 
+    ? (currentUser?.username || 'Unknown') 
+    : (currentPost.user?.username || currentPost.uploadedBy?.username || 'Unknown');
   
   return (
     <View style={styles.postContainer}>
-      {/* Author Info */}
+      {/* Author Info - Twitter Style */}
       <View style={styles.authorContainer}>
         <TouchableOpacity 
           onPress={() => handleUserPress(currentPost.user?._id || currentPost.uploadedBy?._id)}
@@ -788,145 +900,204 @@ const renderHeader = () => {
             source={{
               uri: (currentPost.user?.profilePicture || currentPost.uploadedBy?.profilePicture)
                 ? `http://${API_BASE_URL}:3000${currentPost.user?.profilePicture || currentPost.uploadedBy?.profilePicture}`
-                : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
+                : 'https://via.placeholder.com/48/CCCCCC/666666?text=U'
             }}
             style={styles.authorAvatar}
           />
           <View style={styles.authorTextContainer}>
-            <View style={styles.usernameRow}>
-              <Text style={styles.authorUsername}>
-                {typeof currentPost.user === 'string' 
-                  ? (currentUser?.username || 'Unknown') 
-                  : (currentPost.user?.username || currentPost.uploadedBy?.username || 'Unknown')
-                }
-              </Text>
-              
-              {/* Context Links */}
-              {isMemoryPost && (currentPost.memoryInfo?.memoryTitle || currentPost.memoryTitle) && (
-                <>
-                  <Text style={styles.contextText}> in </Text>
-                  <TouchableOpacity onPress={handleMemoryPress}>
-                    <Text style={styles.memoryLink}>
-                      {currentPost.memoryInfo?.memoryTitle || currentPost.memoryTitle}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              
-              {!isMemoryPost && currentPost.event && (
-                <>
-                  <Text style={styles.contextText}> at </Text>
-                  <TouchableOpacity onPress={handleEventPress}>
-                    <Text style={styles.eventLink}>{currentPost.event.title}</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+            <View style={styles.authorNameRow}>
+              <Text style={styles.authorUsername}>{username}</Text>
             </View>
-            
-            <Text style={styles.postTime}>
-              {formatDate(currentPost.createdAt || currentPost.uploadedAt)}
-            </Text>
+            <View style={styles.authorMetaRow}>
+              <Text style={styles.authorHandle}>@{username.toLowerCase().replace(/\s+/g, '')}</Text>
+              <Text style={styles.authorMetaDot}>•</Text>
+              <Text style={styles.authorTime}>{getTimeAgo(currentPost.createdAt || currentPost.uploadedAt)}</Text>
+            </View>
           </View>
-          {/* ✅ FIXED: Only show menu if user can edit */}
-          {canEdit && (
-            <TouchableOpacity 
-              onPress={handlePostActions}
-              style={styles.postMenuButton}
-            >
-              <Ionicons name="ellipsis-horizontal" size={20} color="#8E8E93" />
-            </TouchableOpacity>
-          )}
         </TouchableOpacity>
       </View>
 
-      {/* Image with tap to zoom and loading states */}
-      <TouchableOpacity 
-        onPress={() => setShowImageModal(true)}
-        style={[
-          styles.imageContainer,
-          {
-            width: imageDimensions.width,
-            height: imageDimensions.height
-          }
-        ]}
-        disabled={imageLoading || imageError}
-      >
-        {imageLoading && (
-          <View style={styles.imageLoadingContainer}>
-            <ActivityIndicator size="large" color="#3797EF" />
-            <Text style={styles.imageLoadingText}>Loading image...</Text>
+      {/* Review Card - Only show if review exists */}
+      {hasReview && review && (
+        <View style={styles.reviewCardContainer}>
+          <View style={styles.reviewCard}>
+            {review.poster && (
+              <TouchableOpacity 
+                style={styles.reviewPosterContainer}
+                onPress={() => review.externalUrl && Linking.openURL(review.externalUrl)}
+                activeOpacity={0.8}
+              >
+                <Image source={{ uri: review.poster }} style={styles.reviewPoster} />
+                {review.type === 'song' && (
+                  <View style={styles.playButtonOverlay}>
+                    <Ionicons name="play-circle" size={32} color="#FFFFFF" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
+            <View style={styles.reviewInfo}>
+              <Text style={styles.reviewTitle} numberOfLines={1}>{review.title}</Text>
+              <Text style={styles.reviewSubtitle} numberOfLines={1}>
+                {review.type === 'song' 
+                  ? `${review.artist || ''}${review.year ? ` • ${review.year}` : ''}`
+                  : `${review.artist || ''}${review.year ? ` • ${review.year}` : ''}`
+                }
+              </Text>
+              {review.genre && review.genre.length > 0 && (
+                <View style={styles.genreContainer}>
+                  {review.genre.slice(0, 2).map((genre, index) => (
+                    <View key={index} style={styles.genreTag}>
+                      <Text style={styles.genreText}>{genre}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+            {review.externalUrl && (
+              <TouchableOpacity 
+                style={styles.bookmarkButton}
+                onPress={() => Linking.openURL(review.externalUrl)}
+              >
+                <Ionicons name="bookmark-outline" size={20} color="#8E8E93" />
+              </TouchableOpacity>
+            )}
           </View>
-        )}
-        
-        {imageError && (
-          <View style={styles.imagePlaceholder}>
-            <Ionicons name="image" size={50} color="#C7C7CC" />
-            <Text style={styles.placeholderText}>Failed to load image</Text>
-          </View>
-        )}
-        
-        {imgURL && !imageError && (
-          <Image
-            source={{ uri: imgURL }}
-            style={[
-              styles.postImage,
-              { opacity: imageLoading ? 0 : 1 }
-            ]}
-            resizeMode={isMemoryPost ? "contain" : "cover"}
-            onLoad={() => {
-              if (imageLoading) {
-                setImageLoading(false);
-              }
-            }}
-            onError={() => {
-              if (!imageError) {
-                setImageError(true);
-                setImageLoading(false);
-              }
-            }}
-            key={`image-${imgURL}`}
-          />
-        )}
-        
-        {!imgURL && !imageLoading && (
-          <View style={styles.imagePlaceholder}>
-            <Ionicons name="image" size={50} color="#C7C7CC" />
-            <Text style={styles.placeholderText}>No image</Text>
-          </View>
-        )}
-      </TouchableOpacity>
-
-      {/* Actions */}
-      <View style={styles.actionsContainer}>
-        {/* Memory explore button */}
-        {isMemoryPost && (
-          <TouchableOpacity onPress={handleMemoryPress} style={styles.memoryExploreBtn}>
-            <Text style={styles.memoryExploreBtnText}>Explore Memory</Text>
-            <Ionicons name="arrow-forward" size={16} color={MEMORY_BLUE} />
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Caption */}
-      {currentPost.caption && (
-        <View style={styles.captionContainer}>
-          <Text style={styles.captionText}>
-            <Text style={styles.captionUsername}>
-              {typeof currentPost.user === 'string' 
-                ? (currentUser?.username || 'Unknown') 
-                : (currentPost.user?.username || currentPost.uploadedBy?.username || 'Unknown')
-              }
-            </Text>
-            {' '}{currentPost.caption}
-          </Text>
         </View>
       )}
 
+      {/* Rating Stars - Only show if review has rating */}
+      {hasReview && review && review.rating && review.rating > 0 && (
+        <View style={styles.ratingContainer}>
+          <View style={styles.starsContainer}>
+            {renderStars(review.rating)}
+          </View>
+          <Text style={styles.ratingText}>{review.rating.toFixed(1)}</Text>
+        </View>
+      )}
+
+      {/* Image with tap to zoom - Show if image exists (even for review posts) */}
+      {imgURL && (
+        <TouchableOpacity 
+          onPress={() => setShowImageModal(true)}
+          style={[
+            styles.imageContainer,
+            {
+              width: imageDimensions.width,
+              height: imageDimensions.height
+            }
+          ]}
+          disabled={imageLoading || imageError}
+        >
+          {imageLoading && (
+            <View style={styles.imageLoadingContainer}>
+              <ActivityIndicator size="large" color="#3797EF" />
+              <Text style={styles.imageLoadingText}>Loading image...</Text>
+            </View>
+          )}
+          
+          {imageError && (
+            <View style={styles.imagePlaceholder}>
+              <Ionicons name="image" size={50} color="#C7C7CC" />
+              <Text style={styles.placeholderText}>Failed to load image</Text>
+            </View>
+          )}
+          
+          {imgURL && !imageError && (
+            <Image
+              source={{ uri: imgURL }}
+              style={[
+                styles.postImage,
+                { opacity: imageLoading ? 0 : 1 }
+              ]}
+              resizeMode={isMemoryPost ? "contain" : "cover"}
+              onLoad={() => {
+                if (imageLoading) {
+                  setImageLoading(false);
+                }
+              }}
+              onError={() => {
+                if (!imageError) {
+                  setImageError(true);
+                  setImageLoading(false);
+                }
+              }}
+              key={`image-${imgURL}`}
+            />
+          )}
+        </TouchableOpacity>
+      )}
+
+      {/* Caption / Review Text */}
+      {currentPost.caption && (
+        <View style={styles.captionContainer}>
+          <Text style={styles.captionText}>{currentPost.caption}</Text>
+        </View>
+      )}
+
+      {/* Timestamp Detail - Twitter Style */}
+      <View style={styles.timestampContainer}>
+        <Text style={styles.timestampText}>
+          {new Date(currentPost.createdAt || currentPost.uploadedAt).toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          })}{' • '}
+          {new Date(currentPost.createdAt || currentPost.uploadedAt).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          })}
+        </Text>
+      </View>
+
+      {/* Engagement Stats - Twitter Style */}
+      <View style={styles.engagementContainer}>
+        <View style={styles.engagementRow}>
+          <TouchableOpacity 
+            style={styles.engagementButton} 
+            activeOpacity={0.7}
+            onPress={handleLike}
+          >
+            <View style={[styles.engagementIconContainer, isLiked && styles.engagementIconLiked]}>
+              <Ionicons
+                name={isLiked ? 'heart' : 'heart-outline'}
+                size={22}
+                color={isLiked ? '#EF4444' : '#8E8E93'}
+              />
+            </View>
+            {likeCount > 0 && (
+              <Text style={[styles.engagementText, isLiked && styles.engagementTextLiked]}>
+                {likeCount.toLocaleString()}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.engagementButton} activeOpacity={0.7}>
+            <View style={styles.engagementIconContainer}>
+              <Ionicons name="chatbubble-outline" size={22} color="#8E8E93" />
+            </View>
+            {commentCount > 0 && (
+              <Text style={styles.engagementText}>{commentCount.toLocaleString()}</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.engagementButton} activeOpacity={0.7}>
+            <View style={styles.engagementIconContainer}>
+              <Ionicons name="repeat-outline" size={22} color="#8E8E93" />
+            </View>
+            {repostCount > 0 && (
+              <Text style={styles.engagementText}>{repostCount.toLocaleString()}</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity style={styles.shareButton} activeOpacity={0.7}>
+          <Ionicons name="share-outline" size={22} color="#8E8E93" />
+        </TouchableOpacity>
+      </View>
+
       {/* Comments Header */}
       <View style={styles.commentsHeader}>
-        <Text style={styles.commentsTitle}>
-          Comments ({commentCount})
-        </Text>
+        <Text style={styles.commentsTitle}>Comments</Text>
       </View>
     </View>
   );
@@ -965,14 +1136,42 @@ const renderHeader = () => {
     );
   }
 
+  // Calculate ownership for header
+  const userId = typeof currentPost?.user === 'string' ? currentPost?.user : currentPost?.user?._id;
+  const isOwner = userId === currentUser?._id;
+  const uploadedById = typeof currentPost?.uploadedBy === 'string' ? currentPost?.uploadedBy : currentPost?.uploadedBy?._id;
+  const isUploader = uploadedById === currentUser?._id;
+  const canEditHeader = isOwner || isUploader;
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" />
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerButton}
+        >
+          <Ionicons name="chevron-back" size={28} color="#000000" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{hasReview ? 'Review' : 'Post'}</Text>
+        <View style={styles.headerRight}>
+          {canEditHeader && (
+            <TouchableOpacity
+              onPress={handlePostActions}
+              style={styles.headerButton}
+            >
+              <Ionicons name="ellipsis-horizontal" size={24} color="#000000" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
       
       <KeyboardAvoidingView 
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         <FlatList
           ref={scrollViewRef}
@@ -986,40 +1185,42 @@ const renderHeader = () => {
           contentContainerStyle={{ paddingBottom: 20 }}
         />
 
-        {/* Comment Input */}
+        {/* Comment Input - Twitter Style */}
         <View style={styles.commentInputContainer}>
           <Image
             source={{ 
               uri: currentUser?.profilePicture 
                 ? `http://${API_BASE_URL}:3000${currentUser.profilePicture}`
-                : 'https://via.placeholder.com/32/CCCCCC/666666?text=U'
+                : 'https://via.placeholder.com/40/CCCCCC/666666?text=U'
             }}
             style={styles.commentInputAvatar}
           />
-          <TextInput
-            ref={textInputRef}
-            style={styles.commentInput}
-            placeholder={isMemoryPost ? "Share your thoughts..." : "Add a comment..."}
-            placeholderTextColor="#8E8E93"
-            value={newComment}
-            onChangeText={setNewComment}
-            multiline
-            maxLength={500}
-          />
-          <TouchableOpacity
-            onPress={postComment}
-            style={[
-              styles.commentPostButton,
-              { opacity: newComment.trim() ? 1 : 0.5 }
-            ]}
-            disabled={!newComment.trim() || commentsLoading}
-          >
-            {commentsLoading ? (
-              <ActivityIndicator size="small" color="#3797EF" />
-            ) : (
-              <Text style={styles.commentPostButtonText}>Post</Text>
-            )}
-          </TouchableOpacity>
+          <View style={styles.commentInputWrapper}>
+            <TextInput
+              ref={textInputRef}
+              style={styles.commentInput}
+              placeholder={isMemoryPost ? "Share your thoughts..." : "Add a comment..."}
+              placeholderTextColor="#8E8E93"
+              value={newComment}
+              onChangeText={setNewComment}
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              onPress={postComment}
+              style={[
+                styles.commentPostButton,
+                { opacity: newComment.trim() ? 1 : 0.5 }
+              ]}
+              disabled={!newComment.trim() || commentsLoading}
+            >
+              {commentsLoading ? (
+                <ActivityIndicator size="small" color="#3994EF" />
+              ) : (
+                <Text style={styles.commentPostButtonText}>Post</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
 
@@ -1121,7 +1322,7 @@ const renderHeader = () => {
           </TouchableOpacity>
         </Modal>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -1129,6 +1330,28 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+    backgroundColor: '#FFFFFF',
+  },
+  headerButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  headerRight: {
+    minWidth: 36,
+    alignItems: 'flex-end',
   },
   loadingContainer: {
     flex: 1,
@@ -1173,30 +1396,52 @@ const styles = StyleSheet.create({
   },
   authorContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 16,
   },
   authorInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   authorAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     marginRight: 12,
   },
   authorTextContainer: {
     flex: 1,
   },
+  authorNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  authorUsername: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0D141B',
+  },
+  authorMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  authorHandle: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  authorMetaDot: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginHorizontal: 4,
+  },
+  authorTime: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
   usernameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-  },
-  authorUsername: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
   },
   contextText: {
     fontSize: 16,
@@ -1273,28 +1518,170 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginRight: 4,
   },
-  captionContainer: {
+  // Review Card Styles
+  reviewCardContainer: {
     paddingHorizontal: 16,
     marginBottom: 12,
   },
-  captionText: {
+  reviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  reviewPosterContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#F3F4F6',
+    marginRight: 12,
+    position: 'relative',
+  },
+  reviewPoster: {
+    width: '100%',
+    height: '100%',
+  },
+  playButtonOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reviewInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  reviewTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0D141B',
+    marginBottom: 4,
+  },
+  reviewSubtitle: {
     fontSize: 14,
-    lineHeight: 18,
-    color: '#000000',
+    color: '#8E8E93',
+    marginBottom: 8,
+  },
+  genreContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  genreTag: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  genreText: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  bookmarkButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  
+  // Rating Styles
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  starsContainer: {
+    flexDirection: 'row',
+    marginRight: 8,
+  },
+  starIcon: {
+    marginRight: 2,
+  },
+  ratingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0D141B',
+  },
+
+  // Timestamp Styles
+  timestampContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  timestampText: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+
+  // Engagement Stats - Twitter Style
+  engagementContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  engagementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+  },
+  engagementButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  engagementIconContainer: {
+    padding: 8,
+    borderRadius: 20,
+  },
+  engagementIconLiked: {
+    // No background color - just red icon
+  },
+  engagementText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  engagementTextLiked: {
+    color: '#EF4444',
+  },
+  shareButton: {
+    padding: 8,
+    borderRadius: 20,
+  },
+
+  captionContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  captionText: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#0D141B',
   },
   captionUsername: {
     fontWeight: '600',
   },
   commentsHeader: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    paddingVertical: 16,
   },
   commentsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0D141B',
   },
   commentContainer: {
     flexDirection: 'row',
@@ -1306,13 +1693,67 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   commentAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
   },
   commentContent: {
     flex: 1,
     paddingRight: 8,
+  },
+  commentHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  commentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  commentUsername: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0D141B',
+    marginRight: 4,
+  },
+  commentHandle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginRight: 4,
+  },
+  commentTimeDot: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginHorizontal: 4,
+  },
+  commentTime: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  commentTextContent: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#0D141B',
+    marginBottom: 8,
+  },
+  commentActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  commentActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  commentActionText: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  commentOptionsButton: {
+    padding: 4,
   },
   commentTextContainer: {
     backgroundColor: '#F2F2F7',
@@ -1321,27 +1762,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginBottom: 4,
   },
-  commentUsername: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  commentTextContent: {
-    fontSize: 14,
-    lineHeight: 18,
-    color: '#000000',
-  },
   commentMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginLeft: 12,
     marginTop: 2,
-  },
-  commentTime: {
-    fontSize: 11,
-    color: '#8E8E93',
   },
   commentActionsButton: {
     padding: 4,
@@ -1367,42 +1793,52 @@ const styles = StyleSheet.create({
   },
   commentInputContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingBottom: Platform.OS === 'ios' ? 12 : 12,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    borderTopColor: '#E5E7EB',
     minHeight: 64,
   },
   commentInputAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 4,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  commentInputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minHeight: 48,
   },
   commentInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
     fontSize: 14,
-    maxHeight: 80,
-    marginRight: 8,
-    backgroundColor: '#F8F8F8',
+    color: '#0D141B',
+    maxHeight: 100,
+    paddingVertical: Platform.OS === 'ios' ? 8 : 10,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+    lineHeight: 20,
   },
   commentPostButton: {
-    paddingHorizontal: 12,
+    marginLeft: 8,
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    marginBottom: 4,
   },
   commentPostButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#3797EF',
+    color: '#3994EF',
   },
   // Modal styles for image zoom
   modalBackground: {

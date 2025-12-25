@@ -101,6 +101,61 @@ const PhotoSchema = new mongoose.Schema({
       longitude: Number
     }
   },
+  // ✅ TWITTER FEATURES: Post type and content
+  postType: {
+    type: String,
+    enum: ['photo', 'text', 'video', 'link'],
+    default: 'photo'
+  },
+  textContent: {
+    type: String,
+    maxlength: 5000
+  },
+  // ✅ TWITTER FEATURES: Repost functionality
+  isRepost: {
+    type: Boolean,
+    default: false
+  },
+  originalPost: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Photo'
+  },
+  repostComment: String,
+  repostCount: {
+    type: Number,
+    default: 0
+  },
+  viewCount: {
+    type: Number,
+    default: 0
+  },
+  // ✅ TWITTER FEATURES: Review functionality (Movies & Songs)
+  review: {
+    type: {
+      type: String,
+      enum: ['movie', 'song', null],
+      default: null
+    },
+    mediaId: String,  // External API ID (TMDB, Spotify, etc.)
+    title: String,
+    artist: String,  // For songs: artist name, for movies: director/studio
+    year: Number,
+    poster: String,  // Album art or movie poster URL
+    rating: {
+      type: Number,
+      min: 0,
+      max: 5,
+      default: null
+    },
+    ratingType: {
+      type: String,
+      enum: ['stars', 'thumbs', 'numerical'],
+      default: 'stars'
+    },
+    genre: [String],
+    duration: Number,  // For songs: track length, for movies: runtime
+    externalUrl: String  // Link to Spotify, IMDB, etc.
+  },
   // Privacy context for efficient querying
   privacyContext: {
     isFromPrivateAccount: {
@@ -137,6 +192,12 @@ PhotoSchema.index({
   'visibility.level': 1, 
   isDeleted: 1 
 });
+// ✅ TWITTER FEATURES: New indexes for performance
+PhotoSchema.index({ postType: 1, createdAt: -1 });
+PhotoSchema.index({ isRepost: 1, originalPost: 1 });
+PhotoSchema.index({ user: 1, 'visibility.level': 1, createdAt: -1 });
+PhotoSchema.index({ 'review.type': 1, 'review.mediaId': 1 });
+PhotoSchema.index({ 'review.type': 1, createdAt: -1 });
 
 // ✅ PHASE 1: Pre-save middleware to sync fields and set privacy context
 PhotoSchema.pre('save', async function(next) {

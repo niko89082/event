@@ -320,7 +320,7 @@ function AppNavigator({ onLogout }) {
             <RootStack.Screen 
               name="UnifiedDetailsScreen" 
               component={UnifiedDetailsScreen}
-              options={{ headerShown: true, title: 'Post' }}
+              options={{ headerShown: false }}
             />
 
             <RootStack.Screen 

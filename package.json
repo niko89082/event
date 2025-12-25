@@ -25,6 +25,7 @@
     "@paypal/checkout-server-sdk": "^1.0.3",
     "@react-native-async-storage/async-storage": "^2.1.2",
     "aws-sdk": "^2.1659.0",
+    "axios": "^1.13.2",
     "bcryptjs": "^2.4.3",
     "chrono-node": "^2.8.0",
     "crypto": "^1.0.1",

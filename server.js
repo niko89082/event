@@ -38,6 +38,9 @@ const formsRoutes = require('./routes/forms');
 // ✅ NEW: Friends System Routes (Phase 1)
 const friendsRoutes = require('./routes/friends');
 
+// ✅ NEW: Review Routes (Twitter Features)
+const reviewRoutes = require('./routes/reviews');
+
 // 🔄 DEPRECATED: Keep follower routes during migration (will be removed in Phase 5)
 const followRoutes = require('./routes/follow');
 
@@ -266,43 +269,62 @@ async function ensureIndexes() {
     const User = mongoose.model('User');
     const Event = mongoose.model('Event');
     const Photo = mongoose.model('Photo');
+    const NotificationModel = mongoose.model('Notification');
+
+    // Helper function to create index with error handling
+    const createIndexSafe = async (collection, indexSpec, options = {}) => {
+      try {
+        await collection.createIndex(indexSpec, options);
+      } catch (error) {
+        // Ignore index conflicts (index already exists with different name/options)
+        if (error.code === 85 || error.codeName === 'IndexOptionsConflict') {
+          console.log(`⚠️  Index conflict (ignored): ${options.name || 'unnamed'} - using existing index`);
+        } else {
+          console.error(`❌ Error creating index ${options.name || 'unnamed'}:`, error.message);
+        }
+      }
+    };
 
     await Promise.all([
       // ✅ NEW: Friends system indexes
-      User.collection.createIndex({ 'friends.user': 1, 'friends.status': 1 }),
-      User.collection.createIndex({ 'friends.initiatedBy': 1 }),
-      User.collection.createIndex({ 'friends.createdAt': -1 }),
-      User.collection.createIndex({ 'privacy.friendRequests': 1 }),
-      User.collection.createIndex({ migratedToFriendsAt: 1 }),
+      createIndexSafe(User.collection, { 'friends.user': 1, 'friends.status': 1 }),
+      createIndexSafe(User.collection, { 'friends.initiatedBy': 1 }),
+      createIndexSafe(User.collection, { 'friends.createdAt': -1 }),
+      createIndexSafe(User.collection, { 'privacy.friendRequests': 1 }),
+      createIndexSafe(User.collection, { migratedToFriendsAt: 1 }),
 
       // Full-text search for users
-      User.collection.createIndex(
+      createIndexSafe(
+        User.collection,
         { username: 'text', bio: 'text' },
         { name: 'UserFullText', weights: { username: 10, bio: 2 } }
       ),
 
       // Full-text search for events with privacy tags
-      Event.collection.createIndex(
+      // Note: If event_search_text_index exists, this will be ignored (which is fine)
+      createIndexSafe(
+        Event.collection,
         { title: 'text', category: 'text', description: 'text', tags: 'text' },
         { name: 'EventFullText', weights: { title: 8, category: 5, description: 1, tags: 3 } }
       ),
 
       // Privacy and discovery indexes
-      Event.collection.createIndex({ privacyLevel: 1, time: 1 }),
-      Event.collection.createIndex({ 'permissions.appearInSearch': 1, time: 1 }),
-      Event.collection.createIndex({ 'permissions.appearInFeed': 1, time: 1 }),
-      Event.collection.createIndex({ host: 1, privacyLevel: 1 }),
-      Event.collection.createIndex({ attendees: 1, time: 1 }),
-      Event.collection.createIndex({ invitedUsers: 1 }),
+      createIndexSafe(Event.collection, { privacyLevel: 1, time: 1 }),
+      createIndexSafe(Event.collection, { 'permissions.appearInSearch': 1, time: 1 }),
+      createIndexSafe(Event.collection, { 'permissions.appearInFeed': 1, time: 1 }),
+      createIndexSafe(Event.collection, { host: 1, privacyLevel: 1 }),
+      createIndexSafe(Event.collection, { attendees: 1, time: 1 }),
+      createIndexSafe(Event.collection, { invitedUsers: 1 }),
       
       // Category and tag discovery
-      Event.collection.createIndex({ category: 1, time: 1 }),
-      Event.collection.createIndex({ tags: 1, time: 1 }),
-      Event.collection.createIndex({ interests: 1, time: 1 }),
+      createIndexSafe(Event.collection, { category: 1, time: 1 }),
+      createIndexSafe(Event.collection, { tags: 1, time: 1 }),
+      createIndexSafe(Event.collection, { interests: 1, time: 1 }),
       
       // Weather and location indexes
-      Event.collection.createIndex({ weatherDependent: 1, time: 1 }),
-      Event.collection.createIndex(
+      createIndexSafe(Event.collection, { weatherDependent: 1, time: 1 }),
+      createIndexSafe(
+        Event.collection,
         { geo: '2dsphere' },
         {
           name: 'GeoIndex',
@@ -311,18 +333,24 @@ async function ensureIndexes() {
       ),
 
       // Time-based queries
-      Event.collection.createIndex({ time: 1 }),
-      Event.collection.createIndex({ createdAt: -1 }),
+      createIndexSafe(Event.collection, { time: 1 }),
+      createIndexSafe(Event.collection, { createdAt: -1 }),
 
-      // ✅ NEW: Photo privacy indexes for friends system
-      Photo.collection.createIndex({ user: 1, 'visibility.level': 1 }),
-      Photo.collection.createIndex({ event: 1, user: 1 }),
-      Photo.collection.createIndex({ taggedEvent: 1, user: 1 }),
-      Photo.collection.createIndex({ uploadDate: -1 }),
+      // ✅ NEW: Photo privacy indexes for friends system + Twitter features
+      createIndexSafe(Photo.collection, { user: 1, 'visibility.level': 1 }),
+      createIndexSafe(Photo.collection, { event: 1, user: 1 }),
+      createIndexSafe(Photo.collection, { taggedEvent: 1, user: 1 }),
+      createIndexSafe(Photo.collection, { uploadDate: -1 }),
+      // ✅ Twitter features indexes (from Photo model)
+      createIndexSafe(Photo.collection, { postType: 1, createdAt: -1 }),
+      createIndexSafe(Photo.collection, { isRepost: 1, originalPost: 1 }),
+      createIndexSafe(Photo.collection, { user: 1, 'visibility.level': 1, createdAt: -1 }),
+      createIndexSafe(Photo.collection, { 'review.type': 1, 'review.mediaId': 1 }),
+      createIndexSafe(Photo.collection, { 'review.type': 1, createdAt: -1 }),
 
       // Notification indexes
-      Notification.collection.createIndex({ user: 1, read: 1, createdAt: -1 }),
-      Notification.collection.createIndex({ user: 1, category: 1, read: 1 }),
+      createIndexSafe(NotificationModel.collection, { user: 1, read: 1, createdAt: -1 }),
+      createIndexSafe(NotificationModel.collection, { user: 1, category: 1, read: 1 }),
     ]);
 
     console.log('✅ Database indexes ensured for friends + privacy system');
@@ -494,6 +522,9 @@ app.use('/api/profile', profileRoutes);
 
 // ✅ NEW: Friends system routes (Phase 1)
 app.use('/api/friends', friendsRoutes);
+
+// ✅ NEW: Review routes
+app.use('/api/reviews', reviewRoutes);
 
 // 🔄 DEPRECATED: Follower routes (keep during migration)
 app.use('/api/follow', followRoutes);

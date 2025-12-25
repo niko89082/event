@@ -1,49 +1,116 @@
-// screens/CreatePostScreen.js - Single Photo, 2 Steps
-import React, { useState, useEffect, useRef } from 'react';
+// screens/CreatePostScreen.js - Twitter-style single screen
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, Image, Alert, ScrollView, TouchableOpacity,
-  TextInput, Modal, FlatList, Animated, Dimensions, StatusBar,
-  SafeAreaView, ActivityIndicator
+  TextInput, Modal, FlatList, Dimensions, StatusBar,
+  SafeAreaView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
+import MovieReviewSelector from '../components/MovieReviewSelector';
+import SongReviewSelector from '../components/SongReviewSelector';
+import ReviewCard from '../components/ReviewCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const MAX_TEXT_LENGTH = 5000;
 
 export default function CreatePostScreen({ navigation }) {
-  const [step, setStep] = useState(1);
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [caption, setCaption] = useState('');
+  const { currentUser } = useContext(AuthContext);
+  const insets = useSafeAreaInsets();
+  const [textContent, setTextContent] = useState('');
+  const [selectedImages, setSelectedImages] = useState([]);
   const [myEvents, setMyEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState('');
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [privacy, setPrivacy] = useState('public');
+  const [review, setReview] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
+  const [showMovieReview, setShowMovieReview] = useState(false);
+  const [showSongReview, setShowSongReview] = useState(false);
   const [publishing, setPublishing] = useState(false);
-
-  // Animation values
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const progressAnim = useRef(new Animated.Value(0.5)).current;
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const textInputRef = useRef(null);
 
   useEffect(() => {
     requestLibraryPermission();
     fetchMyAttendingEvents();
   }, []);
 
+  // Hide bottom tab bar when this screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      // Get the tab navigator (parent of the stack navigator)
+      const tabNavigator = navigation.getParent()?.getParent();
+      if (tabNavigator) {
+        tabNavigator.setOptions({
+          tabBarStyle: { display: 'none' },
+        });
+      }
+      return () => {
+        if (tabNavigator) {
+          tabNavigator.setOptions({
+            tabBarStyle: undefined,
+          });
+        }
+      };
+    }, [navigation])
+  );
+
+  // Keep keyboard open permanently
   useEffect(() => {
-    // Animate step transitions
-    Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: (step - 1) * -SCREEN_WIDTH,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.timing(progressAnim, {
-        toValue: step / 2,
-        duration: 300,
-        useNativeDriver: false,
-      })
-    ]).start();
-  }, [step]);
+    const timer = setTimeout(() => {
+      textInputRef.current?.focus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Refocus when keyboard is dismissed
+  useEffect(() => {
+    const keyboardDidHideListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        // Small delay to ensure keyboard is fully dismissed before refocusing
+        setTimeout(() => {
+          textInputRef.current?.focus();
+        }, 100);
+      }
+    );
+
+    return () => {
+      keyboardDidHideListener.remove();
+    };
+  }, []);
+
+  // Keyboard handling
+  useEffect(() => {
+    const keyboardWillShow = (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    };
+    
+    const keyboardWillHide = () => {
+      setKeyboardHeight(0);
+    };
+
+    let showListener, hideListener;
+    
+    if (Platform.OS === 'ios') {
+      showListener = Keyboard.addListener('keyboardWillShow', keyboardWillShow);
+      hideListener = Keyboard.addListener('keyboardWillHide', keyboardWillHide);
+    } else {
+      showListener = Keyboard.addListener('keyboardDidShow', keyboardWillShow);
+      hideListener = Keyboard.addListener('keyboardDidHide', keyboardWillHide);
+    }
+
+    return () => {
+      showListener?.remove();
+      hideListener?.remove();
+    };
+  }, []);
 
   const requestLibraryPermission = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -55,9 +122,9 @@ export default function CreatePostScreen({ navigation }) {
   const fetchMyAttendingEvents = async () => {
     try {
       const res = await api.get('/events/my-photo-events');
-      setMyEvents(res.data);
+      setMyEvents(res.data || []);
     } catch (err) {
-      console.error(err.response?.data || err);
+      console.error('Error fetching events:', err);
     }
   };
 
@@ -65,166 +132,254 @@ export default function CreatePostScreen({ navigation }) {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: true,
         quality: 0.8,
-        aspect: [1, 1],
+        selectionLimit: 10,
       });
 
-      if (!result.canceled) {
-        setSelectedImage(result.assets[0]);
-        goToStep(2);
+      if (!result.canceled && result.assets) {
+        const newImages = result.assets.slice(0, 10 - selectedImages.length);
+        setSelectedImages([...selectedImages, ...newImages]);
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to pick image. Please try again.');
     }
   };
 
-  const goToStep = (newStep) => {
-    setStep(newStep);
+  const handleRemoveImage = (index) => {
+    setSelectedImages(selectedImages.filter((_, i) => i !== index));
+  };
+
+  const handleAddLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Location permission is needed to add location.');
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({});
+      const [address] = await Location.reverseGeocodeAsync({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+
+      setSelectedLocation({
+        name: address ? `${address.street || ''} ${address.city || ''}`.trim() : 'Current Location',
+        coordinates: {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        },
+      });
+    } catch (error) {
+      console.error('Location error:', error);
+      Alert.alert('Error', 'Failed to get location.');
+    }
   };
 
   const handlePost = async () => {
-  if (!selectedImage) {
-    Alert.alert('No Photo', 'Please select a photo to share.');
-    return;
-  }
-
-  // ✅ Event selection is now optional
-
-  try {
-    setPublishing(true);
-
-    const formData = new FormData();
-    formData.append('photo', {
-      uri: selectedImage.uri,
-      type: 'image/jpeg',
-      name: 'photo.jpg',
-    });
-    
-    // ✅ Only include eventId if one is selected
-    if (selectedEventId) {
-      formData.append('eventId', selectedEventId);
-    }
-    
-    if (caption.trim()) {
-      formData.append('caption', caption.trim());
+    // Validate: must have text, image, or review
+    if (!textContent.trim() && selectedImages.length === 0 && !review) {
+      Alert.alert('Empty Post', 'Please add some content to your post.');
+      return;
     }
 
-    console.log('📤 Uploading photo:', selectedEventId ? `to event: ${selectedEventId}` : 'as general post');
+    // Validate text length
+    if (textContent.length > MAX_TEXT_LENGTH) {
+      Alert.alert('Text Too Long', `Text must be ${MAX_TEXT_LENGTH} characters or less.`);
+      return;
+    }
 
-    // ✅ Use different endpoints based on post type
-    const endpoint = selectedEventId ? '/photos/upload' : '/photos/create';
-    
-    const response = await api.post(endpoint, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    console.log('✅ Photo upload successful:', response.data);
-
-    // Navigation logic (same as before)
     try {
-      navigation.replace('PostPublished', {
-        photoId: response.data._id,
-        eventId: selectedEventId || null,
-        imageUri: selectedImage.uri,
-        isGeneralPost: !selectedEventId // ✅ Flag for general posts
-      });
-    } catch (navError) {
-      console.warn('❌ Stack navigation failed, trying root navigation:', navError);
-      
-      try {
-        navigation.navigate('PostPublishedScreen', {
-          photoId: response.data._id,
+      setPublishing(true);
+
+      // Determine post type
+      const postType = selectedImages.length > 0 ? 'photo' : 'text';
+
+      if (postType === 'text' && selectedImages.length === 0) {
+        // Text-only post
+        const response = await api.post('/api/photos/create-text', {
+          textContent: textContent.trim(),
+          privacy: privacy,
+          location: selectedLocation,
           eventId: selectedEventId || null,
-          imageUri: selectedImage.uri,
-          isGeneralPost: !selectedEventId
+          review: review,
         });
-      } catch (rootNavError) {
-        console.warn('❌ Root navigation failed, going back with success:', rootNavError);
+
+        console.log('✅ Text post created:', response.data);
+        handlePostSuccess(response.data);
+      } else {
+        // Photo post (with optional text)
+        const formData = new FormData();
         
-        Alert.alert(
-          'Success!',
-          selectedEventId ? 'Your photo has been shared to the event!' : 'Your post has been shared to your feed!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.goBack()
-            }
-          ]
-        );
+        // Add first image (required for photo post)
+        formData.append('photo', {
+          uri: selectedImages[0].uri,
+          type: 'image/jpeg',
+          name: 'photo.jpg',
+        });
+
+        // Add text content
+        if (textContent.trim()) {
+          formData.append('textContent', textContent.trim());
+        }
+        formData.append('caption', textContent.trim() || '');
+        formData.append('postType', 'photo');
+        formData.append('privacy', privacy);
+        
+        if (selectedLocation) {
+          formData.append('location', JSON.stringify(selectedLocation));
+        }
+        
+        if (selectedEventId) {
+          formData.append('eventId', selectedEventId);
+        }
+        
+        if (review) {
+          formData.append('review', JSON.stringify(review));
+        }
+
+        const response = await api.post('/api/photos/create', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+
+        console.log('✅ Photo post created:', response.data);
+        handlePostSuccess(response.data);
       }
+    } catch (error) {
+      console.error('❌ Post creation error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to create post. Please try again.');
+    } finally {
+      setPublishing(false);
     }
+  };
 
-  } catch (error) {
-    console.error('❌ Post creation error:', error);
-    
-    let errorMessage = 'Failed to share photo. Please try again.';
-    
-    if (error.response?.data?.message) {
-      errorMessage = error.response.data.message;
-    } else if (error.message) {
-      errorMessage = error.message;
-    }
-    
-    Alert.alert('Error', errorMessage);
-  } finally {
-    setPublishing(false);
-  }
-};
+  const handlePostSuccess = (data) => {
+    Alert.alert(
+      'Success!',
+      'Your post has been shared!',
+      [
+        {
+          text: 'OK',
+          onPress: () => {
+            // Reset form
+            setTextContent('');
+            setSelectedImages([]);
+            setSelectedEventId('');
+            setSelectedLocation(null);
+            setReview(null);
+            navigation.goBack();
+          },
+        },
+      ]
+    );
+  };
 
+  const handleReviewSelect = (reviewData) => {
+    setReview(reviewData);
+  };
 
   const selectEvent = (event) => {
     setSelectedEventId(selectedEventId === event._id ? '' : event._id);
     setShowEventModal(false);
   };
 
-  const renderProgressBar = () => (
-  <View style={styles.progressContainer}>
-    <View style={styles.progressBar}>
-      <Animated.View style={[
-        styles.progressFill,
-        { width: progressAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['0%', '100%']
-        })}
-      ]} />
-    </View>
-    {/* Removed the progress text line completely */}
-  </View>
-);
+  const canPost = () => {
+    return (textContent.trim().length > 0 || selectedImages.length > 0 || review) && 
+           textContent.length <= MAX_TEXT_LENGTH;
+  };
 
-  const renderStepIndicator = () => (
-    <View style={styles.stepIndicator}>
-      {[1, 2].map((stepNum) => (
-        <View key={stepNum} style={styles.stepIndicatorContainer}>
-          <View style={[
-            styles.stepDot,
-            step >= stepNum && styles.stepDotActive,
-            step === stepNum && styles.stepDotCurrent
-          ]}>
-            {step > stepNum ? (
-              <Ionicons name="checkmark" size={12} color="#FFFFFF" />
-            ) : (
-              <Text style={[
-                styles.stepNumber,
-                step >= stepNum && styles.stepNumberActive
-              ]}>
-                {stepNum}
-              </Text>
-            )}
-          </View>
-          {stepNum < 2 && (
-            <View style={[
-              styles.stepConnector,
-              step > stepNum && styles.stepConnectorActive
-            ]} />
-          )}
-        </View>
-      ))}
-    </View>
-  );
+  const renderImagePreview = () => {
+    if (selectedImages.length === 0) return null;
+
+    return (
+      <View style={styles.imagesContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {selectedImages.map((image, index) => (
+            <View key={index} style={styles.imagePreviewWrapper}>
+              <Image source={{ uri: image.uri }} style={styles.imagePreview} />
+              <TouchableOpacity
+                style={styles.removeImageButton}
+                onPress={() => handleRemoveImage(index)}
+              >
+                <Ionicons name="close-circle" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderActionButtons = () => {
+    return (
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        style={styles.actionButtons}
+        contentContainerStyle={styles.actionButtonsContent}
+      >
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={handlePickImage}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="image-outline" size={24} color="#3797EF" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => setShowMovieReview(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="film-outline" size={24} color="#3797EF" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => setShowSongReview(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="musical-notes-outline" size={24} color="#3797EF" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={handleAddLocation}
+          activeOpacity={0.7}
+        >
+          <Ionicons 
+            name={selectedLocation ? "location" : "location-outline"} 
+            size={24} 
+            color={selectedLocation ? "#34C759" : "#3797EF"} 
+          />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => setShowEventModal(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons 
+            name={selectedEventId ? "calendar" : "calendar-outline"} 
+            size={24} 
+            color={selectedEventId ? "#34C759" : "#3797EF"} 
+          />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => navigation.navigate('CreateEventScreen')}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="add-circle-outline" size={24} color="#3797EF" />
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  };
+
 
   const renderEventItem = ({ item: event }) => {
     const isSelected = selectedEventId === event._id;
@@ -264,150 +419,8 @@ export default function CreatePostScreen({ navigation }) {
     );
   };
 
-  const renderStep1 = () => (
-    <View style={styles.stepContainer}>
-      <View style={styles.stepHeader}>
-        <View style={styles.stepIconContainer}>
-          <Ionicons name="camera" size={32} color="#3797EF" />
-        </View>
-        <Text style={styles.stepTitle}>Choose Photo</Text>
-        <Text style={styles.stepSubtitle}>
-          Select a photo to share with your community
-        </Text>
-      </View>
-
-      <View style={styles.imageContainer}>
-        {selectedImage ? (
-          <View style={styles.selectedImageContainer}>
-            <Image source={{ uri: selectedImage.uri }} style={styles.selectedImage} />
-            <TouchableOpacity 
-              style={styles.changeImageButton}
-              onPress={handlePickImage}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="swap-horizontal" size={20} color="#3797EF" />
-              <Text style={styles.changeImageText}>Change Photo</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity style={styles.uploadArea} onPress={handlePickImage}>
-            <View style={styles.uploadIcon}>
-              <Ionicons name="cloud-upload-outline" size={48} color="#3797EF" />
-            </View>
-            <Text style={styles.uploadTitle}>Tap to select photo</Text>
-            <Text style={styles.uploadSubtitle}>Choose from your photo library</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {selectedImage && (
-        <TouchableOpacity style={styles.primaryButton} onPress={() => goToStep(2)}>
-          <Text style={styles.primaryButtonText}>Continue</Text>
-          <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-
-  const renderStep2 = () => (
-    <View style={styles.stepContainer}>
-      <View style={styles.stepHeader}>
-        <View style={styles.stepIconContainer}>
-          <Ionicons name="create" size={32} color="#3797EF" />
-        </View>
-        <Text style={styles.stepTitle}>Write Caption</Text>
-        <Text style={styles.stepSubtitle}>
-          Add a caption and tag an event (optional)
-        </Text>
-      </View>
-
-      {/* Photo Preview */}
-      {selectedImage && (
-        <View style={styles.photoPreview}>
-          <Image source={{ uri: selectedImage.uri }} style={styles.previewImage} />
-        </View>
-      )}
-
-      <View style={styles.captionContainer}>
-        <TextInput
-          style={styles.captionInput}
-          multiline
-          value={caption}
-          onChangeText={setCaption}
-          placeholder="What's happening? Share your moment..."
-          placeholderTextColor="#8E8E93"
-          maxLength={2000}
-          textAlignVertical="top"
-        />
-        <Text style={styles.characterCount}>
-          {caption.length}/2000
-        </Text>
-      </View>
-
-      <View style={styles.eventSection}>
-        <Text style={styles.sectionTitle}>Tag an Event</Text>
-        <Text style={styles.sectionSubtitle}>
-          Link this post to an event you're attending
-        </Text>
-        
-        <TouchableOpacity
-  style={styles.eventSelector}
-  onPress={() => setShowEventModal(true)}
-  activeOpacity={0.7}
->
-  <View style={styles.eventSelectorLeft}>
-    <Ionicons 
-      name={selectedEventId ? "calendar" : "calendar-outline"} 
-      size={20} 
-      color={selectedEventId ? "#34C759" : "#8E8E93"} 
-    />
-    <Text style={[
-        styles.eventSelectorText,
-        selectedEventId && styles.eventSelectorTextSelected
-      ]}>
-        {selectedEventId 
-          ? myEvents.find(e => e._id === selectedEventId)?.title || 'Selected Event'
-          : 'Link to event (optional)' // ✅ Make it clear it's optional
-        }
-      </Text>
-  </View>
-  <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-</TouchableOpacity>
-      </View>
-
-      <View style={styles.stepActions}>
-        <TouchableOpacity 
-          style={styles.secondaryButton} 
-          onPress={() => goToStep(1)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="arrow-back" size={20} color="#3797EF" />
-          <Text style={styles.secondaryButtonText}>Back</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.primaryButton, publishing && styles.primaryButtonDisabled]} 
-          onPress={handlePost}
-          disabled={publishing}
-          activeOpacity={0.8}
-        >
-          {publishing ? (
-            <>
-              <ActivityIndicator size="small" color="#FFFFFF" />
-              <Text style={styles.primaryButtonText}>Publishing...</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.primaryButtonText}>Share Post</Text>
-              <Ionicons name="paper-plane" size={20} color="#FFFFFF" />
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       {/* Header */}
@@ -419,21 +432,127 @@ export default function CreatePostScreen({ navigation }) {
         >
           <Ionicons name="close" size={24} color="#000000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Post</Text>
-        <View style={styles.headerRight} />
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={[styles.postButton, !canPost() && styles.postButtonDisabled]}
+          onPress={handlePost}
+          disabled={!canPost() || publishing}
+        >
+          {publishing ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={[
+              styles.postButtonText,
+              !canPost() && styles.postButtonTextDisabled
+            ]}>
+              Post
+            </Text>
+          )}
+        </TouchableOpacity>
       </View>
 
-      {renderStepIndicator()}
-      {renderProgressBar()}
-
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.stepsContainer}>
-          <View style={styles.step}>
-            {step === 1 && renderStep1()}
-            {step === 2 && renderStep2()}
-          </View>
+      <KeyboardAvoidingView 
+        style={styles.keyboardContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        <ScrollView 
+          style={styles.content} 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled={true}
+        >
+        {/* User Avatar and Text Input */}
+        <View style={styles.inputContainer}>
+          {currentUser?.profilePicture ? (
+            <Image
+              source={{ uri: currentUser.profilePicture }}
+              style={styles.avatar}
+            />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Ionicons name="person" size={20} color="#8E8E93" />
+            </View>
+          )}
+          
+          <TextInput
+            ref={textInputRef}
+            style={styles.textInput}
+            multiline
+            value={textContent}
+            onChangeText={setTextContent}
+            placeholder="What's happening?"
+            placeholderTextColor="#8E8E93"
+            maxLength={MAX_TEXT_LENGTH}
+            textAlignVertical="top"
+            autoFocus
+            scrollEnabled={true}
+            showsVerticalScrollIndicator={true}
+            nestedScrollEnabled={true}
+          />
         </View>
-      </ScrollView>
+
+        {/* Character Count */}
+        {textContent.length > 0 && (
+          <View style={styles.characterCountContainer}>
+            <Text style={[
+              styles.characterCount,
+              textContent.length > MAX_TEXT_LENGTH * 0.9 && styles.characterCountWarning
+            ]}>
+              {textContent.length}/{MAX_TEXT_LENGTH}
+            </Text>
+          </View>
+        )}
+
+        {/* Review Preview */}
+        {review && (
+          <View style={styles.reviewPreviewContainer}>
+            <View style={styles.reviewPreviewHeader}>
+              <Text style={styles.reviewPreviewTitle}>
+                {review.type === 'movie' ? 'Movie Review' : 'Song Review'}
+              </Text>
+              <TouchableOpacity onPress={() => setReview(null)}>
+                <Ionicons name="close-circle" size={20} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            <ReviewCard review={review} />
+          </View>
+        )}
+
+        {/* Image Previews */}
+        {renderImagePreview()}
+
+        {/* Location Preview */}
+        {selectedLocation && (
+          <View style={styles.locationPreview}>
+            <Ionicons name="location" size={16} color="#3797EF" />
+            <Text style={styles.locationText}>{selectedLocation.name}</Text>
+            <TouchableOpacity onPress={() => setSelectedLocation(null)}>
+              <Ionicons name="close-circle" size={16} color="#8E8E93" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Event Preview */}
+        {selectedEventId && (
+          <View style={styles.eventPreview}>
+            <Ionicons name="calendar" size={16} color="#34C759" />
+            <Text style={styles.eventPreviewText}>
+              {myEvents.find(e => e._id === selectedEventId)?.title || 'Selected Event'}
+            </Text>
+            <TouchableOpacity onPress={() => setSelectedEventId('')}>
+              <Ionicons name="close-circle" size={16} color="#8E8E93" />
+            </TouchableOpacity>
+          </View>
+        )}
+        </ScrollView>
+
+        {/* Action Buttons - Fixed at bottom, moves with keyboard */}
+        <View style={[styles.actionButtonsContainer, { marginBottom: keyboardHeight > 0 ? 0 : 0 }]}>
+          {renderActionButtons()}
+        </View>
+      </KeyboardAvoidingView>
 
       {/* Event Selection Modal */}
       <Modal
@@ -465,7 +584,20 @@ export default function CreatePostScreen({ navigation }) {
           />
         </SafeAreaView>
       </Modal>
-    </SafeAreaView>
+
+      {/* Review Selectors */}
+      <MovieReviewSelector
+        visible={showMovieReview}
+        onClose={() => setShowMovieReview(false)}
+        onSelect={handleReviewSelect}
+      />
+
+      <SongReviewSelector
+        visible={showSongReview}
+        onClose={() => setShowSongReview(false)}
+        onSelect={handleReviewSelect}
+      />
+    </View>
   );
 }
 
@@ -478,307 +610,182 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
   },
   headerButton: {
     padding: 4,
   },
-  headerTitle: {
-    fontSize: 18,
+  postButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    minWidth: 70,
+    alignItems: 'center',
+  },
+  postButtonDisabled: {
+    backgroundColor: '#C7C7CC',
+  },
+  postButtonText: {
+    fontSize: 16,
     fontWeight: '700',
-    color: '#000000',
-  },
-  headerRight: {
-    width: 32,
-  },
-
-  // Step Indicator
-  stepIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    backgroundColor: '#F8F9FA',
-  },
-  stepIndicatorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  stepDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E1E1E1',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepDotActive: {
-    backgroundColor: '#3797EF',
-  },
-  stepDotCurrent: {
-    backgroundColor: '#3797EF',
-    transform: [{ scale: 1.1 }],
-  },
-  stepNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
-  },
-  stepNumberActive: {
     color: '#FFFFFF',
   },
-  stepConnector: {
-    width: 60,
-    height: 2,
-    backgroundColor: '#E1E1E1',
-    marginHorizontal: 12,
+  postButtonTextDisabled: {
+    color: '#FFFFFF',
   },
-  stepConnectorActive: {
-    backgroundColor: '#3797EF',
+  keyboardContainer: {
+    flex: 1,
   },
-
-  // Progress Bar
-  progressContainer: {
-  paddingHorizontal: 40,  // ← Changed from 20 to 40 (narrower width)
-  paddingBottom: 8,       // ← Changed from 16 to 8 (less space)
-  backgroundColor: '#F8F9FA',
-},
-  progressBar: {
-  width: '100%',
-  height: 2,              // ← Changed from 4 to 2 (thinner bar)
-  backgroundColor: '#E1E1E1',
-  borderRadius: 1,        // ← Changed from 2 to 1 (proportional to height)
-  overflow: 'hidden',
-},
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#3797EF',
-    borderRadius: 2,
-  },
-
-  // Content
   content: {
     flex: 1,
   },
-  stepsContainer: {
-    flex: 1,
+  scrollContent: {
+    paddingBottom: 8,
   },
-  step: {
-    flex: 1,
-  },
-  stepContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 24,
-  },
-  stepHeader: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  stepIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#F0F8FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  stepTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  stepSubtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-
-  // Step 1 - Photo Selection
-  imageContainer: {
-    marginBottom: 32,
-  },
-  selectedImageContainer: {
-    alignItems: 'center',
-  },
-  selectedImage: {
-    width: 280,
-    height: 280,
-    borderRadius: 16,
-    backgroundColor: '#F6F6F6',
-    marginBottom: 16,
-  },
-  changeImageButton: {
+  inputContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F8FF',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E1E8F7',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    alignItems: 'flex-start',
   },
-  changeImageText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#3797EF',
-    marginLeft: 8,
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
   },
-  uploadArea: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 16,
-    paddingVertical: 48,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E1E1E1',
-    borderStyle: 'dashed',
-  },
-  uploadIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#F0F8FF',
+  avatarPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E1E1E1',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginRight: 12,
   },
-  uploadTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+  textInput: {
+    flex: 1,
+    fontSize: 20,
     color: '#000000',
-    marginBottom: 8,
+    minHeight: 100,
+    maxHeight: 500,
+    paddingTop: 0,
+    paddingBottom: 0,
+    paddingRight: 0,
   },
-  uploadSubtitle: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-
-  // Step 2 - Photo Preview
-  photoPreview: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  previewImage: {
-    width: 200,
-    height: 200,
-    borderRadius: 12,
-    backgroundColor: '#F6F6F6',
-  },
-
-  // Caption
-  captionContainer: {
-    marginBottom: 24,
-  },
-  captionInput: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 16,
-    padding: 16,
-    fontSize: 16,
-    lineHeight: 22,
-    minHeight: 120,
-    maxHeight: 200,
-    color: '#000000',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
+  characterCountContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 8,
+    alignItems: 'flex-end',
   },
   characterCount: {
     fontSize: 12,
     color: '#8E8E93',
-    textAlign: 'right',
+  },
+  characterCountWarning: {
+    color: '#FF3B30',
+  },
+  reviewPreviewContainer: {
+    marginHorizontal: 16,
     marginTop: 8,
+    marginBottom: 8,
+    padding: 12,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
   },
-  eventSection: {
-    marginBottom: 32,
+  reviewPreviewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
+  reviewPreviewTitle: {
     fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 16,
-  },
-  eventSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-  },
-  eventSelectorContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  eventSelectorText: {
-    flex:1,
-    fontSize: 16,
-    color: '#8E8E93',
-    marginLeft: 12,
-  },
-  eventSelectorTextSelected: {
+    fontWeight: '600',
     color: '#000000',
-    fontWeight: '500',
   },
-
-  // Action Buttons
-  stepActions: {
+  imagesContainer: {
+    marginTop: 8,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+  },
+  imagePreviewWrapper: {
+    marginRight: 12,
+    position: 'relative',
+  },
+  imagePreview: {
+    width: 120,
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: '#E1E1E1',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 12,
+  },
+  locationPreview: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 4,
+    backgroundColor: '#F0F8FF',
+    borderRadius: 8,
+    gap: 8,
   },
-  primaryButton: {
+  locationText: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3797EF',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    gap: 8,
-  },
-  primaryButtonDisabled: {
-    backgroundColor: '#C7C7CC',
-  },
-  primaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  secondaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    gap: 8,
-  },
-  secondaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 14,
     color: '#3797EF',
   },
-
-  // Event Modal
+  eventPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 4,
+    backgroundColor: '#F0F9F0',
+    borderRadius: 8,
+    gap: 8,
+  },
+  eventPreviewText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#34C759',
+  },
+  actionButtonsContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 0.5,
+    borderTopColor: '#E1E1E1',
+  },
+  actionButtons: {
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  actionButtonsContent: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 16,
+  },
+  actionButton: {
+    padding: 8,
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -852,9 +859,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
   },
-  eventSelectorLeft: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  flex: 1,  // ← Add this line
-},
 });

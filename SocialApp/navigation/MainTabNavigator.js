@@ -11,7 +11,6 @@ import FeedScreen from '../screens/FeedScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
 // Create Screens
-import CreatePickerScreen from '../screens/CreatePickerScreen';
 import CreateEventScreen from '../screens/CreateEventScreen';
 import CreatePostScreen from '../screens/CreatePostScreen';
 import CreateMemoryScreen from '../screens/CreateMemoryScreen';
@@ -178,13 +177,12 @@ function ProfileStackNavigator() {
 function CreateStackNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="CreatePicker" component={CreatePickerScreen} />
+      <Stack.Screen name="CreatePost" component={CreatePostScreen} />
       <Stack.Screen 
         name="CreateEvent" 
         component={CreateEventScreen} 
         options={{ headerShown: true, title: 'New Event' }} 
       />
-      <Stack.Screen name="CreatePost" component={CreatePostScreen} />
       <Stack.Screen 
         name="CreateMemory" 
         component={CreateMemoryScreen} 

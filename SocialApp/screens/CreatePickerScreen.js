@@ -4,8 +4,8 @@ import { View, Text, TouchableOpacity, StyleSheet, FlatList, SafeAreaView, Statu
 import { Ionicons } from '@expo/vector-icons';
 
 const OPTIONS = [
+  { key:'post', label:'Post', desc:'Share text, photos, or reviews', icon:'create-outline' },
   { key:'event', label:'Event', desc:'Create an event for others to join', icon:'calendar' },
-  // { key:'photo', label:'Photo', desc:'Share photos and moments', icon:'image' }, // TEMPORARILY HIDDEN
   { key:'memory', label:'Memory', desc:'Create a shared memory with friends', icon:'images' },
 ];
 
@@ -41,14 +41,11 @@ export default function CreatePickerScreen({ navigation }) {
   const onSelect = (key) => {
   console.log('🟡 CreatePickerScreen: Selected option:', key);
   
-  if (key === 'event') {
+  if (key === 'post') {
+    navigation.navigate('CreatePostScreen');
+  } else if (key === 'event') {
     navigation.navigate('CreateEventScreen');
-  }
-  // COMMENTED OUT PHOTO OPTION
-  // if (key === 'photo') {
-  //   navigation.navigate('CreatePostScreen');
-  // }
-  if (key === 'memory') {
+  } else if (key === 'memory') {
     navigation.navigate('CreateMemoryScreen');
   }
 };

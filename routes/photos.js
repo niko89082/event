@@ -1186,26 +1186,64 @@ router.get('/user/:userId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+// ✅ UPDATED: Support both photo and text posts
 router.post('/create', protect, upload.single('photo'), async (req, res) => {
   try {
-    const { caption } = req.body;
+    const { caption, textContent, postType, privacy, location, eventId, review } = req.body;
     
-    if (!req.file) {
-      return res.status(400).json({ message: 'No photo uploaded' });
+    // Determine post type
+    const finalPostType = postType || (req.file ? 'photo' : 'text');
+    
+    // Validate: must have either photo or text content
+    if (!req.file && !textContent && !caption) {
+      return res.status(400).json({ message: 'Post must have either photo or text content' });
     }
 
-    console.log(`📸 General post creation - User: ${req.user._id}`);
+    // For text posts, textContent is required
+    if (finalPostType === 'text' && !textContent && !caption) {
+      return res.status(400).json({ message: 'Text posts require text content' });
+    }
 
-    // Create photo document (NO event association)
+    console.log(`📝 Post creation - User: ${req.user._id}, Type: ${finalPostType}`);
+
+    // Parse review if provided
+    let reviewData = null;
+    if (review) {
+      try {
+        reviewData = typeof review === 'string' ? JSON.parse(review) : review;
+      } catch (e) {
+        console.error('Error parsing review data:', e);
+      }
+    }
+
+    // Parse location if provided
+    let locationData = null;
+    if (location) {
+      try {
+        locationData = typeof location === 'string' ? JSON.parse(location) : location;
+      } catch (e) {
+        locationData = { name: location };
+      }
+    }
+
+    // Create post document
     const photo = new Photo({
       user: req.user._id,
-      // event: null,              // ✅ No event for general posts
-      // taggedEvent: null,        // ✅ No event for general posts  
-      paths: [`/uploads/photos/${req.file.filename}`],
-      visibleInEvent: false,      // ✅ This is a general post
-      caption: caption || '',
-      likes: [],                  // Initialize empty likes array
-      comments: []                // Initialize empty comments array
+      postType: finalPostType,
+      textContent: textContent || caption || '',
+      caption: caption || textContent || '',
+      visibleInEvent: false,
+      likes: [],
+      comments: [],
+      review: reviewData,
+      location: locationData,
+      event: eventId || null,
+      taggedEvent: eventId || null,
+      paths: req.file ? [`/uploads/photos/${req.file.filename}`] : [],
+      visibility: {
+        level: privacy || 'public',
+        inheritFromUser: false
+      }
     });
     await photo.save();
 
@@ -1216,17 +1254,17 @@ router.post('/create', protect, upload.single('photo'), async (req, res) => {
       { $addToSet: { photos: photo._id } }
     );
 
-    // ✅ NEW: Create activity for general photo upload (non-blocking)
+    // ✅ Create activity for post upload (non-blocking)
     setImmediate(async () => {
       try {
         await onGeneralPhotoUpload(photo._id, req.user._id);
-        console.log(`📸 Activity hook executed for general photo: ${photo._id}`);
+        console.log(`📸 Activity hook executed for post: ${photo._id}`);
       } catch (activityError) {
-        console.error('Failed to create general photo activity:', activityError);
+        console.error('Failed to create post activity:', activityError);
       }
     });
 
-    console.log(`✅ Successfully created general post: ${photo._id}`);
+    console.log(`✅ Successfully created ${finalPostType} post: ${photo._id}`);
     
     res.status(201).json({
       success: true,
@@ -1236,8 +1274,206 @@ router.post('/create', protect, upload.single('photo'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ General post creation error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Post creation error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ✅ NEW: Text-only post endpoint (no photo required)
+router.post('/create-text', protect, async (req, res) => {
+  try {
+    const { textContent, privacy, location, eventId, review } = req.body;
+    
+    if (!textContent || textContent.trim().length === 0) {
+      return res.status(400).json({ message: 'Text content is required' });
+    }
+
+    if (textContent.length > 5000) {
+      return res.status(400).json({ message: 'Text content exceeds 5000 character limit' });
+    }
+
+    console.log(`📝 Text post creation - User: ${req.user._id}`);
+
+    // Parse review if provided
+    let reviewData = null;
+    if (review) {
+      try {
+        reviewData = typeof review === 'string' ? JSON.parse(review) : review;
+      } catch (e) {
+        console.error('Error parsing review data:', e);
+      }
+    }
+
+    // Parse location if provided
+    let locationData = null;
+    if (location) {
+      try {
+        locationData = typeof location === 'string' ? JSON.parse(location) : location;
+      } catch (e) {
+        locationData = { name: location };
+      }
+    }
+
+    // Create text post document
+    const photo = new Photo({
+      user: req.user._id,
+      postType: 'text',
+      textContent: textContent.trim(),
+      caption: textContent.trim(), // Also store in caption for compatibility
+      visibleInEvent: false,
+      likes: [],
+      comments: [],
+      review: reviewData,
+      location: locationData,
+      event: eventId || null,
+      taggedEvent: eventId || null,
+      paths: [], // No photo for text posts
+      visibility: {
+        level: privacy || 'public',
+        inheritFromUser: false
+      }
+    });
+    await photo.save();
+
+    // Add to user's photos
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { $addToSet: { photos: photo._id } }
+    );
+
+    // ✅ Create activity for text post (non-blocking)
+    setImmediate(async () => {
+      try {
+        await onGeneralPhotoUpload(photo._id, req.user._id);
+        console.log(`📝 Activity hook executed for text post: ${photo._id}`);
+      } catch (activityError) {
+        console.error('Failed to create text post activity:', activityError);
+      }
+    });
+
+    console.log(`✅ Successfully created text post: ${photo._id}`);
+    
+    res.status(201).json({
+      success: true,
+      photo: photo,
+      _id: photo._id,
+      message: 'Text post created successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Text post creation error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ✅ NEW: Repost functionality
+router.post('/repost/:postId', protect, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { comment } = req.body; // Optional comment for quote posts
+
+    const originalPost = await Photo.findById(postId)
+      .populate('user', 'username profilePicture');
+
+    if (!originalPost) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    if (originalPost.isDeleted) {
+      return res.status(400).json({ message: 'Cannot repost deleted post' });
+    }
+
+    // Check if already reposted
+    const existingRepost = await Photo.findOne({
+      user: req.user._id,
+      isRepost: true,
+      originalPost: postId
+    });
+
+    if (existingRepost) {
+      return res.status(400).json({ message: 'Already reposted' });
+    }
+
+    // Create repost
+    const repost = new Photo({
+      user: req.user._id,
+      postType: comment ? 'text' : 'photo', // Quote posts are text posts
+      textContent: comment || '',
+      isRepost: true,
+      originalPost: postId,
+      repostComment: comment || null,
+      visibleInEvent: false,
+      likes: [],
+      comments: [],
+      visibility: {
+        level: 'public',
+        inheritFromUser: false
+      }
+    });
+
+    await repost.save();
+
+    // Increment repost count on original post
+    await Photo.findByIdAndUpdate(postId, {
+      $inc: { repostCount: 1 }
+    });
+
+    // Add to user's photos
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { $addToSet: { photos: repost._id } }
+    );
+
+    console.log(`✅ Repost created: ${repost._id}`);
+
+    res.status(201).json({
+      success: true,
+      repost: repost,
+      _id: repost._id,
+      message: comment ? 'Quote post created successfully' : 'Repost created successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Repost error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ✅ NEW: Remove repost
+router.delete('/repost/:postId', protect, async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    const repost = await Photo.findOne({
+      user: req.user._id,
+      isRepost: true,
+      originalPost: postId
+    });
+
+    if (!repost) {
+      return res.status(404).json({ message: 'Repost not found' });
+    }
+
+    // Decrement repost count on original post
+    await Photo.findByIdAndUpdate(postId, {
+      $inc: { repostCount: -1 }
+    });
+
+    // Delete repost
+    await Photo.findByIdAndDelete(repost._id);
+
+    console.log(`✅ Repost removed: ${repost._id}`);
+
+    res.json({
+      success: true,
+      message: 'Repost removed successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Remove repost error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

@@ -69,6 +69,8 @@ export default function ActivityList({
 
     switch (item.activityType) {
       case 'regular_post':
+      case 'text_post':
+      case 'review_post':
       case 'memory_post':
         return (
           <View style={styles.activityWrapper}>

@@ -46,19 +46,45 @@ function updateEnvFile(filePath, varName, newValue) {
   }
   
   let content = fs.readFileSync(filePath, 'utf8');
-  const lines = content.split('\n');
   let updated = false;
   
-  // Update or add the variable
-  const varRegex = new RegExp(`^${varName}=.*$`, 'm');
-  if (varRegex.test(content)) {
-    // Update existing variable
-    content = content.replace(varRegex, `${varName}=${newValue}`);
+  // Regex to match the variable (handles spaces around = and comments)
+  // Matches: VAR_NAME=value or VAR_NAME = value or VAR_NAME=value # comment
+  const varRegex = new RegExp(`^${varName}\\s*=\\s*.*$`, 'gm');
+  
+  // Remove all existing instances of this variable
+  const lines = content.split('\n');
+  const filteredLines = lines.filter(line => {
+    const trimmed = line.trim();
+    return !trimmed.startsWith(`${varName}=`) && !trimmed.match(new RegExp(`^${varName}\\s*=`));
+  });
+  
+  // Check if we need to update (value changed or variable didn't exist or duplicates exist)
+  const existingLines = lines.filter(line => {
+    const trimmed = line.trim();
+    return trimmed.startsWith(`${varName}=`) || trimmed.match(new RegExp(`^${varName}\\s*=`));
+  });
+  
+  const hasDuplicates = existingLines.length > 1;
+  let valueChanged = false;
+  
+  if (existingLines.length > 0) {
+    // Extract current value from first occurrence (before any comment)
+    const firstLine = existingLines[0];
+    const currentValue = firstLine.split('=')[1]?.split('#')[0]?.trim();
+    valueChanged = currentValue !== newValue;
+  }
+  
+  // Update if: value changed, duplicates exist, or variable doesn't exist
+  if (valueChanged || hasDuplicates || existingLines.length === 0) {
+    // Add the variable with new value at the end
+    const trimmed = filteredLines.join('\n').trimEnd();
+    const needsNewline = trimmed.length > 0 && !trimmed.endsWith('\n');
+    content = trimmed + (needsNewline ? '\n' : '') + `${varName}=${newValue}\n`;
     updated = true;
   } else {
-    // Add new variable at the end
-    content = content.trim() + `\n${varName}=${newValue}\n`;
-    updated = true;
+    // Value is already correct and no duplicates, no update needed
+    return false;
   }
   
   fs.writeFileSync(filePath, content, 'utf8');
@@ -88,11 +114,16 @@ function main() {
     console.log(`⚠️  Root .env file not found at: ${rootEnvPath}`);
   }
   
-  // Update SocialApp .env file (API_BASE_URL)
+  // Update SocialApp .env file (API_BASE_URL and EXPO_PUBLIC_API_URL)
   if (fs.existsSync(socialAppEnvPath)) {
     // API_BASE_URL should be just the IP, not http://
     if (updateEnvFile(socialAppEnvPath, 'API_BASE_URL', ipAddress)) {
       console.log(`✅ Updated API_BASE_URL in SocialApp/.env`);
+      updated = true;
+    }
+    // Also update EXPO_PUBLIC_API_URL for Expo public env vars
+    if (updateEnvFile(socialAppEnvPath, 'EXPO_PUBLIC_API_URL', ipAddress)) {
+      console.log(`✅ Updated EXPO_PUBLIC_API_URL in SocialApp/.env`);
       updated = true;
     }
   } else {

@@ -31,6 +31,27 @@ export default function NoActivityEmptyStateRedesigned({ navigation }) {
         <Ionicons name="add-circle" size={18} color="#3797EF" />
         <Text style={styles.createEventButtonText}>Create an event</Text>
       </TouchableOpacity>
+
+      {/* Debug Buttons */}
+      <View style={styles.debugButtonsContainer}>
+        <TouchableOpacity 
+          style={styles.debugButton}
+          onPress={() => navigation.navigate('MoviePageScreen', { tmdbId: '27205' })}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="film" size={18} color="#3797EF" />
+          <Text style={styles.debugButtonText}>Debug: Movie Page</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.debugButton}
+          onPress={() => navigation.navigate('SongPageScreen', { spotifyId: '4uLU6hMCjMI75M1A2tKUQC' })}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="musical-notes" size={18} color="#3797EF" />
+          <Text style={styles.debugButtonText}>Debug: Song Page</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -92,6 +113,28 @@ const styles = StyleSheet.create({
   },
   
   createEventButtonText: {
+    fontSize: 15,
+    color: '#3797EF',
+    marginLeft: 8,
+    fontWeight: '600',
+  },
+  debugButtonsContainer: {
+    marginTop: 24,
+    gap: 12,
+    width: '100%',
+  },
+  debugButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 25,
+    backgroundColor: 'rgba(55, 151, 239, 0.1)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(55, 151, 239, 0.3)',
+  },
+  debugButtonText: {
     fontSize: 15,
     color: '#3797EF',
     marginLeft: 8,

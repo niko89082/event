@@ -31,6 +31,14 @@ NODE_ENV=development
 # Stripe Configuration (for payments)
 STRIPE_SECRET_KEY=your_stripe_secret_key
 STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+
+# ✅ NEW: Twitter Features - Movie & Song Reviews
+# TMDB API (for movie reviews) - Get free API key at https://www.themoviedb.org/settings/api
+TMDB_API_KEY=your_tmdb_api_key_here
+
+# Spotify API (for song reviews) - Get credentials at https://developer.spotify.com/dashboard
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 ```
 
 ## Frontend Environment Variables
@@ -64,4 +72,75 @@ If you don't have Twilio credentials yet:
 ## Cornell Email Restriction
 
 The signup process requires users to have a `@cornell.edu` email address. To test with other domains during development, you can temporarily modify the validation in `routes/auth.js`.
+
+## Movie & Song Review API Setup
+
+### TMDB (The Movie Database) API Setup
+
+1. **Get a free API key:**
+   - Go to https://www.themoviedb.org/
+   - Sign up for a free account
+   - Navigate to Settings → API
+   - Request an API key (automatic approval for free tier)
+   - Copy your API key
+
+2. **Add to `.env` file:**
+   ```bash
+   TMDB_API_KEY=your_api_key_here
+   ```
+
+3. **Note:** The free tier has rate limits but is sufficient for development and moderate use.
+
+### Spotify API Setup
+
+1. **Create a Spotify Developer account:**
+   - Go to https://developer.spotify.com/
+   - Log in with your Spotify account (or create one)
+   - Navigate to Dashboard: https://developer.spotify.com/dashboard
+
+2. **Create a new app:**
+   - Click "Create an app"
+   - Fill in app name and description
+   - Accept the terms
+   - Click "Save"
+
+3. **Get your credentials:**
+   - In your app dashboard, you'll see:
+     - **Client ID** (visible immediately)
+     - **Client Secret** (click "Show Client Secret" to reveal)
+
+4. **Add to `.env` file:**
+   ```bash
+   SPOTIFY_CLIENT_ID=your_client_id_here
+   SPOTIFY_CLIENT_SECRET=your_client_secret_here
+   ```
+
+5. **Note:** 
+   - Spotify uses OAuth 2.0 Client Credentials flow (no user login required)
+   - The app will automatically handle token refresh
+   - Free tier has generous rate limits for development
+
+### Testing Without API Keys
+
+If you don't have API keys yet, the services will use **mock data** for development:
+- Movie searches will return sample results (e.g., "Inception")
+- Song searches will return sample results (e.g., "Bohemian Rhapsody")
+- This allows you to test the review feature without API keys
+
+### After Adding API Keys
+
+1. **Restart your backend server** for the environment variables to take effect:
+   ```bash
+   # Stop the server (Ctrl+C) and restart
+   npm start
+   # or
+   node server.js
+   ```
+
+2. **Test the review feature:**
+   - Open the Create Post screen
+   - Tap the movie or music icon
+   - Try searching for a movie or song
+   - If API keys are working, you'll see real results
+   - If not, you'll see mock data
 

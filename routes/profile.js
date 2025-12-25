@@ -612,33 +612,7 @@ router.get('/:userId', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    // Check friendship status if not self
-    let friendshipStatusString = 'not-friends';
-    let canViewPrivateContent = isSelf;
-    
-    if (!isSelf) {
-      const currentUser = await User.findById(currentUserId);
-      
-      // CRITICAL FIX: Extract the status string from the friendship object
-      const friendshipResult = currentUser.getFriendshipStatus(targetUserId);
-      console.log(`🔒 Friendship result (raw): ${JSON.stringify(friendshipResult)}`);
-      
-      // Handle both object and string returns
-      if (typeof friendshipResult === 'object' && friendshipResult.status) {
-        friendshipStatusString = friendshipResult.status;
-      } else if (typeof friendshipResult === 'string') {
-        friendshipStatusString = friendshipResult;
-      } else {
-        console.log(`⚠️ Unexpected friendship result type: ${typeof friendshipResult}`);
-        friendshipStatusString = 'not-friends';
-      }
-      
-      canViewPrivateContent = friendshipStatusString === 'friends';
-      
-      console.log(`🔒 Friendship status: ${friendshipStatusString}, canView: ${canViewPrivateContent}`);
-    }
-    
-    // Get friends count (always visible)
+    // ✅ SIMPLIFIED: Get friends count (always visible)
     const targetUser = await User.findById(targetUserId);
     const friendsCount = targetUser.getAcceptedFriends().length;
     
@@ -652,29 +626,29 @@ router.get('/:userId', protect, async (req, res) => {
     
     console.log(`📅 Attending events: ${user.attendingEvents?.length || 0} total, ${filteredAttendingEvents.length} filtered (excluding hosted)`);
     
-    // CRITICAL FIX: Get photos based on privacy
-    let photos = [];
-    if (canViewPrivateContent) {
-      photos = await Photo.find({ user: targetUserId })
-        .sort({ createdAt: -1 })
-        .limit(100)
-        .lean();
-      
-      console.log(`✅ User CAN view content - returning ${photos.length} photos`);
-    } else {
-      console.log(`🔒 User CANNOT view content - hiding photos (friendship: ${friendshipStatusString})`);
-    }
+    // ✅ SIMPLIFIED: Get all posts (everything is public by default)
+    const photos = await Photo.find({ user: targetUserId, isDeleted: false })
+      .populate('user', 'username profilePicture _id')
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+    
+    // Get posts count
+    const postsCount = await Photo.countDocuments({ user: targetUserId, isDeleted: false });
+    
+    console.log(`✅ Returning all posts - ${photos.length} photos (everything is public)`);
     
     const response = {
       ...user,
-      attendingEvents: filteredAttendingEvents, // ✅ FIXED: Return filtered attending events
+      attendingEvents: filteredAttendingEvents,
       photos: photos,
       friendsCount: friendsCount,
-      canViewPrivateContent: canViewPrivateContent,
-      friendshipStatus: friendshipStatusString // Add this for debugging
+      postsCount: postsCount,
+      canViewPrivateContent: true, // Always true - everything is public
+      friendshipStatus: isSelf ? 'self' : 'not-friends' // Keep for compatibility
     };
     
-    console.log(`🟢 Profile data: photos=${photos.length}, friendsCount=${friendsCount}, attendingEvents=${filteredAttendingEvents.length}, canView=${canViewPrivateContent}, friendship=${friendshipStatusString}`);
+    console.log(`🟢 Profile data: photos=${photos.length}, postsCount=${postsCount}, friendsCount=${friendsCount}, attendingEvents=${filteredAttendingEvents.length}`);
     
     res.json(response);
     

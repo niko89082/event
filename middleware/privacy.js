@@ -116,14 +116,14 @@ class PrivacyMiddleware {
   }
 
   /**
-   * ENHANCED: Check photo access permissions with proper private account + event filtering
+   * SIMPLIFIED: Check photo access permissions - make everything public by default
    */
   static async checkPhotoAccess(userId, photoId, options = {}) {
     try {
       const photo = await Photo.findById(photoId)
-        .populate('user', '_id username isPrivate followers following')
+        .populate('user', '_id username profilePicture')
         .populate('event', '_id host attendees privacyLevel permissions')
-        .populate('taggedEvent', '_id host attendees privacyLevel permissions'); // Handle both event fields
+        .populate('taggedEvent', '_id host attendees privacyLevel permissions');
 
       if (!photo) {
         return { hasAccess: false, content: null, reason: 'Photo not found' };
@@ -134,103 +134,8 @@ class PrivacyMiddleware {
         return { hasAccess: false, content: photo, reason: 'Photo deleted' };
       }
 
-      // Owner can always access
-      if (String(photo.user._id) === String(userId)) {
-        return { hasAccess: true, content: photo, reason: 'Owner access' };
-      }
-
-      // Check moderation status
-      if (photo.moderation?.status === 'rejected') {
-        return { hasAccess: false, content: photo, reason: 'Content moderated' };
-      }
-
-      // Get user relationship context
-      const viewerUser = await User.findById(userId).select('following');
-      if (!viewerUser) {
-        return { hasAccess: false, content: photo, reason: 'Viewer not found' };
-      }
-
-      const isFollowingOwner = viewerUser.following.some(f => String(f) === String(photo.user._id));
-      const ownerFollowsViewer = photo.user.followers.some(f => String(f) === String(userId));
-      const areFriends = isFollowingOwner && ownerFollowsViewer;
-
-      // Get event access for both event and taggedEvent
-      let eventAccess = false;
-      const eventToCheck = photo.event || photo.taggedEvent;
-      
-      if (eventToCheck) {
-        const isEventHost = String(eventToCheck.host) === String(userId);
-        const isEventAttendee = eventToCheck.attendees.some(a => String(a) === String(userId));
-        eventAccess = isEventHost || isEventAttendee;
-      }
-
-      // Check photo visibility level first
-      switch (photo.visibility?.level || 'public') {
-        case 'private':
-          return { hasAccess: false, content: photo, reason: 'Private photo' };
-        
-        case 'friends':
-          if (!areFriends) {
-            return { hasAccess: false, content: photo, reason: 'Friends only' };
-          }
-          break;
-        
-        case 'attendees':
-          if (!eventAccess) {
-            return { hasAccess: false, content: photo, reason: 'Event attendees only' };
-          }
-          break;
-        
-        case 'public':
-        default:
-          // Continue to owner privacy check
-          break;
-      }
-
-      // ENHANCED: Private account logic for event-tagged photos
-      if (photo.user.isPrivate) {
-        // Private account owner - check multiple access paths
-        
-        // Path 1: Direct following relationship
-        if (isFollowingOwner) {
-          return { hasAccess: true, content: photo, reason: 'Following private account' };
-        }
-        
-        // Path 2: Event access with photo sharing permissions
-        if (eventToCheck && eventAccess) {
-          console.log(`🔍 Private account photo tagged to event ${eventToCheck._id} - checking photo sharing permissions`);
-          
-          // User has access to the event, but we need to check event's photo sharing policy
-          const eventPhotoAccess = await this.checkEventPhotoSharingAccess(userId, eventToCheck, photo);
-          if (eventPhotoAccess.hasAccess) {
-            console.log(`✅ Private account photo accessible via event: ${eventPhotoAccess.reason}`);
-            return { 
-              hasAccess: true, 
-              content: photo, 
-              reason: `Private account photo accessible via event: ${eventPhotoAccess.reason}` 
-            };
-          } else {
-            console.log(`❌ Private account photo not accessible via event: ${eventPhotoAccess.reason}`);
-          }
-        }
-        
-        // Path 3: No access - private account and not following
-        return { 
-          hasAccess: false, 
-          content: photo, 
-          reason: 'Private account - not following and no event access' 
-        };
-      }
-
-      // Public account - check event privacy if photo is tagged to event
-      if (eventToCheck) {
-        const { hasAccess: eventAccessCheck } = await this.checkEventAccess(userId, eventToCheck._id);
-        if (!eventAccessCheck) {
-          return { hasAccess: false, content: photo, reason: 'Event privacy restriction' };
-        }
-      }
-
-      return { hasAccess: true, content: photo, reason: 'Public access' };
+      // ✅ SIMPLIFIED: Make everything public - all posts visible to everyone
+      return { hasAccess: true, content: photo, reason: 'Public access (all posts public by default)' };
 
     } catch (error) {
       console.error('Photo access check error:', error);

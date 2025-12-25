@@ -19,10 +19,20 @@ const router = express.Router();
 ══════════════════════════════════════════════════════════════════ */
 
 const ACTIVITY_TYPES = {
-  // Existing content types
+  // ✅ UPDATED: Prioritize posts (Twitter features)
   'regular_post': { 
-    priority: 'medium', 
-    weight: 1.0,
+    priority: 'high', 
+    weight: 2.0, // Increased from 1.0
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  },
+  'text_post': { 
+    priority: 'high', 
+    weight: 2.0,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  },
+  'review_post': { 
+    priority: 'high', 
+    weight: 2.2, // Reviews get slightly higher weight
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
   'memory_post': { 
@@ -508,10 +518,24 @@ const fetchRegularPosts = async (userId, friendIds, timeRange) => {
     {
       $match: {
         user: { $in: friendIds },
-        uploadDate: { $gte: timeRange.start },
         $or: [
-          { isDeleted: { $exists: false } },
-          { isDeleted: false }
+          { uploadDate: { $gte: timeRange.start } },
+          { createdAt: { $gte: timeRange.start } }
+        ],
+        $and: [
+          {
+            $or: [
+              { isDeleted: { $exists: false } },
+              { isDeleted: false }
+            ]
+          },
+          {
+            $or: [
+              { postType: { $in: ['photo', 'text'] } },
+              { postType: { $exists: false } },
+              { postType: null }
+            ]
+          }
         ]
       }
     },
@@ -581,18 +605,33 @@ const fetchRegularPosts = async (userId, friendIds, timeRange) => {
         }
       }
     },
-    { $sort: { uploadDate: -1 } },
+    {
+      $addFields: {
+        sortDate: { $ifNull: ['$createdAt', '$uploadDate'] }
+      }
+    },
+    { $sort: { sortDate: -1 } },
     { $limit: 50 }
   ]);
 
   console.log(`🔒 Privacy filtered: Found ${posts.length} regular posts (private event posts excluded)`);
 
-  return posts.map(post => ({
-    ...post,
-    activityType: 'regular_post',
-    timestamp: post.uploadDate,
-    score: calculateActivityScore(post, 'regular_post', userId)
-  }));
+  return posts.map(post => {
+    // Determine activity type based on post type
+    let activityType = 'regular_post';
+    if (post.postType === 'text') {
+      activityType = 'text_post';
+    } else if (post.review && post.review.type) {
+      activityType = 'review_post';
+    }
+    
+    return {
+      ...post,
+      activityType: activityType,
+      timestamp: post.createdAt || post.uploadDate,
+      score: calculateActivityScore(post, activityType, userId)
+    };
+  });
 };
 
 

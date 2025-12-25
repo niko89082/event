@@ -2,11 +2,21 @@
 import axios from 'axios';
 import { API_BASE_URL } from '@env';
 
+// Validate API_BASE_URL is defined
+if (!API_BASE_URL) {
+  console.error('❌ API Service: API_BASE_URL is not defined! Check your .env file.');
+  throw new Error('API_BASE_URL is not defined in environment variables. Please check your .env file.');
+}
+
 console.log('🟡 API Service: Initializing with base URL:', API_BASE_URL);
 
+// Construct base URL
+const baseURL = `http://${API_BASE_URL}:3000`;
+console.log('🟡 API Service: Full base URL:', baseURL);
+
 const api = axios.create({
-  baseURL: `http://${API_BASE_URL}:3000`,
-  timeout: 15000, // Increased timeout
+  baseURL: baseURL,
+  timeout: 15000, // 15 second timeout
   headers: {
     'Content-Type': 'application/json',
   },
@@ -69,6 +79,14 @@ api.interceptors.response.use(
     
     if (error.code === 'ECONNABORTED') {
       console.error('❌ API: Request timeout - server may be slow or unreachable');
+      console.error('❌ API: Attempted URL:', error.config?.baseURL + error.config?.url);
+      console.error('❌ API: Check if server is running and accessible from this device');
+    }
+    
+    // Log the full URL that was attempted
+    if (error.config) {
+      const attemptedUrl = error.config.baseURL + error.config.url;
+      console.error('❌ API: Attempted URL:', attemptedUrl);
     }
     
     return Promise.reject(error);
