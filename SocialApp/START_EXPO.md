@@ -51,3 +51,4 @@ If you get "expo not found" errors:
 2. Make sure dependencies are installed: `npm install`
 3. Use `npx expo` instead of just `expo`
 
+

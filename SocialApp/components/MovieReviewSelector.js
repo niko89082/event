@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, FlatList, Image,
   TouchableOpacity, ActivityIndicator, Modal, SafeAreaView,
-  Dimensions
+  Dimensions, Keyboard
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';

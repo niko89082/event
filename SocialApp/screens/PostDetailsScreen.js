@@ -1,4 +1,19 @@
 // screens/PostDetailsScreen.js - Fixed Implementation with Likes Functionality
+
+
+
+
+
+
+
+
+
+/*
+
+THIS WAS PRETTY MUCH DEPRICATED
+
+
+ */
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity,
@@ -455,7 +470,7 @@ export default function PostDetailsScreen() {
     return stars;
   };
 
-  const renderHeader = () => (
+  const renderHeader = () =>{ (
     <View style={styles.headerContainer}>
       {/* Author Info - Twitter Style */}
       <View style={styles.authorContainer}>
@@ -622,7 +637,7 @@ export default function PostDetailsScreen() {
         <Text style={styles.commentsTitle}>Comments</Text>
       </View>
     </View>
-  );
+  );}
 
   if (loading) {
     return (

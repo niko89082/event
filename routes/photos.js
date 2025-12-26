@@ -1186,16 +1186,17 @@ router.get('/user/:userId', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-// ✅ UPDATED: Support both photo and text posts
-router.post('/create', protect, upload.single('photo'), async (req, res) => {
+// ✅ UPDATED: Support both photo and text posts with multiple photos (X/Twitter style)
+router.post('/create', protect, upload.array('photo', 4), async (req, res) => {
   try {
     const { caption, textContent, postType, privacy, location, eventId, review } = req.body;
     
-    // Determine post type
-    const finalPostType = postType || (req.file ? 'photo' : 'text');
+    // Determine post type - support multiple photos (X/Twitter style)
+    const hasPhotos = req.files && req.files.length > 0;
+    const finalPostType = postType || (hasPhotos ? 'photo' : 'text');
     
     // Validate: must have either photo or text content
-    if (!req.file && !textContent && !caption) {
+    if (!hasPhotos && !textContent && !caption) {
       return res.status(400).json({ message: 'Post must have either photo or text content' });
     }
 
@@ -1204,7 +1205,12 @@ router.post('/create', protect, upload.single('photo'), async (req, res) => {
       return res.status(400).json({ message: 'Text posts require text content' });
     }
 
-    console.log(`📝 Post creation - User: ${req.user._id}, Type: ${finalPostType}`);
+    // Validate photo count (X/Twitter limit: 4 photos)
+    if (hasPhotos && req.files.length > 4) {
+      return res.status(400).json({ message: 'Maximum 4 photos allowed per post' });
+    }
+
+    console.log(`📝 Post creation - User: ${req.user._id}, Type: ${finalPostType}, Photos: ${req.files?.length || 0}`);
 
     // Parse review if provided
     let reviewData = null;
@@ -1226,6 +1232,11 @@ router.post('/create', protect, upload.single('photo'), async (req, res) => {
       }
     }
 
+    // Build paths array from all uploaded files (X/Twitter supports multiple photos)
+    const photoPaths = hasPhotos 
+      ? req.files.map(file => `/uploads/photos/${file.filename}`)
+      : [];
+
     // Create post document
     const photo = new Photo({
       user: req.user._id,
@@ -1239,7 +1250,7 @@ router.post('/create', protect, upload.single('photo'), async (req, res) => {
       location: locationData,
       event: eventId || null,
       taggedEvent: eventId || null,
-      paths: req.file ? [`/uploads/photos/${req.file.filename}`] : [],
+      paths: photoPaths,
       visibility: {
         level: privacy || 'public',
         inheritFromUser: false

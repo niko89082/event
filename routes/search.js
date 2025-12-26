@@ -2,6 +2,7 @@ const express  = require('express');
 const chrono   = require('chrono-node');
 const Event    = require('../models/Event');
 const User     = require('../models/User');
+const Photo    = require('../models/Photo');
 const protect  = require('../middleware/auth');
 
 const router = express.Router();
@@ -69,6 +70,70 @@ router.get('/events', protect, async (req, res) => {
     res.json(events);
   } catch (err) {
     console.error('/search/events →', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/* ───── /search/posts?q=text ─────────────────────────────── */
+
+router.get('/posts', protect, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json([]);
+
+  const userId = req.user._id;
+
+  try {
+    // Get user's friends for privacy filtering
+    const user = await User.findById(userId).select('following');
+    const userFollowing = user.following.map(f => String(f));
+
+    // Search posts (text posts and photo posts with captions)
+    const posts = await Photo.find({
+      $and: [
+        {
+          $or: [
+            { textContent: { $regex: q, $options: 'i' } },
+            { caption: { $regex: q, $options: 'i' } }
+          ]
+        },
+        {
+          $or: [
+            // User's own posts
+            { user: userId },
+            // Posts from followed users
+            { user: { $in: userFollowing } },
+            // Public posts
+            { 'visibility.level': 'public' }
+          ]
+        },
+        {
+          $or: [
+            { isDeleted: { $exists: false } },
+            { isDeleted: false }
+          ]
+        }
+      ]
+    })
+      .populate('user', 'username displayName profilePicture')
+      .sort({ uploadDate: -1 })
+      .limit(30)
+      .lean();
+
+    // Add like status for current user
+    const postsWithLikes = posts.map(post => {
+      const likesArray = post.likes || [];
+      const likesAsStrings = likesArray.map(like => String(like));
+      return {
+        ...post,
+        userLiked: likesAsStrings.includes(String(userId)),
+        likeCount: likesArray.length,
+        commentCount: post.comments ? post.comments.length : 0
+      };
+    });
+
+    res.json(postsWithLikes);
+  } catch (err) {
+    console.error('/search/posts →', err);
     res.status(500).json({ message: 'Server error' });
   }
 });

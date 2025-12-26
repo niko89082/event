@@ -1,10 +1,10 @@
-// screens/CreatePostScreen.js - Twitter-style single screen
-import React, { useState, useEffect, useContext, useRef } from 'react';
+// screens/CreatePostScreen.js - X/Twitter-style Create Post Screen with horizontal media carousel
+import React, { useState, useEffect, useContext, useRef, useLayoutEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, Image, Alert, ScrollView, TouchableOpacity,
   TextInput, Modal, FlatList, Dimensions, StatusBar,
-  SafeAreaView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard
+  SafeAreaView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, Pressable
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -15,15 +15,18 @@ import api from '../services/api';
 import MovieReviewSelector from '../components/MovieReviewSelector';
 import SongReviewSelector from '../components/SongReviewSelector';
 import ReviewCard from '../components/ReviewCard';
+import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_TEXT_LENGTH = 5000;
+const CHARACTER_COUNTER_THRESHOLD = MAX_TEXT_LENGTH * 0.9; // Show counter at 90% of limit
+const MAX_MEDIA_COUNT = 10; // Increased limit for carousel
 
 export default function CreatePostScreen({ navigation }) {
   const { currentUser } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
   const [textContent, setTextContent] = useState('');
-  const [selectedImages, setSelectedImages] = useState([]);
+  const [selectedMedia, setSelectedMedia] = useState([]); // Changed from selectedImages to support videos
   const [myEvents, setMyEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState('');
   const [selectedLocation, setSelectedLocation] = useState(null);
@@ -35,55 +38,21 @@ export default function CreatePostScreen({ navigation }) {
   const [publishing, setPublishing] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const textInputRef = useRef(null);
+  const mediaCarouselRef = useRef(null);
 
   useEffect(() => {
     requestLibraryPermission();
     fetchMyAttendingEvents();
   }, []);
 
-  // Hide bottom tab bar when this screen is focused
-  useFocusEffect(
-    React.useCallback(() => {
-      // Get the tab navigator (parent of the stack navigator)
-      const tabNavigator = navigation.getParent()?.getParent();
-      if (tabNavigator) {
-        tabNavigator.setOptions({
-          tabBarStyle: { display: 'none' },
-        });
-      }
-      return () => {
-        if (tabNavigator) {
-          tabNavigator.setOptions({
-            tabBarStyle: undefined,
-          });
-        }
-      };
-    }, [navigation])
-  );
+  // Tab bar hiding is handled in MainTabNavigator.js - no need to do it here
 
-  // Keep keyboard open permanently
+  // Auto-focus text input
   useEffect(() => {
     const timer = setTimeout(() => {
       textInputRef.current?.focus();
-    }, 100);
+    }, 300);
     return () => clearTimeout(timer);
-  }, []);
-
-  // Refocus when keyboard is dismissed
-  useEffect(() => {
-    const keyboardDidHideListener = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        // Small delay to ensure keyboard is fully dismissed before refocusing
-        setTimeout(() => {
-          textInputRef.current?.focus();
-        }, 100);
-      }
-    );
-
-    return () => {
-      keyboardDidHideListener.remove();
-    };
   }, []);
 
   // Keyboard handling
@@ -128,58 +97,92 @@ export default function CreatePostScreen({ navigation }) {
     }
   };
 
-  const handlePickImage = async () => {
+  const handlePickMedia = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: true,
-        quality: 0.8,
-        selectionLimit: 10,
-      });
-
-      if (!result.canceled && result.assets) {
-        const newImages = result.assets.slice(0, 10 - selectedImages.length);
-        setSelectedImages([...selectedImages, ...newImages]);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
-    }
-  };
-
-  const handleRemoveImage = (index) => {
-    setSelectedImages(selectedImages.filter((_, i) => i !== index));
-  };
-
-  const handleAddLocation = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Location permission is needed to add location.');
+      const remainingSlots = MAX_MEDIA_COUNT - selectedMedia.length;
+      if (remainingSlots <= 0) {
+        Alert.alert('Media Limit', `You can add up to ${MAX_MEDIA_COUNT} photos/videos per post.`);
         return;
       }
 
-      const location = await Location.getCurrentPositionAsync({});
-      const [address] = await Location.reverseGeocodeAsync({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
+      Alert.alert(
+        'Add Media',
+        'Choose an option',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Camera', 
+            onPress: async () => {
+              try {
+                const { status } = await ImagePicker.requestCameraPermissionsAsync();
+                if (status !== 'granted') {
+                  Alert.alert('Permission Required', 'Camera permission is needed to take photos.');
+                  return;
+                }
 
-      setSelectedLocation({
-        name: address ? `${address.street || ''} ${address.city || ''}`.trim() : 'Current Location',
-        coordinates: {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        },
-      });
+                const result = await ImagePicker.launchCameraAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.All,
+                  quality: 0.85,
+                  allowsEditing: true,
+                });
+
+                if (!result.canceled && result.assets && result.assets.length > 0) {
+                  const newMedia = result.assets.map(asset => ({
+                    ...asset,
+                    type: asset.type || (asset.uri.includes('.mp4') || asset.uri.includes('.mov') ? 'video' : 'image')
+                  }));
+                  setSelectedMedia([...selectedMedia, ...newMedia]);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+              } catch (error) {
+                console.error('Camera error:', error);
+                Alert.alert('Error', 'Failed to take photo. Please try again.');
+              }
+            }
+          },
+          { 
+            text: 'Photo Library', 
+            onPress: async () => {
+              try {
+                const result = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.All,
+                  allowsMultipleSelection: remainingSlots > 1,
+                  quality: 0.85,
+                  selectionLimit: remainingSlots,
+                });
+
+                if (!result.canceled && result.assets && result.assets.length > 0) {
+                  const newMedia = result.assets.map(asset => ({
+                    ...asset,
+                    type: asset.type || (asset.uri.includes('.mp4') || asset.uri.includes('.mov') ? 'video' : 'image')
+                  }));
+                  setSelectedMedia([...selectedMedia, ...newMedia]);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+              } catch (error) {
+                console.error('Media picker error:', error);
+                Alert.alert('Error', 'Failed to pick media. Please try again.');
+              }
+            }
+          },
+        ],
+        { cancelable: true }
+      );
     } catch (error) {
-      console.error('Location error:', error);
-      Alert.alert('Error', 'Failed to get location.');
+      console.error('Media picker error:', error);
+      Alert.alert('Error', 'Failed to pick media. Please try again.');
     }
   };
 
+  const handleRemoveMedia = (index) => {
+    const newMedia = selectedMedia.filter((_, i) => i !== index);
+    setSelectedMedia(newMedia);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
   const handlePost = async () => {
-    // Validate: must have text, image, or review
-    if (!textContent.trim() && selectedImages.length === 0 && !review) {
+    // Validate: must have text, media, or review
+    if (!textContent.trim() && selectedMedia.length === 0 && !review) {
       Alert.alert('Empty Post', 'Please add some content to your post.');
       return;
     }
@@ -193,10 +196,10 @@ export default function CreatePostScreen({ navigation }) {
     try {
       setPublishing(true);
 
-      // Determine post type
-      const postType = selectedImages.length > 0 ? 'photo' : 'text';
+      // Filter images only for now (videos can be added later)
+      const images = selectedMedia.filter(m => !m.type || m.type === 'image' || !m.uri.includes('.mp4'));
 
-      if (postType === 'text' && selectedImages.length === 0) {
+      if (images.length === 0 && !textContent.trim() && !review) {
         // Text-only post
         const response = await api.post('/api/photos/create-text', {
           textContent: textContent.trim(),
@@ -212,11 +215,16 @@ export default function CreatePostScreen({ navigation }) {
         // Photo post (with optional text)
         const formData = new FormData();
         
-        // Add first image (required for photo post)
-        formData.append('photo', {
-          uri: selectedImages[0].uri,
-          type: 'image/jpeg',
-          name: 'photo.jpg',
+        // Add all selected images
+        images.forEach((image, index) => {
+          const mimeType = image.mimeType || image.type || 'image/jpeg';
+          const fileName = image.fileName || image.filename || `photo_${index}.jpg`;
+          
+          formData.append('photo', {
+            uri: image.uri,
+            type: mimeType,
+            name: fileName,
+          });  
         });
 
         // Add text content
@@ -257,6 +265,7 @@ export default function CreatePostScreen({ navigation }) {
   };
 
   const handlePostSuccess = (data) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert(
       'Success!',
       'Your post has been shared!',
@@ -266,7 +275,7 @@ export default function CreatePostScreen({ navigation }) {
           onPress: () => {
             // Reset form
             setTextContent('');
-            setSelectedImages([]);
+            setSelectedMedia([]);
             setSelectedEventId('');
             setSelectedLocation(null);
             setReview(null);
@@ -279,6 +288,7 @@ export default function CreatePostScreen({ navigation }) {
 
   const handleReviewSelect = (reviewData) => {
     setReview(reviewData);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const selectEvent = (event) => {
@@ -287,59 +297,113 @@ export default function CreatePostScreen({ navigation }) {
   };
 
   const canPost = () => {
-    return (textContent.trim().length > 0 || selectedImages.length > 0 || review) && 
+    return (textContent.trim().length > 0 || selectedMedia.length > 0 || review) && 
            textContent.length <= MAX_TEXT_LENGTH;
   };
 
-  const renderImagePreview = () => {
-    if (selectedImages.length === 0) return null;
+  // Calculate media dimensions based on aspect ratio
+  const getMediaDimensions = (media, containerWidth) => {
+    const isVideo = media.type === 'video' || media.uri?.includes('.mp4') || media.uri?.includes('.mov');
+    const aspectRatio = media.width && media.height ? media.width / media.height : 1;
+    
+    // For images, use actual aspect ratio; for videos, default to 16:9
+    const finalAspectRatio = isVideo ? 16/9 : (aspectRatio || 1);
+    
+    // Max height to prevent overflow - make it fit better on screen
+    const maxHeight = SCREEN_WIDTH * 0.7; // Allow images to be larger
+    const calculatedHeight = containerWidth / finalAspectRatio;
+    const height = Math.min(calculatedHeight, maxHeight);
+    
+    return { width: containerWidth, height };
+  };
+
+  // Render horizontal swipeable media carousel
+  const renderMediaCarousel = () => {
+    if (selectedMedia.length === 0) return null;
+
+    // Use full screen width for images - no padding
+    const itemWidth = SCREEN_WIDTH;
 
     return (
-      <View style={styles.imagesContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {selectedImages.map((image, index) => (
-            <View key={index} style={styles.imagePreviewWrapper}>
-              <Image source={{ uri: image.uri }} style={styles.imagePreview} />
-              <TouchableOpacity
-                style={styles.removeImageButton}
-                onPress={() => handleRemoveImage(index)}
-              >
-                <Ionicons name="close-circle" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-          ))}
-        </ScrollView>
+      <View style={styles.mediaCarouselContainer}>
+        <FlatList
+          ref={mediaCarouselRef}
+          data={selectedMedia}
+          horizontal
+          pagingEnabled={selectedMedia.length > 1}
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item, index) => `media-${index}`}
+          renderItem={({ item, index }) => {
+            const dimensions = getMediaDimensions(item, itemWidth);
+            const isVideo = item.type === 'video' || item.uri?.includes('.mp4') || item.uri?.includes('.mov');
+            
+            return (
+              <View style={[styles.mediaItem, { width: SCREEN_WIDTH }]}>
+                <View style={[styles.mediaWrapper, { width: dimensions.width, height: dimensions.height }]}>
+                  {isVideo ? (
+                    <View style={[styles.videoPlaceholder, { width: dimensions.width, height: dimensions.height }]}>
+                      <Ionicons name="play-circle" size={48} color="#FFFFFF" />
+                      <Text style={styles.videoLabel}>Video</Text>
+                    </View>
+                  ) : (
+                    <Image 
+                      source={{ uri: item.uri }} 
+                      style={[styles.mediaImage, { width: dimensions.width, height: dimensions.height }]}
+                      resizeMode="cover"
+                    />
+                  )}
+                  <TouchableOpacity
+                    style={styles.removeMediaButton}
+                    onPress={() => handleRemoveMedia(index)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="close-circle" size={28} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          }}
+          contentContainerStyle={styles.mediaCarouselContent}
+          snapToInterval={SCREEN_WIDTH}
+          decelerationRate="fast"
+          scrollEventThrottle={16}
+        />
+        {/* Media indicator dots */}
+        {selectedMedia.length > 1 && (
+          <View style={styles.mediaIndicators}>
+            {selectedMedia.map((_, index) => (
+              <View key={index} style={styles.mediaIndicator} />
+            ))}
+          </View>
+        )}
       </View>
     );
   };
 
   const renderActionButtons = () => {
     return (
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        style={styles.actionButtons}
-        contentContainerStyle={styles.actionButtonsContent}
-      >
+      <View style={styles.actionButtonsContainer}>
         <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handlePickImage}
+          style={[styles.actionButton, selectedMedia.length >= MAX_MEDIA_COUNT && styles.actionButtonDisabled]}
+          onPress={handlePickMedia}
           activeOpacity={0.7}
+          disabled={selectedMedia.length >= MAX_MEDIA_COUNT}
         >
-          <Ionicons name="image-outline" size={24} color="#3797EF" />
+          <Ionicons 
+            name="image-outline" 
+            size={24} 
+            color={selectedMedia.length >= MAX_MEDIA_COUNT ? "#C7C7CC" : "#3797EF"} 
+          />
         </TouchableOpacity>
         
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={() => setShowMovieReview(true)}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="film-outline" size={24} color="#3797EF" />
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => setShowSongReview(true)}
+          onPress={() => {
+            Keyboard.dismiss();
+            setTimeout(() => {
+              setShowSongReview(true);
+            }, 100);
+          }}
           activeOpacity={0.7}
         >
           <Ionicons name="musical-notes-outline" size={24} color="#3797EF" />
@@ -347,14 +411,15 @@ export default function CreatePostScreen({ navigation }) {
         
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={handleAddLocation}
+          onPress={() => {
+            Keyboard.dismiss();
+            setTimeout(() => {
+              setShowMovieReview(true);
+            }, 100);
+          }}
           activeOpacity={0.7}
         >
-          <Ionicons 
-            name={selectedLocation ? "location" : "location-outline"} 
-            size={24} 
-            color={selectedLocation ? "#34C759" : "#3797EF"} 
-          />
+          <Ionicons name="film-outline" size={24} color="#3797EF" />
         </TouchableOpacity>
         
         <TouchableOpacity
@@ -371,15 +436,14 @@ export default function CreatePostScreen({ navigation }) {
         
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={() => navigation.navigate('CreateEventScreen')}
+          onPress={() => navigation.navigate('CreateEvent')}
           activeOpacity={0.7}
         >
           <Ionicons name="add-circle-outline" size={24} color="#3797EF" />
         </TouchableOpacity>
-      </ScrollView>
+      </View>
     );
   };
-
 
   const renderEventItem = ({ item: event }) => {
     const isSelected = selectedEventId === event._id;
@@ -451,108 +515,100 @@ export default function CreatePostScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView 
-        style={styles.keyboardContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-      >
-        <ScrollView 
-          style={styles.content} 
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
+      <View style={styles.keyboardContainer}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: keyboardHeight > 0 ? 80 : 100 }]}
           keyboardShouldPersistTaps="handled"
-          nestedScrollEnabled={true}
+          showsVerticalScrollIndicator={false}
         >
-        {/* User Avatar and Text Input */}
-        <View style={styles.inputContainer}>
-          {currentUser?.profilePicture ? (
-            <Image
-              source={{ uri: currentUser.profilePicture }}
-              style={styles.avatar}
-            />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Ionicons name="person" size={20} color="#8E8E93" />
+          {/* User Avatar and Text Input */}
+          <View style={styles.inputContainer}>
+            <View style={styles.avatarContainer}>
+              {currentUser?.profilePicture ? (
+                <Image
+                  source={{ uri: currentUser.profilePicture }}
+                  style={styles.avatar}
+                />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Ionicons name="person" size={20} color="#8E8E93" />
+                </View>
+              )}
+            </View>
+            
+            <View style={styles.textInputWrapper}>
+              <TextInput
+                ref={textInputRef}
+                style={styles.textInput}
+                multiline
+                value={textContent}
+                onChangeText={setTextContent}
+                placeholder="What's happening?"
+                placeholderTextColor="#8E8E93"
+                maxLength={MAX_TEXT_LENGTH}
+                textAlignVertical="top"
+                autoFocus
+                scrollEnabled={false}
+              />
+            </View>
+          </View>
+          
+          {/* Media Carousel - Full width, below text input */}
+          {renderMediaCarousel()}
+
+          {/* Character Count - Only show when nearing limit */}
+          {textContent.length >= CHARACTER_COUNTER_THRESHOLD && (
+            <View style={styles.characterCountContainer}>
+              <Text style={[
+                styles.characterCount,
+                textContent.length > MAX_TEXT_LENGTH * 0.95 && styles.characterCountWarning
+              ]}>
+                {textContent.length}/{MAX_TEXT_LENGTH}
+              </Text>
             </View>
           )}
-          
-          <TextInput
-            ref={textInputRef}
-            style={styles.textInput}
-            multiline
-            value={textContent}
-            onChangeText={setTextContent}
-            placeholder="What's happening?"
-            placeholderTextColor="#8E8E93"
-            maxLength={MAX_TEXT_LENGTH}
-            textAlignVertical="top"
-            autoFocus
-            scrollEnabled={true}
-            showsVerticalScrollIndicator={true}
-            nestedScrollEnabled={true}
-          />
-        </View>
 
-        {/* Character Count */}
-        {textContent.length > 0 && (
-          <View style={styles.characterCountContainer}>
-            <Text style={[
-              styles.characterCount,
-              textContent.length > MAX_TEXT_LENGTH * 0.9 && styles.characterCountWarning
-            ]}>
-              {textContent.length}/{MAX_TEXT_LENGTH}
-            </Text>
-          </View>
-        )}
+          {/* Review Preview */}
+          {review && (
+            <View style={styles.reviewPreviewContainer}>
+              <View style={styles.reviewPreviewHeader}>
+                <Text style={styles.reviewPreviewTitle}>
+                  {review.type === 'movie' ? '🎬 Movie Review' : '🎵 Music Review'}
+                </Text>
+                <TouchableOpacity onPress={() => setReview(null)}>
+                  <Ionicons name="close-circle" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+              <ReviewCard review={review} />
+            </View>
+          )}
 
-        {/* Review Preview */}
-        {review && (
-          <View style={styles.reviewPreviewContainer}>
-            <View style={styles.reviewPreviewHeader}>
-              <Text style={styles.reviewPreviewTitle}>
-                {review.type === 'movie' ? 'Movie Review' : 'Song Review'}
+          {/* Event Preview */}
+          {selectedEventId && (
+            <View style={styles.eventPreview}>
+              <Ionicons name="calendar" size={16} color="#34C759" />
+              <Text style={styles.eventPreviewText}>
+                {myEvents.find(e => e._id === selectedEventId)?.title || 'Selected Event'}
               </Text>
-              <TouchableOpacity onPress={() => setReview(null)}>
-                <Ionicons name="close-circle" size={20} color="#8E8E93" />
+              <TouchableOpacity onPress={() => setSelectedEventId('')}>
+                <Ionicons name="close-circle" size={16} color="#8E8E93" />
               </TouchableOpacity>
             </View>
-            <ReviewCard review={review} />
-          </View>
-        )}
-
-        {/* Image Previews */}
-        {renderImagePreview()}
-
-        {/* Location Preview */}
-        {selectedLocation && (
-          <View style={styles.locationPreview}>
-            <Ionicons name="location" size={16} color="#3797EF" />
-            <Text style={styles.locationText}>{selectedLocation.name}</Text>
-            <TouchableOpacity onPress={() => setSelectedLocation(null)}>
-              <Ionicons name="close-circle" size={16} color="#8E8E93" />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Event Preview */}
-        {selectedEventId && (
-          <View style={styles.eventPreview}>
-            <Ionicons name="calendar" size={16} color="#34C759" />
-            <Text style={styles.eventPreviewText}>
-              {myEvents.find(e => e._id === selectedEventId)?.title || 'Selected Event'}
-            </Text>
-            <TouchableOpacity onPress={() => setSelectedEventId('')}>
-              <Ionicons name="close-circle" size={16} color="#8E8E93" />
-            </TouchableOpacity>
-          </View>
-        )}
+          )}
         </ScrollView>
 
-        {/* Action Buttons - Fixed at bottom, moves with keyboard */}
-        <View style={[styles.actionButtonsContainer, { marginBottom: keyboardHeight > 0 ? 0 : 0 }]}>
+        {/* Action Buttons - Fixed at bottom, positioned relative to keyboard */}
+        <View style={[
+          styles.actionBarContainer, 
+          { 
+            bottom: keyboardHeight > 0 ? keyboardHeight + 5 : Math.max(insets.bottom, 0),
+            paddingBottom: keyboardHeight > 0 ? 8 : Math.max(insets.bottom, 8)
+          }
+        ]}>
           {renderActionButtons()}
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Event Selection Modal */}
       <Modal
@@ -640,24 +696,26 @@ const styles = StyleSheet.create({
   keyboardContainer: {
     flex: 1,
   },
-  content: {
+  scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 8,
+    paddingBottom: 20,
   },
   inputContainer: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 12,
     paddingBottom: 8,
-    alignItems: 'flex-start',
+  },
+  avatarContainer: {
+    marginRight: 12,
+    marginTop: 4,
   },
   avatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 12,
   },
   avatarPlaceholder: {
     width: 40,
@@ -666,17 +724,83 @@ const styles = StyleSheet.create({
     backgroundColor: '#E1E1E1',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+  },
+  textInputWrapper: {
+    flex: 1,
   },
   textInput: {
-    flex: 1,
     fontSize: 20,
     color: '#000000',
-    minHeight: 100,
-    maxHeight: 500,
+    minHeight: 120,
     paddingTop: 0,
     paddingBottom: 0,
     paddingRight: 0,
+    paddingLeft: 0,
+    lineHeight: 28,
+  },
+  mediaCarouselContainer: {
+    marginTop: 12,
+    marginBottom: 8,
+    width: SCREEN_WIDTH,
+  },
+  mediaCarouselContent: {
+    alignItems: 'flex-start',
+  },
+  mediaItem: {
+    width: SCREEN_WIDTH,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaWrapper: {
+    position: 'relative',
+    borderRadius: 0,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
+    width: SCREEN_WIDTH,
+  },
+  mediaImage: {
+    borderRadius: 0,
+  },
+  videoPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000000',
+  },
+  videoLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  removeMediaButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  mediaIndicators: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 6,
+  },
+  mediaIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#C7C7CC',
   },
   characterCountContainer: {
     paddingHorizontal: 16,
@@ -712,45 +836,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000000',
   },
-  imagesContainer: {
-    marginTop: 8,
-    marginBottom: 8,
-    paddingHorizontal: 16,
-  },
-  imagePreviewWrapper: {
-    marginRight: 12,
-    position: 'relative',
-  },
-  imagePreview: {
-    width: 120,
-    height: 120,
-    borderRadius: 12,
-    backgroundColor: '#E1E1E1',
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 12,
-  },
-  locationPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginHorizontal: 16,
-    marginTop: 4,
-    marginBottom: 4,
-    backgroundColor: '#F0F8FF',
-    borderRadius: 8,
-    gap: 8,
-  },
-  locationText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#3797EF',
-  },
   eventPreview: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -768,23 +853,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#34C759',
   },
-  actionButtonsContainer: {
+  actionBarContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 0.5,
     borderTopColor: '#E1E1E1',
+    paddingTop: 8,
   },
-  actionButtons: {
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  actionButtonsContent: {
+  actionButtonsContainer: {
     flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    gap: 16,
+    gap: 24,
+    alignItems: 'center',
   },
   actionButton: {
-    padding: 8,
+    padding: 4,
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
   },
   modalContainer: {
     flex: 1,

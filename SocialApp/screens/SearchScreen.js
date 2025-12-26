@@ -1,112 +1,247 @@
-// Enhanced SearchScreen.js - Unified Instagram-style search experience
-import React, { useState, useEffect, useContext } from 'react';
+// Enhanced SearchScreen.js - Blue theme with tabs for All, People, Songs, Movies, Posts, Events
+import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
 import {
   View, TextInput, FlatList, Text, TouchableOpacity, StyleSheet,
-  SafeAreaView, StatusBar, ActivityIndicator, Alert, Image, RefreshControl
+  SafeAreaView, StatusBar, ActivityIndicator, Alert, Image, RefreshControl,
+  ScrollView, Dimensions, Animated, PanResponder
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import CategoryManager from '../components/CategoryManager';
+import PostCard from '../components/PostCard';
+import ReviewCard from '../components/ReviewCard';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'localhost:3000';
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const TABS = ['all', 'people', 'songs', 'movies', 'posts', 'events'];
+
+// Blue theme colors
+const COLORS = {
+  primary: '#607AFB',
+  primaryLight: '#E8ECFF',
+  primaryDark: '#4A5FD9',
+  background: '#F5F6F8',
+  surface: '#FFFFFF',
+  text: '#1A1A1A',
+  textSecondary: '#6B7280',
+  border: '#E5E7EB',
+  success: '#10B981',
+  successLight: '#D1FAE5',
+};
 
 export default function SearchScreen({ navigation, route }) {
-  // Basic search state
+  // Search state
   const [query, setQuery] = useState('');
-  const [tab, setTab] = useState('users'); // users | events
+  const [activeTab, setActiveTab] = useState('all'); // 'all', 'people', 'songs', 'movies', 'posts', 'events'
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  
-  // Enhanced search state
-  const [searchType, setSearchType] = useState('all'); // 'all', 'friends', 'non-friends'
-  const [friendStatuses, setFriendStatuses] = useState({}); // Track friendship statuses
   
   // Friend suggestions state
   const [suggestions, setSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [showingCategories, setShowingCategories] = useState(false);
-  const [categoryLimit, setCategoryLimit] = useState(5);
-  const [showAllCategories, setShowAllCategories] = useState(false);
-  const [categoryRefreshTrigger, setCategoryRefreshTrigger] = useState(0);
+  
+  // Trending hashtags (mock data for now)
+  const [trendingHashtags] = useState([
+    '#TechMeetup2024',
+    '#SummerVibes',
+    '#LiveMusic',
+    '#ArtBasel',
+    '#FoodieHeaven'
+  ]);
 
   // Auth context
   const { currentUser } = useContext(AuthContext);
 
-  // Handle navigation params for friend suggestions
-  useEffect(() => {
-    if (route.params?.showSuggestions) {
-      setShowSuggestions(true);
-      fetchFriendSuggestions();
-    }
-  }, [route.params?.showSuggestions]);
+  // Swipe animation refs
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const currentTabIndex = useRef(0);
+  const isAnimating = useRef(false);
+  const tabScrollViewRef = useRef(null);
+  const tabLayouts = useRef({}); // Store tab layout positions
 
-  // Load suggestions immediately if starting on users tab
-  useEffect(() => {
-    if (tab === 'users') {
+  // Fetch friend suggestions
+  const fetchFriendSuggestions = async () => {
+    try {
+      setLoadingSuggestions(true);
+      const { data } = await api.get('/api/friends/suggestions', {
+        params: { limit: 15 }
+      });
+      
+      if (data.success) {
+        setSuggestions(data.suggestions || []);
+      } else {
+        setSuggestions([]);
+      }
+    } catch (error) {
+      console.error('Error fetching suggestions:', error);
+      setSuggestions([]);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  // Switch to tab function
+  const switchToTab = useCallback((index) => {
+    if (isAnimating.current) return;
+    if (index < 0 || index >= TABS.length) return;
+    
+    isAnimating.current = true;
+    currentTabIndex.current = index;
+    const newTab = TABS[index];
+    setActiveTab(newTab);
+    setQuery('');
+    setResults([]);
+
+    Animated.spring(scrollX, {
+      toValue: -index * SCREEN_WIDTH,
+      useNativeDriver: true,
+      tension: 50,
+      friction: 7,
+    }).start(() => {
+      isAnimating.current = false;
+    });
+
+
+    // Scroll tab indicator to center
+    if (tabScrollViewRef.current) {
+      const tabWidth = 60; // Tab minWidth
+      const gap = 24; // Gap between tabs
+      const offset = Math.max(0, (index * (tabWidth + gap)) - SCREEN_WIDTH / 2 + tabWidth / 2);
+      tabScrollViewRef.current.scrollTo({ x: offset, animated: true });
+    }
+
+    // Load suggestions for people tab
+    if (newTab === 'people') {
       fetchFriendSuggestions();
     }
-  }, []); // Only run once on mount
+  }, [scrollX]);
+
+  // PanResponder for horizontal swipe - only in main content area
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        const { dx, dy, y0 } = gestureState;
+        
+        // Don't capture if gesture started in header area (search bar, tabs, trending)
+        const HEADER_AREA_HEIGHT = 200; // Approximate height of header + tabs + trending
+        if (y0 < HEADER_AREA_HEIGHT) {
+          return false;
+        }
+        
+        // Only respond to strong horizontal swipes in main content area
+        const isStrongHorizontalSwipe = Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy) * 2;
+        return isStrongHorizontalSwipe && !isAnimating.current;
+      },
+      onPanResponderGrant: () => {
+        scrollX.stopAnimation();
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (isAnimating.current) return;
+        
+        const { dx } = gestureState;
+        const currentTab = currentTabIndex.current;
+        const baseOffset = -currentTab * SCREEN_WIDTH;
+        let newOffset = baseOffset + dx;
+        
+        // Add resistance at boundaries
+        const minOffset = -(TABS.length - 1) * SCREEN_WIDTH;
+        const maxOffset = 0;
+        const RESISTANCE_FACTOR = 0.25;
+        
+        if (newOffset > maxOffset) {
+          newOffset = maxOffset + (newOffset - maxOffset) * RESISTANCE_FACTOR;
+        } else if (newOffset < minOffset) {
+          newOffset = minOffset + (newOffset - minOffset) * RESISTANCE_FACTOR;
+        }
+        
+        if (Number.isFinite(newOffset)) {
+          scrollX.setValue(newOffset);
+          // Update indicator position proportionally during swipe
+          const progress = -newOffset / SCREEN_WIDTH;
+          // Indicator position will be updated by onLayout when tab changes
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (isAnimating.current) return;
+        
+        const { dx, vx } = gestureState;
+        const currentTab = currentTabIndex.current;
+        let targetIndex = currentTab;
+        
+        const DISTANCE_THRESHOLD = 80;
+        const VELOCITY_THRESHOLD = 0.4;
+        
+        const shouldSwipe = Math.abs(dx) > DISTANCE_THRESHOLD || Math.abs(vx) > VELOCITY_THRESHOLD;
+        
+        if (shouldSwipe) {
+          // Swiping right (dx > 0) - go to previous tab
+          if (dx > 0) {
+            if (currentTab === 0) {
+              // On "all" tab - exit screen
+              navigation.goBack();
+              return;
+            } else {
+              targetIndex = currentTab - 1;
+            }
+          } 
+          // Swiping left (dx < 0) - go to next tab
+          else if (dx < 0 && currentTab < TABS.length - 1) {
+            targetIndex = currentTab + 1;
+          }
+        }
+        
+        switchToTab(targetIndex);
+      },
+      onPanResponderTerminationRequest: () => {
+        // Allow termination to let nested ScrollViews work
+        return true;
+      },
+      onPanResponderTerminate: () => {
+        isAnimating.current = false;
+        // Snap back to current tab
+        switchToTab(currentTabIndex.current);
+      },
+    })
+  ).current;
+
+  // Load suggestions on mount for people tab
+  useEffect(() => {
+    if (activeTab === 'people' && query.trim() === '') {
+      fetchFriendSuggestions();
+    }
+  }, [activeTab]);
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (query.trim().length > 0) {
+        performSearch();
+      } else {
+        setResults([]);
+        // Load suggestions for people tab when query is empty
+        if (activeTab === 'people') {
+          fetchFriendSuggestions();
+        }
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [query, activeTab]);
 
   // Navigation header setup
   useEffect(() => {
     navigation.setOptions({
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#E1E1E1',
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 18,
-        color: '#000000',
-      },
-      headerTitle: showSuggestions ? 'People You May Know' : 'Search',
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-back" size={26} color="#000000" />
-        </TouchableOpacity>
-      ),
+      headerShown: false,
+      gestureEnabled: false, // Disable default back gesture, we'll handle it
     });
-  }, [navigation, showSuggestions]);
+  }, [navigation]);
 
-  // Enhanced auto-loading useEffect
-    useEffect(() => {
-    if (tab === 'users' && query.trim() === '' && suggestions.length === 0 && !loadingSuggestions) {
-      console.log('🚀 Loading friend suggestions for users tab...');
-      fetchFriendSuggestions();
-    }
-  }, [tab]); // Only depend on tab change, not suggestions.length
 
-  // Separate effect to clear results when query is empty
-  useEffect(() => {
-    if (query.trim() === '') {
-      setResults([]);
-    }
-  }, [query]);
-
-  // Debounced search effect - Instagram/Facebook style timing
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (query.trim().length > 0) {
-        runEnhancedSearch();
-      } else {
-        setResults([]);
-      }
-    }, 150); // Optimized timing - fast but not overwhelming
-
-    return () => clearTimeout(timeoutId);
-  }, [query, tab, searchType]);
-
-  // CLEAN: Enhanced search function (no more infinite loops!)
-  const runEnhancedSearch = async () => {
+  // Perform search based on active tab
+  const performSearch = async () => {
     if (!query.trim()) {
       setResults([]);
       return;
@@ -114,286 +249,204 @@ export default function SearchScreen({ navigation, route }) {
     
     setLoading(true);
     try {
-      console.log(`🔍 CLEAN SEARCH: ${tab} - "${query}" (Type: ${searchType})`);
+      let endpoint = '';
+      let params = { q: query };
+
+      switch (activeTab) {
+        case 'all':
+          // Search all types
+          await searchAll();
+          return;
+        case 'people':
+          endpoint = '/api/users/search';
+          params.limit = 20;
+          break;
+        case 'songs':
+          endpoint = '/api/reviews/search-songs';
+          params.query = query;
+          params.limit = 20;
+          break;
+        case 'movies':
+          endpoint = '/api/reviews/search-movies';
+          params.query = query;
+          params.page = 1;
+          break;
+        case 'posts':
+          endpoint = '/api/search/posts';
+          break;
+        case 'events':
+          endpoint = '/api/search/events';
+          break;
+        default:
+          setLoading(false);
+          return;
+      }
+
+      const response = await api.get(endpoint, { params });
       
-      if (tab === 'users') {
-        let endpoint = '/api/users/search';
-        let params = { q: query, limit: 20 };
-        
-        // Use friends-only search if filter is set to friends
-        if (searchType === 'friends') {
-          endpoint = '/api/users/friends/search';
-        } else {
-          params.includeNonFriends = 'true';
-        }
-        
-        const response = await api.get(endpoint, { params });
-        const searchResults = response.data || [];
-        
-        console.log(`✅ CLEAN SEARCH: Found ${searchResults.length} results`);
-        
-        // Update friend statuses for UI
-        const statusMap = {};
-        searchResults.forEach(user => {
-          statusMap[user._id] = user.relationshipStatus || 'unknown';
-        });
-        setFriendStatuses(statusMap);
-        
-        setResults(searchResults);
+      if (activeTab === 'songs' || activeTab === 'movies') {
+        setResults(response.data.items || response.data.results || []);
       } else {
-        // Search events (existing functionality)
-        const response = await api.get(`/api/search/events`, {
-          params: { q: query }
-        });
         setResults(response.data || []);
       }
-      
     } catch (error) {
-      console.error('❌ Clean search error:', error);
+      console.error('Search error:', error);
       setResults([]);
-      
-      // Better error handling
-      if (error.response?.status === 429) {
-        Alert.alert('Too Many Requests', 'Please slow down your searching.');
-      } else if (error.response?.status === 500) {
-        Alert.alert('Server Error', 'Search is temporarily unavailable.');
-      } else {
-        Alert.alert('Search Error', 'Could not complete search. Please try again.');
-      }
+      Alert.alert('Search Error', 'Could not complete search. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch friend suggestions using existing friends.js API
-  const fetchFriendSuggestions = async () => {
+  // Search all types
+  const searchAll = async () => {
     try {
-      setLoadingSuggestions(true);
-      console.log('🎯 Fetching friend suggestions...');
+      const [usersRes, postsRes, eventsRes, songsRes, moviesRes] = await Promise.allSettled([
+        api.get('/api/users/search', { params: { q: query, limit: 5 } }),
+        api.get('/api/search/posts', { params: { q: query } }).then(r => r.data.slice(0, 5)),
+        api.get('/api/search/events', { params: { q: query } }).then(r => r.data.slice(0, 5)),
+        api.get('/api/reviews/search-songs', { params: { query, limit: 5 } }),
+        api.get('/api/reviews/search-movies', { params: { query, page: 1 } })
+      ]);
+
+      const allResults = [];
       
-      const { data } = await api.get('/api/friends/suggestions', {
-        params: { limit: 15 }
-      });
-      
-      if (data.success) {
-        setSuggestions(data.suggestions || []);
-        console.log(`📱 Loaded ${data.suggestions?.length || 0} suggestions`);
-      } else {
-        setSuggestions([]);
+      if (usersRes.status === 'fulfilled' && usersRes.value.data) {
+        allResults.push(...usersRes.value.data.map(u => ({ ...u, _type: 'user' })));
       }
+      if (postsRes.status === 'fulfilled' && postsRes.value) {
+        allResults.push(...postsRes.value.map(p => ({ ...p, _type: 'post' })));
+      }
+      if (eventsRes.status === 'fulfilled' && eventsRes.value) {
+        allResults.push(...eventsRes.value.map(e => ({ ...e, _type: 'event' })));
+      }
+      if (songsRes.status === 'fulfilled' && songsRes.value.data?.items) {
+        allResults.push(...songsRes.value.data.items.map(s => ({ ...s, _type: 'song' })));
+      }
+      if (moviesRes.status === 'fulfilled' && moviesRes.value.data?.results) {
+        allResults.push(...moviesRes.value.data.results.map(m => ({ ...m, _type: 'movie' })));
+      }
+
+      setResults(allResults);
     } catch (error) {
-      console.error('❌ Error fetching suggestions:', error);
-      setSuggestions([]);
-    } finally {
-      setLoadingSuggestions(false);
+      console.error('Search all error:', error);
+      setResults([]);
     }
   };
 
-  // ENHANCED: Send friend request with instant UX
+  // Send friend request
   const sendFriendRequest = async (userId, username) => {
     try {
-      console.log(`📤 ENHANCED: Sending friend request to user: ${userId}`);
-      
-      // Update UI immediately for instant feedback
+      // Update UI immediately
       setResults(prev => prev.map(user => 
         user._id === userId 
-          ? { 
-              ...user, 
-              relationshipStatus: 'request-sent', 
-              priorityReason: 'Friend request sent',
-              canAddFriend: false 
-            }
+          ? { ...user, relationshipStatus: 'request-sent', canAddFriend: false }
           : user
       ));
       
-      // Update friend statuses
-      setFriendStatuses(prev => ({
-        ...prev,
-        [userId]: 'request-sent'
-      }));
-      
-      // Update suggestions to show "Requested" status instead of removing
       setSuggestions(prev => prev.map(user => 
         user._id === userId 
-          ? { 
-              ...user, 
-              relationshipStatus: 'request-sent', 
-              priorityReason: 'Friend request sent',
-              canAddFriend: false 
-            }
+          ? { ...user, relationshipStatus: 'request-sent', canAddFriend: false }
+          : user
+      ));
+
+      await api.post(`/api/friends/request/${userId}`);
+    } catch (error) {
+      console.error('Error sending friend request:', error);
+      Alert.alert('Error', 'Could not send friend request. Please try again.');
+      
+      // Revert UI
+      setResults(prev => prev.map(user => 
+        user._id === userId 
+          ? { ...user, relationshipStatus: 'not-friends', canAddFriend: true }
           : user
       ));
       
-      try {
-        // Send API request in background
-        await api.post(`/api/friends/request/${userId}`);
-        console.log('✅ ENHANCED: Friend request sent successfully');
-      } catch (error) {
-        console.error('❌ ENHANCED: Error sending friend request:', error);
-        
-        // Revert UI changes on error
-        setResults(prev => prev.map(user => 
-          user._id === userId 
-            ? { 
-                ...user, 
-                relationshipStatus: 'not-friends', 
-                priorityReason: null,
-                canAddFriend: true 
-              }
-            : user
-        ));
-        
-        setFriendStatuses(prev => ({
-          ...prev,
-          [userId]: 'not-friends'
-        }));
-        
-        // Revert suggestions on error
-        setSuggestions(prev => prev.map(user => 
-          user._id === userId 
-            ? { 
-                ...user, 
-                relationshipStatus: 'not-friends', 
-                priorityReason: null,
-                canAddFriend: true 
-              }
-            : user
-        ));
-        
-        let errorMessage = 'Could not send friend request. Please try again.';
-        if (error.response?.status === 400) {
-          errorMessage = error.response.data.error || errorMessage;
-        } else if (error.response?.status === 409) {
-          errorMessage = 'Friend request already exists or you are already friends.';
-        }
-        
-        Alert.alert('Error', errorMessage);
-      }
-    } catch (error) {
-      console.error('❌ ENHANCED: Error in sendFriendRequest:', error);
+      setSuggestions(prev => prev.map(user => 
+        user._id === userId 
+          ? { ...user, relationshipStatus: 'not-friends', canAddFriend: true }
+          : user
+      ));
     }
   };
 
-  // Format mutual friends with names first, then count
-  const formatMutualFriends = (mutualFriendsDetails, totalCount) => {
-    if (!mutualFriendsDetails?.length && !totalCount) return null;
-    
-    if (mutualFriendsDetails && mutualFriendsDetails.length > 0) {
-      const names = mutualFriendsDetails.slice(0, 2).map(f => f.displayName || f.username);
-      const remaining = totalCount - names.length;
-      
-      if (names.length === 1) {
-        return remaining > 0 ? `${names[0]} and ${remaining} more` : names[0];
-      } else if (names.length === 2) {
-        return remaining > 0 ? `${names[0]}, ${names[1]} and ${remaining} more` : `${names[0]} and ${names[1]}`;
-      }
-    }
-    
-    // Fallback to count only
-    if (totalCount > 0) {
-      return `${totalCount} mutual friend${totalCount > 1 ? 's' : ''}`;
-    }
-    
-    return null;
-  };
-
-  // Get connection reason for why someone was suggested
-  const getConnectionReason = (user) => {
-    const mutualFriendsCount = user.mutualFriends || user.mutualFriendsCount || 0;
-    const mutualEventsCount = user.mutualEvents || user.mutualEventsCount || user.eventCoAttendance || 0;
-    
-    // Prioritize showing mutual friends if they exist
-    if (mutualFriendsCount > 0) {
-      return formatMutualFriends(user.mutualFriendsDetails, mutualFriendsCount);
-    }
-    
-    // Show events if no mutual friends
-    if (mutualEventsCount > 0) {
-      return `Attended ${mutualEventsCount} event${mutualEventsCount > 1 ? 's' : ''} together`;
-    }
-    
-    // Other connection reasons
-    if (user.reason) {
-      return user.reason;
-    }
-    
-    // Fallback
-    return "Suggested for you";
-  };
-
-  // Get button configuration based on relationship status
+  // Get button config for friend status
   const getButtonConfig = (relationshipStatus) => {
     switch (relationshipStatus) {
       case 'friends':
-        return { text: 'Friends', color: '#34C759', bgColor: '#F0FFF0', icon: 'checkmark-circle', disabled: true };
+        return { text: 'Friends', color: COLORS.success, bgColor: COLORS.successLight, disabled: true };
       case 'request-sent':
-        return { text: 'Requested', color: '#FF9500', bgColor: '#FFF8F0', icon: 'time', disabled: true };
+        return { text: 'Requested', color: COLORS.textSecondary, bgColor: COLORS.border, disabled: true };
       case 'request-received':
-        return { text: 'Respond', color: '#34C759', bgColor: '#F0FFF0', icon: 'person-add', disabled: false };
-      case 'not-friends':
+        return { text: 'Respond', color: COLORS.primary, bgColor: COLORS.primaryLight, disabled: false };
       default:
-        return { text: 'Add', color: '#3797EF', bgColor: '#F0F7FF', icon: 'person-add-outline', disabled: false };
+        return { text: 'Add Friend', color: COLORS.primary, bgColor: COLORS.primaryLight, disabled: false };
     }
   };
 
-  // Universal User Row Component
-  const UserRow = ({ user, isSearchResult = false }) => {
-    const avatar = user.profilePicture
-      ? `http://${API_BASE_URL}${user.profilePicture}`
-      : `https://placehold.co/50x50/C7C7CC/FFFFFF?text=${user.username?.charAt(0).toUpperCase() || '?'}`;
+  // Render user row (modernized UI)
+  const renderUserRow = ({ item }) => {
+    const avatar = item.profilePicture
+      ? `http://${API_BASE_URL}${item.profilePicture}`
+      : `https://placehold.co/48x48/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`;
 
-    const relationshipStatus = user.relationshipStatus || friendStatuses[user._id] || 'not-friends';
-    const connectionReason = getConnectionReason(user);
+    const relationshipStatus = item.relationshipStatus || 'not-friends';
     const buttonConfig = getButtonConfig(relationshipStatus);
     const canSendRequest = !buttonConfig.disabled && relationshipStatus === 'not-friends';
 
     return (
       <TouchableOpacity
         style={styles.userRow}
-        onPress={() => navigation.navigate('ProfileScreen', { userId: user._id })}
+        onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
         activeOpacity={0.95}
       >
         <View style={styles.userContent}>
-          <Image source={{ uri: avatar }} style={styles.userAvatar} />
+          <View style={styles.avatarContainer}>
+            <Image source={{ uri: avatar }} style={styles.userAvatar} />
+            {item.verified && (
+              <View style={styles.verifiedBadge}>
+                <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+              </View>
+            )}
+          </View>
           
           <View style={styles.userInfo}>
-            <Text style={styles.username} numberOfLines={1}>
-              {user.displayName || user.username}
-            </Text>
-            
+            <View style={styles.userNameRow}>
+              <Text style={styles.username} numberOfLines={1}>
+                {item.displayName || item.username}
+              </Text>
+            </View>
             <Text style={styles.handle} numberOfLines={1}>
-              @{user.username}
+              @{item.username}
             </Text>
-            
-            {connectionReason && (
-              <Text style={styles.connectionReason} numberOfLines={1}>
-                {connectionReason}
+            {item.profession && (
+              <Text style={styles.profession} numberOfLines={1}>
+                {item.profession}
               </Text>
             )}
           </View>
 
-          {/* Action button */}
           <TouchableOpacity
             style={[
-              styles.actionButton,
-              { backgroundColor: buttonConfig.bgColor, borderColor: buttonConfig.color }
+              styles.friendButton,
+              { 
+                backgroundColor: buttonConfig.disabled ? COLORS.border : COLORS.primary,
+                borderColor: buttonConfig.disabled ? COLORS.border : COLORS.primary
+              }
             ]}
             onPress={(e) => {
               e.stopPropagation();
-              if (relationshipStatus === 'request-received') {
-                navigation.navigate('FriendsListScreen', { 
-                  userId: currentUser._id, 
-                  mode: 'requests' 
-                });
-              } else if (canSendRequest) {
-                sendFriendRequest(user._id, user.username);
+              if (canSendRequest) {
+                sendFriendRequest(item._id, item.username);
               }
             }}
             activeOpacity={0.7}
-            disabled={buttonConfig.disabled && relationshipStatus !== 'request-received'}
+            disabled={buttonConfig.disabled}
           >
-            <Ionicons name={buttonConfig.icon} size={16} color={buttonConfig.color} />
-            <Text style={[styles.actionButtonText, { color: buttonConfig.color }]}>
+            <Text style={[
+              styles.friendButtonText, 
+              { color: buttonConfig.disabled ? COLORS.textSecondary : '#FFFFFF' }
+            ]}>
               {buttonConfig.text}
             </Text>
           </TouchableOpacity>
@@ -401,355 +454,504 @@ export default function SearchScreen({ navigation, route }) {
       </TouchableOpacity>
     );
   };
-const shouldShowCategories = () => {
-  return (
-    tab === 'events' && 
-    query.trim() === '' && 
-    results.length === 0 &&
-    !loading &&
-    !showSuggestions
-  );
-};
-// ✅ NEW: Category refresh handler
-const handleCategoryRefresh = () => {
-  setCategoryRefreshTrigger(prev => prev + 1);
-};
 
-// ✅ NEW: Toggle show all categories
-const toggleShowAllCategories = () => {
-  setShowAllCategories(prev => !prev);
-};
-  // Render search result item (updated to use enhanced user item)
-  const renderSearchResult = ({ item }) => {
-    if (tab === 'users') {
-      return <UserRow user={item} isSearchResult={true} />;
-    } else {
-      // Event rendering (existing logic)
-      return (
-        <TouchableOpacity 
-          style={styles.eventRow}
-          onPress={() => navigation.navigate('EventDetailsScreen', { eventId: item._id })}
-          activeOpacity={0.95}
-        >
-          <View style={styles.eventContent}>
-            <View style={styles.eventImageContainer}>
-              {item.coverImage ? (
-                <Image
-                  source={{ uri: `http://${API_BASE_URL}${item.coverImage}` }}
-                  style={styles.eventImage}
-                />
-              ) : (
-                <View style={styles.eventImagePlaceholder}>
-                  <Ionicons name="calendar-outline" size={24} color="#8E8E93" />
-                </View>
-              )}
-            </View>
-            <View style={styles.eventInfo}>
-              <Text style={styles.eventTitle} numberOfLines={2}>{item.title}</Text>
-              {item.location?.address && (
-                <Text style={styles.eventLocation} numberOfLines={1}>
-                  {item.location.address}
-                </Text>
-              )}
-              {item.time && (
-                <Text style={styles.eventTime}>
-                  {new Date(item.time).toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit'
-                  })}
-                </Text>
-              )}
-              {item.host && (
-                <Text style={styles.eventHost}>by {item.host.username}</Text>
-              )}
-            </View>
-          </View>
-        </TouchableOpacity>
-      );
-    }
-  };
+  // Render event card (keeping existing UI)
+  const renderEventCard = ({ item }) => {
+    const eventDate = item.time ? new Date(item.time) : null;
+    const month = eventDate ? eventDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '';
+    const day = eventDate ? eventDate.getDate() : '';
+    
+    const coverImage = item.coverImage 
+      ? `http://${API_BASE_URL}${item.coverImage}`
+      : null;
 
-  // Main render
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-      {/* Friend Suggestions View */}
-      {showSuggestions ? (
-        <View style={styles.suggestionsContainer}>
-          <View style={styles.suggestionsHeader}>
-            <Text style={styles.suggestionsTitle}>People You May Know</Text>
-            <TouchableOpacity onPress={() => setShowSuggestions(false)}>
-              <Text style={styles.hideSuggestions}>Search Instead</Text>
-            </TouchableOpacity>
+    return (
+      <TouchableOpacity 
+        style={styles.eventCard}
+        onPress={() => navigation.navigate('EventDetailsScreen', { eventId: item._id })}
+        activeOpacity={0.95}
+      >
+        <View style={styles.eventCardContent}>
+          {/* Date Badge */}
+          <View style={styles.eventDateBadge}>
+            <Text style={styles.eventMonth}>{month}</Text>
+            <Text style={styles.eventDay}>{day}</Text>
           </View>
           
-          {loadingSuggestions ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#3797EF" />
-              <Text style={styles.loadingText}>Finding people you may know...</Text>
-            </View>
-          ) : suggestions.length > 0 ? (
-            <FlatList
-              data={suggestions}
-              keyExtractor={(item) => item._id}
-              renderItem={({ item }) => <UserRow user={item} />}
-              showsVerticalScrollIndicator={false}
-              ItemSeparatorComponent={() => <View style={styles.separator} />}
-              refreshControl={
-                <RefreshControl
-                  refreshing={loadingSuggestions}
-                  onRefresh={fetchFriendSuggestions}
-                  tintColor="#3797EF"
-                />
-              }
-            />
-          ) : (
-            <View style={styles.emptyState}>
-              <Ionicons name="people-outline" size={64} color="#C7C7CC" />
-              <Text style={styles.emptyTitle}>No Suggestions Available</Text>
-              <Text style={styles.emptySubtext}>
-                Add more friends or attend events to get personalized suggestions
-              </Text>
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={() => setShowSuggestions(false)}
-              >
-                <Text style={styles.primaryButtonText}>Search for People</Text>
+          {/* Content */}
+          <View style={styles.eventInfo}>
+            <View style={styles.eventHeader}>
+              <View style={styles.eventStatusBadge}>
+                <Text style={styles.eventStatusText}>Selling Fast</Text>
+              </View>
+              <TouchableOpacity>
+                <Ionicons name="bookmark-outline" size={20} color={COLORS.textSecondary} />
               </TouchableOpacity>
+            </View>
+            
+            <Text style={styles.eventTitle} numberOfLines={1}>{item.title}</Text>
+            
+            {item.location?.address && (
+              <View style={styles.eventLocation}>
+                <Ionicons name="location" size={16} color={COLORS.primary} />
+                <Text style={styles.eventLocationText} numberOfLines={1}>
+                  {item.location.address}
+                </Text>
+              </View>
+            )}
+            
+            {item.attendees && item.attendees.length > 0 && (
+              <View style={styles.eventAttendees}>
+                <View style={styles.attendeeAvatars}>
+                  {item.attendees.slice(0, 3).map((attendee, idx) => (
+                    <Image
+                      key={idx}
+                      source={{ 
+                        uri: attendee.profilePicture 
+                          ? `http://${API_BASE_URL}${attendee.profilePicture}`
+                          : `https://placehold.co/20x20/C7C7CC/FFFFFF?text=${attendee.username?.charAt(0) || '?'}`
+                      }}
+                      style={styles.attendeeAvatar}
+                    />
+                  ))}
+                </View>
+                <Text style={styles.attendeeCount}>
+                  +{item.attendees.length} going
+                </Text>
+              </View>
+            )}
+          </View>
+          
+          {/* Image */}
+          {coverImage && (
+            <Image source={{ uri: coverImage }} style={styles.eventImage} />
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Render post card
+  const renderPostCard = ({ item }) => {
+    return (
+      <View style={styles.postCard}>
+        <PostCard 
+          post={item} 
+          currentUserId={currentUser?._id} 
+          navigation={navigation}
+        />
+      </View>
+    );
+  };
+
+  // Render song card
+  const renderSongCard = ({ item }) => {
+    return (
+      <TouchableOpacity
+        style={styles.mediaCard}
+        onPress={() => {
+          // Navigate to song details or create review
+          navigation.navigate('PostDetailsScreen', { 
+            songId: item.id,
+            song: item 
+          });
+        }}
+        activeOpacity={0.95}
+      >
+        <Image
+          source={{ uri: item.album?.images?.[0]?.url || item.images?.[0]?.url }}
+          style={styles.mediaImage}
+        />
+        <View style={styles.mediaInfo}>
+          <Text style={styles.mediaTitle} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Text style={styles.mediaSubtitle} numberOfLines={1}>
+            {item.artists?.[0]?.name || 'Unknown Artist'}
+          </Text>
+          {item.album && (
+            <Text style={styles.mediaMeta} numberOfLines={1}>
+              {item.album.name}
+            </Text>
+          )}
+        </View>
+        <Ionicons name="musical-notes" size={24} color={COLORS.primary} />
+      </TouchableOpacity>
+    );
+  };
+
+  // Render movie card
+  const renderMovieCard = ({ item }) => {
+    const posterUrl = item.poster_path 
+      ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
+      : null;
+
+    return (
+      <TouchableOpacity
+        style={styles.mediaCard}
+        onPress={() => {
+          // Navigate to movie details or create review
+          navigation.navigate('PostDetailsScreen', { 
+            movieId: item.id,
+            movie: item 
+          });
+        }}
+        activeOpacity={0.95}
+      >
+        {posterUrl ? (
+          <Image source={{ uri: posterUrl }} style={styles.mediaImage} />
+        ) : (
+          <View style={[styles.mediaImage, styles.mediaImagePlaceholder]}>
+            <Ionicons name="film-outline" size={32} color={COLORS.textSecondary} />
+          </View>
+        )}
+        <View style={styles.mediaInfo}>
+          <Text style={styles.mediaTitle} numberOfLines={2}>
+            {item.title}
+          </Text>
+          {item.release_date && (
+            <Text style={styles.mediaSubtitle}>
+              {new Date(item.release_date).getFullYear()}
+            </Text>
+          )}
+          {item.vote_average && (
+            <View style={styles.ratingContainer}>
+              <Ionicons name="star" size={14} color="#FFD700" />
+              <Text style={styles.ratingText}>{item.vote_average.toFixed(1)}</Text>
             </View>
           )}
         </View>
-      ) : (
-        // Regular Search View
-        <>
-          {/* Search Input */}
-          <View style={styles.searchContainer}>
-            <View style={styles.searchInputContainer}>
-              <Ionicons name="search-outline" size={20} color="#8E8E93" style={styles.searchIcon} />
-              <TextInput
-                value={query}
-                onChangeText={setQuery}
-                placeholder={`Search ${tab}...`}
-                style={styles.searchInput}
-                onSubmitEditing={runEnhancedSearch}
-                returnKeyType="search"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {query.length > 0 && (
-                <TouchableOpacity onPress={() => { setQuery(''); setResults([]); }}>
-                  <Ionicons name="close-circle" size={20} color="#8E8E93" />
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
+        <Ionicons name="film" size={24} color={COLORS.primary} />
+      </TouchableOpacity>
+    );
+  };
 
-          {/* Tab Selector */}
-          <View style={styles.tabContainer}>
-            <TouchableOpacity 
-              style={[styles.tabButton, tab === 'users' && styles.activeTab]}
-              onPress={() => {
-                setTab('users');
-                setQuery(''); // Clear search
-                setResults([]);
-                // Force suggestions load when switching to users tab
-                if (suggestions.length === 0 && !loadingSuggestions) {
-                  console.log('🚀 Loading suggestions for users tab switch...');
-                  fetchFriendSuggestions();
-                }
-              }}
-            >
-              <Text style={[styles.tabText, tab === 'users' && styles.activeTabText]}>
-                People
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.tabButton, tab === 'events' && styles.activeTab]}
-              onPress={() => {
-                setTab('events');
-                setQuery(''); // Clear search
-                setResults([]);
-              }}
-            >
-              <Text style={[styles.tabText, tab === 'events' && styles.activeTabText]}>
-                Events
-              </Text>
-            </TouchableOpacity>
-          </View>
+  // Render all results (for "All" tab)
+  const renderAllResult = ({ item }) => {
+    switch (item._type) {
+      case 'user':
+        return renderUserRow({ item });
+      case 'post':
+        return renderPostCard({ item });
+      case 'event':
+        return renderEventCard({ item });
+      case 'song':
+        return renderSongCard({ item });
+      case 'movie':
+        return renderMovieCard({ item });
+      default:
+        return null;
+    }
+  };
 
-          {/* Search Filter (for users only) */}
-          {tab === 'users' && query.length > 0 && (
-            <View style={styles.filterContainer}>
-              <TouchableOpacity
-                style={[styles.filterButton, searchType === 'all' && styles.activeFilter]}
-                onPress={() => setSearchType('all')}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.filterText, searchType === 'all' && styles.activeFilterText]}>
-                  All People
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.filterButton, searchType === 'friends' && styles.activeFilter]}
-                onPress={() => setSearchType('friends')}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.filterText, searchType === 'friends' && styles.activeFilterText]}>
-                  Friends Only
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
+  // Render result based on active tab
+  const renderResult = ({ item }) => {
+    switch (activeTab) {
+      case 'people':
+        return renderUserRow({ item });
+      case 'posts':
+        return renderPostCard({ item });
+      case 'events':
+        return renderEventCard({ item });
+      case 'songs':
+        return renderSongCard({ item });
+      case 'movies':
+        return renderMovieCard({ item });
+      case 'all':
+        return renderAllResult({ item });
+      default:
+        return null;
+    }
+  };
 
-          {/* Search Results */}
-          <FlatList 
-            data={results} 
-            keyExtractor={(item) => item._id} 
-            renderItem={renderSearchResult}
-            contentContainerStyle={styles.resultsList}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={() => {
-              if (loading) {
-                return (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#3797EF" />
-                    <Text style={styles.loadingText}>Searching...</Text>
-                  </View>
-                );
-              }
-              
-              if (query.trim()) {
-                return (
-                  <View style={styles.emptyState}>
-                    <Ionicons 
-                      name={tab === 'users' ? 'people-outline' : 'calendar-outline'} 
-                      size={64} 
-                      color="#C7C7CC" 
-                    />
-                    <Text style={styles.emptyTitle}>
-                      No {tab} found
-                    </Text>
-                    <Text style={styles.emptySubtext}>
-                      Try different keywords or check your spelling
-                    </Text>
-                    {tab === 'users' && searchType === 'friends' && (
-                      <TouchableOpacity
-                        style={styles.secondaryButton}
-                        onPress={() => setSearchType('all')}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.secondaryButtonText}>Search All People</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              }
-              
-              // No search query - show appropriate content based on tab
-              return (
-                <View style={styles.welcomeContainer}>
-                  {tab === 'users' ? (
-                    // Users tab logic
-                    loadingSuggestions ? (
-                      <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#3797EF" />
-                        <Text style={styles.loadingText}>Finding people you may know...</Text>
-                      </View>
-                    ) : suggestions.length > 0 ? (
-                      <>
-                        <View style={styles.sectionHeader}>
-                          <Text style={styles.sectionTitle}>People You May Know</Text>
-                        </View>
-                        
-                        <FlatList
-                          data={suggestions}
-                          keyExtractor={(item) => item._id}
-                          renderItem={({ item }) => <UserRow user={item} />}
-                          showsVerticalScrollIndicator={false}
-                          ItemSeparatorComponent={() => <View style={styles.separator} />}
-                          scrollEnabled={true}
-                          nestedScrollEnabled={true}
-                          refreshControl={
-                            <RefreshControl
-                              refreshing={loadingSuggestions}
-                              onRefresh={fetchFriendSuggestions}
-                              tintColor="#3797EF"
-                            />
-                          }
-                        />
-                      </>
-                    ) : (
-                      // Fallback if no suggestions available
-                      <View style={styles.emptyState}>
-                        <Ionicons name="people-outline" size={64} color="#C7C7CC" />
-                        <Text style={styles.emptyTitle}>Find Friends</Text>
-                        <Text style={styles.emptySubtext}>
-                          Search for people by username, name, or email
-                        </Text>
-                      </View>
-                    )
-                  ) : (
-                    // Events tab - show categories when empty, search results when typing
-                    shouldShowCategories() ? (
-                      <CategoryManager
-                        navigation={navigation}
-                        currentUserId={currentUser?._id}
-                        refreshTrigger={categoryRefreshTrigger}
-                        maxCategories={showAllCategories ? undefined : categoryLimit}
-                        onRefresh={handleCategoryRefresh}
-                        style={styles.categoryContainer}
-                        showToggle={true}
-                        onToggleShowAll={toggleShowAllCategories}
-                        showAllState={showAllCategories}
-                      />
-                    ) : (
-                      <View style={styles.emptyState}>
-                        <Ionicons name="calendar-outline" size={64} color="#C7C7CC" />
-                        <Text style={styles.emptyTitle}>Search Events</Text>
-                        <Text style={styles.emptySubtext}>
-                          Discover events by title or location
-                        </Text>
-                      </View>
-                    )
-                  )}
-                </View>
-              );
-            }}
+  // Render empty state
+  const renderEmptyState = () => {
+    if (loading) {
+      return (
+        <View style={styles.emptyState}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.emptyText}>Searching...</Text>
+        </View>
+      );
+    }
+
+    if (query.trim()) {
+      return (
+        <View style={styles.emptyState}>
+          <Ionicons 
+            name={
+              activeTab === 'people' ? 'people-outline' :
+              activeTab === 'events' ? 'calendar-outline' :
+              activeTab === 'posts' ? 'document-text-outline' :
+              activeTab === 'songs' ? 'musical-notes-outline' :
+              activeTab === 'movies' ? 'film-outline' :
+              'search-outline'
+            } 
+            size={64} 
+            color={COLORS.textSecondary} 
           />
-        </>
-      )}
-    </SafeAreaView>
+          <Text style={styles.emptyTitle}>No results found</Text>
+          <Text style={styles.emptySubtext}>
+            Try different keywords or check your spelling
+          </Text>
+        </View>
+      );
+    }
+
+    // Show suggestions or trending content when no query
+    if (activeTab === 'people' && suggestions.length > 0) {
+      return (
+        <View style={styles.suggestionsContainer}>
+          <Text style={styles.sectionTitle}>People to connect with</Text>
+          <FlatList
+            data={suggestions}
+            keyExtractor={(item) => item._id}
+            renderItem={renderUserRow}
+            scrollEnabled={false}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+          />
+        </View>
+      );
+    }
+
+    if (activeTab === 'events') {
+      return (
+        <CategoryManager
+          navigation={navigation}
+          currentUserId={currentUser?._id}
+        />
+      );
+    }
+
+    return (
+      <View style={styles.emptyState}>
+        <Ionicons 
+          name="search-outline" 
+          size={64} 
+          color={COLORS.textSecondary} 
+        />
+        <Text style={styles.emptyTitle}>Start searching</Text>
+        <Text style={styles.emptySubtext}>
+          Search for {activeTab === 'all' ? 'people, events, posts, songs, and movies' : activeTab}
+        </Text>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.surface} />
+      <SafeAreaView style={styles.safeAreaTop} />
+      
+      {/* Search Header */}
+      <View style={styles.searchHeader}>
+        {/* Back Button */}
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={24} color={COLORS.text} />
+        </TouchableOpacity>
+        
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={24} color={COLORS.textSecondary} style={styles.searchIcon} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search Events, People, & Tags"
+            placeholderTextColor={COLORS.textSecondary}
+            style={styles.searchInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {query.length > 0 && (
+            <TouchableOpacity onPress={() => setQuery('')}>
+              <Ionicons name="close-circle" size={20} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity>
+            <Ionicons name="mic-outline" size={20} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Tabs */}
+        <View style={styles.tabsWrapper}>
+          <ScrollView 
+            ref={tabScrollViewRef}
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.tabsContainer}
+            contentContainerStyle={styles.tabsContent}
+          >
+            {TABS.map((tab, index) => {
+              const isActive = activeTab === tab;
+              return (
+                <TouchableOpacity
+                  key={tab}
+                  style={styles.tab}
+                  onPress={() => switchToTab(index)}
+                  activeOpacity={0.7}
+                  onLayout={(event) => {
+                    const { x, width } = event.nativeEvent.layout;
+                    tabLayouts.current[index] = { x, width };
+                  }}
+                >
+                  <Text style={[
+                    styles.tabText,
+                    isActive && styles.tabTextActive
+                  ]}>
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {/* Tab Indicator - positioned at border, aligned with active tab */}
+          <View style={styles.tabIndicatorContainer}>
+            {TABS.map((tab, index) => {
+              const isActive = activeTab === tab;
+              const tabLayout = tabLayouts.current[index];
+              const indicatorWidth = tabLayout ? Math.min(tabLayout.width, 60) : 60;
+              const indicatorLeft = tabLayout ? tabLayout.x + (tabLayout.width / 2) - (indicatorWidth / 2) : 16 + index * 84;
+              
+              return (
+                <View
+                  key={tab}
+                  style={[
+                    styles.tabIndicator,
+                    isActive && styles.tabIndicatorActive,
+                    isActive && {
+                      position: 'absolute',
+                      left: indicatorLeft,
+                      width: indicatorWidth,
+                    }
+                  ]}
+                />
+              );
+            })}
+          </View>
+        </View>
+      </View>
+
+      {/* Swipeable Content */}
+      <View 
+        style={styles.swipeableContainer}
+        {...panResponder.panHandlers}
+      >
+        <Animated.View style={[
+          styles.swipeableContent,
+          { transform: [{ translateX: scrollX }] }]
+        }>
+          {TABS.map((tab, index) => {
+            const isCurrentTab = activeTab === tab;
+            return (
+              <View key={tab} style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
+                <FlatList
+                  data={isCurrentTab ? results : []}
+                  keyExtractor={(item, idx) => item._id || item.id || `item-${idx}`}
+                  renderItem={renderResult}
+                  contentContainerStyle={styles.resultsList}
+                  showsVerticalScrollIndicator={false}
+                  ListHeaderComponent={() => {
+                    // Trending Section (only when no query and on "all" tab)
+                    if (!query.trim() && activeTab === 'all' && isCurrentTab) {
+                      return (
+                        <View style={styles.trendingSection}>
+                          <View style={styles.trendingHeader}>
+                            <View style={styles.trendingTitleRow}>
+                              <Ionicons name="trending-up" size={20} color={COLORS.primary} />
+                              <Text style={styles.trendingTitle}>Trending Now</Text>
+                            </View>
+                            <TouchableOpacity>
+                              <Text style={styles.seeAllText}>See all</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <ScrollView 
+                            horizontal 
+                            showsHorizontalScrollIndicator={false}
+                            style={styles.trendingChips}
+                            contentContainerStyle={styles.trendingChipsContent}
+                            nestedScrollEnabled={true}
+                          >
+                            {trendingHashtags.map((tag, idx) => (
+                              <TouchableOpacity
+                                key={idx}
+                                style={styles.trendingChip}
+                                onPress={() => setQuery(tag)}
+                              >
+                                <Text style={styles.trendingChipHash}>#</Text>
+                                <Text style={styles.trendingChipText}>{tag.replace('#', '')}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      );
+                    }
+                    return null;
+                  }}
+                  ListEmptyComponent={isCurrentTab ? renderEmptyState : () => null}
+                  refreshControl={
+                    isCurrentTab ? (
+                      <RefreshControl
+                        refreshing={loading}
+                        onRefresh={performSearch}
+                        tintColor={COLORS.primary}
+                      />
+                    ) : undefined
+                  }
+                  scrollEnabled={isCurrentTab}
+                  nestedScrollEnabled={true}
+                />
+              </View>
+            );
+          })}
+        </Animated.View>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#FAFAFA' // Changed from #FFFFFF to match app background
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
   },
-  headerButton: {
+  safeAreaTop: {
+    backgroundColor: COLORS.surface,
+  },
+  searchHeader: {
+    backgroundColor: COLORS.surface,
+    paddingTop: 12,
+    paddingBottom: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  backButton: {
+    position: 'absolute',
+    left: 16,
+    top: 12,
+    zIndex: 10,
     padding: 8,
-    marginHorizontal: 8,
+    marginTop: 8,
   },
-  
-  // Search Input Styles
   searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F0F0',
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
+    marginHorizontal: 16,
+    marginLeft: 56, // Make room for back button
+    marginBottom: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   searchIcon: {
     marginRight: 8,
@@ -757,295 +959,405 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: '#000000',
+    color: COLORS.text,
+    padding: 0,
   },
-  
-  // Tab Styles - Modern Redesign with Center Alignment
-  tabContainer: { 
-    flexDirection: 'row', 
-    backgroundColor: 'transparent',
-    marginTop: 8,
-    marginBottom: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-    justifyContent: 'center', // Center the tabs
-    gap: 40, // Modern spacing between tabs
+  tabsWrapper: {
+    position: 'relative',
+    backgroundColor: COLORS.surface,
   },
-  tabButton: {
+  tabsContainer: {
+    maxHeight: 50,
+  },
+  tabsContent: {
+    paddingHorizontal: 16,
+    gap: 24,
+  },
+  tab: {
     paddingVertical: 12,
-    paddingHorizontal: 20,
     alignItems: 'center',
-    justifyContent: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  activeTab: {
-    borderBottomColor: '#000000', // Modern underline indicator
+    minWidth: 60,
   },
   tabText: {
-    fontSize: 17,
-    fontWeight: '500',
-    color: '#8E8E93',
-    letterSpacing: -0.3, // Modern tight spacing
-  },
-  activeTabText: {
-    color: '#000000',
-    fontWeight: '600',
-  },
-
-  // Filter Styles
-  filterContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    gap: 8,
-  },
-  filterButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#F0F0F0',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-  },
-  activeFilter: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  filterText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#8E8E93',
+    color: COLORS.textSecondary,
   },
-  activeFilterText: {
-    color: '#FFFFFF',
+  tabTextActive: {
+    color: COLORS.text,
+    fontWeight: '700',
   },
-  
-  // Results List Styles
+  tabIndicatorContainer: {
+    position: 'absolute',
+    bottom: -1, // Position right on the border
+    left: 0,
+    right: 0,
+    height: 2,
+    zIndex: 10,
+  },
+  tabIndicator: {
+    height: 2,
+    backgroundColor: 'transparent',
+  },
+  tabIndicatorActive: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 1,
+  },
+  trendingSection: {
+    paddingTop: 24,
+    paddingBottom: 16,
+  },
+  trendingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  trendingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  trendingTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  seeAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  trendingChips: {
+    paddingLeft: 16,
+  },
+  trendingChipsContent: {
+    gap: 12,
+    paddingRight: 16,
+  },
+  trendingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  trendingChipHash: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  trendingChipText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: COLORS.text,
+  },
   resultsList: {
     paddingBottom: 20,
   },
-  
-  // Universal User Row Styles
+  // User Row Styles (Modernized)
   userRow: {
+    backgroundColor: COLORS.surface,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
   userContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  userAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25, // Perfect circle
+  avatarContainer: {
+    position: 'relative',
     marginRight: 12,
+  },
+  userAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+  },
+  verifiedBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#3B82F6',
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   userInfo: {
     flex: 1,
   },
+  userNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   username: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
+    fontWeight: '700',
+    color: COLORS.text,
     marginBottom: 2,
   },
   handle: {
     fontSize: 14,
-    color: '#8E8E93',
+    color: COLORS.textSecondary,
     marginBottom: 2,
   },
-  connectionReason: {
+  profession: {
     fontSize: 13,
-    color: '#8E8E93',
-    lineHeight: 16,
+    color: COLORS.textSecondary,
   },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+  friendButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
     borderWidth: 1,
-    gap: 4,
-  },
-  actionButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  
-  // Event Row Styles
-  eventRow: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-  },
-  eventContent: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  eventImageContainer: {
-    marginRight: 12,
-  },
-  eventImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-  },
-  eventImagePlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-    backgroundColor: '#F0F0F0',
+    minWidth: 100,
     alignItems: 'center',
+  },
+  friendButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Swipeable Container
+  swipeableContainer: {
+    flex: 1,
+  },
+  swipeableContent: {
+    flexDirection: 'row',
+    width: SCREEN_WIDTH * TABS.length,
+  },
+  tabContentWrapper: {
+    flex: 1,
+  },
+  // Event Card Styles (keeping existing UI)
+  eventCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginVertical: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  eventCardContent: {
+    flexDirection: 'row',
+    height: 128,
+  },
+  eventDateBadge: {
+    width: 80,
+    backgroundColor: COLORS.primaryLight,
     justifyContent: 'center',
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: COLORS.border,
+  },
+  eventMonth: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  eventDay: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: COLORS.text,
+    marginTop: 4,
   },
   eventInfo: {
     flex: 1,
+    padding: 12,
+    justifyContent: 'space-between',
   },
-  eventTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
-  },
-  eventLocation: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 2,
-  },
-  eventTime: {
-    fontSize: 13,
-    color: '#8E8E93',
-    marginBottom: 2,
-  },
-  eventHost: {
-    fontSize: 12,
-    color: '#8E8E93',
-  },
-  
-  // Section Styles
-  sectionHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  
-  // Separator
-  separator: {
-    height: 0.5,
-    backgroundColor: '#F0F0F0',
-    marginLeft: 78, // Align with content after avatar
-  },
-  
-  // Button Styles
-  seeAllButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  seeAllText: {
-    fontSize: 16,
-    color: '#3797EF',
-    fontWeight: '500',
-  },
-  primaryButton: {
-    backgroundColor: '#3797EF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 20,
-    marginTop: 16,
-  },
-  primaryButtonText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  secondaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F7FF',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#3797EF',
-    marginTop: 16,
-  },
-  secondaryButtonText: {
-    fontSize: 16,
-    color: '#3797EF',
-    fontWeight: '500',
-  },
-  buttonIcon: {
-    marginRight: 8,
-  },
-  
-  // Container Styles
-  suggestionsContainer: {
-    flex: 1,
-  },
-  suggestionsHeader: {
+  eventHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#F0F0F0',
+    alignItems: 'flex-start',
+    marginBottom: 8,
   },
-  suggestionsTitle: {
-    fontSize: 18,
+  eventStatusBadge: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  eventStatusText: {
+    fontSize: 12,
     fontWeight: '600',
-    color: '#000000',
+    color: '#10B981',
   },
-  hideSuggestions: {
-    fontSize: 16,
-    color: '#3797EF',
-    fontWeight: '500',
+  eventTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 8,
   },
-  welcomeContainer: {
+  eventLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 8,
+  },
+  eventLocationText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
     flex: 1,
   },
-  
-  // State Styles
-  loadingContainer: {
-    flexDirection: 'column',
+  eventAttendees: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  attendeeAvatars: {
+    flexDirection: 'row',
+    marginRight: 4,
+  },
+  attendeeAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+    marginLeft: -8,
+  },
+  attendeeCount: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  eventImage: {
+    width: 112,
+    height: 128,
+    backgroundColor: COLORS.border,
+  },
+  // Post Card Styles
+  postCard: {
+    backgroundColor: COLORS.surface,
+    marginHorizontal: 16,
+    marginVertical: 4,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  // Media Card Styles (Songs & Movies)
+  mediaCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    padding: 12,
+    marginHorizontal: 16,
+    marginVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  mediaImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    marginRight: 12,
+    backgroundColor: COLORS.border,
+  },
+  mediaImagePlaceholder: {
     justifyContent: 'center',
-    paddingVertical: 60,
+    alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 12,
+  mediaInfo: {
+    flex: 1,
+  },
+  mediaTitle: {
     fontSize: 16,
-    color: '#8E8E93',
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 4,
   },
+  mediaSubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  mediaMeta: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  ratingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  // Empty State Styles
   emptyState: {
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
     paddingHorizontal: 32,
   },
   emptyTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#000000',
+    fontWeight: '700',
+    color: COLORS.text,
     marginTop: 16,
     marginBottom: 8,
-    textAlign: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    marginTop: 12,
   },
   emptySubtext: {
     fontSize: 16,
-    color: '#8E8E93',
+    color: COLORS.textSecondary,
     textAlign: 'center',
     lineHeight: 22,
   },
-  categoryContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
+  // Suggestions Container
+  suggestionsContainer: {
+    paddingTop: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  separator: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginLeft: 60,
+  },
+  resultsList: {
+    paddingBottom: 20,
   },
 });

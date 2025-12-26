@@ -455,6 +455,32 @@ const fetchUserProfile = async (isRefresh = false) => {
   }
 };
 
+  // Handle post deletion
+  const handlePostDelete = async (postId) => {
+    try {
+      // Remove from local state
+      setPosts(prevPosts => prevPosts.filter(p => p._id !== postId));
+      console.log('✅ Post removed from local state:', postId);
+    } catch (error) {
+      console.error('❌ Error removing post from state:', error);
+    }
+  };
+
+  // Handle post update
+  const handlePostUpdate = async (postId, updates) => {
+    try {
+      // Update local state
+      setPosts(prevPosts => 
+        prevPosts.map(p => 
+          p._id === postId ? { ...p, ...updates } : p
+        )
+      );
+      console.log('✅ Post updated in local state:', postId, updates);
+    } catch (error) {
+      console.error('❌ Error updating post in state:', error);
+    }
+  };
+
   // Handle like/unlike for posts
   const handlePostLike = async (postId) => {
     try {
@@ -1396,6 +1422,8 @@ const renderPostGrid = ({ item }) => (
             currentUserId={currentUser?._id}
             navigation={navigation}
             onLike={handlePostLike}
+            onDeletePost={handlePostDelete}
+            onPostUpdated={handlePostUpdate}
             profileUser={user ? {
               _id: user._id,
               username: user.username,

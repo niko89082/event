@@ -1,12 +1,13 @@
 // components/PostCard.js - Display all post types (text, photo, review)
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, TouchableOpacity,
-  Dimensions, Linking
+  Dimensions, Linking, Alert, Platform, Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@env';
 import ReviewCard from './ReviewCard';
+import api from '../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_WIDTH = SCREEN_WIDTH - 32;
@@ -22,10 +23,54 @@ const niceDate = (iso) => {
   return new Date(iso).toLocaleDateString();
 };
 
-export default function PostCard({ post, currentUserId, navigation, onLike, onComment, profileUser }) {
+export default function PostCard({ post, currentUserId, navigation, onLike, onComment, profileUser, onDeletePost, onPostUpdated }) {
   const [showFullText, setShowFullText] = useState(false);
-  // ✅ FIX: Use profileUser as fallback if post.user is missing
-  const user = post.user || profileUser || {};
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 42, left: null, right: 16 });
+  const moreButtonRef = useRef(null);
+  
+  // ✅ FIX: Better user data extraction - handle both ObjectId strings and populated objects
+  let user = {};
+  if (post.user) {
+    // Check if it's a populated object with username
+    if (typeof post.user === 'object' && !Array.isArray(post.user) && post.user.username) {
+      user = post.user;
+    } else if (typeof post.user === 'string' || (typeof post.user === 'object' && post.user._id && !post.user.username)) {
+      // If user is just an ID string or object without username, use profileUser
+      user = profileUser || {};
+    } else {
+      user = post.user;
+    }
+  }
+  
+  // Always fallback to profileUser if user doesn't have username
+  if (!user.username && profileUser && profileUser.username) {
+    user = { ...user, ...profileUser };
+  }
+  
+  // Final fallback - ensure we have at least an object
+  if (!user || typeof user !== 'object') {
+    user = {};
+  }
+  
+  // Debug logging (can be removed later)
+  if (!user.username && (post.user || profileUser)) {
+    console.log('⚠️ PostCard: Missing username', {
+      hasPostUser: !!post.user,
+      postUserType: typeof post.user,
+      postUserUsername: post.user?.username,
+      hasProfileUser: !!profileUser,
+      profileUserUsername: profileUser?.username,
+      finalUser: user
+    });
+  }
+  
+  // Check if current user is the post owner
+  const isOwner = currentUserId && (
+    String(post.user?._id || post.user) === String(currentUserId) ||
+    String(user._id) === String(currentUserId)
+  );
+  
   const isLiked = post.userLiked || (post.likes && post.likes.includes && post.likes.includes(currentUserId));
   const likeCount = post.likeCount || (post.likes ? post.likes.length : 0);
   const commentCount = post.commentCount || (post.comments ? post.comments.length : 0);
@@ -81,6 +126,113 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
     }
   };
 
+  const handleMoreOptions = () => {
+    if (!isOwner) return;
+    // Calculate position: menu should be adjacent to ellipsis (right side)
+    // But text inside should align with username which starts at 62px from left
+    // So position menu at 62px from left, and it will extend to the right
+    setMenuPosition({ top: 42, left: 62, right: null });
+    setShowOptionsMenu(true);
+  };
+
+  const handleEditOption = () => {
+    setShowOptionsMenu(false);
+    handleEditPost();
+  };
+
+  const handleDeleteOption = () => {
+    setShowOptionsMenu(false);
+    handleDeletePost();
+  };
+
+  const handleEditPost = () => {
+    if (Platform.OS === 'ios') {
+      Alert.prompt(
+        'Edit Caption',
+        'Enter new caption:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Save', onPress: updateCaption },
+        ],
+        'plain-text',
+        post.textContent || post.caption || ''
+      );
+    } else {
+      // For Android, show a simple alert with input
+      Alert.alert(
+        'Edit Caption',
+        'Caption editing is available. Please use the post details screen to edit.',
+        [
+          { text: 'OK', onPress: () => {
+            if (navigation) {
+              navigation.navigate('UnifiedDetailsScreen', {
+                postId: post._id,
+                postType: postType,
+                post: post,
+                editMode: true
+              });
+            }
+          }}
+        ]
+      );
+    }
+  };
+
+  const updateCaption = async (newCaption) => {
+    if (!newCaption) return;
+    
+    try {
+      await api.put(`/api/photos/${post._id}`, { 
+        caption: newCaption,
+        textContent: newCaption 
+      });
+      
+      // Call onPostUpdated callback if provided
+      if (onPostUpdated) {
+        onPostUpdated(post._id, { 
+          caption: newCaption,
+          textContent: newCaption 
+        });
+      }
+      
+      Alert.alert('Success', 'Post updated successfully!');
+    } catch (error) {
+      console.error('Error updating post:', error);
+      Alert.alert('Error', 'Failed to update post');
+    }
+  };
+
+  const handleDeletePost = () => {
+    Alert.alert(
+      'Delete Post',
+      'Are you sure you want to delete this post? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive', 
+          onPress: confirmDeletePost 
+        },
+      ]
+    );
+  };
+
+  const confirmDeletePost = async () => {
+    try {
+      await api.delete(`/api/photos/${post._id}`);
+      
+      // Call onDeletePost callback if provided
+      if (onDeletePost) {
+        onDeletePost(post._id);
+      }
+      
+      Alert.alert('Success', 'Post deleted successfully');
+    } catch (error) {
+      console.error('Error deleting post:', error);
+      Alert.alert('Error', 'Failed to delete post. Please try again.');
+    }
+  };
+
   const getImageUrl = (path) => {
     if (!path) return null;
     if (path.startsWith('http')) return path;
@@ -99,7 +251,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
             />
           ) : (
             <View style={styles.avatarPlaceholder}>
-              <Ionicons name="person" size={20} color="#8E8E93" />
+              <Ionicons name="person" size={18} color="#8E8E93" />
             </View>
           )}
           <View style={styles.userDetails}>
@@ -109,9 +261,58 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
             </Text>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.moreButton}>
-          <Ionicons name="ellipsis-horizontal" size={20} color="#8E8E93" />
-        </TouchableOpacity>
+        {isOwner && (
+          <View style={styles.moreButtonContainer}>
+            <TouchableOpacity 
+              ref={moreButtonRef}
+              style={styles.moreButton}
+              onPress={handleMoreOptions}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color="#8E8E93" />
+            </TouchableOpacity>
+            
+            {/* Options Menu */}
+            <Modal
+              visible={showOptionsMenu}
+              transparent={true}
+              animationType="fade"
+              onRequestClose={() => setShowOptionsMenu(false)}
+            >
+              <TouchableOpacity
+                style={styles.menuOverlay}
+                activeOpacity={1}
+                onPress={() => setShowOptionsMenu(false)}
+              >
+                <View 
+                  style={[styles.menuWrapper, { 
+                    top: menuPosition.top, 
+                    left: menuPosition.left,
+                    right: menuPosition.right 
+                  }]}
+                  onStartShouldSetResponder={() => true}
+                >
+                  <View style={styles.menuContainer}>
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={handleEditOption}
+                    >
+                      <Ionicons name="create-outline" size={20} color="#000000" />
+                      <Text style={styles.menuItemText}>Edit</Text>
+                    </TouchableOpacity>
+                    <View style={styles.menuDivider} />
+                    <TouchableOpacity
+                      style={[styles.menuItem, styles.menuItemDestructive]}
+                      onPress={handleDeleteOption}
+                    >
+                      <Ionicons name="trash-outline" size={20} color="#ED4956" />
+                      <Text style={[styles.menuItemText, styles.menuItemTextDestructive]}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
       </View>
 
       {/* Content */}
@@ -200,7 +401,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
         >
           <Ionicons
             name={isLiked ? "heart" : "heart-outline"}
-            size={22}
+            size={20}
             color={isLiked ? "#ED4956" : "#000000"}
           />
           {likeCount > 0 && (
@@ -215,7 +416,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
           onPress={handleComment}
           activeOpacity={0.7}
         >
-          <Ionicons name="chatbubble-outline" size={22} color="#000000" />
+          <Ionicons name="chatbubble-outline" size={20} color="#000000" />
           {commentCount > 0 && (
             <Text style={styles.engagementCount}>{commentCount}</Text>
           )}
@@ -226,7 +427,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
           onPress={handleRepost}
           activeOpacity={0.7}
         >
-          <Ionicons name="repeat-outline" size={22} color="#000000" />
+          <Ionicons name="repeat-outline" size={20} color="#000000" />
           {repostCount > 0 && (
             <Text style={styles.engagementCount}>{repostCount}</Text>
           )}
@@ -237,7 +438,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
           onPress={handleShare}
           activeOpacity={0.7}
         >
-          <Ionicons name="share-outline" size={22} color="#000000" />
+          <Ionicons name="share-outline" size={20} color="#000000" />
         </TouchableOpacity>
       </View>
     </View>
@@ -249,14 +450,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   userInfo: {
     flexDirection: 'row',
@@ -264,54 +465,98 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 10,
   },
   avatarPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#E1E1E1',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 10,
   },
   userDetails: {
     flex: 1,
   },
   username: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#000000',
   },
   timestamp: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#8E8E93',
-    marginTop: 2,
+    marginTop: 1,
+  },
+  moreButtonContainer: {
+    position: 'relative',
   },
   moreButton: {
     padding: 4,
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  menuWrapper: {
+    position: 'absolute',
+    alignItems: 'flex-start',
+  },
+  menuContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    minWidth: 180,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  menuItemDestructive: {
+    // Destructive styling
+  },
+  menuItemText: {
+    fontSize: 17,
+    color: '#000000',
+    fontWeight: '500',
+  },
+  menuItemTextDestructive: {
+    color: '#ED4956',
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#E1E1E1',
   },
   content: {
     paddingHorizontal: 16,
   },
   textContainer: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   textContent: {
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 19,
     color: '#000000',
   },
   showMoreText: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#3797EF',
-    marginTop: 4,
+    marginTop: 3,
   },
   imagesContainer: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   singleImage: {
     width: IMAGE_WIDTH,
@@ -344,7 +589,7 @@ const styles = StyleSheet.create({
   },
   moreImagesText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   locationContainer: {
@@ -354,7 +599,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   locationText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#8E8E93',
   },
   eventTag: {
@@ -368,7 +613,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   eventTagText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#3797EF',
     fontWeight: '500',
   },
@@ -376,8 +621,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    gap: 32,
+    paddingTop: 10,
+    gap: 28,
   },
   engagementButton: {
     flexDirection: 'row',
@@ -385,7 +630,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   engagementCount: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#000000',
   },
   engagementCountLiked: {

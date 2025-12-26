@@ -1,5 +1,5 @@
 // navigation/MainTabNavigator.js - Modern Glassmorphic Bottom Tab Navigator
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { View, Platform, StyleSheet, TouchableOpacity } from 'react-native';
@@ -21,6 +21,26 @@ const Stack = createStackNavigator();
 
 // Custom Tab Bar Component with Glassmorphism
 function CustomTabBar({ state, descriptors, navigation }) {
+  // Check if we're on CreatePost screen - hide tab bar
+  const isCreatePost = React.useMemo(() => {
+    const createTab = state.routes.find(r => r.name === 'Create');
+    if (createTab?.state?.routes) {
+      const currentRoute = createTab.state.routes[createTab.state.index];
+      const isPost = currentRoute?.name === 'CreatePost';
+      // Also check nested state
+      if (currentRoute?.state?.routes) {
+        const nestedRoute = currentRoute.state.routes[currentRoute.state.index];
+        return isPost || nestedRoute?.name === 'CreatePost';
+      }
+      return isPost;
+    }
+    return false;
+  }, [state]);
+
+  if (isCreatePost) {
+    return null; // Hide tab bar completely when on CreatePost
+  }
+
   return (
     <View style={styles.tabBarContainer}>
       {Platform.OS === 'ios' ? (
@@ -174,7 +194,25 @@ function ProfileStackNavigator() {
 }
 
 // Create Stack Navigator
-function CreateStackNavigator() {
+function CreateStackNavigator({ navigation }) {
+  // Hide tab bar when CreatePost screen is active
+  useLayoutEffect(() => {
+    const unsubscribe = navigation.addListener('state', () => {
+      const state = navigation.getState();
+      const currentRoute = state.routes[state.index];
+      const isCreatePost = currentRoute.name === 'CreatePost';
+      
+      const tabNavigator = navigation.getParent();
+      if (tabNavigator) {
+        tabNavigator.setOptions({
+          tabBarStyle: isCreatePost ? { display: 'none' } : undefined,
+        });
+      }
+    });
+    
+    return unsubscribe;
+  }, [navigation]);
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="CreatePost" component={CreatePostScreen} />
