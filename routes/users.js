@@ -437,80 +437,145 @@ function calculatePriorityScore(user, searchTerm, relationship, mutualFriendsCou
 }
 
 
-router.get('/search/suggestions', protect, async (req, res) => {
+// Following suggestions endpoint - based on who your following follow
+router.get('/following/suggestions', protect, async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 15 } = req.query;
     
-    console.log('🎯 Getting search suggestions...');
+    console.log('🎯 Getting following suggestions...');
     
-    const currentUser = await User.findById(req.user._id);
-    const friendIds = currentUser.getAcceptedFriends().map(id => id.toString());
-    const sentRequestIds = currentUser.getSentRequests().map(req => req.user.toString());
-    const receivedRequestIds = currentUser.getPendingRequests().map(req => req.user.toString());
+    const currentUser = await User.findById(req.user._id)
+      .select('following');
     
+    if (!currentUser) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
+    
+    const followingIds = (currentUser.following || []).map(id => id.toString());
     const excludeIds = [
       currentUser._id.toString(),
-      ...friendIds,
-      ...sentRequestIds,
-      ...receivedRequestIds
+      ...followingIds
     ];
     
-    // Find users with mutual friends or recent activity
-    const suggestions = await User.find({
-      _id: { $nin: excludeIds }
+    console.log(`📊 User is following ${followingIds.length} users`);
+    
+    // If user is not following anyone, return random suggestions
+    if (followingIds.length === 0) {
+      const randomSuggestions = await User.find({
+        _id: { $nin: excludeIds }
+      })
+      .select('username displayName fullName profilePicture bio')
+      .limit(parseInt(limit))
+      .lean();
+      
+      const processed = randomSuggestions.map(user => ({
+        ...user,
+        isFollowing: false,
+        priorityReason: 'Suggested for you',
+        relevanceScore: Math.random() * 5
+      }));
+      
+      return res.json({
+        success: true,
+        suggestions: processed,
+        metadata: {
+          total: processed.length,
+          algorithmVersion: '2.0'
+        }
+      });
+    }
+    
+    // Get users that your following follow
+    const usersYouFollow = await User.find({
+      _id: { $in: followingIds }
     })
-    .select('username displayName fullName profilePicture bio')
-    .limit(parseInt(limit) * 3) // Get more to filter
+    .select('following')
     .lean();
     
-    // Process suggestions with mutual friends
-    const processedSuggestions = [];
+    // Build a map of suggested users and their scores (based on how many of your following follow them)
+    const suggestionScores = new Map();
     
-    for (const user of suggestions.slice(0, parseInt(limit))) {
-      try {
-        const targetUser = await User.findById(user._id);
-        if (targetUser) {
-          const targetFriends = targetUser.getAcceptedFriends().map(id => id.toString());
-          const mutualFriendsCount = friendIds.filter(friendId => 
-            targetFriends.includes(friendId)
-          ).length;
-          
-          if (mutualFriendsCount > 0 || Math.random() < 0.3) { // Include some random suggestions
-            processedSuggestions.push({
-              ...user,
-              relationshipStatus: 'not-friends',
-              priorityReason: mutualFriendsCount > 0 
-                ? `${mutualFriendsCount} mutual friend${mutualFriendsCount > 1 ? 's' : ''}`
-                : 'Suggested for you',
-              canAddFriend: true,
-              mutualFriendsCount,
-              relevanceScore: mutualFriendsCount * 10 + Math.random() * 5
-            });
-          }
+    for (const followedUser of usersYouFollow) {
+      const theirFollowing = (followedUser.following || []).map(id => id.toString());
+      
+      for (const suggestedUserId of theirFollowing) {
+        // Skip if already following or is self
+        if (excludeIds.includes(suggestedUserId)) {
+          continue;
         }
-      } catch (error) {
-        console.error('Error processing suggestion:', error);
+        
+        // Increment score for this suggested user
+        const currentScore = suggestionScores.get(suggestedUserId) || 0;
+        suggestionScores.set(suggestedUserId, currentScore + 1);
       }
     }
     
-    // Sort by relevance
-    const sortedSuggestions = processedSuggestions
+    // Sort by score (highest first) and get top suggestions
+    const sortedSuggestions = Array.from(suggestionScores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, parseInt(limit) * 2) // Get more to allow for filtering
+      .map(([userId, score]) => ({ userId, score }));
+    
+    console.log(`🔍 Found ${sortedSuggestions.length} potential suggestions`);
+    
+    // Fetch full user data for top suggestions
+    const suggestedUserIds = sortedSuggestions.map(s => s.userId);
+    const suggestedUsers = await User.find({
+      _id: { $in: suggestedUserIds }
+    })
+    .select('username displayName fullName profilePicture bio following')
+    .lean();
+    
+    // Process suggestions with mutual follows count
+    const processedSuggestions = [];
+    
+    for (const suggestedUser of suggestedUsers) {
+      const suggestionData = sortedSuggestions.find(s => s.userId === suggestedUser._id.toString());
+      const score = suggestionData?.score || 0;
+      
+      // Calculate mutual follows (users you both follow)
+      let mutualFollowsCount = 0;
+      if (suggestedUser.following) {
+        const targetFollowingIds = suggestedUser.following.map(id => id.toString());
+        mutualFollowsCount = followingIds.filter(followId => 
+          targetFollowingIds.includes(followId)
+        ).length;
+      }
+      
+      processedSuggestions.push({
+        ...suggestedUser,
+        isFollowing: false,
+        mutualFollowsCount,
+        priorityReason: score > 0 
+          ? `Followed by ${score} of your following`
+          : mutualFollowsCount > 0
+          ? `${mutualFollowsCount} mutual follow${mutualFollowsCount > 1 ? 's' : ''}`
+          : 'Suggested for you',
+        relevanceScore: score * 10 + mutualFollowsCount * 5 + Math.random() * 2
+      });
+    }
+    
+    // Sort by relevance score and limit
+    const finalSuggestions = processedSuggestions
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, parseInt(limit));
     
-    console.log(`✅ Returning ${sortedSuggestions.length} suggestions`);
+    console.log(`✅ Returning ${finalSuggestions.length} following suggestions`);
     
     res.json({
       success: true,
-      suggestions: sortedSuggestions,
+      suggestions: finalSuggestions,
       metadata: {
-        total: sortedSuggestions.length,
-        algorithmVersion: '1.0'
+        total: finalSuggestions.length,
+        algorithmVersion: '2.0'
       }
     });
     
   } catch (error) {
-    console.error('❌ Suggestions error:', error);
+    console.error('❌ Following suggestions error:', error);
     res.status(500).json({ 
       success: false,
       error: 'Failed to get suggestions', 
@@ -538,12 +603,10 @@ router.get('/search', protect, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Get user's social graph
-    const friendIds = currentUser.getAcceptedFriends().map(id => id.toString());
-    const sentRequestIds = currentUser.getSentRequests().map(req => req.user.toString());
-    const receivedRequestIds = currentUser.getPendingRequests().map(req => req.user.toString());
+    // Get user's social graph (following relationships)
+    const followingIds = (currentUser.following || []).map(id => id.toString());
     
-    console.log(`📊 User has ${friendIds.length} friends, ${sentRequestIds.length} sent requests, ${receivedRequestIds.length} received requests`);
+    console.log(`📊 User is following ${followingIds.length} users`);
     
     // Build search query with multiple matching strategies
     const searchQuery = {
@@ -574,48 +637,29 @@ router.get('/search', protect, async (req, res) => {
     
     console.log(`🔍 Found ${users.length} raw matches`);
     
-    // Process results with relationship status and relevance
+    // Process results with follow status and relevance
     const processedResults = [];
     
     for (const user of users) {
       const userId = user._id.toString();
       
-      // Determine relationship status
-      let relationshipStatus = 'not-friends';
-      let priorityReason = 'Suggested for you';
-      let canAddFriend = true;
+      // Determine follow status
+      const isFollowing = followingIds.includes(userId);
+      const isSelf = userId === currentUser._id.toString();
       
-      if (friendIds.includes(userId)) {
-        relationshipStatus = 'friends';
-        priorityReason = 'Your friend';
-        canAddFriend = false;
-      } else if (sentRequestIds.includes(userId)) {
-        relationshipStatus = 'request-sent';
-        priorityReason = 'Friend request sent';
-        canAddFriend = false;
-      } else if (receivedRequestIds.includes(userId)) {
-        relationshipStatus = 'request-received';
-        priorityReason = 'Wants to be friends';
-        canAddFriend = false;
-      }
-      
-      // Calculate mutual friends for non-friends
-      let mutualFriendsCount = 0;
-      if (relationshipStatus === 'not-friends') {
+      // Calculate mutual follows (users you both follow)
+      let mutualFollowsCount = 0;
+      if (!isFollowing && !isSelf) {
         try {
           const targetUser = await User.findById(userId);
-          if (targetUser) {
-            const targetFriends = targetUser.getAcceptedFriends().map(id => id.toString());
-            mutualFriendsCount = friendIds.filter(friendId => 
-              targetFriends.includes(friendId)
+          if (targetUser && targetUser.following) {
+            const targetFollowingIds = targetUser.following.map(id => id.toString());
+            mutualFollowsCount = followingIds.filter(followId => 
+              targetFollowingIds.includes(followId)
             ).length;
-            
-            if (mutualFriendsCount > 0) {
-              priorityReason = `${mutualFriendsCount} mutual friend${mutualFriendsCount > 1 ? 's' : ''}`;
-            }
           }
         } catch (error) {
-          console.error('Error calculating mutual friends:', error);
+          console.error('Error calculating mutual follows:', error);
         }
       }
       
@@ -624,21 +668,22 @@ router.get('/search', protect, async (req, res) => {
       
       // Add relationship priority bonus
       let relationshipBonus = 0;
-      switch (relationshipStatus) {
-        case 'friends': relationshipBonus = 1000; break;
-        case 'request-received': relationshipBonus = 500; break;
-        case 'request-sent': relationshipBonus = 200; break;
-        case 'not-friends': relationshipBonus = mutualFriendsCount * 10; break;
+      if (isFollowing) {
+        relationshipBonus = 1000;
+      } else if (mutualFollowsCount > 0) {
+        relationshipBonus = mutualFollowsCount * 10;
       }
       
       const finalScore = relevanceScore + relationshipBonus;
       
       processedResults.push({
         ...user,
-        relationshipStatus,
-        priorityReason,
-        canAddFriend,
-        mutualFriendsCount,
+        isFollowing,
+        isSelf,
+        mutualFollowsCount,
+        priorityReason: isFollowing ? 'Following' : mutualFollowsCount > 0 
+          ? `${mutualFollowsCount} mutual follow${mutualFollowsCount > 1 ? 's' : ''}`
+          : 'Suggested for you',
         relevanceScore: finalScore
       });
     }

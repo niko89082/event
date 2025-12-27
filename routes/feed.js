@@ -107,10 +107,10 @@ const ACTIVITY_TYPES = {
 };
 
 
-const fetchPhotoComments = async (userId, friendIds, timeRange) => {
+const fetchPhotoComments = async (userId, followingIds, timeRange) => {
   console.log('💬 Fetching regular photo comments...');
   console.log('📅 Time range:', { start: timeRange.start, end: timeRange.end });
-  console.log('👥 Friend IDs count:', friendIds.length);
+  console.log('👥 Following IDs count:', followingIds.length);
   
   try {
     const photoComments = await Photo.aggregate([
@@ -167,8 +167,8 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
           $or: [
             // Show comments on your own photos (from anyone)
             { 'photoOwner._id': userId },
-            // Show comments from your friends (on any photo you can see)
-            { 'commenter._id': { $in: friendIds } }
+            // Show comments from users you follow (on any photo you can see)
+            { 'commenter._id': { $in: followingIds } }
             // ❌ REMOVED: Show your own comments (this was causing the issue)
             // { 'comments.user': userId }
           ]
@@ -239,7 +239,7 @@ const fetchPhotoComments = async (userId, friendIds, timeRange) => {
 
 // ✅ FIXED: Memory photo comments with proper time filtering and friend logic
 // ✅ FIX 2: Memory photo comments based on participation, not friendship
-const fetchMemoryPhotoComments = async (userId, friendIds, timeRange) => {
+const fetchMemoryPhotoComments = async (userId, followingIds, timeRange) => {
   console.log('💬 Fetching memory photo comments...');
   console.log('📅 Time range:', { start: timeRange.start, end: timeRange.end });
   
@@ -507,17 +507,13 @@ const calculateRelationshipScore = (activity, userId) => {
    ACTIVITY FETCHERS WITH COMPLETE PRIVACY FILTERING
 ══════════════════════════════════════════════════════════════════ */
 
-const fetchRegularPosts = async (userId, friendIds, timeRange) => {
+const fetchRegularPosts = async (userId, followingIds, timeRange) => {
   console.log('📸 Fetching regular posts...');
-  
-  // Get user's accepted friends for privacy checking
-  const user = await User.findById(userId);
-  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
   
   const posts = await Photo.aggregate([
     {
       $match: {
-        user: { $in: friendIds },
+        user: { $in: followingIds },
         $or: [
           { uploadDate: { $gte: timeRange.start } },
           { createdAt: { $gte: timeRange.start } }
@@ -570,10 +566,10 @@ const fetchRegularPosts = async (userId, friendIds, timeRange) => {
           { event: null },
           // Posts from public events
           { 'event.privacyLevel': 'public' },
-          // Posts from friends-only events where user is friends with host
+          // Posts from followers-only events where user follows the host
           { 
-            'event.privacyLevel': 'friends',
-            'event.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+            'event.privacyLevel': 'followers',
+            'event.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
           }
           // Private event posts completely excluded
         ]
@@ -638,26 +634,22 @@ const fetchRegularPosts = async (userId, friendIds, timeRange) => {
 
 
 
-const fetchEventCreations = async (userId, friendIds, timeRange) => {
+const fetchEventCreations = async (userId, followingIds, timeRange) => {
   console.log('🎉 Fetching event creations...');
-  
-  // Get user's accepted friends for privacy checking
-  const user = await User.findById(userId);
-  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
   
   const events = await Event.aggregate([
     {
       $match: {
-        host: { $in: friendIds.map(id => new mongoose.Types.ObjectId(id)) },
+        host: { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) },
         createdAt: { $gte: timeRange.start },
         // ✅ CRITICAL PRIVACY FILTER: Only show events friends can see
         $or: [
           // Public events from friends
           { privacyLevel: 'public' },
-          // Friends-only events from friends (user is friends with host)
+          // Events from users you follow
           { 
-            privacyLevel: 'friends',
-            host: { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+            privacyLevel: 'followers',
+            host: { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
           }
           // Private events completely excluded from activity feed
         ]
@@ -711,13 +703,10 @@ const fetchEventCreations = async (userId, friendIds, timeRange) => {
   }));
 };
 
-const fetchMemoryPosts = async (userId, friendIds, timeRange) => {
+const fetchMemoryPosts = async (userId, followingIds, timeRange) => {
   console.log('🧠 Fetching memory posts...');
   
   // Get user's memories and accepted friends
-  const user = await User.findById(userId);
-  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
-  
   const userMemories = await Memory.find({
     $or: [
       { creator: userId },
@@ -733,7 +722,7 @@ const fetchMemoryPosts = async (userId, friendIds, timeRange) => {
     {
       $match: {
         memory: { $in: userMemoryIds },
-        uploadedBy: { $in: friendIds },
+        uploadedBy: { $in: followingIds },
         uploadDate: { $gte: timeRange.start },
         isDeleted: false
       }
@@ -780,10 +769,10 @@ const fetchMemoryPosts = async (userId, friendIds, timeRange) => {
           { eventData: null },
           // Memories from public events
           { 'eventData.privacyLevel': 'public' },
-          // Memories from friends-only events where user is friends with host
+          // Memories from followers-only events where user follows the host
           { 
-            'eventData.privacyLevel': 'friends',
-            'eventData.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+            'eventData.privacyLevel': 'followers',
+            'eventData.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
           }
           // Private event memories completely excluded
         ]
@@ -827,7 +816,7 @@ const fetchMemoryPosts = async (userId, friendIds, timeRange) => {
     score: calculateActivityScore(post, 'memory_post', userId)
   }));
 };
-const fetchMemoryPhotoUploads = async (userId, friendIds, timeRange) => {
+const fetchMemoryPhotoUploads = async (userId, followingIds, timeRange) => {
   console.log('📸 Fetching memory photo uploads...');
   
   try {
@@ -1029,7 +1018,7 @@ const fetchEventInvitations = async (userId, timeRange) => {
   }));
 };
 
-const fetchCoHostActivities = async (userId, friendIds, timeRange) => {
+const fetchCoHostActivities = async (userId, followingIds, timeRange) => {
   console.log('👥 Fetching cohost activities...');
   
   try {
@@ -1037,7 +1026,7 @@ const fetchCoHostActivities = async (userId, friendIds, timeRange) => {
     
     // Fetch cohost activities
     const cohostActivities = await mongoose.connection.db.collection('activities').find({
-      userId: { $in: friendIds.map(id => new mongoose.Types.ObjectId(id)) },
+      userId: { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) },
       type: 'friend_cohost_added',
       timestamp: { $gte: timeRange.start }
     }).sort({ timestamp: -1 }).limit(20).toArray();
@@ -1179,26 +1168,22 @@ const fetchCoHostActivities = async (userId, friendIds, timeRange) => {
 //   });
 // };
 
-const fetchFriendEventJoins = async (userId, friendIds, timeRange) => {
-  console.log('👥 Fetching friend event joins...');
+const fetchFriendEventJoins = async (userId, followingIds, timeRange) => {
+  console.log('👥 Fetching following event joins...');
   
-  // Get user's accepted friends for privacy checking
-  const user = await User.findById(userId);
-  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
-  
-  // Find recent event updates where friends joined
+  // Find recent event updates where users you follow joined
   const recentJoins = await Event.aggregate([
     {
       $match: {
-        attendees: { $in: friendIds },
+        attendees: { $in: followingIds },
         updatedAt: { $gte: timeRange.start },
         time: { $gte: new Date() }, // Only future events
         // ✅ CRITICAL PRIVACY FILTER: Exclude private events completely
         $or: [
           { privacyLevel: 'public' },
           { 
-            privacyLevel: 'friends',
-            host: { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+            privacyLevel: 'followers',
+            host: { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
           }
           // Private events completely excluded - no joins from private events show up
         ]
@@ -1225,10 +1210,10 @@ const fetchFriendEventJoins = async (userId, friendIds, timeRange) => {
     },
     {
       $addFields: {
-        friendAttendees: {
+        followingAttendees: {
           $filter: {
             input: '$attendeeUsers',
-            cond: { $in: ['$$this._id', friendIds] }
+            cond: { $in: ['$$this._id', followingIds] }
           }
         }
       }
@@ -1273,72 +1258,7 @@ const fetchFriendEventJoins = async (userId, friendIds, timeRange) => {
   }));
 };
 
-const fetchFriendRequests = async (userId, timeRange) => {
-  console.log('🤝 Fetching friend requests (EFFICIENT)...');
-  
-  // ✅ EFFICIENT: Single query with proper indexing
-  const requests = await Notification.find({
-    user: userId,
-    type: 'friend_request',
-    createdAt: { $gte: timeRange.start },
-    // ✅ SIMPLE: Just exclude handled requests - no complex logic
-    'data.actionTaken': { $exists: false }
-  })
-  .populate('sender', 'username profilePicture')
-  .sort({ createdAt: -1 })
-  .limit(10)
-  .lean(); // ✅ PERFORMANCE: Use lean() for read-only operations
-
-  console.log(`🔍 Found ${requests.length} unhandled friend requests`);
-
-  return requests.map(request => ({
-    _id: `friendreq_${request._id}`,
-    activityType: 'friend_request',
-    timestamp: request.createdAt,
-    user: request.sender,
-    data: {
-      requestId: request._id,
-      requester: request.sender,
-      message: request.message || request.data?.message || 'I would like to add you as a friend.'
-    },
-    metadata: {
-      actionable: true,
-      grouped: false,
-      priority: 'high'
-    },
-    score: calculateActivityScore(request, 'friend_request', userId)
-  }));
-};
-
-const fetchFriendRequestsAccepted = async (userId, friendIds, timeRange) => {
-  console.log('✅ Fetching accepted friend requests...');
-  
-  const acceptedRequests = await Notification.find({
-    user: userId,
-    type: 'friend_request_accepted',
-    createdAt: { $gte: timeRange.start }
-  })
-  .populate('sender', 'username profilePicture')
-  .sort({ createdAt: -1 })
-  .limit(10);
-
-  return acceptedRequests.map(request => ({
-    _id: `friendaccept_${request._id}`,
-    activityType: 'friend_request_accepted',
-    timestamp: request.createdAt,
-    user: request.sender,
-    data: {
-      accepter: request.sender,
-      message: request.message
-    },
-    metadata: {
-      actionable: false,
-      grouped: false,
-      priority: 'high'
-    },
-    score: calculateActivityScore(request, 'friend_request_accepted', userId)
-  }));
-};
+// Friend request functions removed - using follower-following system
 
 const fetchEventReminders = async (userId, timeRange) => {
   console.log('⏰ Fetching event reminders...');
@@ -1386,17 +1306,13 @@ const fetchEventReminders = async (userId, timeRange) => {
   });
 };
 
-const fetchMemoriesCreated = async (userId, friendIds, timeRange) => {
+const fetchMemoriesCreated = async (userId, followingIds, timeRange) => {
   console.log('📚 Fetching created memories...');
-  
-  // Get user's accepted friends for privacy checking
-  const user = await User.findById(userId);
-  const userFriendIds = user.getAcceptedFriends().map(id => String(id));
   
   const memories = await Memory.aggregate([
     {
       $match: {
-        creator: { $in: friendIds },
+        creator: { $in: followingIds },
         createdAt: { $gte: timeRange.start },
         participants: userId // Only memories user is part of
       }
@@ -1432,10 +1348,10 @@ const fetchMemoriesCreated = async (userId, friendIds, timeRange) => {
           { event: null },
           // Memories from public events
           { 'event.privacyLevel': 'public' },
-          // Memories from friends-only events where user is friends with host
+          // Memories from followers-only events where user follows the host
           { 
-            'event.privacyLevel': 'friends',
-            'event.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+            'event.privacyLevel': 'followers',
+            'event.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
           }
           // Private event memories completely excluded
         ]
@@ -1522,19 +1438,16 @@ router.get('/feed/activity', protect, async (req, res) => {
   console.log(`🎯 [API] /feed/activity -> user ${userId} page ${page}`);
 
   try {
-    // Get user's social connections
+    // Get user's social connections (following relationships)
     const viewer = await User.findById(userId)
-      .select('following attendingEvents friends friendRequests')
-      .populate('following', '_id')
-      .populate('friends', '_id');
+      .select('following attendingEvents')
+      .populate('following', '_id');
 
-    const followingIds = viewer.following?.map(u => u._id) || [];
-    const friendIds = viewer.getAcceptedFriends() || [];
+    const followingIds = viewer.following?.map(u => u._id.toString()) || [];
     
     console.log(`🔍 User connections:`, {
       userId,
-      followingCount: followingIds.length,
-      friendsCount: friendIds.length
+      followingCount: followingIds.length
     });
 
     // Define time range for activity fetching
@@ -1550,8 +1463,6 @@ router.get('/feed/activity', protect, async (req, res) => {
       eventInvitations,
      //eventPhotoUploads,
       friendEventJoins,
-      friendRequests,
-      friendRequestsAccepted,
       eventReminders,
       memoriesCreated,
       eventCreations,
@@ -1560,20 +1471,18 @@ router.get('/feed/activity', protect, async (req, res) => {
       memoryPhotoComments,     // ✅ NEW: Memory photo comments
       cohostActivities         // ✅ NEW: Cohost activities
     ] = await Promise.all([
-      fetchRegularPosts(userId, friendIds, timeRange),
-      fetchMemoryPosts(userId, friendIds, timeRange),
+      fetchRegularPosts(userId, followingIds, timeRange),
+      fetchMemoryPosts(userId, followingIds, timeRange),
       fetchEventInvitations(userId, timeRange),
-      //fetchEventPhotoUploads(userId, friendIds, timeRange),
-      fetchFriendEventJoins(userId, friendIds, timeRange),
-      fetchFriendRequests(userId, timeRange),
-      fetchFriendRequestsAccepted(userId, friendIds, timeRange),
+      //fetchEventPhotoUploads(userId, followingIds, timeRange),
+      fetchFriendEventJoins(userId, followingIds, timeRange),
       fetchEventReminders(userId, timeRange),
-      fetchMemoriesCreated(userId, friendIds, timeRange),
-      fetchEventCreations(userId, friendIds, timeRange),
-      fetchMemoryPhotoUploads(userId, friendIds, timeRange),
-      fetchPhotoComments(userId, friendIds, timeRange),           // ✅ NEW: Fetch photo comments
-      fetchMemoryPhotoComments(userId, friendIds, timeRange),     // ✅ NEW: Fetch memory photo comments
-      fetchCoHostActivities(userId, friendIds, timeRange)         // ✅ NEW: Fetch cohost activities
+      fetchMemoriesCreated(userId, followingIds, timeRange),
+      fetchEventCreations(userId, followingIds, timeRange),
+      fetchMemoryPhotoUploads(userId, followingIds, timeRange),
+      fetchPhotoComments(userId, followingIds, timeRange),           // ✅ NEW: Fetch photo comments
+      fetchMemoryPhotoComments(userId, followingIds, timeRange),     // ✅ NEW: Fetch memory photo comments
+      fetchCoHostActivities(userId, followingIds, timeRange)         // ✅ NEW: Fetch cohost activities
     ]);
 
     console.log('📊 Activity counts by type:', {
@@ -1582,8 +1491,6 @@ router.get('/feed/activity', protect, async (req, res) => {
       eventInvitations: eventInvitations.length,
      // eventPhotoUploads: eventPhotoUploads.length,
       friendEventJoins: friendEventJoins.length,
-      friendRequests: friendRequests.length,
-      friendRequestsAccepted: friendRequestsAccepted.length,
       eventReminders: eventReminders.length,
       memoriesCreated: memoriesCreated.length,
       eventCreations: eventCreations.length,
@@ -1600,8 +1507,6 @@ router.get('/feed/activity', protect, async (req, res) => {
       ...eventInvitations,
       //...eventPhotoUploads,
       ...friendEventJoins,
-      ...friendRequests,
-      ...friendRequestsAccepted,
       ...eventReminders,
       ...memoriesCreated,
       ...eventCreations,
@@ -1684,8 +1589,7 @@ router.get('/feed/activity', protect, async (req, res) => {
         },
         finalFeedTypes: activityTypeCounts,
         userConnections: {
-          followingCount: followingIds.length,
-          friendsCount: friendIds.length
+          followingCount: followingIds.length
         },
         timeRange,
         privacyFiltered: true,
@@ -1757,10 +1661,6 @@ router.get('/feed/posts', protect, async (req, res) => {
     
     console.log(`📸 Fetching regular posts with like status...`);
     
-    // Get user's accepted friends for privacy checking
-    const user = await User.findById(userId);
-    const userFriendIds = user.getAcceptedFriends().map(id => String(id));
-    
     // ✅ CRITICAL: Use aggregation to calculate like status properly
     const friendPosts = await Photo.aggregate([
       {
@@ -1797,10 +1697,10 @@ router.get('/feed/posts', protect, async (req, res) => {
             { event: null },
             // Posts from public events
             { 'event.privacyLevel': 'public' },
-            // Posts from friends-only events where user is friends with host
+            // Posts from followers-only events where user follows the host
             { 
-              'event.privacyLevel': 'friends',
-              'event.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+              'event.privacyLevel': 'followers',
+              'event.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
             }
             // Private event posts completely excluded
           ]
@@ -1941,8 +1841,8 @@ router.get('/feed/posts', protect, async (req, res) => {
               { 'eventData.privacyLevel': 'public' },
               // Memories from friends-only events where user is friends with host
               { 
-                'eventData.privacyLevel': 'friends',
-                'eventData.host': { $in: userFriendIds.map(id => new mongoose.Types.ObjectId(id)) }
+                'eventData.privacyLevel': 'followers',
+                'eventData.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
               }
               // Private event memories completely excluded
             ]
@@ -2091,20 +1991,20 @@ router.get('/feed/posts', protect, async (req, res) => {
     });
   }
 });
-const debugFriendship = async (userAId, userBId) => {
+const debugFollowRelationship = async (userAId, userBId) => {
   try {
-    const userA = await User.findById(userAId).select('friends username');
-    const userB = await User.findById(userBId).select('friends username');
+    const userA = await User.findById(userAId).select('following followers username');
+    const userB = await User.findById(userBId).select('following followers username');
     
-    const aFriends = userA.getAcceptedFriends().map(id => String(id));
-    const bFriends = userB.getAcceptedFriends().map(id => String(id));
+    const aFollowing = (userA.following || []).map(id => String(id));
+    const bFollowing = (userB.following || []).map(id => String(id));
     
-    console.log('🔍 Friendship Debug:', {
-      userA: { id: userAId, username: userA.username, friendCount: aFriends.length },
-      userB: { id: userBId, username: userB.username, friendCount: bFriends.length },
-      aIsFriendsWithB: aFriends.includes(String(userBId)),
-      bIsFriendsWithA: bFriends.includes(String(userAId)),
-      mutualFriendship: aFriends.includes(String(userBId)) && bFriends.includes(String(userAId))
+    console.log('🔍 Follow Relationship Debug:', {
+      userA: { id: userAId, username: userA.username, followingCount: aFollowing.length },
+      userB: { id: userBId, username: userB.username, followingCount: bFollowing.length },
+      aFollowsB: aFollowing.includes(String(userBId)),
+      bFollowsA: bFollowing.includes(String(userAId)),
+      mutualFollow: aFollowing.includes(String(userBId)) && bFollowing.includes(String(userAId))
     });
     
     return {
@@ -2123,7 +2023,7 @@ router.get('/debug/friendship/:otherUserId', protect, async (req, res) => {
     const userId = req.user._id;
     const otherUserId = req.params.otherUserId;
     
-    const debug = await debugFriendship(userId, otherUserId);
+    const debug = await debugFollowRelationship(userId, otherUserId);
     
     res.json({
       success: true,

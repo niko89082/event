@@ -12,7 +12,9 @@ import CategoryManager from '../components/CategoryManager';
 import PostCard from '../components/PostCard';
 import ReviewCard from '../components/ReviewCard';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'localhost:3000';
+import { API_BASE_URL as ENV_API_BASE_URL } from '@env';
+// Use the IP from .env, add port 3000 when constructing URLs
+const API_BASE_URL = ENV_API_BASE_URL ? `${ENV_API_BASE_URL}:3000` : (process.env.EXPO_PUBLIC_API_URL || 'localhost:3000');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const TABS = ['all', 'people', 'songs', 'movies', 'posts', 'events'];
@@ -38,7 +40,7 @@ export default function SearchScreen({ navigation, route }) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   
-  // Friend suggestions state
+  // Following suggestions state
   const [suggestions, setSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   
@@ -61,11 +63,11 @@ export default function SearchScreen({ navigation, route }) {
   const tabScrollViewRef = useRef(null);
   const tabLayouts = useRef({}); // Store tab layout positions
 
-  // Fetch friend suggestions
-  const fetchFriendSuggestions = async () => {
+  // Fetch following suggestions (based on who your following follow)
+  const fetchFollowingSuggestions = async () => {
     try {
       setLoadingSuggestions(true);
-      const { data } = await api.get('/api/friends/suggestions', {
+      const { data } = await api.get('/api/users/following/suggestions', {
         params: { limit: 15 }
       });
       
@@ -75,7 +77,7 @@ export default function SearchScreen({ navigation, route }) {
         setSuggestions([]);
       }
     } catch (error) {
-      console.error('Error fetching suggestions:', error);
+      console.error('Error fetching following suggestions:', error);
       setSuggestions([]);
     } finally {
       setLoadingSuggestions(false);
@@ -114,7 +116,7 @@ export default function SearchScreen({ navigation, route }) {
 
     // Load suggestions for people tab
     if (newTab === 'people') {
-      fetchFriendSuggestions();
+      fetchFollowingSuggestions();
     }
   }, [scrollX]);
 
@@ -210,7 +212,7 @@ export default function SearchScreen({ navigation, route }) {
   // Load suggestions on mount for people tab
   useEffect(() => {
     if (activeTab === 'people' && query.trim() === '') {
-      fetchFriendSuggestions();
+      fetchFollowingSuggestions();
     }
   }, [activeTab]);
 
@@ -223,7 +225,7 @@ export default function SearchScreen({ navigation, route }) {
         setResults([]);
         // Load suggestions for people tab when query is empty
         if (activeTab === 'people') {
-          fetchFriendSuggestions();
+          fetchFollowingSuggestions();
         }
       }
     }, 300);
@@ -335,53 +337,45 @@ export default function SearchScreen({ navigation, route }) {
   };
 
   // Send friend request
-  const sendFriendRequest = async (userId, username) => {
+  const handleFollow = async (userId, username) => {
     try {
-      // Update UI immediately
-      setResults(prev => prev.map(user => 
-        user._id === userId 
-          ? { ...user, relationshipStatus: 'request-sent', canAddFriend: false }
-          : user
-      ));
-      
-      setSuggestions(prev => prev.map(user => 
-        user._id === userId 
-          ? { ...user, relationshipStatus: 'request-sent', canAddFriend: false }
-          : user
-      ));
+      const user = results.find(u => u._id === userId) || suggestions.find(u => u._id === userId);
+      const isCurrentlyFollowing = user?.isFollowing || false;
 
-      await api.post(`/api/friends/request/${userId}`);
+      if (isCurrentlyFollowing) {
+        // Unfollow
+        await api.delete(`/api/follow/unfollow/${userId}`);
+        setResults(prev => prev.map(u => 
+          u._id === userId ? { ...u, isFollowing: false } : u
+        ));
+        setSuggestions(prev => prev.map(u => 
+          u._id === userId ? { ...u, isFollowing: false } : u
+        ));
+      } else {
+        // Follow
+        await api.post(`/api/follow/follow/${userId}`);
+        setResults(prev => prev.map(u => 
+          u._id === userId ? { ...u, isFollowing: true } : u
+        ));
+        setSuggestions(prev => prev.map(u => 
+          u._id === userId ? { ...u, isFollowing: true } : u
+        ));
+      }
     } catch (error) {
-      console.error('Error sending friend request:', error);
-      Alert.alert('Error', 'Could not send friend request. Please try again.');
-      
-      // Revert UI
-      setResults(prev => prev.map(user => 
-        user._id === userId 
-          ? { ...user, relationshipStatus: 'not-friends', canAddFriend: true }
-          : user
-      ));
-      
-      setSuggestions(prev => prev.map(user => 
-        user._id === userId 
-          ? { ...user, relationshipStatus: 'not-friends', canAddFriend: true }
-          : user
-      ));
+      console.error('Error following/unfollowing:', error);
+      Alert.alert('Error', 'Could not update follow status. Please try again.');
     }
   };
 
-  // Get button config for friend status
-  const getButtonConfig = (relationshipStatus) => {
-    switch (relationshipStatus) {
-      case 'friends':
-        return { text: 'Friends', color: COLORS.success, bgColor: COLORS.successLight, disabled: true };
-      case 'request-sent':
-        return { text: 'Requested', color: COLORS.textSecondary, bgColor: COLORS.border, disabled: true };
-      case 'request-received':
-        return { text: 'Respond', color: COLORS.primary, bgColor: COLORS.primaryLight, disabled: false };
-      default:
-        return { text: 'Add Friend', color: COLORS.primary, bgColor: COLORS.primaryLight, disabled: false };
+  // Get button config for follow status
+  const getButtonConfig = (isFollowing, isSelf) => {
+    if (isSelf) {
+      return { text: 'You', color: COLORS.textSecondary, bgColor: COLORS.border, disabled: true };
     }
+    if (isFollowing) {
+      return { text: 'Following', color: COLORS.success, bgColor: COLORS.successLight, disabled: false };
+    }
+    return { text: 'Follow', color: COLORS.primary, bgColor: COLORS.primaryLight, disabled: false };
   };
 
   // Render user row (modernized UI)
@@ -390,9 +384,9 @@ export default function SearchScreen({ navigation, route }) {
       ? `http://${API_BASE_URL}${item.profilePicture}`
       : `https://placehold.co/48x48/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`;
 
-    const relationshipStatus = item.relationshipStatus || 'not-friends';
-    const buttonConfig = getButtonConfig(relationshipStatus);
-    const canSendRequest = !buttonConfig.disabled && relationshipStatus === 'not-friends';
+    const isFollowing = item.isFollowing || false;
+    const isSelf = item.isSelf || false;
+    const buttonConfig = getButtonConfig(isFollowing, isSelf);
 
     return (
       <TouchableOpacity
@@ -436,12 +430,12 @@ export default function SearchScreen({ navigation, route }) {
             ]}
             onPress={(e) => {
               e.stopPropagation();
-              if (canSendRequest) {
-                sendFriendRequest(item._id, item.username);
+              if (!isSelf) {
+                handleFollow(item._id, item.username);
               }
             }}
             activeOpacity={0.7}
-            disabled={buttonConfig.disabled}
+            disabled={isSelf}
           >
             <Text style={[
               styles.friendButtonText, 

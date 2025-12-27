@@ -1,4 +1,4 @@
-// models/User.js - PHASE 1: Enhanced with Friends System + Payment Accounts
+// models/User.js - Follower-Following System + Payment Accounts
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -63,33 +63,7 @@ const UserSchema = new mongoose.Schema({
     required: false,
   },
 
-  // ✅ NEW: Friends System (replaces followers/following)
-  friends: [{
-    user: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'User',
-      required: true 
-    },
-    status: { 
-      type: String, 
-      enum: ['pending', 'accepted', 'blocked'], 
-      default: 'pending' 
-    },
-    initiatedBy: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'User',
-      required: true 
-    },
-    createdAt: { 
-      type: Date, 
-      default: Date.now 
-    },
-    acceptedAt: Date,
-    requestMessage: String,
-    mutualFriends: Number
-  }],
-
-  // ✅ DEPRECATED: Keep temporarily for migration - will be removed in Phase 5
+  // Follower-Following System (one-way relationships)
   followers: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -98,32 +72,18 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   }],
-  followRequests: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  }],
 
-  // ✅ NEW: Enhanced Privacy Settings for Friends System
+  // Privacy Settings
   privacy: {
-    friendRequests: {
-      type: String,
-      enum: ['everyone', 'friends-of-friends', 'no-one'],
-      default: 'everyone'
-    },
-    friendsList: {
-      type: String,
-      enum: ['everyone', 'friends', 'only-me'],
-      default: 'friends'
-    },
     posts: {
       type: String,
-      enum: ['public', 'friends', 'only-me'],
+      enum: ['public', 'followers', 'only-me'],
       default: 'public'
     },
     eventAttendance: {
       type: String,
-      enum: ['public', 'friends', 'only-me'],
-      default: 'friends'
+      enum: ['public', 'followers', 'only-me'],
+      default: 'public'
     },
     allowSuggestions: {
       type: Boolean,
@@ -292,220 +252,11 @@ const UserSchema = new mongoose.Schema({
   }],
   resetPasswordToken: String,
   resetPasswordExpires: Date,
-
-  // ✅ NEW: Migration tracking
-  migratedToFriendsAt: Date,
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
-
-// ============================================
-// ✅ NEW: FRIENDS SYSTEM METHODS
-// ============================================
-
-/**
- * Get all accepted friends for this user
- * @returns {Array} Array of friend user IDs
- */
-UserSchema.methods.getAcceptedFriends = function() {
-  // ✅ Add null/undefined check
-  if (!this.friends || !Array.isArray(this.friends)) {
-    return [];
-  }
-  
-  return this.friends
-    .filter(f => f && f.status === 'accepted')  // ✅ Also check if f exists
-    .map(f => f.user);
-};
-
-/**
- * Get pending friend requests sent TO this user
- * @returns {Array} Array of friend request objects
- */
-UserSchema.methods.getPendingRequests = function() {
-  if (!this.friends || !Array.isArray(this.friends)) {
-    return [];
-  }
-  
-  return this.friends.filter(f => 
-    f && f.status === 'pending' && 
-    String(f.initiatedBy) !== String(this._id)
-  );
-};
-
-/**
- * Get pending friend requests sent BY this user
- * @returns {Array} Array of friend request objects  
- */
-UserSchema.methods.getSentRequests = function() {
-  if (!this.friends || !Array.isArray(this.friends)) {
-    return [];
-  }
-  
-  return this.friends.filter(f => 
-    f && f.status === 'pending' && 
-    String(f.initiatedBy) === String(this._id)
-  );
-};
-
-/**
- * Check if two users are friends
- * @param {string} userId - User ID to check friendship with
- * @returns {Object} Friendship status and details
- */
-UserSchema.methods.getFriendshipStatus = function(userId) {
-  if (!this.friends || !Array.isArray(this.friends)) {
-    return { status: 'not-friends', friendship: null };
-  }
-  
-  const userIdStr = String(userId);
-  const friendship = this.friends.find(f => 
-    f && String(f.user) === userIdStr
-  );
-  
-  if (!friendship) {
-    return { status: 'not-friends', friendship: null };
-  }
-  
-  if (friendship.status === 'accepted') {
-    return { status: 'friends', friendship };
-  }
-  
-  if (friendship.status === 'pending') {
-    const initiatedByMe = String(friendship.initiatedBy) === String(this._id);
-    return { 
-      status: initiatedByMe ? 'request-sent' : 'request-received', 
-      friendship 
-    };
-  }
-  
-  if (friendship.status === 'blocked') {
-    return { status: 'blocked', friendship };
-  }
-  
-  return { status: 'not-friends', friendship: null };
-};
-
-/**
- * Send friend request to another user
- * @param {string} userId - User ID to send request to
- * @param {string} message - Optional message with request
- * @returns {Promise<Object>} Result of friend request
- */
-UserSchema.methods.sendFriendRequest = async function(userId, message = '') {
-  const userIdStr = String(userId);
-  const currentIdStr = String(this._id);
-  
-  if (userIdStr === currentIdStr) {
-    throw new Error('Cannot send friend request to yourself');
-  }
-  
-  const existingFriendship = this.getFriendshipStatus(userId);
-  if (existingFriendship.status !== 'not-friends') {
-    throw new Error(`Friendship already exists with status: ${existingFriendship.status}`);
-  }
-  
-  const targetUser = await this.constructor.findById(userId);
-  if (!targetUser) {
-    throw new Error('User not found');
-  }
-  
-  if (targetUser.privacy?.friendRequests === 'no-one') {
-    throw new Error('This user is not accepting friend requests');
-  }
-  
-  // 🔧 FIXED: Use new mongoose.Types.ObjectId() instead of mongoose.Types.ObjectId()
-  const friendshipData = {
-    user: new mongoose.Types.ObjectId(userId),
-    status: 'pending',
-    initiatedBy: this._id,
-    createdAt: new Date(),
-    requestMessage: message
-  };
-  
-  this.friends.push(friendshipData);
-  targetUser.friends.push({
-    ...friendshipData,
-    user: this._id
-  });
-  
-  await Promise.all([this.save(), targetUser.save()]);
-  
-  return { success: true, message: 'Friend request sent' };
-};
-
-/**
- * Accept friend request
- * @param {string} userId - User ID who sent the request
- * @returns {Promise<Object>} Result of accepting request
- */
-UserSchema.methods.acceptFriendRequest = async function(userId) {
-  const friendship = this.friends.find(f => 
-    String(f.user) === String(userId) && 
-    f.status === 'pending' &&
-    String(f.initiatedBy) !== String(this._id)
-  );
-  
-  if (!friendship) {
-    throw new Error('Friend request not found');
-  }
-  
-  const otherUser = await this.constructor.findById(userId);
-  if (!otherUser) {
-    throw new Error('User not found');
-  }
-  
-  const otherFriendship = otherUser.friends.find(f => 
-    String(f.user) === String(this._id)
-  );
-  
-  const acceptedAt = new Date();
-  friendship.status = 'accepted';
-  friendship.acceptedAt = acceptedAt;
-  
-  if (otherFriendship) {
-    otherFriendship.status = 'accepted';
-    otherFriendship.acceptedAt = acceptedAt;
-  }
-  
-  await Promise.all([this.save(), otherUser.save()]);
-  
-  return { success: true, message: 'Friend request accepted' };
-};
-
-/**
- * Remove friendship or reject/cancel request
- * @param {string} userId - User ID to remove friendship with
- * @returns {Promise<Object>} Result of removal
- */
-UserSchema.methods.removeFriendship = async function(userId) {
-  const friendshipIndex = this.friends.findIndex(f => 
-    String(f.user) === String(userId)
-  );
-  
-  if (friendshipIndex === -1) {
-    throw new Error('Friendship not found');
-  }
-  
-  const otherUser = await this.constructor.findById(userId);
-  if (otherUser) {
-    const otherFriendshipIndex = otherUser.friends.findIndex(f => 
-      String(f.user) === String(this._id)
-    );
-    
-    if (otherFriendshipIndex !== -1) {
-      otherUser.friends.splice(otherFriendshipIndex, 1);
-      await otherUser.save();
-    }
-  }
-  
-  this.friends.splice(friendshipIndex, 1);
-  await this.save();
-  
-  return { success: true, message: 'Friendship removed' };
-};
 
 // ============================================
 // ENHANCED: PAYMENT ACCOUNT METHODS
@@ -772,25 +523,12 @@ UserSchema.pre('save', async function(next) {
     this.paymentAccounts.primary.lastUpdated = new Date();
   }
   
-   if (!this.friends) {
-    this.friends = [];
-  }
   next();
 });
 
 UserSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
-
-// Virtual for friends count
-UserSchema.virtual('friendsCount').get(function() {
-  return this.friends ? this.friends.filter(f => f.status === 'accepted').length : 0;
-});
-
-// Virtual for pending requests count
-UserSchema.virtual('pendingRequestsCount').get(function() {
-  return this.friends ? this.getPendingRequests().length : 0;
-});
 
 // Virtual for full name
 UserSchema.virtual('fullName').get(function() {
@@ -800,9 +538,6 @@ UserSchema.virtual('fullName').get(function() {
 // ============================================
 // INDEXES FOR PERFORMANCE
 // ============================================
-// ✅ FIXED: Remove individual indexes to avoid duplicates (handled in server.js)
-UserSchema.index({ 'friends.user': 1, 'friends.status': 1 });
-UserSchema.index({ 'friends.initiatedBy': 1 });
 UserSchema.index({ 'paymentAccounts.paypal.email': 1 });
 UserSchema.index({ 'paymentAccounts.stripe.accountId': 1 });
 

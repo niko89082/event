@@ -1,17 +1,49 @@
 // services/api.js - Fixed for better auth handling and route consistency
 import axios from 'axios';
-import { API_BASE_URL } from '@env';
+import { API_BASE_URL, EXPO_PUBLIC_API_URL } from '@env';
 
-// Validate API_BASE_URL is defined
-if (!API_BASE_URL) {
-  console.error('❌ API Service: API_BASE_URL is not defined! Check your .env file.');
-  throw new Error('API_BASE_URL is not defined in environment variables. Please check your .env file.');
+// Debug: Log what we're getting from .env
+console.log('🔍 API Service Debug:');
+console.log('   API_BASE_URL from @env:', API_BASE_URL);
+console.log('   EXPO_PUBLIC_API_URL from @env:', EXPO_PUBLIC_API_URL);
+console.log('   Type of API_BASE_URL:', typeof API_BASE_URL);
+
+// Determine the IP address to use
+// Priority: API_BASE_URL from .env > EXPO_PUBLIC_API_URL > fallback
+let ipAddress = API_BASE_URL || EXPO_PUBLIC_API_URL;
+
+// Clean up the IP address (remove http://, https://, trailing slashes, etc.)
+if (ipAddress) {
+  ipAddress = ipAddress
+    .replace(/^https?:\/\//, '') // Remove http:// or https://
+    .replace(/\/$/, '') // Remove trailing slash
+    .split(':')[0]; // Remove port if included (we'll add it back)
 }
 
-console.log('🟡 API Service: Initializing with base URL:', API_BASE_URL);
+// Fallback if still undefined
+if (!ipAddress || ipAddress === 'undefined' || ipAddress === 'localhost') {
+  console.warn('⚠️  API Service: API_BASE_URL not found in .env, using fallback');
+  ipAddress = 'localhost';
+}
 
-// Construct base URL
-const baseURL = `http://${API_BASE_URL}:3000`;
+// Validate IP address format (basic check)
+if (!ipAddress || ipAddress.trim() === '') {
+  console.error('❌ API Service: Invalid IP address!');
+  throw new Error('API_BASE_URL is invalid. Please check your .env file.');
+}
+
+console.log('🟡 API Service: Using IP address:', ipAddress);
+
+// Construct base URL - ensure we don't double-add http://
+let baseURL;
+if (ipAddress.startsWith('http://') || ipAddress.startsWith('https://')) {
+  // Already has protocol, just add port if needed
+  baseURL = ipAddress.includes(':3000') ? ipAddress : `${ipAddress}:3000`;
+} else {
+  // No protocol, add http:// and port
+  baseURL = `http://${ipAddress}:3000`;
+}
+
 console.log('🟡 API Service: Full base URL:', baseURL);
 
 const api = axios.create({
@@ -74,7 +106,8 @@ api.interceptors.response.use(
     }
     
     if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error')) {
-      console.error('❌ API: Network error - check if server is running on', `http://${API_BASE_URL}:3000`);
+      console.error('❌ API: Network error - check if server is running on', baseURL);
+      console.error('❌ API: Current IP address:', ipAddress);
     }
     
     if (error.code === 'ECONNABORTED') {

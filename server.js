@@ -520,7 +520,8 @@ app.use('/api/checkin', checkinRoutes);
 app.use('/api/forms', formsRoutes); 
 app.use('/api/profile', profileRoutes);
 
-// ✅ NEW: Friends system routes (Phase 1)
+// ⚠️ DEPRECATED: Friends system routes - being replaced by follower-following system
+// Keeping for backward compatibility during migration
 app.use('/api/friends', friendsRoutes);
 
 // ✅ NEW: Review routes

@@ -17,8 +17,6 @@ import MemoryPostActivityComponent from './MemoryPostActivityComponent';
 import EventInvitationActivity from './activities/EventInvitationActivity';
 import EventPhotoActivity from './activities/EventPhotoActivity';
 import FriendEventActivity from './activities/FriendEventActivity';
-import FriendRequestActivity from './activities/FriendRequestActivity';
-import FriendRequestAcceptedActivity from './activities/FriendRequestAcceptedActivity';
 import EventReminderActivity from './activities/EventReminderActivity';
 import MemoryCreatedActivity from './activities/MemoryCreatedActivity';
 import EventCreatedActivity from './activities/EventCreatedActivity';
@@ -139,19 +137,7 @@ export default function ActivityList({
           </View>
         );
 
-      case 'friend_request':
-        return (
-          <View style={styles.activityWrapper}>
-            <FriendRequestActivity {...commonProps} />
-          </View>
-        );
-
-      case 'friend_request_accepted':
-        return (
-          <View style={styles.activityWrapper}>
-            <FriendRequestAcceptedActivity {...commonProps} />
-          </View>
-        );
+      // Friend request activities removed - using follower-following system
 
       case 'event_reminder':
         return (

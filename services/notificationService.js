@@ -46,7 +46,7 @@ class NotificationService {
 
   getCategoryFromType(type) {
     const socialTypes = [
-      'friend_request', 'friend_request_accepted', 'new_follower', // ✅ Keep new_follower for migration
+      'new_follower',
       'memory_photo_added', 'memory_invitation', 'memory_photo_batch', 
       'post_liked', 'post_commented', 'memory_photo_liked'
     ];
@@ -63,65 +63,11 @@ class NotificationService {
   }
 
   /* ═══════════════════════════════════════════════════════════════════
-     ✅ NEW: FRIENDS SYSTEM NOTIFICATIONS
+     FOLLOWER-FOLLOWING SYSTEM NOTIFICATIONS
   ═══════════════════════════════════════════════════════════════════ */
 
   /**
-   * Send friend request notification
-   * @param {string} requesterId - User who sent the friend request
-   * @param {string} targetId - User who received the friend request
-   */
-  async sendFriendRequest(requesterId, targetId) {
-    const requester = await User.findById(requesterId).select('username');
-    
-    return this.createNotification({
-      userId: targetId,
-      senderId: requesterId,
-      category: 'social',
-      type: 'friend_request',
-      title: 'Friend Request',
-      message: `${requester.username} sent you a friend request`,
-      data: { 
-        userId: requesterId,
-        requesterUsername: requester.username
-      },
-      actionType: 'ACCEPT_REQUEST',
-      actionData: { requesterId },
-      priority: 'high'
-    });
-  }
-
-  /**
-   * Send friend request accepted notification
-   * @param {string} accepterId - User who accepted the request
-   * @param {string} requesterId - User who originally sent the request
-   */
-  async sendFriendRequestAccepted(accepterId, requesterId) {
-    const accepter = await User.findById(accepterId).select('username');
-    
-    return this.createNotification({
-      userId: requesterId,
-      senderId: accepterId,
-      category: 'social',
-      type: 'friend_request_accepted',
-      title: 'Friend Request Accepted',
-      message: `${accepter.username} accepted your friend request`,
-      data: { 
-        userId: accepterId,
-        accepterUsername: accepter.username
-      },
-      actionType: 'VIEW_PROFILE',
-      actionData: { userId: accepterId },
-      priority: 'high'
-    });
-  }
-
-  /* ═══════════════════════════════════════════════════════════════════
-     🔄 LEGACY: FOLLOWER SYSTEM NOTIFICATIONS (Keep for migration period)
-  ═══════════════════════════════════════════════════════════════════ */
-
-  /**
-   * Send new follower notification (LEGACY - for migration period)
+   * Send new follower notification
    * @param {string} followerId - User who followed
    * @param {string} targetId - User who was followed
    */

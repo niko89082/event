@@ -10,7 +10,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
-import { useFriendRequestManager } from '../hooks/useFriendRequestManager';
 import PostCard from '../components/PostCard';
 import PhotoGrid from '../components/PhotoGrid';
 
@@ -36,14 +35,6 @@ export default function ProfileScreen() {
 
   const userId = params?.userId || currentUser?._id;
   const isSelf = !params?.userId || userId === currentUser?._id;
-  const friendRequestManager = useFriendRequestManager('ProfileScreen', {
-      showSuccessAlerts: true, // Show success alerts for profile actions
-      onAcceptSuccess: handleFriendRequestAccepted,
-      onRejectSuccess: handleFriendRequestRejected,
-      onCancelSuccess: handleFriendRequestCancelled,
-      onSendSuccess: handleFriendRequestSent,
-      onRefreshRequired: () => fetchUserProfile(true)
-    });
   // State
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -56,12 +47,10 @@ export default function ProfileScreen() {
   const [memoriesLoading, setMemoriesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [eventsCount, setEventsCount] = useState(0);
-  // NEW: Friends system state
-  const [friendshipStatus, setFriendshipStatus] = useState('not-friends');
-  const [friendshipData, setFriendshipData] = useState(null);
-  const [mutualFriends, setMutualFriends] = useState([]);
-  const [mutualEventsCount, setMutualEventsCount] = useState(0);
-  const [friendsCount, setFriendsCount] = useState(0);
+  // Follow system state
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
   
   const [eventFilter, setEventFilter] = useState('all');
   const [showManageModal, setShowManageModal] = useState(false);
@@ -88,36 +77,23 @@ const getTabs = () => {
   useEffect(() => {
     currentTabIndex.current = activeTabIndex;
   }, [activeTabIndex]);
-  function handleFriendRequestAccepted(data) {
-    console.log('🎉 ProfileScreen: Friend request accepted', data);
-    if (data.requesterId === userId) {
-      setFriendshipStatus('friends');
-      setFriendsCount(prev => prev + 1);
-      // Refresh profile to show new content
-      fetchUserProfile(true);
+  // Handle follow/unfollow
+  const handleFollow = async () => {
+    try {
+      if (isFollowing) {
+        await api.delete(`/api/follow/unfollow/${userId}`);
+        setIsFollowing(false);
+        setFollowersCount(prev => Math.max(0, prev - 1));
+      } else {
+        await api.post(`/api/follow/follow/${userId}`);
+        setIsFollowing(true);
+        setFollowersCount(prev => prev + 1);
+      }
+    } catch (error) {
+      console.error('Error following/unfollowing:', error);
+      Alert.alert('Error', 'Failed to update follow status');
     }
-  }
- // ✅ REMOVED: No need to re-filter posts - everything is public
-  function handleFriendRequestRejected(data) {
-    console.log('❌ ProfileScreen: Friend request rejected', data);
-    if (data.requesterId === userId) {
-      setFriendshipStatus('not-friends');
-    }
-  }
-
-  function handleFriendRequestCancelled(data) {
-    console.log('🚫 ProfileScreen: Friend request cancelled', data);
-    if (data.targetUserId === userId) {
-      setFriendshipStatus('not-friends');
-    }
-  }
-
-  function handleFriendRequestSent(data) {
-    console.log('📤 ProfileScreen: Friend request sent', data);
-    if (data.targetUserId === userId) {
-      setFriendshipStatus('request-sent');
-    }
-  }
+  };
 
   // PanResponder for swipe functionality (same as before)
   const panResponder = useRef(
@@ -244,80 +220,31 @@ const getTabs = () => {
     switchToTab(index);
   }, [switchToTab]);
 
-  // FIXED: Fetch friendship status with correct endpoint
-  // FIXED: Fetch friendship status with better debugging
-const fetchFriendshipStatus = async () => {
-  console.log('🤝 === FETCHING FRIENDSHIP STATUS ===');
-  console.log('🤝 userId:', userId);
-  console.log('🤝 currentUser._id:', currentUser?._id);
-  console.log('🤝 isSelf:', isSelf);
-  
-  if (isSelf) {
-    console.log('🤝 Setting friendship status to self');
-    setFriendshipStatus('self');
-    return 'self';
-  }
-
-  try {
-    console.log('🤝 Making API call to /api/friends/status/' + userId);
-    const { data } = await api.get(`/api/friends/status/${userId}`);
-    console.log('🤝 Friendship status response:', data);
-    
-    setFriendshipStatus(data.status);
-    setFriendshipData(data.friendship);
-    
-    console.log('🤝 Friendship status set to:', data.status);
-    
-    // Fetch mutual friends if not friends yet
-    if (data.status === 'not-friends') {
-      try {
-        const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
-        setMutualFriends(mutualRes.data.mutualFriends || []);
-        console.log('👥 Mutual friends found:', mutualRes.data.mutualFriends?.length || 0);
-      } catch (mutualError) {
-        console.log('Could not fetch mutual friends:', mutualError);
-      }
-    }
-    
-    console.log('🤝 === FRIENDSHIP STATUS FETCH COMPLETE ===');
-    return data.status;
-  } catch (error) {
-    console.error('❌ Error fetching friendship status:', error);
-    console.error('❌ Error response:', error.response?.data);
-    console.error('❌ Error status:', error.response?.status);
-    setFriendshipStatus('not-friends');
-    return 'not-friends';
-  }
-};
-
-  // FIXED: Fetch friends count using correct endpoint
-  const fetchFriendsCount = async () => {
-  try {
-    // For yourself, use /api/friends/list
+  // Fetch follow status
+  const fetchFollowStatus = async () => {
     if (isSelf) {
-      const { data } = await api.get('/api/friends/list?limit=1');
-      setFriendsCount(data.total || 0);
-    } else {
-      // For other users, use /api/friends/:userId
-      try {
-        const { data } = await api.get(`/api/friends/${userId}?limit=1`);
-        setFriendsCount(data.friendsCount || 0);
-      } catch (error) {
-        // If 403 (permission denied), we can still show the count from the error response
-        if (error.response?.status === 403 && error.response?.data?.friendsCount !== undefined) {
-          setFriendsCount(error.response.data.friendsCount);
-          console.log('Friends list is private, but got count:', error.response.data.friendsCount);
-        } else {
-          console.log('Could not fetch friends count:', error);
-          setFriendsCount(0);
-        }
-      }
+      return;
     }
-  } catch (error) {
-    console.log('Could not fetch friends count:', error);
-    setFriendsCount(0);
-  }
-};
+
+    try {
+      const { data } = await api.get(`/api/profile/${userId}`);
+      setIsFollowing(data.isFollowing || false);
+    } catch (error) {
+      console.error('Error fetching follow status:', error);
+    }
+  };
+
+  // Fetch follow counts
+  const fetchFollowCounts = async () => {
+    try {
+      const { data: followersData } = await api.get(`/api/profile/${userId}/followers`);
+      const { data: followingData } = await api.get(`/api/profile/${userId}/following`);
+      setFollowersCount(followersData.count || 0);
+      setFollowingCount(followingData.count || 0);
+    } catch (error) {
+      console.log('Could not fetch follow counts:', error);
+    }
+  };
 
   // Fetch user profile data (UPDATED for friends system)
 // FIXED: Fetch user profile data with proper sequencing and debugging
@@ -332,66 +259,25 @@ const fetchUserProfile = async (isRefresh = false) => {
     console.log('📡 === PROFILE FETCH START ===');
     console.log('📡 Fetching profile data for userId:', userId);
     console.log('📡 isSelf:', isSelf);
-    console.log('📡 Current friendshipStatus before fetch:', friendshipStatus);
     
-    // CRITICAL FIX: Fetch friendship status FIRST and WAIT for it to update
-    let currentFriendshipStatus = 'not-friends';
+    // Fetch follow status if not self
     if (!isSelf) {
-      console.log('🔒 Fetching friendship status first...');
-      try {
-        const { data } = await api.get(`/api/friends/status/${userId}`);
-        currentFriendshipStatus = data.status;
-        setFriendshipStatus(currentFriendshipStatus);
-        setFriendshipData(data.friendship);
-        console.log('🔒 Friendship status fetched and set:', currentFriendshipStatus);
-        
-        // Fetch mutual friends if not friends yet
-        if (currentFriendshipStatus === 'not-friends' || !isSelf) {
-          try {
-            const mutualRes = await api.get(`/api/friends/mutual/${userId}`);
-            setMutualFriends(mutualRes.data.mutualFriends || []);
-            console.log('👥 Mutual friends:', mutualRes.data.mutualFriends?.length || 0);
-          } catch (mutualError) {
-            console.log('Could not fetch mutual friends:', mutualError);
-          }
-
-          // Fetch mutual events count
-          try {
-            const mutualEventsRes = await api.get(`/api/events/mutual/${userId}`);
-            setMutualEventsCount(mutualEventsRes.data.count || 0);
-            console.log('🎉 Mutual events:', mutualEventsRes.data.count || 0);
-          } catch (mutualEventsError) {
-            console.log('Could not fetch mutual events:', mutualEventsError);
-          }
-        }
-      } catch (error) {
-        console.error('❌ Error fetching friendship status:', error);
-        currentFriendshipStatus = 'not-friends';
-        setFriendshipStatus('not-friends');
-      }
-    } else {
-      currentFriendshipStatus = 'self';
-      setFriendshipStatus('self');
-      console.log('🔒 User is self, setting friendship status to self');
+      await fetchFollowStatus();
     }
     
-    // Now fetch profile data
+    // Fetch profile data
     console.log('📡 Fetching profile data from /api/profile/' + userId);
     const { data } = await api.get(`/api/profile/${userId}`);
     console.log('✅ Profile data received:', { 
       username: data.username, 
-      friendsCount: data.friendsCount,
       postsCount: data.postsCount || data.photos?.length || 0,
-      canViewContent: data.photos?.length > 0 || 'backend-filtered',
-      backendFriendshipStatus: data.friendshipStatus,
-      canViewPrivateContent: data.canViewPrivateContent
+      canViewContent: data.photos?.length > 0 || 'backend-filtered'
     });
     
     setUser(data);
     
-    // ✅ SIMPLIFIED: Show all posts (everything is public by default)
+    // Show all posts (everything is public by default)
     const allPosts = data.photos || [];
-    // ✅ FIX: Ensure all posts have user data populated
     const postsWithUser = allPosts.map(post => ({
       ...post,
       user: post.user || {
@@ -407,13 +293,20 @@ const fetchUserProfile = async (isRefresh = false) => {
     
     console.log('📸 Showing all posts (public by default):', sortedPosts.length);
     
-    // Set friends count from profile data or fetch separately
-    if (data.friendsCount !== undefined) {
-      setFriendsCount(data.friendsCount);
-      console.log('👥 Friends count from profile:', data.friendsCount);
-    } else {
-      console.log('👥 Fetching friends count separately...');
-      await fetchFriendsCount();
+    // Set follow counts from profile data
+    if (data.followersCount !== undefined) {
+      setFollowersCount(data.followersCount);
+    }
+    if (data.followingCount !== undefined) {
+      setFollowingCount(data.followingCount);
+    }
+    if (data.isFollowing !== undefined) {
+      setIsFollowing(data.isFollowing);
+    }
+    
+    // Fetch follow counts if not provided
+    if (data.followersCount === undefined || data.followingCount === undefined) {
+      await fetchFollowCounts();
     }
 
     // ALWAYS fetch events to get the count (regardless of active tab)
@@ -546,32 +439,18 @@ const fetchUserProfile = async (isRefresh = false) => {
 
 useEffect(() => {
   if (activeTabIndex === 2 && !eventsLoading) { // Events tab is now index 2
-    console.log('🔄 Re-checking events due to friendship status change:', friendshipStatus);
-    
-    if (!isSelf && friendshipStatus !== 'friends') {
-      console.log('🔒 Clearing events - user is not a friend');
-      setEvents([]);
-    } else if (friendshipStatus === 'friends' && events.length === 0) {
-      console.log('📅 Now friends - fetching events');
+    if (events.length === 0) {
       fetchUserEvents();
     }
   }
-}, [friendshipStatus, activeTabIndex, isSelf]);
+}, [activeTabIndex, isSelf]);
 
-  // FIXED: Fetch user events with better synchronization
+  // Fetch user events
 const fetchUserEvents = async () => {
   try {
     setEventsLoading(true);
     
-    // ENHANCED CHECK: Don't fetch events for non-friends
-    if (!isSelf && friendshipStatus !== 'friends') {
-      console.log('🔒 Not fetching events - user is not a friend. Status:', friendshipStatus);
-      setEvents([]);
-      setEventsCount(0); // Reset count for non-friends
-      return;
-    }
-    
-    console.log(`📅 Fetching events for userId: ${userId} (isSelf: ${isSelf}, friendship: ${friendshipStatus})`);
+    console.log(`📅 Fetching events for userId: ${userId} (isSelf: ${isSelf})`);
     const { data } = await api.get(`/api/events/user/${userId}?includePast=true&limit=100`);
     
     const sortedEvents = (data.events || []).sort((a, b) => 
@@ -600,7 +479,7 @@ const fetchUserEvents = async () => {
       setSharedEventIds(new Set(data.sharedEventIds));
     }
     
-    console.log(`✅ Loaded ${userEvents.length} events for user ${userId} (friendship: ${friendshipStatus})`);
+    console.log(`✅ Loaded ${userEvents.length} events for user ${userId}`);
     
   } catch (error) {
     console.error('❌ Error fetching events:', error);
@@ -699,153 +578,46 @@ const fetchUserEvents = async () => {
     fetchUserProfile();
   }, [userId]);
 
-  // NEW: Handle friend actions
-  const handleFriendAction = async () => {
-    if (friendRequestManager.isProcessing()) return;
-
+  // Handle follow/unfollow action
+  const handleFollowAction = async () => {
     try {
-      switch (friendshipStatus) {
-        case 'not-friends':
-          await friendRequestManager.sendRequest(userId, 'I would like to add you as a friend.');
-          break;
-          
-        case 'request-sent':
-          Alert.alert(
-            'Cancel Friend Request',
-            `Cancel your friend request to ${user?.username}?`,
-            [
-              { text: 'Keep Request', style: 'cancel' },
-              { 
-                text: 'Cancel Request', 
-                style: 'destructive',
-                onPress: async () => {
-                  try {
-                    await friendRequestManager.cancelSentRequest(userId);
-                  } catch (error) {
-                    console.error('Cancel request failed:', error);
-                  }
-                }
-              }
-            ]
-          );
-          break;
-          
-        case 'request-received':
-          Alert.alert(
-            'Friend Request',
-            `${user?.username} wants to be friends with you`,
-            [
-              {
-                text: 'Decline',
-                style: 'cancel',
-                onPress: async () => {
-                  try {
-                    await friendRequestManager.rejectRequest(userId);
-                  } catch (error) {
-                    console.error('Reject request failed:', error);
-                  }
-                }
-              },
-              {
-                text: 'Accept',
-                onPress: async () => {
-                  try {
-                    await friendRequestManager.acceptRequest(userId);
-                  } catch (error) {
-                    console.error('Accept request failed:', error);
-                  }
-                }
-              }
-            ]
-          );
-          break;
-          
-        case 'friends':
-          Alert.alert(
-            'Remove Friend',
-            `Are you sure you want to remove ${user?.username} from your friends?`,
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Remove',
-                style: 'destructive',
-                onPress: async () => {
-                  try {
-                    await api.delete(`/api/friends/remove/${userId}`);
-                    setFriendshipStatus('not-friends');
-                    setFriendsCount(prev => Math.max(0, prev - 1));
-                    Alert.alert('Success', 'Friend removed');
-                    // Refresh to hide private content
-                    fetchUserProfile(true);
-                  } catch (error) {
-                    Alert.alert('Error', 'Failed to remove friend');
-                  }
-                }
-              }
-            ]
-          );
-          break;
-      }
+      await handleFollow();
+      await fetchFollowCounts();
     } catch (error) {
-      console.error('Friend action error:', error);
-      Alert.alert('Error', error.message || 'Failed to perform action');
+      console.error('Follow action error:', error);
     }
   };
 
 
-  const renderFriendButton = () => {
-  const isProcessing = friendRequestManager.isProcessing();
-  
-  return (
-    <TouchableOpacity
-      style={[
-        styles.friendButton,
-        friendshipStatus === 'friends' && styles.friendsButton,
-        friendshipStatus === 'request-received' && styles.requestReceivedButton,
-        friendshipStatus === 'request-sent' && styles.requestSentButton,
-        isProcessing && styles.friendButtonDisabled
-      ]}
-      onPress={handleFriendAction}
-      disabled={isProcessing}
-      activeOpacity={0.8}
-    >
-      <View style={styles.friendButtonContent}>
-        {isProcessing ? (
-          <ActivityIndicator size="small" color="#FFFFFF" />
-        ) : (
-          <>
-            <Ionicons 
-              name={
-                friendshipStatus === 'friends' ? 'checkmark-circle' :
-                friendshipStatus === 'request-received' ? 'mail' :
-                friendshipStatus === 'request-sent' ? 'time' :
-                'person-add'
-              } 
-              size={16} 
-              color={
-                friendshipStatus === 'friends' ? '#34C759' :
-                friendshipStatus === 'request-received' ? '#FFFFFF' :
-                friendshipStatus === 'request-sent' ? '#8E8E93' :
-                '#FFFFFF'
-              } 
-              style={styles.friendButtonIcon}
-            />
-            <Text style={[
-              styles.friendButtonText,
-              friendshipStatus === 'friends' && styles.friendsButtonText,
-              friendshipStatus === 'request-sent' && styles.requestSentButtonText
-            ]}>
-              {friendshipStatus === 'friends' ? 'Unfriend' :
-               friendshipStatus === 'request-received' ? 'Respond' :
-               friendshipStatus === 'request-sent' ? 'Requested' :
-               'Friend'}
-            </Text>
-          </>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-};
+  const renderFollowButton = () => {
+    if (isSelf) return null;
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.friendButton,
+          isFollowing && styles.friendsButton
+        ]}
+        onPress={handleFollowAction}
+        activeOpacity={0.8}
+      >
+        <View style={styles.friendButtonContent}>
+          <Ionicons 
+            name={isFollowing ? 'checkmark-circle' : 'person-add'} 
+            size={16} 
+            color={isFollowing ? '#34C759' : '#FFFFFF'} 
+            style={styles.friendButtonIcon}
+          />
+          <Text style={[
+            styles.friendButtonText,
+            isFollowing && styles.friendsButtonText
+          ]}>
+            {isFollowing ? 'Following' : 'Follow'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
 
   // Toggle event sharing (same as before)
@@ -909,39 +681,27 @@ const renderProfileHeader = () => {
         {/* Friends Count */}
         <TouchableOpacity
           style={styles.statItem}
-          onPress={() => navigation.navigate('FriendsListScreen', { 
+          onPress={() => navigation.navigate('FollowersListScreen', { 
             userId, 
-            mode: 'friends'
+            mode: 'followers'
           })}
           activeOpacity={0.7}
         >
-          <Text style={styles.statNumber}>{friendsCount}</Text>
-          <Text style={styles.statLabel}>Friends</Text>
+          <Text style={styles.statNumber}>{followersCount}</Text>
+          <Text style={styles.statLabel}>Followers</Text>
         </TouchableOpacity>
         
-        {/* Show mutual friends or events - whichever is greater */}
-        {!isSelf && (mutualFriends.length > 0 || mutualEventsCount > 0) && (
-          <TouchableOpacity
-            style={styles.statItem}
-            onPress={() => {
-              if (mutualFriends.length >= mutualEventsCount) {
-                navigation.navigate('FriendsListScreen', { 
-                  userId, 
-                  mode: 'mutual'
-                });
-              }
-            }}
-            activeOpacity={mutualFriends.length >= mutualEventsCount ? 0.7 : 1}
-            disabled={mutualFriends.length < mutualEventsCount}
-          >
-            <Text style={styles.statNumber}>
-              {mutualFriends.length >= mutualEventsCount ? mutualFriends.length : mutualEventsCount}
-            </Text>
-            <Text style={styles.statLabel}>
-              {mutualFriends.length >= mutualEventsCount ? 'Mutual' : 'Events'}
-            </Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.statItem}
+          onPress={() => navigation.navigate('FollowingListScreen', { 
+            userId, 
+            mode: 'following'
+          })}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.statNumber}>{followingCount}</Text>
+          <Text style={styles.statLabel}>Following</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Action Buttons with Friends System */}
@@ -975,7 +735,7 @@ const renderProfileHeader = () => {
             */}
           </View>
         ) : (
-          renderFriendButton()
+          renderFollowButton()
         )}
       </View>
     </View>

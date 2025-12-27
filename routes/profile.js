@@ -24,7 +24,7 @@ const upload = multer({ storage });
 router.get('/', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('username profilePicture bio displayName pronouns isPublic createdAt');
+      .select('username profilePicture bio displayName pronouns isPublic createdAt following');
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -612,9 +612,15 @@ router.get('/:userId', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    // ✅ SIMPLIFIED: Get friends count (always visible)
+    // Get follow counts
     const targetUser = await User.findById(targetUserId);
-    const friendsCount = targetUser.getAcceptedFriends().length;
+    const followersCount = (targetUser.followers || []).length;
+    const followingCount = (targetUser.following || []).length;
+    
+    // Check if current user follows this profile
+    const isFollowing = !isSelf && (targetUser.followers || []).some(
+      id => id.toString() === currentUserId.toString()
+    );
     
     // ✅ FIXED: Filter attendingEvents to exclude events where user is the host
     let filteredAttendingEvents = [];
@@ -642,13 +648,14 @@ router.get('/:userId', protect, async (req, res) => {
       ...user,
       attendingEvents: filteredAttendingEvents,
       photos: photos,
-      friendsCount: friendsCount,
+      followersCount: followersCount,
+      followingCount: followingCount,
+      isFollowing: isFollowing,
       postsCount: postsCount,
-      canViewPrivateContent: true, // Always true - everything is public
-      friendshipStatus: isSelf ? 'self' : 'not-friends' // Keep for compatibility
+      canViewPrivateContent: true // Always true - everything is public
     };
     
-    console.log(`🟢 Profile data: photos=${photos.length}, postsCount=${postsCount}, friendsCount=${friendsCount}, attendingEvents=${filteredAttendingEvents.length}`);
+    console.log(`🟢 Profile data: photos=${photos.length}, postsCount=${postsCount}, followersCount=${followersCount}, followingCount=${followingCount}, attendingEvents=${filteredAttendingEvents.length}`);
     
     res.json(response);
     
@@ -670,13 +677,6 @@ router.get('/:userId/followers', protect, async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
-    }
-
-    const isSelf = userId === currentUserId.toString();
-    const isFollowing = user.followers.some(f => f._id.toString() === currentUserId);
-
-    if (!user.isPublic && !isSelf && !isFollowing) {
-      return res.status(403).json({ message: 'This account is private' });
     }
 
     res.json({
@@ -702,13 +702,6 @@ router.get('/:userId/following', protect, async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
-    }
-
-    const isSelf = userId === currentUserId.toString();
-    const isFollowing = user.followers?.some(f => f._id.toString() === currentUserId) || false;
-
-    if (!user.isPublic && !isSelf && !isFollowing) {
-      return res.status(403).json({ message: 'This account is private' });
     }
 
     res.json({
