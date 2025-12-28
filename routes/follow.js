@@ -7,13 +7,15 @@ const notificationService = require('../services/notificationService');
 // routes/follow.js - Follower-Following System (instant follows, no requests)
 
 /**
- * POST /follow/:id
+ * POST /api/follow/follow/:id
  * Follow a user (instant follow, no acceptance required)
  */
 router.post('/follow/:id', protect, async (req, res) => {
+  const targetUserId = req.params.id;
+  const currentUserId = req.user._id;
+  
   try {
-    const targetUserId = req.params.id;
-    const currentUserId = req.user._id;
+    console.log('🔔 Follow request:', { targetUserId, currentUserId });
 
     if (targetUserId.toString() === currentUserId.toString()) {
       return res.status(400).json({ message: 'You cannot follow yourself' });
@@ -24,22 +26,85 @@ router.post('/follow/:id', protect, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check if already following
-    if (userToFollow.followers.some(id => id.toString() === currentUserId.toString())) {
+    // Ensure arrays are initialized
+    if (!userToFollow.followers) {
+      userToFollow.followers = [];
+    }
+
+    // Get current user
+    const currentUser = await User.findById(currentUserId);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Ensure arrays are initialized
+    if (!currentUser.following) {
+      currentUser.following = [];
+    }
+
+    // Check if already following (check both arrays)
+    // Convert to strings for comparison
+    const currentUserIdStr = currentUserId.toString();
+    const targetUserIdStr = targetUserId.toString();
+    
+    const alreadyInFollowers = (userToFollow.followers || []).some(id => 
+      id.toString() === currentUserIdStr
+    );
+    const alreadyInFollowing = (currentUser.following || []).some(id => 
+      id.toString() === targetUserIdStr
+    );
+
+    if (alreadyInFollowers || alreadyInFollowing) {
       return res.status(400).json({ message: 'You are already following this user' });
     }
 
     // Instant follow - add to both arrays
-    if (!userToFollow.followers.some(id => id.toString() === currentUserId.toString())) {
-      userToFollow.followers.push(currentUserId);
+    // Ensure arrays exist
+    if (!Array.isArray(userToFollow.followers)) {
+      userToFollow.followers = [];
+    }
+    if (!Array.isArray(currentUser.following)) {
+      currentUser.following = [];
     }
     
-    const currentUser = await User.findById(currentUserId);
-    if (!currentUser.following.some(id => id.toString() === targetUserId.toString())) {
-      currentUser.following.push(targetUserId);
+    userToFollow.followers.push(currentUserId);
+    currentUser.following.push(targetUserId);
+
+    // Fix invalid privacy values (migrate 'friends' to 'followers' or 'public')
+    // This handles users who still have old 'friends' privacy settings
+    if (userToFollow.privacy) {
+      if (userToFollow.privacy.eventAttendance === 'friends') {
+        userToFollow.privacy.eventAttendance = 'followers';
+        userToFollow.markModified('privacy');
+      }
+      if (userToFollow.privacy.posts === 'friends') {
+        userToFollow.privacy.posts = 'followers';
+        userToFollow.markModified('privacy');
+      }
+    }
+    if (currentUser.privacy) {
+      if (currentUser.privacy.eventAttendance === 'friends') {
+        currentUser.privacy.eventAttendance = 'followers';
+        currentUser.markModified('privacy');
+      }
+      if (currentUser.privacy.posts === 'friends') {
+        currentUser.privacy.posts = 'followers';
+        currentUser.markModified('privacy');
+      }
     }
 
+    // Mark arrays as modified to ensure Mongoose saves them
+    userToFollow.markModified('followers');
+    currentUser.markModified('following');
+
     await Promise.all([userToFollow.save(), currentUser.save()]);
+
+    console.log('✅ Successfully followed user:', {
+      targetUser: userToFollow.username,
+      currentUser: currentUser.username,
+      targetFollowersCount: userToFollow.followers.length,
+      currentFollowingCount: currentUser.following.length
+    });
 
     // Send new follower notification (non-blocking)
     setImmediate(async () => {
@@ -68,8 +133,18 @@ router.post('/follow/:id', protect, async (req, res) => {
       isFollowing: true 
     });
   } catch (error) {
-    console.error('POST /follow/:id error =>', error);
-    return res.status(500).json({ message: 'Server error' });
+    console.error('❌ POST /follow/:id error =>', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error details:', {
+      message: error.message,
+      name: error.name,
+      targetUserId,
+      currentUserId
+    });
+    return res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 

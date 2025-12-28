@@ -1577,14 +1577,13 @@ router.get('/feed/activity', protect, async (req, res) => {
           eventInvitations: eventInvitations.length,
          // eventPhotoUploads: eventPhotoUploads.length,
           friendEventJoins: friendEventJoins.length,
-          friendRequests: friendRequests.length,
-          friendRequestsAccepted: friendRequestsAccepted.length,
           eventReminders: eventReminders.length,
           memoriesCreated: memoriesCreated.length,
           eventCreations: eventCreations.length,
           memoryPhotoUploads: memoryPhotoUploads.length,
           photoComments: photoComments.length,              // ✅ NEW
           memoryPhotoComments: memoryPhotoComments.length,  // ✅ NEW
+          cohostActivities: cohostActivities.length,        // ✅ NEW
           total: allActivities.length
         },
         finalFeedTypes: activityTypeCounts,

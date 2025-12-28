@@ -1343,19 +1343,17 @@ router.get('/user/:userId', protect, async (req, res) => {
       query._id = { $in: sharedEventIds };
       
       // For shared events, we also need to check if the viewing user can see them
+      // Since all accounts are public, we can show shared events to anyone
       const currentUser = await User.findById(currentUserId);
-      const userFriends = currentUser.getAcceptedFriends().map(f => String(f));
-      const isFriend = userFriends.includes(String(userId));
+      const isFollowing = (currentUser.following || []).some(id => 
+        id.toString() === String(userId)
+      );
       
-      console.log(`🤝 Is friend: ${isFriend}`);
+      console.log(`🤝 Is following: ${isFollowing}`);
       
-      if (!isFriend) {
-        // If not friends, only show public shared events
-        query.privacyLevel = 'public';
-        console.log(`🔒 Not friends - only showing public shared events`);
-      } else {
-        console.log(`✅ Friends - showing all shared events`);
-      }
+      // All accounts are public, so we can show all shared events
+      // No privacy filtering needed
+      console.log(`✅ All accounts are public - showing all shared events`);
       
     } else {
       // EXISTING LOGIC: For own profile, show based on type
