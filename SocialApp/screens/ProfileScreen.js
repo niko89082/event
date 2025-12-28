@@ -80,18 +80,28 @@ const getTabs = () => {
   // Handle follow/unfollow
   const handleFollow = async () => {
     try {
+      const userIdStr = userId?.toString();
+      if (!userIdStr) {
+        Alert.alert('Error', 'Invalid user ID');
+        return;
+      }
+
       if (isFollowing) {
-        await api.delete(`/api/follow/unfollow/${userId}`);
+        const response = await api.delete(`/api/follow/unfollow/${userIdStr}`);
+        console.log('✅ Unfollow response:', response.data);
         setIsFollowing(false);
         setFollowersCount(prev => Math.max(0, prev - 1));
       } else {
-        await api.post(`/api/follow/follow/${userId}`);
+        const response = await api.post(`/api/follow/follow/${userIdStr}`);
+        console.log('✅ Follow response:', response.data);
         setIsFollowing(true);
         setFollowersCount(prev => prev + 1);
       }
     } catch (error) {
-      console.error('Error following/unfollowing:', error);
-      Alert.alert('Error', 'Failed to update follow status');
+      console.error('❌ Error following/unfollowing:', error);
+      console.error('❌ Error response:', error.response?.data);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to update follow status';
+      Alert.alert('Error', errorMessage);
     }
   };
 
@@ -582,7 +592,11 @@ const fetchUserEvents = async () => {
   const handleFollowAction = async () => {
     try {
       await handleFollow();
-      await fetchFollowCounts();
+      // Refresh follow status and counts after action
+      await Promise.all([
+        fetchFollowStatus(),
+        fetchFollowCounts()
+      ]);
     } catch (error) {
       console.error('Follow action error:', error);
     }
@@ -643,10 +657,10 @@ const fetchUserEvents = async () => {
     }
   };
 
-  // UPDATED: Profile header with friends system
+  // UPDATED: Profile header with follower-following system
 const renderProfileHeader = () => {
-  // Show events count based on friendship status
-  const visibleEventsCount = (!isSelf && friendshipStatus !== 'friends') ? '—' : eventsCount;
+  // All accounts are public, so show events count
+  const visibleEventsCount = eventsCount;
   
   return (
     <View style={styles.profileHeader}>
@@ -1011,9 +1025,8 @@ const renderPostGrid = ({ item }) => (
   } else if (tabIndex === 2) { // Events
     if (eventsLoading) {
       contentData = 'loading';
-    } else if (!isSelf && friendshipStatus !== 'friends') {
-      contentData = 'private';
     } else {
+      // All accounts are public, so show events
       contentData = isSelf ? filteredEvents : events;
     }
   } else if (tabIndex === 3) { // Memories
@@ -1026,57 +1039,8 @@ const renderPostGrid = ({ item }) => (
     contentData = [];
   }
 
-  // Show privacy message for non-friends
-  if (contentData === 'private') {
-    const tabName = tabs[tabIndex];
-    
-    return (
-      <View style={styles.emptyContainer}>
-        <Ionicons name="lock-closed-outline" size={64} color="#C7C7CC" />
-        <Text style={styles.emptyTitle}>
-          You are not friends with {user?.username}
-        </Text>
-        <Text style={styles.emptySubtitle}>
-          {friendshipStatus === 'request-sent' 
-            ? `Your friend request is pending. Once accepted, you'll be able to see their ${tabName.toLowerCase()}.`
-            : friendshipStatus === 'request-received'
-            ? `Accept their friend request to see their ${tabName.toLowerCase()}.`
-            : `Become friends with ${user?.username} to see their ${tabName.toLowerCase()}.`
-          }
-        </Text>
-        
-        {/* Show mutual friends hint if available */}
-        {friendshipStatus === 'not-friends' && mutualFriends.length > 0 && (
-          <Text style={styles.mutualFriendsHint}>
-            You have {mutualFriends.length} mutual friend{mutualFriends.length > 1 ? 's' : ''}
-          </Text>
-        )}
-        
-        {/* Friend action buttons */}
-        {friendshipStatus === 'not-friends' && (
-          <TouchableOpacity
-            style={styles.friendRequestButton}
-            onPress={handleFriendAction}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="person-add" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.friendRequestButtonText}>Send Friend Request</Text>
-          </TouchableOpacity>
-        )}
-        
-        {friendshipStatus === 'request-received' && (
-          <TouchableOpacity
-            style={styles.respondRequestButton}
-            onPress={handleFriendAction}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="mail" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.respondRequestButtonText}>Respond to Request</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  }
+  // Note: All accounts are public, so no privacy checks needed
+  // This section removed as it's no longer needed
 
   if (contentData === 'loading') {
     return (

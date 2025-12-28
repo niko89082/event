@@ -1,50 +1,14 @@
 // services/api.js - Fixed for better auth handling and route consistency
 import axios from 'axios';
-import { API_BASE_URL, EXPO_PUBLIC_API_URL } from '@env';
+import apiConfig from '../config/apiConfig';
 
-// Debug: Log what we're getting from .env
-console.log('🔍 API Service Debug:');
-console.log('   API_BASE_URL from @env:', API_BASE_URL);
-console.log('   EXPO_PUBLIC_API_URL from @env:', EXPO_PUBLIC_API_URL);
-console.log('   Type of API_BASE_URL:', typeof API_BASE_URL);
+// Use the centralized API configuration
+const baseURL = apiConfig.BASE_URL;
+const ipAddress = apiConfig.IP_ADDRESS;
 
-// Determine the IP address to use
-// Priority: API_BASE_URL from .env > EXPO_PUBLIC_API_URL > fallback
-let ipAddress = API_BASE_URL || EXPO_PUBLIC_API_URL;
-
-// Clean up the IP address (remove http://, https://, trailing slashes, etc.)
-if (ipAddress) {
-  ipAddress = ipAddress
-    .replace(/^https?:\/\//, '') // Remove http:// or https://
-    .replace(/\/$/, '') // Remove trailing slash
-    .split(':')[0]; // Remove port if included (we'll add it back)
-}
-
-// Fallback if still undefined
-if (!ipAddress || ipAddress === 'undefined' || ipAddress === 'localhost') {
-  console.warn('⚠️  API Service: API_BASE_URL not found in .env, using fallback');
-  ipAddress = 'localhost';
-}
-
-// Validate IP address format (basic check)
-if (!ipAddress || ipAddress.trim() === '') {
-  console.error('❌ API Service: Invalid IP address!');
-  throw new Error('API_BASE_URL is invalid. Please check your .env file.');
-}
-
-console.log('🟡 API Service: Using IP address:', ipAddress);
-
-// Construct base URL - ensure we don't double-add http://
-let baseURL;
-if (ipAddress.startsWith('http://') || ipAddress.startsWith('https://')) {
-  // Already has protocol, just add port if needed
-  baseURL = ipAddress.includes(':3000') ? ipAddress : `${ipAddress}:3000`;
-} else {
-  // No protocol, add http:// and port
-  baseURL = `http://${ipAddress}:3000`;
-}
-
-console.log('🟡 API Service: Full base URL:', baseURL);
+console.log('🟡 API Service: Initializing');
+console.log('   Using base URL:', baseURL);
+console.log('   IP Address:', ipAddress);
 
 const api = axios.create({
   baseURL: baseURL,

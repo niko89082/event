@@ -17,12 +17,17 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ActivityFeed from '../components/ActivityFeed'; // ✅ CHANGED: Import ActivityFeed instead of PostsFeed
-import EventsHub from '../components/EventsHub';
+import { Image } from 'react-native';
+import { BlurView } from 'expo-blur';
+import ActivityFeed from '../components/ActivityFeed';
+import ForYouFeed from '../components/ForYouFeed';
 import { useDynamicType } from '../hooks/useDynamicType';
 import ResponsiveText from '../components/ResponsiveText';
 import api from '../services/api';
 import { useIsFocused } from '@react-navigation/native';
+import { AuthContext } from '../services/AuthContext';
+import { useContext } from 'react';
+import { API_BASE_URL } from '@env';
 
 // Disable automatic font scaling - we handle it manually
 Text.defaultProps = Text.defaultProps || {};
@@ -32,7 +37,7 @@ TextInput.defaultProps = TextInput.defaultProps || {};
 TextInput.defaultProps.allowFontScaling = false;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const TABS = ['Activity', 'Events']; // ✅ CHANGED: Updated tab names from ['Posts', 'Events'] to ['Activity', 'Events']
+const TABS = ['For You', 'Activity']; // Updated tab names to 'For You' and 'Activity'
 const ANIMATION_DURATION = 250;
 
 // Calculate constants outside component
@@ -49,11 +54,13 @@ export default function FeedScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { getScaledSpacing, getScaledLineHeight, fontScale } = useDynamicType();
   const isFocused = useIsFocused();
+  const { currentUser } = useContext(AuthContext);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
-  const activityRef = useRef(null); // ✅ CHANGED: Renamed from postsRef to activityRef
-  const eventsRef = useRef(null);
+  const [headerPointerEvents, setHeaderPointerEvents] = useState('auto');
+  const activityRef = useRef(null);
+  const forYouRef = useRef(null);
   const isAnimating = useRef(false);
 
   // FIXED: Use ref to avoid closure issues in pan responder
@@ -66,20 +73,28 @@ export default function FeedScreen({ navigation }) {
   // RESTORED: Animation values for scroll-based hiding/showing with OPACITY
   const tabBarTranslateY = useRef(new Animated.Value(0)).current;
   const tabBarOpacity = useRef(new Animated.Value(1)).current;
+  const headerOpacity = useRef(new Animated.Value(1)).current; // New: Header opacity for scroll hiding
+  const headerTranslateY = useRef(new Animated.Value(0)).current; // Header translate for hiding
   const subTabTranslateY = useRef(new Animated.Value(0)).current;
   const lastScrollY = useRef(0);
   const scrollDirection = useRef('up');
   const isTabBarVisible = useRef(true);
-
-  // COMPREHENSIVE DEBUG: Track all positioning values
-  const FIXED_HEADER_HEIGHT = 56;
+  const isHeaderVisible = useRef(true);
+  
+  // Header sizing - Twitter-like compact design
+  const FIXED_HEADER_HEIGHT = 52; // Header content height
+  const TAB_BAR_HEIGHT = 40; // Tab bar height - reduced to minimize overhang
   const SAFE_AREA_TOP = insets.top;
   
-  // ADJUSTED: Move main tabs down to lower the first tab position
-  const MAIN_TAB_POSITION = SAFE_AREA_TOP + FIXED_HEADER_HEIGHT + 8; // MOVED DOWN from -2 to +8 (10px lower)
+  // Header includes both header content and tabs, so total height is header + tabs
+  const TOTAL_HEADER_HEIGHT = SAFE_AREA_TOP + FIXED_HEADER_HEIGHT + TAB_BAR_HEIGHT;
   
-  const SUB_TAB_ORIGINAL_POSITION = 144;
-  const SUB_TAB_MOVE_DISTANCE = SUB_TAB_ORIGINAL_POSITION - MAIN_TAB_POSITION;
+  // FIXED: Keep padding constant - don't change it dynamically to prevent glitching
+  // Content padding stays the same, header just overlays and translates away (Twitter-style)
+  const CONTENT_PADDING_TOP = TOTAL_HEADER_HEIGHT;
+  
+  const SUB_TAB_ORIGINAL_POSITION = TOTAL_HEADER_HEIGHT;
+  const SUB_TAB_MOVE_DISTANCE = 0; // Not used anymore since tabs are in header
 
   // COMPREHENSIVE POSITION DEBUGGING
   console.log('🔍 ACTIVITY FEED SCREEN DEBUG:', {
@@ -96,26 +111,10 @@ export default function FeedScreen({ navigation }) {
       deviceModel: Platform.constants?.systemName + ' ' + Platform.Version,
     },
     '=== HEADER CALCULATIONS ===': {
-      fixedHeaderHeight: FIXED_HEADER_HEIGHT,
-      headerStartsAt: SAFE_AREA_TOP,
-      headerEndsAt: SAFE_AREA_TOP + FIXED_HEADER_HEIGHT,
-      socialTitleContainerHeight: Math.ceil(getScaledLineHeight(27, 1.4)),
-    },
-    '=== MAIN TAB CALCULATIONS ===': {
-      mainTabPosition: MAIN_TAB_POSITION,
-      mainTabHeight: 34,
-      mainTabStartsAt: MAIN_TAB_POSITION,
-      mainTabEndsAt: MAIN_TAB_POSITION + 34,
-      gapFromHeader: MAIN_TAB_POSITION - (SAFE_AREA_TOP + FIXED_HEADER_HEIGHT),
-    },
-    '=== SUB TAB CALCULATIONS ===': {
-      subTabOriginalPosition: SUB_TAB_ORIGINAL_POSITION,
-      subTabMoveDistance: SUB_TAB_MOVE_DISTANCE,
-      clearanceBetweenMainAndSub: SUB_TAB_ORIGINAL_POSITION - (MAIN_TAB_POSITION + 34),
-    },
-    '=== OVERLAP DETECTION ===': {
-      headerOverlap: MAIN_TAB_POSITION < (SAFE_AREA_TOP + FIXED_HEADER_HEIGHT) ? 'YES - OVERLAPPING!' : 'No',
-      subTabOverlap: (MAIN_TAB_POSITION + 34) > SUB_TAB_ORIGINAL_POSITION ? 'YES - OVERLAPPING!' : 'No',
+      totalHeaderHeight: TOTAL_HEADER_HEIGHT,
+      headerContentHeight: FIXED_HEADER_HEIGHT,
+      tabBarHeight: TAB_BAR_HEIGHT,
+      safeAreaTop: SAFE_AREA_TOP,
     }
   });
 
@@ -146,17 +145,37 @@ export default function FeedScreen({ navigation }) {
     return unsubscribe;
   }, [isFocused, navigation]);
 
-  // FIXED: Animation logic with proper distances
-  const animateTabBars = useCallback((mainTabOpacity, subTabToValue) => {
-    console.log('🎬 ANIMATING TAB BARS:', {
+  // FIXED: Animation logic with proper distances - now includes header
+  const animateTabBars = useCallback((mainTabOpacity, headerOpacityValue, subTabToValue) => {
+    console.log('🎬 ANIMATING TAB BARS AND HEADER:', {
       mainTabOpacity,
+      headerOpacityValue,
       subTabToValue,
       subTabMoveDistance: SUB_TAB_MOVE_DISTANCE,
     });
     
+    // Calculate translateY for hiding header - move it completely off screen
+    const headerTranslateValue = headerOpacityValue === 0 ? -TOTAL_HEADER_HEIGHT - 10 : 0;
+    
+    // Update pointer events based on visibility to prevent blocking scroll
+    setHeaderPointerEvents(headerOpacityValue === 0 ? 'none' : 'auto');
+    
+    // DON'T change padding dynamically - causes glitching/jumping
+    // Keep padding constant, let header translate away (Twitter-style behavior)
+    
     Animated.parallel([
       Animated.timing(tabBarOpacity, {
         toValue: mainTabOpacity,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+      Animated.timing(headerOpacity, {
+        toValue: headerOpacityValue,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+      Animated.timing(headerTranslateY, {
+        toValue: headerTranslateValue,
         duration: 250,
         useNativeDriver: true,
       }),
@@ -168,10 +187,18 @@ export default function FeedScreen({ navigation }) {
     ]).start(() => {
       console.log('🎬 ANIMATION COMPLETE:', {
         mainTabVisible: mainTabOpacity === 1,
+        headerVisible: headerOpacityValue === 1,
         subTabPosition: subTabToValue,
+        headerTranslateValue,
+        headerPointerEvents: headerOpacityValue === 0 ? 'none' : 'auto',
+        debugInfo: {
+          headerIsBlocking: headerOpacityValue === 0 ? 'NO - pointerEvents: none' : 'YES - pointerEvents: auto',
+          headerPosition: headerTranslateValue,
+          totalHeaderHeight: TOTAL_HEADER_HEIGHT,
+        }
       });
     });
-  }, [tabBarOpacity, subTabTranslateY, SUB_TAB_MOVE_DISTANCE]);
+  }, [tabBarOpacity, headerOpacity, headerTranslateY, subTabTranslateY, TOTAL_HEADER_HEIGHT, SUB_TAB_MOVE_DISTANCE]);
 
   const handleScroll = useCallback((event) => {
     const currentScrollY = event.nativeEvent.contentOffset.y;
@@ -184,38 +211,55 @@ export default function FeedScreen({ navigation }) {
       scrollDirection.current = 'up';
     }
 
-    // Handle tab bar visibility logic
+    // Handle tab bar and header visibility logic
     if (currentScrollY <= 0) {
-      // At the top - show main tabs, sub-tabs in original position
-      if (!isTabBarVisible.current) {
-        console.log('📍 SCROLL: Showing main tabs (at top)');
+      // At the top - show main tabs and header, sub-tabs in original position
+      if (!isTabBarVisible.current || !isHeaderVisible.current) {
+        console.log('📍 SCROLL: Showing main tabs and header (at top)', {
+          currentScrollY,
+          scrollDelta,
+          headerPointerEvents: 'auto',
+        });
         isTabBarVisible.current = true;
-        animateTabBars(1, 0); // Main tabs: visible, Sub tabs: original position
+        isHeaderVisible.current = true;
+        animateTabBars(1, 1, 0); // Main tabs: visible, Header: visible, Sub tabs: original position
       }
     } else if (scrollDirection.current === 'down' && currentScrollY > SCROLL_THRESHOLD) {
-      // Scrolling down - HIDE main tabs, move sub-tabs to main tab position
-      if (isTabBarVisible.current) {
-        console.log('📍 SCROLL: Hiding main tabs, moving sub-tabs to main position');
+      // Scrolling down - HIDE main tabs and header, move sub-tabs to main tab position
+      if (isTabBarVisible.current || isHeaderVisible.current) {
+        console.log('📍 SCROLL: Hiding main tabs and header, moving sub-tabs to main position', {
+          currentScrollY,
+          scrollDelta,
+          headerPointerEvents: 'none',
+          headerTranslateY: -TOTAL_HEADER_HEIGHT - 10,
+        });
         isTabBarVisible.current = false;
-        animateTabBars(0, -SUB_TAB_MOVE_DISTANCE); // Sub-tabs move to main tab position
+        isHeaderVisible.current = false;
+        animateTabBars(0, 0, -SUB_TAB_MOVE_DISTANCE); // Sub-tabs move to main tab position
       }
     } else if (scrollDirection.current === 'up' && Math.abs(scrollDelta) > SHOW_THRESHOLD) {
-      // Scrolling up - show main tabs, sub-tabs back to original position
-      if (!isTabBarVisible.current) {
-        console.log('📍 SCROLL: Showing main tabs, sub-tabs to original position');
+      // Scrolling up - show main tabs and header, sub-tabs back to original position
+      if (!isTabBarVisible.current || !isHeaderVisible.current) {
+        console.log('📍 SCROLL: Showing main tabs and header, sub-tabs to original position', {
+          currentScrollY,
+          scrollDelta,
+          headerPointerEvents: 'auto',
+        });
         isTabBarVisible.current = true;
-        animateTabBars(1, 0); // Main tabs: visible, Sub tabs: original position
+        isHeaderVisible.current = true;
+        animateTabBars(1, 1, 0); // Main tabs: visible, Header: visible, Sub tabs: original position
       }
     }
 
     lastScrollY.current = currentScrollY;
-  }, [animateTabBars, SUB_TAB_MOVE_DISTANCE]);
+  }, [animateTabBars, SUB_TAB_MOVE_DISTANCE, TOTAL_HEADER_HEIGHT]);
 
   const resetTabBar = useCallback(() => {
-    console.log('🔄 RESETTING TAB BAR');
+    console.log('🔄 RESETTING TAB BAR AND HEADER');
     isTabBarVisible.current = true;
+    isHeaderVisible.current = true;
     lastScrollY.current = 0;
-    animateTabBars(1, 0);
+    animateTabBars(1, 1, 0);
   }, [animateTabBars]);
 
   // Tab switching with proper state management
@@ -259,75 +303,6 @@ export default function FeedScreen({ navigation }) {
     switchToTab(index);
   }, [switchToTab]);
 
-  // FIXED: Create dynamic styles with conservative scaling and sub-tab awareness
-  const createDynamicStyles = () => {
-    // Limit font scaling for UI elements to prevent oversized containers
-    const conservativeFontScale = Math.min(fontScale, 1.2);
-    const scaledPadding = Math.ceil(6 * conservativeFontScale); // Reduced from 8
-    const scaledTabHeight = Math.ceil(32 * conservativeFontScale);
-    
-    const styles = StyleSheet.create({
-      // More compact container to prevent sub-tab covering
-      animatedTabBarContainer: {
-        height: 34, // REDUCED from 38 to 34 to make more compact
-      },
-      
-      transparentTabBar: {
-        paddingVertical: scaledPadding,
-        height: 34, // REDUCED from 38 to 34
-      },
-      
-      tabButton: {
-        paddingVertical: Math.max(2, scaledPadding - 4), // REDUCED padding further
-        paddingHorizontal: getScaledSpacing(12), // REDUCED horizontal padding
-        minHeight: Math.min(scaledTabHeight, 28), // REDUCED from 32 to 28
-        maxHeight: 28, // REDUCED from 32 to 28
-        minWidth: 60,
-      },
-      
-      // Container for Social title - ENHANCED for cross-device compatibility
-      headerTitleContainer: {
-        minHeight: Math.ceil(getScaledLineHeight(26, 1.5)), // UPDATED to match new values
-        paddingVertical: Math.max(14, Math.ceil(12 * Math.min(conservativeFontScale, 1.0))), // INCREASED base from 12 to 14, limited scaling
-        justifyContent: 'center',
-        alignItems: 'center',
-        flex: 1,
-        flexDirection: 'column',
-        // ENSURE VISIBILITY
-        overflow: 'visible',
-        backgroundColor: 'transparent',
-      },
-    });
-
-    console.log('🎨 ACTIVITY FEED DYNAMIC STYLES DEBUG:', {
-      '=== FONT SCALING ===': {
-        originalFontScale: fontScale,
-        conservativeFontScale,
-        scaledPadding,
-        scaledTabHeight,
-      },
-      '=== CONTAINER SIZES ===': {
-        tabContainerHeight: 34,
-        maxTabButtonHeight: 28,
-        headerMinHeight: Math.ceil(getScaledLineHeight(26, 1.5)),
-        headerPadding: Math.max(14, Math.ceil(12 * Math.min(conservativeFontScale, 1.0))),
-      },
-      '=== POSITIONING RESULTS ===': {
-        mainTabBottomPosition: MAIN_TAB_POSITION + 34,
-        subTabStartPosition: SUB_TAB_ORIGINAL_POSITION,
-        clearance: SUB_TAB_ORIGINAL_POSITION - (MAIN_TAB_POSITION + 34),
-      },
-      '=== ADJUSTMENTS MADE ===': {
-        tabUpdate: 'Posts -> Activity',
-        componentUpdate: 'PostsFeed -> ActivityFeed',
-        refUpdate: 'postsRef -> activityRef',
-      }
-    });
-
-    return styles;
-  };
-
-  const dynamicStyles = createDynamicStyles();
 
   // FIXED: Pan Responder using currentTabIndex ref
   const panResponder = useRef(
@@ -434,11 +409,11 @@ export default function FeedScreen({ navigation }) {
     }
   };
 
-  const handleSearchPress = () => {
+  const handleProfilePress = () => {
     try {
-      navigation.navigate('SearchScreen');
+      navigation.navigate('Profile', { screen: 'MyProfile' });
     } catch (error) {
-      navigation.getParent()?.navigate('SearchScreen');
+      navigation.getParent()?.navigate('Profile', { screen: 'MyProfile' });
     }
   };
 
@@ -447,12 +422,12 @@ export default function FeedScreen({ navigation }) {
     resetTabBar();
     
     try {
-      if (activeTabIndex === 0 && activityRef.current?.refresh) { // ✅ CHANGED: Updated from postsRef to activityRef
+      if (activeTabIndex === 0 && forYouRef.current?.refresh) {
+        console.log('🔄 Refreshing For You Feed');
+        await forYouRef.current.refresh();
+      } else if (activeTabIndex === 1 && activityRef.current?.refresh) {
         console.log('🔄 Refreshing Activity Feed');
         await activityRef.current.refresh();
-      } else if (activeTabIndex === 1 && eventsRef.current?.refresh) {
-        console.log('🔄 Refreshing Events Hub');
-        await eventsRef.current.refresh();
       }
     } catch (error) {
       console.error('Global refresh error:', error);
@@ -461,150 +436,203 @@ export default function FeedScreen({ navigation }) {
     }
   };
 
-  const getSubTabStyle = useCallback(() => {
-    return {
-      transform: [{ 
-        translateY: tabBarTranslateY.interpolate({
-          inputRange: [-150, 0],
-          outputRange: [-100, 0],
-          extrapolate: 'clamp'
-        })
-      }]
-    };
-  }, [tabBarTranslateY]);
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* PHASE 1: Fixed Transparent Header - Always Visible */}
-      <View style={styles.fixedHeaderContainer}>
-        <SafeAreaView style={styles.safeAreaHeader}>
-          <View style={styles.fixedHeader}>
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={handleSearchPress}
-              activeOpacity={0.8}
+      {/* Header - Solid Dark with Glassmorphic Effect */}
+      <Animated.View 
+        style={[
+          styles.fixedHeaderContainer,
+          { 
+            opacity: headerOpacity,
+            transform: [{ translateY: headerTranslateY }],
+          }
+        ]}
+        pointerEvents={headerPointerEvents}
+        collapsable={false}
+        removeClippedSubviews={false}
+      >
+        {Platform.OS === 'ios' ? (
+          <BlurView 
+            intensity={80} 
+            style={styles.blurContainer}
+            pointerEvents={headerPointerEvents}
+          >
+            <SafeAreaView 
+              style={styles.safeAreaHeader}
+              pointerEvents={headerPointerEvents}
             >
-              <Ionicons name="search-outline" size={24} color="#3797EF" />
-            </TouchableOpacity>
-            
-            <View 
-              style={[
-                styles.headerTitleContainer, 
-                dynamicStyles.headerTitleContainer,
-              ]}
-              onLayout={(event) => {
-                const { height, width } = event.nativeEvent.layout;
-                console.log('🔍 SOCIAL CONTAINER (Activity Feed):', {
-                  containerHeight: height,
-                  containerWidth: width,
-                  activeTab: TABS[activeTabIndex],
-                  feedType: activeTabIndex === 0 ? 'ActivityFeed' : 'EventsHub'
-                });
-              }}
-            >
-              <ResponsiveText 
-                style={[
-                  styles.headerTitle,
-                  {
-                    textAlign: 'center',
-                    textAlignVertical: 'center',
-                    includeFontPadding: true,
-                  }
-                ]}
-                fontSize={27}
-                lineHeightMultiplier={1.4}
-                onLayout={(event) => {
-                  const { height, width } = event.nativeEvent.layout;
-                  console.log('🔍 SOCIAL TEXT (Activity Feed):', {
-                    textHeight: height,
-                    textWidth: width,
-                    currentTab: TABS[activeTabIndex],
-                    feedComponent: activeTabIndex === 0 ? 'ActivityFeed' : 'EventsHub'
-                  });
-                }}
-              >
-                Social
-              </ResponsiveText>
-            </View>
-            
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={handleNotificationPress}
-              activeOpacity={0.8}
-            >
-              <View style={styles.notificationIconContainer}>
-                <Ionicons name="notifications-outline" size={24} color="#3797EF" />
-                {unreadNotificationCount > 0 && (
-                  <View style={styles.notificationBadge}>
-                    <Text style={styles.notificationBadgeText}>
-                      {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                    </Text>
+              <View style={styles.fixedHeader}>
+                <TouchableOpacity 
+                  style={styles.profileButton}
+                  onPress={handleProfilePress}
+                  activeOpacity={0.8}
+                >
+                  {currentUser?.profilePicture ? (
+                    <Image
+                      source={{ 
+                        uri: currentUser.profilePicture.startsWith('http') 
+                          ? currentUser.profilePicture 
+                          : `http://${API_BASE_URL}:3000${currentUser.profilePicture.startsWith('/') ? '' : '/'}${currentUser.profilePicture}`
+                      }}
+                      style={styles.profilePicture}
+                    />
+                  ) : (
+                    <View style={styles.profilePicturePlaceholder}>
+                      <Ionicons name="person" size={20} color="#8E8E93" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                <View style={styles.headerTitleContainer}>
+                  <Text style={styles.headerTitle}>
+                    <Text style={styles.headerTitlePrimary}>Social</Text>
+                    <Text style={styles.headerTitleSecondary}>Events</Text>
+                  </Text>
+                </View>
+                
+                <TouchableOpacity 
+                  style={styles.notificationButton}
+                  onPress={handleNotificationPress}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.notificationIconContainer}>
+                    <Ionicons name="notifications-outline" size={28} color="#000000" />
+                    {unreadNotificationCount > 0 && (
+                      <View style={styles.notificationBadge}>
+                        <Text style={styles.notificationBadgeText}>
+                          {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                )}
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </View>
-
-      {/* PHASE 3: Main Tabs - COMPACT POSITIONING */}
-      <Animated.View style={[
-        styles.animatedTabBarContainer,
-        dynamicStyles.animatedTabBarContainer,
-        { 
-          top: MAIN_TAB_POSITION,
-          opacity: tabBarOpacity,
-        }
-      ]}>
-        <View style={[styles.transparentTabBar, dynamicStyles.transparentTabBar]}>
-          {TABS.map((tab, index) => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.tabButton, dynamicStyles.tabButton]}
-              onPress={() => handleTabPress(index)}
-              activeOpacity={0.8}
+              
+              {/* Tab Bar */}
+              <View style={styles.tabBarContainer}>
+                {TABS.map((tab, index) => (
+                  <TouchableOpacity
+                    key={tab}
+                    style={styles.tabButton}
+                    onPress={() => handleTabPress(index)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[
+                      styles.tabText,
+                      activeTabIndex === index && styles.tabTextActive
+                    ]}>
+                      {tab}
+                    </Text>
+                    {activeTabIndex === index && (
+                      <View style={styles.tabIndicator} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </SafeAreaView>
+          </BlurView>
+        ) : (
+          <View 
+            style={styles.androidGlassContainer}
+            pointerEvents={headerPointerEvents}
+          >
+            <SafeAreaView 
+              style={styles.safeAreaHeader}
+              pointerEvents={headerPointerEvents}
             >
-              <ResponsiveText
-                style={[
-                  styles.tabButtonText,
-                  activeTabIndex === index && styles.activeTabButtonText
-                ]}
-                fontSize={14}
-                lineHeightMultiplier={1.1}
-                onLayout={(event) => {
-                  const { height, width } = event.nativeEvent.layout;
-                  console.log(`🔍 TAB LAYOUT (${tab}):`, {
-                    textHeight: height,
-                    textWidth: width,
-                    isActive: activeTabIndex === index,
-                    tabIndex: index,
-                    tabName: tab,
-                  });
-                }}
-              >
-                {tab}
-              </ResponsiveText>
-            </TouchableOpacity>
-          ))}
-        </View>
+              <View style={styles.fixedHeader}>
+                <TouchableOpacity 
+                  style={styles.profileButton}
+                  onPress={handleProfilePress}
+                  activeOpacity={0.8}
+                >
+                  {currentUser?.profilePicture ? (
+                    <Image
+                      source={{ 
+                        uri: currentUser.profilePicture.startsWith('http') 
+                          ? currentUser.profilePicture 
+                          : `http://${API_BASE_URL}:3000${currentUser.profilePicture.startsWith('/') ? '' : '/'}${currentUser.profilePicture}`
+                      }}
+                      style={styles.profilePicture}
+                    />
+                  ) : (
+                    <View style={styles.profilePicturePlaceholder}>
+                      <Ionicons name="person" size={20} color="#8E8E93" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                <View style={styles.headerTitleContainer}>
+                  <Text style={styles.headerTitle}>
+                    <Text style={styles.headerTitlePrimary}>Social</Text>
+                    <Text style={styles.headerTitleSecondary}>Events</Text>
+                  </Text>
+                </View>
+                
+                <TouchableOpacity 
+                  style={styles.notificationButton}
+                  onPress={handleNotificationPress}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.notificationIconContainer}>
+                    <Ionicons name="notifications-outline" size={28} color="#000000" />
+                    {unreadNotificationCount > 0 && (
+                      <View style={styles.notificationBadge}>
+                        <Text style={styles.notificationBadgeText}>
+                          {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              </View>
+              
+              {/* Tab Bar */}
+              <View style={styles.tabBarContainer}>
+                {TABS.map((tab, index) => (
+                  <TouchableOpacity
+                    key={tab}
+                    style={styles.tabButton}
+                    onPress={() => handleTabPress(index)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[
+                      styles.tabText,
+                      activeTabIndex === index && styles.tabTextActive
+                    ]}>
+                      {tab}
+                    </Text>
+                    {activeTabIndex === index && (
+                      <View style={styles.tabIndicator} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </SafeAreaView>
+          </View>
+        )}
       </Animated.View>
 
-      {/* PHASE 2: Full-Screen Content */}
+
+      {/* PHASE 2: Full-Screen Content - Starts at top, content scrolls under header */}
+      {/* FIXED: Use constant padding to prevent glitching - Twitter-style behavior */}
       <View 
-        style={styles.contentContainer}
+        style={[styles.contentContainer, { paddingTop: CONTENT_PADDING_TOP }]}
         {...panResponder.panHandlers}
+        collapsable={false}
       >
         <Animated.View style={[
           styles.swipeableContent,
           { transform: [{ translateX: scrollX }] }
         ]}>
-          {/* Activity Tab - ✅ CHANGED: Using ActivityFeed instead of PostsFeed */}
+          {/* For You Tab */}
           <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
-            <ActivityFeed 
+            <ForYouFeed 
               navigation={navigation}
-              ref={activityRef} // ✅ CHANGED: Updated ref name
+              ref={forYouRef}
               refreshing={refreshing}
               onRefresh={handleGlobalRefresh}
               onScroll={handleScroll}
@@ -612,27 +640,15 @@ export default function FeedScreen({ navigation }) {
             />
           </View>
           
-          {/* Events Tab - UNCHANGED */}
+          {/* Activity Tab */}
           <View style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
-            <EventsHub 
+            <ActivityFeed 
               navigation={navigation}
-              ref={eventsRef}
+              ref={activityRef}
               refreshing={refreshing}
               onRefresh={handleGlobalRefresh}
               onScroll={handleScroll}
               scrollEventThrottle={16}
-              getSubTabStyle={getSubTabStyle}
-              subTabTranslateY={subTabTranslateY}
-              subTabMoveDistance={SUB_TAB_MOVE_DISTANCE}
-              debugInfo={{
-                mainTabPosition: MAIN_TAB_POSITION,
-                mainTabHeight: 34,
-                mainTabBottomPosition: MAIN_TAB_POSITION + 34,
-                subTabOriginal: SUB_TAB_ORIGINAL_POSITION,
-                clearanceBetweenTabs: SUB_TAB_ORIGINAL_POSITION - (MAIN_TAB_POSITION + 34),
-                fontScale: fontScale,
-                ResponsiveTextComponent: ResponsiveText,
-              }}
             />
           </View>
         </Animated.View>
@@ -644,7 +660,7 @@ export default function FeedScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF', // White background
   },
   
   fixedHeaderContainer: {
@@ -653,20 +669,46 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 1000,
-    backgroundColor: 'transparent',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
+  
+  blurContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF', // White background
+    overflow: 'hidden', // Prevent overflow from blocking
+  },
+  
+  androidGlassContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF', // White background
+    overflow: 'hidden', // Prevent overflow from blocking
   },
   
   safeAreaHeader: {
     backgroundColor: 'transparent',
+    pointerEvents: 'box-none', // Allow touches to pass through to children only
   },
   
   fixedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    height: 56, // Fixed height
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    minHeight: 52,
   },
   
   headerTitleContainer: {
@@ -676,32 +718,64 @@ const styles = StyleSheet.create({
   },
   
   headerTitle: {
-    fontWeight: '700',
-    color: '#3797EF',
-    textAlign: 'center',
-    letterSpacing: -0.5,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
   
-  headerButton: {
-    padding: 8,
-    borderRadius: 20,
-    backgroundColor: Platform.OS === 'ios' 
-      ? 'rgba(255, 255, 255, 0.25)' 
-      : 'rgba(255, 255, 255, 0.3)',
-    ...(Platform.OS === 'ios' && {
-      backdropFilter: 'blur(20px) saturate(180%)',
-    }),
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
+  headerTitlePrimary: {
+    color: '#000000', // Black
+  },
+  
+  headerTitleSecondary: {
+    color: '#000000', // Black
+  },
+  
+  notificationButton: {
     width: 40,
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: 'rgba(31, 38, 135, 0.37)',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 4,
+  },
+  
+  tabBarContainer: {
+    flexDirection: 'row',
+    width: '100%',
+    paddingHorizontal: 16,
+    marginTop: 0,
+    paddingTop: 4,
+    paddingBottom: 8,
+    minHeight: 40,
+    backgroundColor: '#FFFFFF',
+  },
+  
+  tabButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
+  
+  tabText: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.015,
+    color: '#8E8E93',
+    marginBottom: 4,
+  },
+  
+  tabTextActive: {
+    color: '#000000',
+  },
+  
+  tabIndicator: {
+    height: 2,
+    width: '100%',
+    backgroundColor: '#000000',
+    borderRadius: 2,
+    marginTop: 4,
   },
   
   notificationIconContainer: {
@@ -712,68 +786,50 @@ const styles = StyleSheet.create({
   
   notificationBadge: {
     position: 'absolute',
-    top: -6,
-    right: -6,
+    top: 0,
+    right: 0,
     backgroundColor: '#FF3B30',
     borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    minWidth: 10,
+    height: 10,
     borderWidth: 2,
     borderColor: '#FFFFFF',
-    shadowColor: '#FF3B30',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
-    elevation: 3,
   },
   
   notificationBadgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '700',
     textAlign: 'center',
   },
 
-  // Fixed height containers to prevent excessive growth
-  animatedTabBarContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    zIndex: 999,
-    backgroundColor: 'transparent',
+  profileButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#F0F0F0',
   },
 
-  transparentTabBar: {
-    flexDirection: 'row',
+  profilePicture: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+
+  profilePicturePlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F0F0F0',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 0,
-    position: 'relative',
-    gap: 24, // Increased gap between tabs for better spacing
   },
 
-  tabButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  tabButtonText: {
-    fontWeight: '600',
-    color: '#6B9EF5',
-    textAlign: 'center',
-  },
-
-  activeTabButtonText: {
-    color: '#3797EF',
-    fontWeight: '800',
-    textAlign: 'center',
-  },
 
   contentContainer: {
     flex: 1,
-    paddingTop: 0,
+    // paddingTop will be set inline to use TOTAL_HEADER_HEIGHT constant
   },
 
   swipeableContent: {
@@ -785,5 +841,7 @@ const styles = StyleSheet.create({
   tabContentWrapper: {
     backgroundColor: 'transparent',
     flex: 1,
+    overflow: 'visible',
+    // Ensure content can scroll freely
   }, 
 });

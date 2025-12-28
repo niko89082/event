@@ -15,20 +15,20 @@ export default function NoFriendsEmptyState({ navigation }) {
         <View style={styles.emptyIconContainer}>
           <Ionicons name="people-outline" size={64} color="#C7C7CC" />
         </View>
-        <Text style={styles.title}>Find Your First Friends</Text>
+        <Text style={styles.title}>Start Following People</Text>
         <Text style={styles.subtitle}>
-          Connect with friends to see their activities and discover events together
+          Follow people to see their activities and discover events together
         </Text>
       </View>
       
       {/* Action Button */}
       <TouchableOpacity 
         style={styles.createEventButton}
-        onPress={() => navigation.navigate('SearchScreen', { tab: 'users' })}
+        onPress={() => navigation.navigate('SearchScreen', { tab: 'people' })}
         activeOpacity={0.8}
       >
         <Ionicons name="search" size={18} color="#3797EF" />
-        <Text style={styles.createEventButtonText}>Find Friends</Text>
+        <Text style={styles.createEventButtonText}>Find People</Text>
       </TouchableOpacity>
     </View>
   );
@@ -37,12 +37,13 @@ export default function NoFriendsEmptyState({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF',
     paddingTop: 0,
     paddingBottom: 0,
     paddingHorizontal: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 400,
   },
   
   header: {

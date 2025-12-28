@@ -123,7 +123,7 @@ export default function CreatePostScreen({ navigation }) {
                 const result = await ImagePicker.launchCameraAsync({
                   mediaTypes: ImagePicker.MediaTypeOptions.All,
                   quality: 0.85,
-                  allowsEditing: true,
+                  allowsEditing: false,
                 });
 
                 if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -279,7 +279,14 @@ export default function CreatePostScreen({ navigation }) {
             setSelectedEventId('');
             setSelectedLocation(null);
             setReview(null);
-            navigation.goBack();
+            // Navigate to Feed tab instead of going back
+            // This ensures the main tab navigator is visible again
+            const parentNavigator = navigation.getParent();
+            if (parentNavigator) {
+              parentNavigator.navigate('Feed');
+            } else {
+              navigation.navigate('Feed');
+            }
           },
         },
       ]

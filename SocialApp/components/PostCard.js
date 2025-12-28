@@ -129,9 +129,9 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
   const handleMoreOptions = () => {
     if (!isOwner) return;
     // Calculate position: menu should be adjacent to ellipsis (right side)
-    // But text inside should align with username which starts at 62px from left
-    // So position menu at 62px from left, and it will extend to the right
-    setMenuPosition({ top: 42, left: 62, right: null });
+    // But text inside should align with username which starts at 68px from left
+    // So position menu at 68px from left, and it will extend to the right
+    setMenuPosition({ top: 42, left: 68, right: null });
     setShowOptionsMenu(true);
   };
 
@@ -336,7 +336,11 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
         )}
 
         {/* Review Card */}
-        {post.review && <ReviewCard review={post.review} />}
+        {post.review && (
+          <View style={styles.reviewCardContainer}>
+            <ReviewCard review={post.review} />
+          </View>
+        )}
 
         {/* Photo(s) */}
         {post.paths && post.paths.length > 0 && (
@@ -450,14 +454,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 0.5,
     borderBottomColor: '#E1E1E1',
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   userInfo: {
     flexDirection: 'row',
@@ -465,32 +469,32 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    marginRight: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
   },
   avatarPlaceholder: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#E1E1E1',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 12,
   },
   userDetails: {
     flex: 1,
   },
   username: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
     color: '#000000',
   },
   timestamp: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#8E8E93',
-    marginTop: 1,
+    marginTop: 2,
   },
   moreButtonContainer: {
     position: 'relative',
@@ -540,28 +544,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#E1E1E1',
   },
   content: {
-    paddingHorizontal: 16,
+    paddingLeft: 0,
+    paddingRight: 16,
   },
   textContainer: {
-    marginBottom: 10,
+    marginBottom: 12,
+    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+  },
+  reviewCardContainer: {
+    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    marginBottom: 12,
   },
   textContent: {
-    fontSize: 14,
-    lineHeight: 19,
+    fontSize: 16,
+    lineHeight: 22,
     color: '#000000',
   },
   showMoreText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#3797EF',
-    marginTop: 3,
+    marginTop: 4,
   },
   imagesContainer: {
-    marginBottom: 10,
+    marginBottom: 12,
+    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    paddingRight: 0,
   },
   singleImage: {
-    width: IMAGE_WIDTH,
-    height: IMAGE_WIDTH,
-    borderRadius: 12,
+    width: IMAGE_WIDTH - 68, // Account for left padding
+    height: IMAGE_WIDTH - 68,
+    borderRadius: 16,
     backgroundColor: '#E1E1E1',
   },
   multiImageContainer: {
@@ -570,9 +582,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   multiImage: {
-    width: (IMAGE_WIDTH - 4) / 2,
-    height: (IMAGE_WIDTH - 4) / 2,
-    borderRadius: 8,
+    width: ((IMAGE_WIDTH - 68) - 4) / 2, // Account for left padding and gap
+    height: ((IMAGE_WIDTH - 68) - 4) / 2,
+    borderRadius: 12,
     backgroundColor: '#E1E1E1',
   },
   lastImageOverlay: {
@@ -595,34 +607,37 @@ const styles = StyleSheet.create({
   locationContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 10,
+    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
     gap: 6,
   },
   locationText: {
-    fontSize: 13,
+    fontSize: 15,
     color: '#8E8E93',
   },
   eventTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    padding: 8,
+    marginTop: 10,
+    padding: 10,
+    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
     backgroundColor: '#F0F8FF',
-    borderRadius: 8,
+    borderRadius: 12,
     alignSelf: 'flex-start',
     gap: 6,
   },
   eventTagText: {
-    fontSize: 13,
+    fontSize: 15,
     color: '#3797EF',
     fontWeight: '500',
   },
   engagementBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    gap: 28,
+    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    paddingRight: 16,
+    paddingTop: 12,
+    gap: 32,
   },
   engagementButton: {
     flexDirection: 'row',
@@ -630,7 +645,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   engagementCount: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#000000',
   },
   engagementCountLiked: {

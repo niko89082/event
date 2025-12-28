@@ -44,9 +44,10 @@ export default function ActivityList({
   onScroll,
   onLoadMore,
   onActivityAction,
-  friendsCount = 0,
+  friendsCount = 0, // Note: This is actually followingCount now, kept as friendsCount for backward compatibility
   currentUserId,
   scrollEventThrottle = 16,
+  ListHeaderComponent, // Optional custom header component (e.g., PostComposer)
 }) {
   
   // Render different activity types
@@ -191,10 +192,18 @@ export default function ActivityList({
   };
 
   const renderEmptyState = () => {
-    console.log('🎯 ActivityList: Rendering empty state, friendsCount:', friendsCount);
+    // Note: friendsCount is actually followingCount now
+    const followingCount = friendsCount;
+    console.log('🎯 ActivityList: Rendering empty state, followingCount:', followingCount);
     
-    // Check if user has friends
-    if (friendsCount === 0) {
+    // Don't show empty state if we have a ListHeaderComponent (PostComposer) - let it show
+    // Only show empty state when loading is complete and no activities
+    if (loading) {
+      return null; // Don't show empty state while loading
+    }
+    
+    // Check if user is following anyone (was: friendsCount, now: followingCount)
+    if (followingCount === 0) {
       return <NoFriendsEmptyState navigation={navigation} />;
     } else {
       return <NoActivityEmptyState navigation={navigation} />;
@@ -203,6 +212,26 @@ export default function ActivityList({
 
   const renderHeader = () => {
     console.log('🎯 ActivityList: Rendering header, activities.length:', activities.length);
+    
+    // If custom header component provided (e.g., PostComposer), use it
+    if (ListHeaderComponent) {
+      return (
+        <View>
+          {ListHeaderComponent}
+          {activities.length > 0 && (
+            <FriendRecommendations 
+              navigation={navigation}
+              displayMode="header"
+              onFriendAdded={(user) => {
+                console.log('🎉 Friend added:', user.username);
+                // Trigger refresh
+                if (onRefresh) onRefresh();
+              }}
+            />
+          )}
+        </View>
+      );
+    }
     
     // Only show friend recommendations in header when activities exist
     if (activities.length > 0) {
@@ -240,28 +269,36 @@ export default function ActivityList({
         />
       }
       ListHeaderComponent={renderHeader}
-      ListEmptyComponent={renderEmptyState}
+      ListEmptyComponent={!loading && activities.length === 0 ? renderEmptyState : null}
       ListFooterComponent={renderFooter}
       onScroll={onScroll}
       scrollEventThrottle={scrollEventThrottle}
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={activities.length === 0 ? styles.emptyContentContainer : styles.contentContainer}
+      contentContainerStyle={activities.length === 0 && !loading && !ListHeaderComponent ? styles.emptyContentContainer : styles.contentContainer}
+      contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustContentInsets={false}
+      maintainVisibleContentPosition={{
+        minIndexForVisible: 0,
+        autoscrollToTopThreshold: 10,
+      }}
+      nestedScrollEnabled={true}
+      scrollEnabled={true}
       bounces={true}
       alwaysBounceVertical={true}
       removeClippedSubviews={false}
       maxToRenderPerBatch={10}
       updateCellsBatchingPeriod={50}
       windowSize={10}
-      style={{ backgroundColor: '#F8F9FA' }}
+      style={{ backgroundColor: 'transparent', flex: 1 }}
     />
   );
 }
 
 const styles = StyleSheet.create({
   contentContainer: {
-    paddingTop: 120, // Account for header + tabs
+    paddingTop: 0, // No extra padding - header handles spacing
     paddingBottom: 20,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'transparent', // Transparent to avoid white blocking
     minHeight: '100%',
   },
   emptyContentContainer: {
@@ -270,18 +307,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 0,
     paddingBottom: 0,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'transparent', // Transparent to avoid white blocking
     minHeight: '100%',
   },
   
   // Activity wrappers
   activityWrapper: {
     marginBottom: 8,
-    backgroundColor: '#F8F9FA', // Match screen background
+    backgroundColor: '#FFFFFF', // White background for activity items
     borderRadius: 0,
     marginHorizontal: 0,
-    borderWidth: 0.5, // Very slight border
-    borderColor: '#E5E5E7', // Very subtle border color
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1', // Subtle border
   },
   unknownActivityWrapper: {
     padding: 16,

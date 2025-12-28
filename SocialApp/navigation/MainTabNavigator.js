@@ -9,6 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 // Tab Screens
 import FeedScreen from '../screens/FeedScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import SearchStack from './SearchStack';
+import EventsHubScreen from '../screens/EventsHubScreen';
 
 // Create Screens
 import CreateEventScreen from '../screens/CreateEventScreen';
@@ -78,10 +80,18 @@ function CustomTabBar({ state, descriptors, navigation }) {
                   iconName = isFocused ? 'home' : 'home-outline';
                   iconColor = isFocused ? '#0D47A1' : '#212121';
                   break;
+                case 'Search':
+                  iconName = isFocused ? 'search' : 'search-outline';
+                  iconColor = isFocused ? '#0D47A1' : '#212121';
+                  break;
                 case 'Create':
                   iconName = isFocused ? 'add-circle' : 'add-circle-outline';
-                  iconSize = 34; // Slightly smaller but still prominent
+                  iconSize = 36; // Larger size for prominence
                   iconColor = isFocused ? '#1565C0' : '#1976D2'; // Always blue to stand out
+                  break;
+                case 'Events':
+                  iconName = isFocused ? 'calendar' : 'calendar-outline';
+                  iconColor = isFocused ? '#0D47A1' : '#212121';
                   break;
                 case 'Profile':
                   iconName = isFocused ? 'person' : 'person-outline';
@@ -143,10 +153,18 @@ function CustomTabBar({ state, descriptors, navigation }) {
                   iconName = isFocused ? 'home' : 'home-outline';
                   iconColor = isFocused ? '#0D47A1' : '#212121';
                   break;
+                case 'Search':
+                  iconName = isFocused ? 'search' : 'search-outline';
+                  iconColor = isFocused ? '#0D47A1' : '#212121';
+                  break;
                 case 'Create':
                   iconName = isFocused ? 'add-circle' : 'add-circle-outline';
-                  iconSize = 34; // Slightly smaller but still prominent
+                  iconSize = 36; // Larger size for prominence
                   iconColor = isFocused ? '#1565C0' : '#1976D2'; // Always blue to stand out
+                  break;
+                case 'Events':
+                  iconName = isFocused ? 'calendar' : 'calendar-outline';
+                  iconColor = isFocused ? '#0D47A1' : '#212121';
                   break;
                 case 'Profile':
                   iconName = isFocused ? 'person' : 'person-outline';
@@ -163,12 +181,13 @@ function CustomTabBar({ state, descriptors, navigation }) {
                     styles.tabButton,
                     isFocused && styles.activeTabButton
                   ]}>
-                    <Ionicons 
-                      name={iconName} 
-                      size={28} 
-                      color={isFocused ? '#1976D2' : '#424242'}
-                      onPress={onPress}
-                    />
+                    <TouchableOpacity onPress={onPress} activeOpacity={0.7}>
+                      <Ionicons 
+                        name={iconName} 
+                        size={iconSize} 
+                        color={iconColor}
+                      />
+                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -235,6 +254,15 @@ function CreateStackNavigator({ navigation }) {
   );
 }
 
+// Events Hub Stack Navigator
+function EventsHubStackNavigator() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="EventsHub" component={EventsHubScreen} />
+    </Stack.Navigator>
+  );
+}
+
 export default function MainTabNavigator({ onLogout }) {
   return (
     <Tab.Navigator
@@ -252,10 +280,26 @@ export default function MainTabNavigator({ onLogout }) {
       />
       
       <Tab.Screen 
+        name="Search" 
+        component={SearchStack}
+        options={{
+          tabBarLabel: 'Search',
+        }}
+      />
+      
+      <Tab.Screen 
         name="Create" 
         component={CreateStackNavigator}
         options={{
           tabBarLabel: 'Create',
+        }}
+      />
+      
+      <Tab.Screen 
+        name="Events" 
+        component={EventsHubStackNavigator}
+        options={{
+          tabBarLabel: 'Events',
         }}
       />
       

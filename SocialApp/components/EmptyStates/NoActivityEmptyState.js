@@ -38,12 +38,13 @@ export default function NoActivityEmptyState({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF',
     paddingTop: 0,
     paddingBottom: 0,
     paddingHorizontal: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 400,
   },
   
   header: {
