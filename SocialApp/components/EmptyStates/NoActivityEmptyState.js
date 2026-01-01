@@ -38,7 +38,7 @@ export default function NoActivityEmptyState({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent', // Changed from #FFFFFF to transparent
     paddingTop: 0,
     paddingBottom: 0,
     paddingHorizontal: 40,

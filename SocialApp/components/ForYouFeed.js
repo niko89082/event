@@ -13,6 +13,7 @@ const ForYouFeed = forwardRef(({
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
+  debugValues = {},
 }, ref) => {
   
   const { currentUser } = useContext(AuthContext);
@@ -117,12 +118,38 @@ const ForYouFeed = forwardRef(({
   }, [loading, hasMore, activities.length, page]);
 
   const handlePostCreated = useCallback((postData) => {
-    console.log('🎉 Post created, refreshing feed:', postData);
-    // Refresh the feed to show the new post
-    fetchPage(1, true);
-  }, []);
+    console.log('🎉 Post created, adding to feed immediately:', postData);
+    
+    // Transform post data to activity format
+    let activityType = 'regular_post';
+    if (postData.postType === 'text') {
+      activityType = 'text_post';
+    } else if (postData.review && postData.review.type) {
+      activityType = 'review_post';
+    }
+    
+    const newActivity = {
+      ...postData,
+      activityType: activityType,
+      timestamp: postData.createdAt || postData.uploadDate || new Date().toISOString(),
+      user: currentUser, // Ensure user info is included
+      userLiked: false,
+      likeCount: 0,
+      commentCount: 0,
+    };
+    
+    // Immediately prepend the new post to the activities array
+    setActivities(prev => [newActivity, ...prev]);
+    
+    // Optionally refresh in background to get updated counts, but don't wait
+    // This gives immediate feedback while ensuring data is fresh
+    setTimeout(() => {
+      fetchPage(1, true);
+    }, 1000);
+  }, [currentUser]);
 
   const handleScroll = useCallback((event) => {
+    // Pass scroll event to parent for header hiding
     if (parentOnScroll) {
       parentOnScroll(event);
     }
@@ -160,6 +187,7 @@ const ForYouFeed = forwardRef(({
       currentUserId={currentUserId}
       scrollEventThrottle={scrollEventThrottle}
       ListHeaderComponent={<PostComposer navigation={navigation} onPostCreated={handlePostCreated} />}
+      debugValues={debugValues}
     />
   );
 });

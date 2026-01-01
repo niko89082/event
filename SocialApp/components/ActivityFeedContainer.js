@@ -14,6 +14,7 @@ const ActivityFeedContainer = forwardRef(({
   onRefresh: externalOnRefresh,
   onScroll: parentOnScroll,
   scrollEventThrottle = 16,
+  debugValues = {},
 }, ref) => {
   
   const { currentUser } = useContext(AuthContext);
@@ -168,6 +169,7 @@ const ActivityFeedContainer = forwardRef(({
   }, [handleActivityAction]);
 
   const handleScroll = useCallback((event) => {
+    // Pass scroll event to parent for header hiding
     if (parentOnScroll) {
       parentOnScroll(event);
     }
@@ -204,7 +206,8 @@ const ActivityFeedContainer = forwardRef(({
       friendsCount={followingCount}
       currentUserId={currentUserId}
       scrollEventThrottle={scrollEventThrottle}
-      ListHeaderComponent={<PostComposer navigation={navigation} onPostCreated={handlePostCreated} />}
+      ListHeaderComponent={<PostComposer navigation={navigation} onPostCreated={handlePostCreated} debugValues={debugValues} />}
+      debugValues={debugValues}
     />
   );
 });

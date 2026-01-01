@@ -7,7 +7,7 @@ import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 
 // Tab Screens
-import FeedScreen from '../screens/FeedScreen';
+import FeedStack from './FeedStack';
 import ProfileScreen from '../screens/ProfileScreen';
 import SearchStack from './SearchStack';
 import EventsHubScreen from '../screens/EventsHubScreen';
@@ -273,7 +273,7 @@ export default function MainTabNavigator({ onLogout }) {
     >
       <Tab.Screen 
         name="Feed" 
-        component={FeedScreen}
+        component={FeedStack}
         options={{
           tabBarLabel: 'Home',
         }}

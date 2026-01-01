@@ -1275,6 +1275,9 @@ router.post('/create', protect, upload.array('photo', 4), async (req, res) => {
       }
     });
 
+    // Populate user data for immediate feed insertion
+    await photo.populate('user', 'username fullName profilePicture _id');
+    
     console.log(`✅ Successfully created ${finalPostType} post: ${photo._id}`);
     
     res.status(201).json({
@@ -1363,6 +1366,9 @@ router.post('/create-text', protect, async (req, res) => {
       }
     });
 
+    // Populate user data for immediate feed insertion
+    await photo.populate('user', 'username fullName profilePicture _id');
+    
     console.log(`✅ Successfully created text post: ${photo._id}`);
     
     res.status(201).json({

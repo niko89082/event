@@ -19,10 +19,10 @@ const router = express.Router();
 ══════════════════════════════════════════════════════════════════ */
 
 const ACTIVITY_TYPES = {
-  // ✅ UPDATED: Prioritize posts (Twitter features)
+  // ✅ POST TYPES: For both feeds
   'regular_post': { 
     priority: 'high', 
-    weight: 2.0, // Increased from 1.0
+    weight: 2.0,
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
   'text_post': { 
@@ -35,75 +35,36 @@ const ACTIVITY_TYPES = {
     weight: 2.2, // Reviews get slightly higher weight
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
-  'memory_post': { 
-    priority: 'medium', 
-    weight: 1.2,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-  },
   
-  // Existing activity types
+  // ✅ ACTIVITY TYPES: For Activity feed only (friend-based interactions)
   'event_invitation': { 
     priority: 'high', 
     weight: 2.0,
     maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
   },
-  // 'event_photo_upload': { 
-  //   priority: 'medium', 
-  //   weight: 1.3,
-  //   maxAge: 5 * 24 * 60 * 60 * 1000 // 5 days
-  // },
   'friend_event_join': { 
     priority: 'medium', 
     weight: 1.1,
     maxAge: 3 * 24 * 60 * 60 * 1000 // 3 days
-  },
-  'friend_request': { 
-    priority: 'high', 
-    weight: 2.5,
-    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-  },
-  'friend_request_accepted': { 
-    priority: 'high', 
-    weight: 2.2,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-  },
-  'event_reminder': { 
-    priority: 'high', 
-    weight: 3.0,
-    maxAge: 1 * 24 * 60 * 60 * 1000 // 1 day
-  },
-  'memory_created': { 
-    priority: 'medium', 
-    weight: 1.4,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
   'event_created': { 
     priority: 'medium', 
     weight: 1.3,
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
-
-  // ✅ FIXED: Comment activities with higher priority and longer maxAge
-  'memory_photo_upload': { 
-    priority: 'medium', 
-    weight: 1.3,
-    maxAge: 5 * 24 * 60 * 60 * 1000 // 5 days
-  },
   'photo_comment': { 
-    priority: 'medium', // ✅ FIXED: Increased from 'low' to 'medium'
+    priority: 'medium',
     weight: 1.2,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // ✅ FIXED: Increased from 3 to 7 days
-  },
-  'memory_photo_comment': { 
-    priority: 'medium', // ✅ FIXED: Increased from 'low' to 'medium'
-    weight: 1.2,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // ✅ FIXED: Increased from 3 to 7 days
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   },
   'friend_cohost_added': { 
     priority: 'medium', 
     weight: 1.3,
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   }
+  
+  // ❌ REMOVED: event_reminder (notifications only)
+  // ❌ REMOVED: memory_post, memory_created, memory_photo_upload, memory_photo_comment (not in initial release)
 };
 
 
@@ -507,8 +468,128 @@ const calculateRelationshipScore = (activity, userId) => {
    ACTIVITY FETCHERS WITH COMPLETE PRIVACY FILTERING
 ══════════════════════════════════════════════════════════════════ */
 
+// ✅ NEW: Fetch posts from ALL users for "For You" feed (not just followed)
+const fetchForYouPosts = async (userId, timeRange) => {
+  console.log('🌟 Fetching For You posts from all users...');
+  
+  const posts = await Photo.aggregate([
+    {
+      $match: {
+        // Get posts from ALL users including own posts
+        $or: [
+          { uploadDate: { $gte: timeRange.start } },
+          { createdAt: { $gte: timeRange.start } }
+        ],
+        $and: [
+          {
+            $or: [
+              { isDeleted: { $exists: false } },
+              { isDeleted: false }
+            ]
+          },
+          {
+            $or: [
+              { postType: { $in: ['photo', 'text'] } },
+              { postType: { $exists: false } },
+              { postType: null }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'user',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    {
+      $lookup: {
+        from: 'events',
+        localField: 'event',
+        foreignField: '_id',
+        as: 'event'
+      }
+    },
+    {
+      $unwind: { path: '$user', preserveNullAndEmptyArrays: false }
+    },
+    {
+      $unwind: { path: '$event', preserveNullAndEmptyArrays: true }
+    },
+    {
+      $match: {
+        // ✅ FOR YOU FEED: Only show public posts (no followers-only)
+        $or: [
+          // Posts not associated with any event (personal posts - all visible)
+          { event: { $exists: false } },
+          { event: null },
+          // Only posts from public events
+          { 'event.privacyLevel': 'public' }
+          // Private and followers-only event posts excluded from For You feed
+        ]
+      }
+    },
+    {
+      $addFields: {
+        // ✅ CRITICAL: Calculate like status for regular posts
+        userLiked: {
+          $cond: {
+            if: { $isArray: '$likes' },
+            then: { $in: [userId, '$likes'] },
+            else: false
+          }
+        },
+        likeCount: {
+          $cond: {
+            if: { $isArray: '$likes' },
+            then: { $size: '$likes' },
+            else: 0
+          }
+        },
+        commentCount: {
+          $cond: {
+            if: { $isArray: '$comments' },
+            then: { $size: '$comments' },
+            else: 0
+          }
+        }
+      }
+    },
+    {
+      $addFields: {
+        sortDate: { $ifNull: ['$createdAt', '$uploadDate'] }
+      }
+    },
+    { $sort: { sortDate: -1 } },
+    { $limit: 100 } // Get more posts for For You feed (algorithmic selection)
+  ]);
+
+  console.log(`🌟 For You feed: Found ${posts.length} posts from all users (public only)`);
+
+  return posts.map(post => {
+    // Determine activity type based on post type
+    let activityType = 'regular_post';
+    if (post.postType === 'text') {
+      activityType = 'text_post';
+    } else if (post.review && post.review.type) {
+      activityType = 'review_post';
+    }
+    
+    return {
+      ...post,
+      activityType: activityType,
+      timestamp: post.createdAt || post.uploadDate,
+      score: calculateActivityScore(post, activityType, userId)
+    };
+  });
+};
+
+// ✅ UPDATED: Fetch posts from FOLLOWED users only (for Activity feed)
 const fetchRegularPosts = async (userId, followingIds, timeRange) => {
-  console.log('📸 Fetching regular posts...');
+  console.log('📸 Fetching regular posts from followed users...');
   
   const posts = await Photo.aggregate([
     {
@@ -610,7 +691,7 @@ const fetchRegularPosts = async (userId, followingIds, timeRange) => {
     { $limit: 50 }
   ]);
 
-  console.log(`🔒 Privacy filtered: Found ${posts.length} regular posts (private event posts excluded)`);
+  console.log(`🔒 Privacy filtered: Found ${posts.length} regular posts from followed users (private event posts excluded)`);
 
   return posts.map(post => {
     // Determine activity type based on post type
@@ -1434,8 +1515,9 @@ router.get('/feed/activity', protect, async (req, res) => {
   const limit = +req.query.limit || 15;
   const skip = (page - 1) * limit;
   const userId = req.user._id;
+  const feedType = req.query.feedType || 'activity'; // 'for-you' or 'activity'
   
-  console.log(`🎯 [API] /feed/activity -> user ${userId} page ${page}`);
+  console.log(`🎯 [API] /feed/activity -> user ${userId} page ${page} feedType: ${feedType}`);
 
   try {
     // Get user's social connections (following relationships)
@@ -1447,7 +1529,8 @@ router.get('/feed/activity', protect, async (req, res) => {
     
     console.log(`🔍 User connections:`, {
       userId,
-      followingCount: followingIds.length
+      followingCount: followingIds.length,
+      feedType
     });
 
     // Define time range for activity fetching
@@ -1456,65 +1539,60 @@ router.get('/feed/activity', protect, async (req, res) => {
       end: new Date()
     };
 
-    // ✅ PHASE 2: Fetch all activity types including comment activities
-    const [
-      regularPosts,
-      memoryPosts,
-      eventInvitations,
-     //eventPhotoUploads,
-      friendEventJoins,
-      eventReminders,
-      memoriesCreated,
-      eventCreations,
-      memoryPhotoUploads,
-      photoComments,           // ✅ NEW: Regular photo comments
-      memoryPhotoComments,     // ✅ NEW: Memory photo comments
-      cohostActivities         // ✅ NEW: Cohost activities
-    ] = await Promise.all([
-      fetchRegularPosts(userId, followingIds, timeRange),
-      fetchMemoryPosts(userId, followingIds, timeRange),
-      fetchEventInvitations(userId, timeRange),
-      //fetchEventPhotoUploads(userId, followingIds, timeRange),
-      fetchFriendEventJoins(userId, followingIds, timeRange),
-      fetchEventReminders(userId, timeRange),
-      fetchMemoriesCreated(userId, followingIds, timeRange),
-      fetchEventCreations(userId, followingIds, timeRange),
-      fetchMemoryPhotoUploads(userId, followingIds, timeRange),
-      fetchPhotoComments(userId, followingIds, timeRange),           // ✅ NEW: Fetch photo comments
-      fetchMemoryPhotoComments(userId, followingIds, timeRange),     // ✅ NEW: Fetch memory photo comments
-      fetchCoHostActivities(userId, followingIds, timeRange)         // ✅ NEW: Fetch cohost activities
-    ]);
+    let allActivities = [];
 
-    console.log('📊 Activity counts by type:', {
-      regularPosts: regularPosts.length,
-      memoryPosts: memoryPosts.length,
-      eventInvitations: eventInvitations.length,
-     // eventPhotoUploads: eventPhotoUploads.length,
-      friendEventJoins: friendEventJoins.length,
-      eventReminders: eventReminders.length,
-      memoriesCreated: memoriesCreated.length,
-      eventCreations: eventCreations.length,
-      memoryPhotoUploads: memoryPhotoUploads.length,
-      photoComments: photoComments.length,              // ✅ NEW
-      memoryPhotoComments: memoryPhotoComments.length,  // ✅ NEW
-      cohostActivities: cohostActivities.length         // ✅ NEW
-    });
+    // ✅ SEPARATE FEED LOGIC: For You vs Activity
+    if (feedType === 'for-you') {
+      // For You Feed: Only posts from anyone (not just friends), NO activity items
+      console.log('🌟 Fetching For You feed (posts from all users, no activity items)');
+      
+      const forYouPosts = await fetchForYouPosts(userId, timeRange);
+      
+      allActivities = forYouPosts;
+      
+      console.log('📊 For You feed counts:', {
+        posts: forYouPosts.length
+      });
+      
+    } else {
+      // Activity Feed: Friend-based activities only (posts, comments, joins, invitations)
+      console.log('👥 Fetching Activity feed (friend-based activities)');
+      
+      const [
+        regularPosts,
+        eventInvitations,
+        friendEventJoins,
+        eventCreations,
+        photoComments,
+        cohostActivities
+      ] = await Promise.all([
+        fetchRegularPosts(userId, followingIds, timeRange), // Posts from followed users
+        fetchEventInvitations(userId, timeRange),
+        fetchFriendEventJoins(userId, followingIds, timeRange),
+        fetchEventCreations(userId, followingIds, timeRange),
+        fetchPhotoComments(userId, followingIds, timeRange), // Comments from friends
+        fetchCoHostActivities(userId, followingIds, timeRange)
+      ]);
 
-    // ✅ PHASE 2: Combine all activities including comment activities
-    const allActivities = [
-      ...regularPosts,
-      ...memoryPosts,
-      ...eventInvitations,
-      //...eventPhotoUploads,
-      ...friendEventJoins,
-      ...eventReminders,
-      ...memoriesCreated,
-      ...eventCreations,
-      ...memoryPhotoUploads,
-      ...photoComments,           // ✅ NEW: Include photo comments
-      ...memoryPhotoComments,     // ✅ NEW: Include memory photo comments
-      ...cohostActivities         // ✅ NEW: Include cohost activities
-    ];
+      console.log('📊 Activity feed counts by type:', {
+        regularPosts: regularPosts.length,
+        eventInvitations: eventInvitations.length,
+        friendEventJoins: friendEventJoins.length,
+        eventCreations: eventCreations.length,
+        photoComments: photoComments.length,
+        cohostActivities: cohostActivities.length
+      });
+
+      // ✅ Combine friend-based activities (NO memories, NO event reminders)
+      allActivities = [
+        ...regularPosts,
+        ...eventInvitations,
+        ...friendEventJoins,
+        ...eventCreations,
+        ...photoComments,
+        ...cohostActivities
+      ];
+    }
 
     console.log(`📈 Total activities before filtering: ${allActivities.length}`);
 
@@ -1571,19 +1649,17 @@ router.get('/feed/activity', protect, async (req, res) => {
         limit
       },
       debug: {
-        activityCounts: {
-          regularPosts: regularPosts.length,
-          memoryPosts: memoryPosts.length,
-          eventInvitations: eventInvitations.length,
-         // eventPhotoUploads: eventPhotoUploads.length,
-          friendEventJoins: friendEventJoins.length,
-          eventReminders: eventReminders.length,
-          memoriesCreated: memoriesCreated.length,
-          eventCreations: eventCreations.length,
-          memoryPhotoUploads: memoryPhotoUploads.length,
-          photoComments: photoComments.length,              // ✅ NEW
-          memoryPhotoComments: memoryPhotoComments.length,  // ✅ NEW
-          cohostActivities: cohostActivities.length,        // ✅ NEW
+        feedType: feedType,
+        activityCounts: feedType === 'for-you' ? {
+          posts: allActivities.length,
+          total: allActivities.length
+        } : {
+          regularPosts: allActivities.filter(a => ['regular_post', 'text_post', 'review_post'].includes(a.activityType)).length,
+          eventInvitations: allActivities.filter(a => a.activityType === 'event_invitation').length,
+          friendEventJoins: allActivities.filter(a => a.activityType === 'friend_event_join').length,
+          eventCreations: allActivities.filter(a => a.activityType === 'event_created').length,
+          photoComments: allActivities.filter(a => a.activityType === 'photo_comment').length,
+          cohostActivities: allActivities.filter(a => a.activityType === 'friend_cohost_added').length,
           total: allActivities.length
         },
         finalFeedTypes: activityTypeCounts,
@@ -1592,26 +1668,27 @@ router.get('/feed/activity', protect, async (req, res) => {
         },
         timeRange,
         privacyFiltered: true,
-        phase2Complete: true  // ✅ NEW: Indicates Phase 2 is implemented
+        memoriesRemoved: true, // ✅ Indicates memories removed from feed
+        eventRemindersRemoved: true // ✅ Indicates event reminders removed from feed
       }
     };
 
-    console.log(`🟢 [PHASE 2] Sending activity response:`, {
+    console.log(`🟢 [${feedType.toUpperCase()}] Sending feed response:`, {
+      feedType,
       totalActivities: filteredActivities.length,
       paginatedCount: paginatedActivities.length,
       hasMore: response.pagination.hasMore,
-      commentActivities: photoComments.length + memoryPhotoComments.length,  // ✅ NEW
       topActivityTypes: paginatedActivities.slice(0, 5).map(a => a.activityType)
     });
 
     res.json(response);
 
   } catch (err) {
-    console.error('❌ [PHASE 2] Activity feed error:', err);
+    console.error(`❌ [${feedType.toUpperCase()}] Feed error:`, err);
     res.status(500).json({ 
       message: 'Server error',
       error: err.message,
-      phase2Error: true,
+      feedType: feedType,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }

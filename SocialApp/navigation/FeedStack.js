@@ -3,6 +3,7 @@ import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 
 import FeedScreen        from '../screens/FeedScreen';
+import FeedTemplateScreen from '../screens/FeedTemplateScreen';
 import PostDetailsScreen from '../screens/PostDetailsScreen';
 import CreateEventScreen from '../screens/CreateEventScreen';
 import CreatePostScreen  from '../screens/CreatePostScreen';
@@ -45,6 +46,15 @@ export default function FeedStack() {
         name="SongPageScreen"
         component={SongPageScreen}
         options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="FeedTemplateScreen"
+        component={FeedTemplateScreen}
+        options={{ 
+          headerShown: true,
+          title: 'Feed Post Types Template',
+          headerBackTitle: 'Back'
+        }}
       />
     </Stack.Navigator>
   );

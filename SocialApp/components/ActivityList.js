@@ -7,9 +7,11 @@ import {
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Import activity components
 import CompletePostItem from './PostItem';
@@ -28,8 +30,6 @@ import PhotoCommentActivity from './activities/PhotoCommentActivity';
 import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
 import PostActivityComponent from './PostActivityComponent';
 import FriendRecommendations from './FriendRecommendations';
-import NoFriendsEmptyState from './EmptyStates/NoFriendsEmptyState';
-import NoActivityEmptyState from './EmptyStates/NoActivityEmptyState';
 
 // Testing toggles
 const USE_ALTERNATIVE_LAYOUT = true;
@@ -48,7 +48,14 @@ export default function ActivityList({
   currentUserId,
   scrollEventThrottle = 16,
   ListHeaderComponent, // Optional custom header component (e.g., PostComposer)
+  debugValues = {}, // Debug values from FeedScreen
 }) {
+  const insets = useSafeAreaInsets();
+  
+  // Calculate header height to match FeedScreen - use debug values if available
+  const FIXED_HEADER_HEIGHT = debugValues.fixedHeaderHeight || 52;
+  const TAB_BAR_HEIGHT = debugValues.tabBarHeight || 40;
+  const HEADER_HEIGHT = debugValues.totalHeaderHeight || (insets.top + FIXED_HEADER_HEIGHT + TAB_BAR_HEIGHT);
   
   // Render different activity types
   const renderActivity = useCallback(({ item }) => {
@@ -191,24 +198,6 @@ export default function ActivityList({
     );
   };
 
-  const renderEmptyState = () => {
-    // Note: friendsCount is actually followingCount now
-    const followingCount = friendsCount;
-    console.log('🎯 ActivityList: Rendering empty state, followingCount:', followingCount);
-    
-    // Don't show empty state if we have a ListHeaderComponent (PostComposer) - let it show
-    // Only show empty state when loading is complete and no activities
-    if (loading) {
-      return null; // Don't show empty state while loading
-    }
-    
-    // Check if user is following anyone (was: friendsCount, now: followingCount)
-    if (followingCount === 0) {
-      return <NoFriendsEmptyState navigation={navigation} />;
-    } else {
-      return <NoActivityEmptyState navigation={navigation} />;
-    }
-  };
 
   const renderHeader = () => {
     console.log('🎯 ActivityList: Rendering header, activities.length:', activities.length);
@@ -250,6 +239,16 @@ export default function ActivityList({
     return null;
   };
 
+  // Calculate content container style with proper padding for header
+  const getContentContainerStyle = () => {
+    // Add padding to account for fixed header so PostComposer isn't covered
+    // Add small gap to lower PostComposer slightly and match bottom padding
+    const gap = 10; // Match PostComposer's paddingBottom for balanced spacing
+    const paddingTop = HEADER_HEIGHT + gap;
+    
+    return [styles.contentContainer, { paddingTop }];
+  };
+
   return (
     <FlatList
       data={activities}
@@ -266,21 +265,17 @@ export default function ActivityList({
           title="Pull to refresh activities"
           titleColor="#8E8E93"
           progressBackgroundColor="#FFFFFF"
+          progressViewOffset={HEADER_HEIGHT + 10}
         />
       }
       ListHeaderComponent={renderHeader}
-      ListEmptyComponent={!loading && activities.length === 0 ? renderEmptyState : null}
       ListFooterComponent={renderFooter}
       onScroll={onScroll}
       scrollEventThrottle={scrollEventThrottle}
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={activities.length === 0 && !loading && !ListHeaderComponent ? styles.emptyContentContainer : styles.contentContainer}
+      contentContainerStyle={getContentContainerStyle()}
       contentInsetAdjustmentBehavior="never"
       automaticallyAdjustContentInsets={false}
-      maintainVisibleContentPosition={{
-        minIndexForVisible: 0,
-        autoscrollToTopThreshold: 10,
-      }}
       nestedScrollEnabled={true}
       scrollEnabled={true}
       bounces={true}
@@ -298,15 +293,6 @@ const styles = StyleSheet.create({
   contentContainer: {
     paddingTop: 0, // No extra padding - header handles spacing
     paddingBottom: 20,
-    backgroundColor: 'transparent', // Transparent to avoid white blocking
-    minHeight: '100%',
-  },
-  emptyContentContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 0,
-    paddingBottom: 0,
     backgroundColor: 'transparent', // Transparent to avoid white blocking
     minHeight: '100%',
   },

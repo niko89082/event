@@ -1,4 +1,4 @@
-// components/PostComposer.js - Redesigned post composer with modern UI
+// components/PostComposer.js - Redesigned to match feed design
 import React, { useContext, useState, useRef } from 'react';
 import {
   View,
@@ -18,7 +18,7 @@ import { API_BASE_URL } from '@env';
 import api from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
 
-export default function PostComposer({ navigation, onPostCreated }) {
+export default function PostComposer({ navigation, onPostCreated, debugValues = {} }) {
   const { currentUser } = useContext(AuthContext);
   const [textContent, setTextContent] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
@@ -116,19 +116,32 @@ export default function PostComposer({ navigation, onPostCreated }) {
     }
   };
 
-  const handlePostSuccess = (postData) => {
+  const handlePostSuccess = (responseData) => {
     // Reset form
     setTextContent('');
     setSelectedImage(null);
     setIsExpanded(false);
     
-    // Notify parent component
-    if (onPostCreated) {
-      onPostCreated(postData);
-    }
+    // Extract post data from response - handle both response.data.photo and response.data
+    const postData = responseData.photo || responseData;
     
-    // Show success feedback
-    Alert.alert('Success', 'Your post has been published!');
+    // Ensure post data has all required fields for feed insertion
+    const completePostData = {
+      ...postData,
+      createdAt: postData.createdAt || postData.uploadDate || new Date().toISOString(),
+      uploadDate: postData.uploadDate || postData.createdAt || new Date().toISOString(),
+      user: postData.user || currentUser, // Ensure user info is included
+      likes: postData.likes || [],
+      comments: postData.comments || [],
+      userLiked: false,
+      likeCount: postData.likeCount || 0,
+      commentCount: postData.commentCount || 0,
+    };
+    
+    // Notify parent component with complete post data
+    if (onPostCreated) {
+      onPostCreated(completePostData);
+    }
   };
 
   const handleFocus = () => {
@@ -153,37 +166,56 @@ export default function PostComposer({ navigation, onPostCreated }) {
 
   const profilePictureUri = getProfilePictureUrl();
   const canPost = (textContent.trim().length > 0 || selectedImage) && !isPosting;
-  const characterCount = textContent.length;
 
   return (
     <View style={styles.container}>
       <View style={styles.content}>
-        {/* Profile Picture */}
+        {/* Profile Picture - Smaller to match header */}
         <View style={styles.profilePictureContainer}>
           {profilePictureUri ? (
             <Image source={{ uri: profilePictureUri }} style={styles.profilePicture} />
           ) : (
             <View style={styles.profilePicturePlaceholder}>
-              <Ionicons name="person" size={24} color="#8E8E93" />
+              <Ionicons name="person" size={20} color="#8E8E93" />
             </View>
           )}
         </View>
 
-        {/* Main Input Section */}
+        {/* Input Section with Icons */}
         <View style={styles.inputSection}>
-          <TextInput
-            ref={inputRef}
-            style={styles.textInput}
-            placeholder="What's happening?"
-            placeholderTextColor="#8E8E93"
-            value={textContent}
-            onChangeText={setTextContent}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            multiline
-            maxLength={MAX_TEXT_LENGTH}
-            textAlignVertical="top"
-          />
+          <View style={styles.inputWrapper}>
+            <TextInput
+              ref={inputRef}
+              style={styles.textInput}
+              placeholder="What's happening?"
+              placeholderTextColor="#8E8E93"
+              value={textContent}
+              onChangeText={setTextContent}
+              onFocus={handleFocus}
+              onBlur={handleBlur}
+              multiline
+              maxLength={MAX_TEXT_LENGTH}
+              textAlignVertical="center"
+            />
+            
+            {/* Action Icons - Inside the textbox on the right */}
+            <View style={styles.actionIconsContainer}>
+              <TouchableOpacity
+                style={styles.actionIcon}
+                onPress={handleImagePress}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="image-outline" size={22} color="#3797EF" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.actionIcon}
+                onPress={() => navigation.navigate('Create', { screen: 'CreateEvent' })}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="school-outline" size={22} color="#8B5CF6" />
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* Selected Image Preview */}
           {selectedImage && (
@@ -199,37 +231,10 @@ export default function PostComposer({ navigation, onPostCreated }) {
             </View>
           )}
 
-          {/* Action Bar - Always visible when expanded */}
-          {isExpanded && (
+          {/* Action Bar - Only show when expanded and has content */}
+          {isExpanded && (textContent.trim() || selectedImage) && (
             <View style={styles.actionBar}>
-              <View style={styles.actionIcons}>
-                <TouchableOpacity
-                  style={styles.actionIcon}
-                  onPress={handleImagePress}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="image-outline" size={22} color="#3797EF" />
-                  <Text style={styles.actionLabel}>Photo</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.actionIcon}
-                  onPress={() => navigation.navigate('Create', { screen: 'CreateEvent' })}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="calendar-outline" size={22} color="#3797EF" />
-                  <Text style={styles.actionLabel}>Event</Text>
-                </TouchableOpacity>
-              </View>
-
               <View style={styles.postButtonContainer}>
-                {characterCount > 0 && (
-                  <Text style={[
-                    styles.characterCount,
-                    characterCount > MAX_TEXT_LENGTH * 0.9 && styles.characterCountWarning
-                  ]}>
-                    {characterCount}
-                  </Text>
-                )}
                 <TouchableOpacity
                   style={[styles.postButton, !canPost && styles.postButtonDisabled]}
                   onPress={handlePost}
@@ -257,41 +262,53 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
   },
   content: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   profilePictureContainer: {
     marginRight: 12,
-    marginTop: 2,
+    alignSelf: 'flex-start',
+    marginTop: 2, // Slight offset to align with input
   },
   profilePicture: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#F0F0F0',
   },
   profilePicturePlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#F0F0F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
   inputSection: {
     flex: 1,
-    paddingTop: 4,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 24,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 10,
+    minHeight: 44,
   },
   textInput: {
+    flex: 1,
     fontSize: 16,
     color: '#000000',
-    minHeight: 48,
-    maxHeight: 200,
     paddingVertical: 0,
+    paddingHorizontal: 0,
+    marginRight: 4,
+    maxHeight: 100,
     ...Platform.select({
       ios: {
         fontWeight: '400',
@@ -300,6 +317,15 @@ const styles = StyleSheet.create({
         fontWeight: 'normal',
       },
     }),
+  },
+  actionIconsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 4,
+  },
+  actionIcon: {
+    padding: 4,
   },
   imagePreviewContainer: {
     marginTop: 12,
@@ -331,41 +357,12 @@ const styles = StyleSheet.create({
   actionBar: {
     marginTop: 12,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-  },
-  actionIcons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 20,
-  },
-  actionIcon: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-  },
-  actionLabel: {
-    fontSize: 14,
-    color: '#3797EF',
-    fontWeight: '500',
   },
   postButtonContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  characterCount: {
-    fontSize: 13,
-    color: '#8E8E93',
-    fontWeight: '500',
-  },
-  characterCountWarning: {
-    color: '#FF3B30',
   },
   postButton: {
     backgroundColor: '#3797EF',
