@@ -131,8 +131,8 @@ export default function FeedScreen({ navigation }) {
     const currentScrollY = event.nativeEvent.contentOffset.y;
     const scrollDelta = currentScrollY - lastScrollY.current;
     
-    // Use debug values if available
-    const SCROLL_HIDE_THRESHOLD = debugValues.scrollThreshold || 50;
+    // Scroll threshold for hiding header
+    const SCROLL_HIDE_THRESHOLD = 50;
     
     // Determine scroll direction
     const SCROLL_DELTA_THRESHOLD = 3;
@@ -145,10 +145,11 @@ export default function FeedScreen({ navigation }) {
     const shouldShow = scrollDirection.current === 'up' || currentScrollY <= 10;
     
     // Animate header - only translateY, no opacity (solid color)
+    // Translate up more to ensure it's completely off screen
     if (shouldHide && isHeaderVisible.current) {
       isHeaderVisible.current = false;
       Animated.timing(headerTranslateY, {
-        toValue: -headerHeight,
+        toValue: -(headerHeight + 20), // Add extra 20px to go up more
         duration: 250,
         useNativeDriver: true,
       }).start();
@@ -162,7 +163,7 @@ export default function FeedScreen({ navigation }) {
     }
     
     lastScrollY.current = currentScrollY;
-  }, [SAFE_AREA_TOP, HEADER_HEIGHT, TAB_BAR_HEIGHT, debugValues]);
+  }, [SAFE_AREA_TOP, HEADER_HEIGHT, TAB_BAR_HEIGHT]);
 
   const SAFE_AREA_TOP = insets.top;
   const HEADER_HEIGHT = 52;

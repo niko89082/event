@@ -389,13 +389,66 @@ const PostActivityComponent = ({
     return `http://${API_BASE_URL}:3000${path}`;
   }, [post.paths]);
 
-  // Caption processing
-  const caption = post.caption || '';
+  // Caption processing with hashtag extraction
+  const caption = post.caption || post.textContent || '';
   const CAPTION_LIMIT = 200;
   const shouldTruncateCaption = caption.length > CAPTION_LIMIT;
   const displayCaption = showFullCaption || !shouldTruncateCaption 
     ? caption 
     : caption.substring(0, CAPTION_LIMIT) + '...';
+  
+  // Extract hashtags from caption
+  const hashtagRegex = /#[\w]+/g;
+  const hashtags = useMemo(() => {
+    const matches = caption.match(hashtagRegex);
+    return matches ? [...new Set(matches)] : [];
+  }, [caption]);
+  
+  // Split caption into text and hashtags for rendering
+  const renderCaptionWithHashtags = () => {
+    if (!displayCaption) return null;
+    
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    const regex = /#[\w]+/g;
+    
+    while ((match = regex.exec(displayCaption)) !== null) {
+      // Add text before hashtag
+      if (match.index > lastIndex) {
+        parts.push({
+          type: 'text',
+          content: displayCaption.substring(lastIndex, match.index)
+        });
+      }
+      // Add hashtag
+      parts.push({
+        type: 'hashtag',
+        content: match[0]
+      });
+      lastIndex = regex.lastIndex;
+    }
+    
+    // Add remaining text
+    if (lastIndex < displayCaption.length) {
+      parts.push({
+        type: 'text',
+        content: displayCaption.substring(lastIndex)
+      });
+    }
+    
+    return parts.length > 0 ? parts : [{ type: 'text', content: displayCaption }];
+  };
+  
+  const captionParts = renderCaptionWithHashtags();
+  
+  // Check if this is a text-only post (no image)
+  const isTextOnlyPost = !imageUrl && (!post.paths || post.paths.length === 0);
+  
+  // Get engagement counts
+  const likeCount = post.likeCount || post.likes?.length || 0;
+  const repostCount = post.repostCount || 0;
+  const isLiked = post.userLiked || false;
 
   // Image dimensions calculation
   const getImageDimensions = () => {
@@ -646,8 +699,12 @@ const PostActivityComponent = ({
     );
   };
 
-  // Custom activity header with event reference
+  // Custom activity header with username, handle, and timestamp
   const renderCustomHeader = () => {
+    const username = user.displayName || user.username || 'Unknown User';
+    const userHandle = user.username ? `@${user.username}` : '';
+    const isOwner = String(user._id) === String(currentUserId);
+    
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity 
@@ -674,26 +731,103 @@ const PostActivityComponent = ({
           <View style={styles.userInfo}>
             <View style={styles.usernameRow}>
               <Text style={styles.username} numberOfLines={1}>
-                {user.displayName || user.username || 'Unknown User'}
+                {username}
               </Text>
-              {renderEventReference()}
+              {userHandle && (
+                <Text style={styles.userHandle} numberOfLines={1}>
+                  {' '}{userHandle}
+                </Text>
+              )}
+              <Text style={styles.timeAgo}>
+                {' • '}{niceDate(post.createdAt || post.uploadDate)}
+              </Text>
             </View>
-            <Text style={styles.timeAgo}>
-              {niceDate(post.createdAt || post.uploadDate)}
-            </Text>
           </View>
         </TouchableOpacity>
 
-        {/* Post Type Icon */}
-        <View style={[styles.activityIcon, { 
-          backgroundColor: isMemoryPost ? '#FF69B420' : '#8E8E9320' 
-        }]}>
-          <Ionicons 
-            name={isMemoryPost ? 'heart' : 'image'} 
-            size={16} 
-            color={isMemoryPost ? '#FF69B4' : '#8E8E93'} 
+        {/* Three-dot menu for owner */}
+        {isOwner && (
+          <TouchableOpacity 
+            style={styles.moreMenuButton}
+            onPress={() => {
+              Alert.alert(
+                'Post Options',
+                'What would you like to do?',
+                [
+                  { text: 'Edit', onPress: () => {} },
+                  { text: 'Delete', style: 'destructive', onPress: () => {} },
+                  { text: 'Cancel', style: 'cancel' }
+                ]
+              );
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="ellipsis-horizontal" size={18} color="#8E8E93" />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+  
+  // Engagement bar with likes, comments, reposts, share
+  const renderEngagementBar = () => {
+    return (
+      <View style={styles.engagementBar}>
+        <TouchableOpacity 
+          style={styles.engagementButton}
+          onPress={() => {
+            // Handle like
+            console.log('Like pressed');
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isLiked ? "heart" : "heart-outline"}
+            size={20}
+            color={isLiked ? "#ED4956" : "#000000"}
           />
-        </View>
+          {likeCount > 0 && (
+            <Text style={[styles.engagementCount, isLiked && styles.engagementCountLiked]}>
+              {likeCount}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.engagementButton}
+          onPress={handleViewAllComments}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chatbubble-outline" size={20} color="#000000" />
+          {commentCount > 0 && (
+            <Text style={styles.engagementCount}>{commentCount}</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.engagementButton}
+          onPress={() => {
+            // Handle repost
+            console.log('Repost pressed');
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="repeat-outline" size={20} color="#000000" />
+          {repostCount > 0 && (
+            <Text style={styles.engagementCount}>{repostCount}</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.engagementButton}
+          onPress={() => {
+            // Handle share
+            console.log('Share pressed');
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="share-outline" size={20} color="#000000" />
+        </TouchableOpacity>
       </View>
     );
   };
@@ -711,13 +845,22 @@ const PostActivityComponent = ({
       {/* Custom Header with Event Reference */}
       {renderCustomHeader()}
 
-      {/* Caption Section */}
+      {/* Caption Section with Hashtags */}
       {caption ? (
         <Animated.View 
           style={[styles.captionContainer, { opacity: fadeAnim }]}
         >
           <Text style={styles.captionText}>
-            {displayCaption}
+            {captionParts.map((part, index) => {
+              if (part.type === 'hashtag') {
+                return (
+                  <Text key={index} style={styles.hashtagText}>
+                    {part.content}
+                  </Text>
+                );
+              }
+              return <Text key={index}>{part.content}</Text>;
+            })}
           </Text>
           {shouldTruncateCaption && !showFullCaption && (
             <TouchableOpacity 
@@ -734,43 +877,43 @@ const PostActivityComponent = ({
         </Animated.View>
       ) : null}
 
-      {/* Enhanced Image Display with Loading States */}
-      <TouchableOpacity 
-        style={styles.imageContainer}
-        onPress={handleImagePress}
-        activeOpacity={0.95}
-        accessible={true}
-        accessibilityLabel={`View full ${isMemoryPost ? 'memory' : 'post'}`}
-        accessibilityRole="button"
-      >
-        {imageUrl && !imageError ? (
-          <>
-            <Image
-              source={{ uri: imageUrl }}
-              style={[styles.postImage, imageDimensions]}
-              resizeMode="cover"
-              onLoad={handleImageLoad}
-              onError={handleImageError}
-            />
-            
-            {/* Loading overlay */}
-            {imageLoading && (
-              <View style={[styles.imageLoadingOverlay, imageDimensions]}>
-                <ActivityIndicator size="large" color="#3797EF" />
-              </View>
-            )}
-          </>
-        ) : (
-          <View style={[styles.imagePlaceholder, imageDimensions]}>
-            <Ionicons 
-              name={imageError ? "image-outline" : "image-outline"} 
-              size={48} 
-              color="#C7C7CC" 
-            />
-            <Text style={styles.placeholderText}>
-              {imageError ? 'Failed to load image' : 'No image'}
-            </Text>
-            {imageError && (
+      {/* Enhanced Image Display with Loading States - Only show if image exists */}
+      {!isTextOnlyPost && imageUrl && (
+        <TouchableOpacity 
+          style={styles.imageContainer}
+          onPress={handleImagePress}
+          activeOpacity={0.95}
+          accessible={true}
+          accessibilityLabel={`View full ${isMemoryPost ? 'memory' : 'post'}`}
+          accessibilityRole="button"
+        >
+          {!imageError ? (
+            <>
+              <Image
+                source={{ uri: imageUrl }}
+                style={[styles.postImage, imageDimensions]}
+                resizeMode="cover"
+                onLoad={handleImageLoad}
+                onError={handleImageError}
+              />
+              
+              {/* Loading overlay */}
+              {imageLoading && (
+                <View style={[styles.imageLoadingOverlay, imageDimensions]}>
+                  <ActivityIndicator size="large" color="#3797EF" />
+                </View>
+              )}
+            </>
+          ) : (
+            <View style={[styles.imagePlaceholder, imageDimensions]}>
+              <Ionicons 
+                name="image-outline" 
+                size={48} 
+                color="#C7C7CC" 
+              />
+              <Text style={styles.placeholderText}>
+                Failed to load image
+              </Text>
               <TouchableOpacity 
                 style={styles.retryImageButton}
                 onPress={() => {
@@ -781,25 +924,28 @@ const PostActivityComponent = ({
               >
                 <Text style={styles.retryImageText}>Retry</Text>
               </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        {/* Enhanced Memory Post Overlay */}
-        {isMemoryPost && (
-          <Animated.View 
-            style={[
-              styles.memoryOverlay,
-              { opacity: fadeAnim }
-            ]}
-          >
-            <View style={styles.memoryBadge}>
-              <Ionicons name="heart" size={14} color="#FFFFFF" />
-              <Text style={styles.memoryBadgeText}>Memory</Text>
             </View>
-          </Animated.View>
-        )}
-      </TouchableOpacity>
+          )}
+
+          {/* Enhanced Memory Post Overlay */}
+          {isMemoryPost && (
+            <Animated.View 
+              style={[
+                styles.memoryOverlay,
+                { opacity: fadeAnim }
+              ]}
+            >
+              <View style={styles.memoryBadge}>
+                <Ionicons name="heart" size={14} color="#FFFFFF" />
+                <Text style={styles.memoryBadgeText}>Memory</Text>
+              </View>
+            </Animated.View>
+          )}
+        </TouchableOpacity>
+      )}
+
+      {/* Engagement Bar */}
+      {renderEngagementBar()}
 
       {/* Enhanced Comments Section */}
       {renderCommentsSection()}
@@ -827,9 +973,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     marginRight: 12,
   },
   placeholderAvatar: {
@@ -847,13 +993,24 @@ const styles = StyleSheet.create({
   },
   username: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#1C1C1E',
-    marginRight: 8,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  userHandle: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: '#8E8E93',
   },
   timeAgo: {
-    fontSize: 13,
+    fontSize: 15,
     color: '#8E8E93',
+  },
+  moreMenuButton: {
+    padding: 4,
+  },
+  moreButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
   },
   activityIcon: {
     width: 28,
@@ -888,11 +1045,13 @@ const styles = StyleSheet.create({
   captionText: {
     fontSize: 16,
     lineHeight: 22,
-    color: '#1C1C1E',
+    color: '#000000',
   },
-  moreButton: {
-    alignSelf: 'flex-start',
-    paddingVertical: 4,
+  hashtagText: {
+    fontSize: 16,
+    lineHeight: 22,
+    color: '#3797EF',
+    fontWeight: '400',
   },
   moreText: {
     color: '#8E8E93',
@@ -900,10 +1059,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Image Styles - Enhanced with loading states
+  // Image Styles - Enhanced with loading states and rounded corners
   imageContainer: {
     marginHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 12,
     position: 'relative',
@@ -1166,6 +1325,29 @@ const styles = StyleSheet.create({
     color: '#FF6B6B',
     marginLeft: 6,
     fontWeight: '500',
+  },
+  
+  // Engagement Bar Styles
+  engagementBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 24,
+  },
+  engagementButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  engagementCount: {
+    fontSize: 15,
+    color: '#000000',
+    fontWeight: '400',
+  },
+  engagementCountLiked: {
+    color: '#ED4956',
   },
 });
 
