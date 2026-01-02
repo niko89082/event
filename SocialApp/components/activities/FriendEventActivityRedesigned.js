@@ -23,7 +23,40 @@ const FriendEventActivityRedesigned = ({
   onAction 
 }) => {
   const { data, metadata, timestamp } = activity;
+  
+  // Safety checks
+  if (!data) {
+    console.error('❌ FriendEventActivityRedesigned: No data found', { activity });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Activity data unavailable</Text>
+      </View>
+    );
+  }
+  
   const { event, friends, groupCount, isGrouped } = data;
+  
+  // Safety check for event
+  if (!event) {
+    console.error('❌ FriendEventActivityRedesigned: No event data found', { activity });
+    return (
+      <View style={styles.container}>
+        <ActivityHeader
+          user={friends?.[0] || activity.user}
+          timestamp={timestamp}
+          activityType="friend_event_join"
+          onUserPress={() => {}}
+        />
+        <Text style={styles.errorText}>Event information unavailable</Text>
+      </View>
+    );
+  }
+  
+  // Safety check for friends
+  if (!friends || friends.length === 0) {
+    console.error('❌ FriendEventActivityRedesigned: No friends data found', { activity });
+    return null;
+  }
 
   const handleViewEvent = () => {
     navigation.navigate('EventDetailsScreen', { eventId: event._id });
@@ -259,17 +292,7 @@ const FriendEventActivityRedesigned = ({
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 0,
-    marginHorizontal: 0,
-    marginVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    paddingVertical: 16,
   },
 
   // Message
@@ -422,6 +445,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     flex: 1,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#FF3B30',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    textAlign: 'center',
   },
 });
 

@@ -18,7 +18,40 @@ const MemoryCreatedActivity = ({
   onAction 
 }) => {
   const { data, metadata, timestamp } = activity;
+  
+  // Safety checks
+  if (!data) {
+    console.error('❌ MemoryCreatedActivity: No data found', { activity });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Activity data unavailable</Text>
+      </View>
+    );
+  }
+  
   const { memory, event, creator } = data;
+  
+  // Safety check for memory
+  if (!memory) {
+    console.error('❌ MemoryCreatedActivity: No memory data found', { activity });
+    return (
+      <View style={styles.container}>
+        <ActivityHeader
+          user={creator || activity.user}
+          timestamp={timestamp}
+          activityType="memory_created"
+          onUserPress={() => {}}
+        />
+        <Text style={styles.errorText}>Memory information unavailable</Text>
+      </View>
+    );
+  }
+  
+  // Safety check for creator
+  if (!creator) {
+    console.error('❌ MemoryCreatedActivity: No creator data found', { activity });
+    return null;
+  }
 
   // ✅ FIXED: Change navigation from 'MemoryScreen' to 'MemoryDetailsScreen'
   const handleViewMemory = () => {
@@ -343,6 +376,13 @@ const styles = StyleSheet.create({
   },
   viewMemoryButton: {
     backgroundColor: '#FF9500',
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#FF3B30',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    textAlign: 'center',
   },
 });
 

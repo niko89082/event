@@ -15,12 +15,14 @@ import {
   LayoutAnimation,
   Platform,
   Keyboard,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ActivityHeader from './activities/ActivityHeader';
 import { niceDate } from '../utils/helpers';
 import { API_BASE_URL } from '@env';
 import api from '../services/api';
+import usePostsStore from '../stores/postsStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_WIDTH = SCREEN_WIDTH - 32; // Account for card margins
@@ -30,11 +32,55 @@ const PostActivityComponent = ({
   activity, 
   currentUserId, 
   navigation,
-  onCommentAdded 
+  onCommentAdded,
+  onLike 
 }) => {
   const post = activity;
   const user = post.user || {};
   const isMemoryPost = post.postType === 'memory';
+  
+  // Get centralized post state from store
+  const toggleLikeInStore = usePostsStore(state => state.toggleLike);
+  
+  // Get post from store - use selector that returns stable reference
+  const storePost = usePostsStore(state => {
+    if (!post._id) return null;
+    return state.posts.get(post._id);
+  });
+  
+  // Memoize the like state to prevent unnecessary re-renders
+  const isLikedFromStore = useMemo(() => {
+    if (!storePost) return null;
+    return Boolean(storePost.userLiked);
+  }, [storePost?.userLiked]);
+  
+  const likeCountFromStore = useMemo(() => {
+    if (!storePost) return null;
+    return storePost.likeCount || 0;
+  }, [storePost?.likeCount]);
+  
+  // Initialize store with this post if not already there (only once per post ID)
+  const initializedPostIds = useRef(new Set());
+  useEffect(() => {
+    if (post._id && !initializedPostIds.current.has(post._id)) {
+      const existingPost = usePostsStore.getState().posts.get(post._id);
+      if (!existingPost) {
+        initializedPostIds.current.add(post._id);
+        // Ensure userLiked is properly set from initial post data
+        const postToAdd = {
+          ...post,
+          userLiked: Boolean(post.userLiked || (post.likes && Array.isArray(post.likes) && post.likes.includes(currentUserId))),
+          likeCount: post.likeCount || (post.likes && Array.isArray(post.likes) ? post.likes.length : 0),
+        };
+        usePostsStore.getState().addPost(postToAdd);
+      } else {
+        initializedPostIds.current.add(post._id);
+      }
+    }
+  }, [post._id, currentUserId]); // Include currentUserId to properly check like status
+  
+  // Use store data if available, otherwise fall back to initial post
+  const currentPost = storePost || post;
   
   // State for caption expansion
   const [showFullCaption, setShowFullCaption] = useState(false);
@@ -49,6 +95,7 @@ const PostActivityComponent = ({
   // Phase 3: Enhanced state management
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+  const [postLoading, setPostLoading] = useState(!post || !post._id);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [commentSubmitAttempts, setCommentSubmitAttempts] = useState(0);
@@ -445,10 +492,89 @@ const PostActivityComponent = ({
   // Check if this is a text-only post (no image)
   const isTextOnlyPost = !imageUrl && (!post.paths || post.paths.length === 0);
   
-  // Get engagement counts
-  const likeCount = post.likeCount || post.likes?.length || 0;
+  // Check if this post has a review
+  const hasReview = post.review && post.review.type && (post.review.type === 'movie' || post.review.type === 'song');
+  const review = post.review;
+  
+  // Get engagement counts from store (always up to date)
+  // Prioritize store data, then fall back to post data, then calculate from likes array
+  const isLiked = isLikedFromStore !== null
+    ? isLikedFromStore
+    : (post.userLiked !== undefined 
+        ? Boolean(post.userLiked) 
+        : (post.likes && Array.isArray(post.likes) && currentUserId 
+            ? post.likes.some(likeId => String(likeId) === String(currentUserId))
+            : false));
+  const likeCount = likeCountFromStore !== null
+    ? likeCountFromStore
+    : (post.likeCount || (post.likes && Array.isArray(post.likes) ? post.likes.length : 0));
   const repostCount = post.repostCount || 0;
-  const isLiked = post.userLiked || false;
+  
+  // Follow status - check if current user is following the post author
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [isCheckingFollow, setIsCheckingFollow] = useState(false);
+  
+  // Check follow status on mount
+  useEffect(() => {
+    if (currentUserId && user._id && String(user._id) !== String(currentUserId)) {
+      checkFollowStatus();
+    }
+  }, [currentUserId, user._id]);
+  
+  const checkFollowStatus = async () => {
+    if (!user._id || !currentUserId) return;
+    
+    try {
+      // Check if current user follows the post author
+      // Try to get this from the post data first, otherwise fetch it
+      if (post.user?.isFollowing !== undefined) {
+        setIsFollowing(post.user.isFollowing);
+        return;
+      }
+      
+      // Fallback: Get the post author's profile which includes isFollowing status
+      const response = await api.get(`/api/profile/${user._id}`);
+      if (response.data && response.data.isFollowing !== undefined) {
+        setIsFollowing(response.data.isFollowing);
+      } else {
+        // Last resort: Get current user's profile to check following list
+        const currentUserResponse = await api.get(`/api/profile/${currentUserId}`);
+        const currentUser = currentUserResponse.data;
+        if (currentUser && currentUser.following) {
+          const followingIds = (currentUser.following || []).map(id => String(id));
+          setIsFollowing(followingIds.includes(String(user._id)));
+        } else {
+          setIsFollowing(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking follow status:', error);
+      // Default to false if check fails
+      setIsFollowing(false);
+    }
+  };
+  
+  const handleFollow = async () => {
+    if (!user._id || !currentUserId || String(user._id) === String(currentUserId)) {
+      return;
+    }
+    
+    try {
+      setIsCheckingFollow(true);
+      if (isFollowing) {
+        await api.delete(`/api/follow/unfollow/${user._id}`);
+        setIsFollowing(false);
+      } else {
+        await api.post(`/api/follow/follow/${user._id}`);
+        setIsFollowing(true);
+      }
+    } catch (error) {
+      console.error('Error following/unfollowing:', error);
+      Alert.alert('Error', 'Failed to update follow status');
+    } finally {
+      setIsCheckingFollow(false);
+    }
+  };
 
   // Image dimensions calculation
   const getImageDimensions = () => {
@@ -704,6 +830,7 @@ const PostActivityComponent = ({
     const username = user.displayName || user.username || 'Unknown User';
     const userHandle = user.username ? `@${user.username}` : '';
     const isOwner = String(user._id) === String(currentUserId);
+    const showFollowButton = !isOwner && currentUserId && user._id && String(user._id) !== String(currentUserId);
     
     return (
       <View style={styles.headerContainer}>
@@ -729,24 +856,42 @@ const PostActivityComponent = ({
 
           {/* User Info */}
           <View style={styles.userInfo}>
-            <View style={styles.usernameRow}>
-              <Text style={styles.username} numberOfLines={1}>
-                {username}
-              </Text>
+            <Text style={styles.username} numberOfLines={1}>
+              {username}
+            </Text>
+            <View style={styles.userMetaRow}>
               {userHandle && (
                 <Text style={styles.userHandle} numberOfLines={1}>
-                  {' '}{userHandle}
+                  {userHandle}
                 </Text>
               )}
+              {userHandle && (
+                <Text style={styles.metaDot}> • </Text>
+              )}
               <Text style={styles.timeAgo}>
-                {' • '}{niceDate(post.createdAt || post.uploadDate)}
+                {niceDate(post.createdAt || post.uploadDate)}
               </Text>
             </View>
           </View>
         </TouchableOpacity>
 
-        {/* Three-dot menu for owner */}
-        {isOwner && (
+        {/* Follow Button or Three-dot menu */}
+        {showFollowButton ? (
+          <TouchableOpacity 
+            style={[styles.followButton, isFollowing && styles.followingButton]}
+            onPress={handleFollow}
+            disabled={isCheckingFollow}
+            activeOpacity={0.7}
+          >
+            {isCheckingFollow ? (
+              <ActivityIndicator size="small" color={isFollowing ? "#000000" : "#FFFFFF"} />
+            ) : (
+              <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
+                {isFollowing ? 'Following' : 'Follow'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        ) : isOwner ? (
           <TouchableOpacity 
             style={styles.moreMenuButton}
             onPress={() => {
@@ -764,8 +909,120 @@ const PostActivityComponent = ({
           >
             <Ionicons name="ellipsis-horizontal" size={18} color="#8E8E93" />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
+    );
+  };
+  
+  // Like handler - use centralized store
+  const [isLiking, setIsLiking] = useState(false);
+  
+  const handleLike = async () => {
+    if (!post._id || !currentUserId || isLiking) {
+      return;
+    }
+    
+    setIsLiking(true);
+    
+    try {
+      // Use centralized store toggleLike which handles optimistic updates and API calls
+      const newLikedStatus = await toggleLikeInStore(post._id, isMemoryPost, currentUserId);
+      
+      // Call onLike callback if provided to sync with parent
+      if (onLike) {
+        const updatedPost = usePostsStore.getState().getPost(post._id);
+        onLike(post._id, updatedPost?.userLiked || newLikedStatus, updatedPost?.likeCount || likeCount);
+      }
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      Alert.alert('Error', 'Failed to update like');
+    } finally {
+      setIsLiking(false);
+    }
+  };
+  
+  // Render review card
+  const renderReviewCard = () => {
+    if (!review) return null;
+    
+    const renderStars = (rating) => {
+      if (!rating || rating <= 0) return null;
+      const stars = [];
+      for (let i = 1; i <= 5; i++) {
+        stars.push(
+          <Ionicons
+            key={i}
+            name={i <= rating ? "star" : "star-outline"}
+            size={14}
+            color={i <= rating ? "#FFD700" : "#E1E1E1"}
+          />
+        );
+      }
+      return stars;
+    };
+    
+    const handleReviewPress = () => {
+      if (review.externalUrl) {
+        Linking.openURL(review.externalUrl);
+      }
+    };
+    
+    return (
+      <TouchableOpacity
+        style={styles.reviewCard}
+        onPress={handleReviewPress}
+        activeOpacity={0.8}
+      >
+        <View style={styles.reviewContent}>
+          {review.poster && (
+            <Image 
+              source={{ uri: review.poster }} 
+              style={styles.reviewPoster}
+            />
+          )}
+          <View style={styles.reviewInfo}>
+            <Text style={styles.reviewTitle} numberOfLines={1}>
+              {review.title}
+            </Text>
+            <Text style={styles.reviewSubtitle} numberOfLines={1}>
+              {review.artist || ''}
+              {review.year && ` • ${review.year}`}
+            </Text>
+            {review.rating && review.rating > 0 && (
+              <View style={styles.reviewRatingContainer}>
+                <View style={styles.reviewStarsContainer}>
+                  {renderStars(review.rating)}
+                </View>
+                <Text style={styles.reviewRatingText}>
+                  {review.rating}/5
+                </Text>
+              </View>
+            )}
+            {review.genre && review.genre.length > 0 && (
+              <View style={styles.reviewGenreContainer}>
+                {review.genre.slice(0, 2).map((genre, index) => (
+                  <View key={index} style={styles.reviewGenreTag}>
+                    <Text style={styles.reviewGenreText}>{genre}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+          {review.externalUrl && (
+            <TouchableOpacity
+              style={styles.reviewExternalButton}
+              onPress={handleReviewPress}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons
+                name={review.type === 'movie' ? "open-outline" : "musical-notes"}
+                size={18}
+                color="#3797EF"
+              />
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
     );
   };
   
@@ -775,10 +1032,8 @@ const PostActivityComponent = ({
       <View style={styles.engagementBar}>
         <TouchableOpacity 
           style={styles.engagementButton}
-          onPress={() => {
-            // Handle like
-            console.log('Like pressed');
-          }}
+          onPress={handleLike}
+          disabled={isLiking}
           activeOpacity={0.7}
         >
           <Ionicons
@@ -877,6 +1132,13 @@ const PostActivityComponent = ({
         </Animated.View>
       ) : null}
 
+      {/* Review Card - Show if post has a review */}
+      {hasReview && review && (
+        <View style={styles.reviewCardContainer}>
+          {renderReviewCard()}
+        </View>
+      )}
+
       {/* Enhanced Image Display with Loading States - Only show if image exists */}
       {!isTextOnlyPost && imageUrl && (
         <TouchableOpacity 
@@ -946,9 +1208,6 @@ const PostActivityComponent = ({
 
       {/* Engagement Bar */}
       {renderEngagementBar()}
-
-      {/* Enhanced Comments Section */}
-      {renderCommentsSection()}
     </Animated.View>
   );
 };
@@ -989,20 +1248,28 @@ const styles = StyleSheet.create({
   usernameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 2,
   },
   username: {
     fontSize: 15,
     fontWeight: '700',
     color: '#000000',
+    marginBottom: 2,
+  },
+  userMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   userHandle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '400',
     color: '#8E8E93',
   },
+  metaDot: {
+    fontSize: 13,
+    color: '#8E8E93',
+  },
   timeAgo: {
-    fontSize: 15,
+    fontSize: 13,
     color: '#8E8E93',
   },
   moreMenuButton: {
@@ -1037,15 +1304,17 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
-  // Caption Styles
+  // Caption Styles - Aligned with username (16px header + 40px avatar + 12px margin = 68px)
   captionContainer: {
-    paddingHorizontal: 16,
+    paddingLeft: 68,
+    paddingRight: 16,
     marginBottom: 12,
   },
   captionText: {
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 17,
+    lineHeight: 24,
     color: '#000000',
+    fontWeight: '500',
   },
   hashtagText: {
     fontSize: 16,
@@ -1059,13 +1328,16 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Image Styles - Enhanced with loading states and rounded corners
+  // Image Styles - Enhanced with loading states and rounded corners, aligned with username
   imageContainer: {
-    marginHorizontal: 16,
+    marginLeft: 68,
+    marginRight: 16,
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 12,
     position: 'relative',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -1327,11 +1599,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   
-  // Engagement Bar Styles
+  // Engagement Bar Styles - Aligned with username
   engagementBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingLeft: 68,
+    paddingRight: 16,
     paddingTop: 8,
     paddingBottom: 4,
     gap: 24,
@@ -1348,6 +1621,105 @@ const styles = StyleSheet.create({
   },
   engagementCountLiked: {
     color: '#ED4956',
+  },
+  
+  // Follow Button Styles
+  followButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#000000',
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followingButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  followButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  followingButtonText: {
+    color: '#000000',
+  },
+  
+  // Review Card Styles - Aligned with username
+  reviewCardContainer: {
+    paddingLeft: 68,
+    paddingRight: 16,
+    marginBottom: 12,
+  },
+  reviewCard: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  reviewContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  reviewPoster: {
+    width: 70,
+    height: 105,
+    borderRadius: 8,
+    backgroundColor: '#E1E1E1',
+    marginRight: 12,
+  },
+  reviewInfo: {
+    flex: 1,
+  },
+  reviewTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  reviewSubtitle: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginBottom: 6,
+  },
+  reviewRatingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  reviewStarsContainer: {
+    flexDirection: 'row',
+    marginRight: 6,
+  },
+  reviewRatingText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
+  reviewGenreContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    gap: 6,
+  },
+  reviewGenreTag: {
+    backgroundColor: '#E1E8F7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  reviewGenreText: {
+    fontSize: 11,
+    color: '#3797EF',
+    fontWeight: '500',
+  },
+  reviewExternalButton: {
+    padding: 4,
+    marginLeft: 4,
   },
 });
 

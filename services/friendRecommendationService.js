@@ -25,7 +25,8 @@ class FriendRecommendationService {
       const user = await User.findById(userId);
       if (!user) throw new Error('User not found');
       
-      const currentFriends = user.getAcceptedFriends();
+      // Use follow system: get users the current user is following
+      const currentFriends = (user.following || []).map(id => String(id));
       const excludeIds = this.getExcludedUserIds(user, currentFriends);
       
       // Get user's event history
@@ -72,14 +73,13 @@ class FriendRecommendationService {
    * Get users to exclude from recommendations
    */
   static getExcludedUserIds(user, currentFriends) {
-    const blockedUsers = user.blockedUsers || [];
-    const pendingUsers = user.friends.map(f => String(f.user));
+    const blockedUsers = (user.blockedUsers || []).map(id => String(id));
+    // No pending users in follow system (instant follows)
     
     return [
       user._id,
       ...currentFriends.map(id => new mongoose.Types.ObjectId(id)),
-      ...blockedUsers.map(id => new mongoose.Types.ObjectId(id)),
-      ...pendingUsers.map(id => new mongoose.Types.ObjectId(id))
+      ...blockedUsers.map(id => new mongoose.Types.ObjectId(id))
     ];
   }
   
@@ -135,13 +135,14 @@ class FriendRecommendationService {
     const currentFriendsObjectIds = currentFriends.map(id => new mongoose.Types.ObjectId(id));
     
     const pipeline = [
-      // Stage 1: Find potential friends
+      // Stage 1: Find potential friends (using follow system)
       {
         $match: {
           _id: { $nin: excludeIds },
           isPublic: true,
           $or: [
-            { 'friends.status': 'accepted' }, // For mutual friends
+            { following: { $in: currentFriendsObjectIds } }, // Users who follow me
+            { followers: { $in: currentFriendsObjectIds } }, // Users I follow
             { _id: { $in: Array.from(eventContext.coAttendees).map(id => new mongoose.Types.ObjectId(id)) } }
           ]
         }
@@ -165,16 +166,13 @@ class FriendRecommendationService {
         }
       },
       
-      // Stage 3: Calculate mutual friends
+      // Stage 3: Calculate mutual connections (using follow system)
       {
         $addFields: {
-          acceptedFriends: {
-            $map: {
-              input: { $filter: { input: '$friends', cond: { $eq: ['$$this.status', 'accepted'] } } },
-              as: 'friend',
-              in: '$$friend.user'
-            }
-          }
+          // Get users this person follows (for mutual friend calculation)
+          theirFollowing: { $ifNull: ['$following', []] },
+          // Get users who follow this person
+          theirFollowers: { $ifNull: ['$followers', []] }
         }
       },
       
@@ -182,11 +180,19 @@ class FriendRecommendationService {
       {
         $addFields: {
           mutualFriendsCount: {
-            $size: { $setIntersection: ['$acceptedFriends', currentFriendsObjectIds] }
+            $size: {
+              $setIntersection: [
+                { $ifNull: ['$following', []] },
+                currentFriendsObjectIds
+              ]
+            }
           },
           mutualEventsCount: { $size: '$sharedEvents' },
           mutualFriendIds: {
-            $setIntersection: ['$acceptedFriends', currentFriendsObjectIds]
+            $setIntersection: [
+              { $ifNull: ['$following', []] },
+              currentFriendsObjectIds
+            ]
           },
           
           // Category overlap scoring
@@ -569,12 +575,13 @@ class FriendRecommendationService {
       throw new Error('User not found');
     }
     
-    const currentFriends = currentUser.getAcceptedFriends();
-    const targetFriends = targetUser.getAcceptedFriends();
+    // Use follow system: get users each person follows
+    const currentFollowing = (currentUser.following || []).map(id => String(id));
+    const targetFollowing = (targetUser.following || []).map(id => String(id));
     
-    // Calculate mutual friends
-    const mutualFriends = currentFriends.filter(friendId => 
-      targetFriends.includes(String(friendId))
+    // Calculate mutual connections (users we both follow)
+    const mutualFriends = currentFollowing.filter(friendId => 
+      targetFollowing.includes(friendId)
     );
     
     // Get event overlap
@@ -584,9 +591,13 @@ class FriendRecommendationService {
     const currentEventIds = currentUserEvents.map(e => String(e._id));
     const sharedEvents = targetUserEvents.filter(e => currentEventIds.includes(String(e._id)));
     
-    // Check exclusion reasons
-    const friendshipStatus = currentUser.getFriendshipStatus(targetUserId);
-    const isBlocked = (currentUser.blockedUsers || []).includes(targetUserId);
+    // Check exclusion reasons (using follow system)
+    const isFollowing = currentFollowing.includes(String(targetUserId));
+    const isFollowedBy = (targetUser.followers || []).map(id => String(id)).includes(String(currentUserId));
+    const friendshipStatus = {
+      status: isFollowing ? 'following' : (isFollowedBy ? 'followed-by' : 'not-friends')
+    };
+    const isBlocked = (currentUser.blockedUsers || []).map(id => String(id)).includes(String(targetUserId));
     const isPrivate = !targetUser.isPublic;
     
     // Calculate scores

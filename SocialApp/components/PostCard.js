@@ -1,5 +1,5 @@
 // components/PostCard.js - Display all post types (text, photo, review)
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, Image, TouchableOpacity,
   Dimensions, Linking, Alert, Platform, Modal
@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@env';
 import ReviewCard from './ReviewCard';
 import api from '../services/api';
+import usePostsStore from '../stores/postsStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_WIDTH = SCREEN_WIDTH - 32;
@@ -71,10 +72,125 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
     String(user._id) === String(currentUserId)
   );
   
-  const isLiked = post.userLiked || (post.likes && post.likes.includes && post.likes.includes(currentUserId));
-  const likeCount = post.likeCount || (post.likes ? post.likes.length : 0);
-  const commentCount = post.commentCount || (post.comments ? post.comments.length : 0);
+  // ✅ CENTRALIZED STATE MANAGEMENT - Get post data and actions from store
+  const toggleLikeInStore = usePostsStore(state => state.toggleLike);
+  
+  // Get post from store - use selector that returns stable reference
+  const storePost = usePostsStore(state => {
+    if (!post._id) return null;
+    return state.posts.get(post._id);
+  });
+  
+  // Memoize the like state to prevent unnecessary re-renders
+  const isLikedFromStore = useMemo(() => {
+    if (!storePost) return null;
+    return Boolean(storePost.userLiked);
+  }, [storePost?.userLiked]);
+  
+  const likeCountFromStore = useMemo(() => {
+    if (!storePost) return null;
+    return storePost.likeCount || 0;
+  }, [storePost?.likeCount]);
+  
+  // Initialize store with this post if not already there (only once per post ID)
+  const initializedPostIds = useRef(new Set());
+  useEffect(() => {
+    if (post._id && !initializedPostIds.current.has(post._id)) {
+      const existingPost = usePostsStore.getState().posts.get(post._id);
+      if (!existingPost) {
+        initializedPostIds.current.add(post._id);
+        // Ensure userLiked is properly set from initial post data
+        const postToAdd = {
+          ...post,
+          userLiked: Boolean(post.userLiked || (post.likes && Array.isArray(post.likes) && post.likes.includes(currentUserId))),
+          likeCount: post.likeCount || (post.likes && Array.isArray(post.likes) ? post.likes.length : 0),
+        };
+        usePostsStore.getState().addPost(postToAdd);
+      } else {
+        initializedPostIds.current.add(post._id);
+      }
+    }
+  }, [post._id, currentUserId]); // Include currentUserId to properly check like status
+  
+  // Use store data if available, otherwise fall back to initial post
+  const currentPost = storePost || post;
+  
+  // Get engagement counts from store (always up to date)
+  // Prioritize store data, then fall back to post data, then calculate from likes array
+  const isLiked = isLikedFromStore !== null
+    ? isLikedFromStore
+    : (post.userLiked !== undefined 
+        ? Boolean(post.userLiked) 
+        : (post.likes && Array.isArray(post.likes) && currentUserId 
+            ? post.likes.some(likeId => String(likeId) === String(currentUserId))
+            : false));
+  const likeCount = likeCountFromStore !== null
+    ? likeCountFromStore
+    : (post.likeCount || (post.likes && Array.isArray(post.likes) ? post.likes.length : 0));
+  const commentCount = storePost
+    ? (storePost.commentCount || 0)
+    : (post.commentCount || (post.comments ? post.comments.length : 0));
   const repostCount = post.repostCount || 0;
+  
+  // Local state for like loading
+  const [isLiking, setIsLiking] = useState(false);
+  
+  // Follow status
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [isCheckingFollow, setIsCheckingFollow] = useState(false);
+  
+  useEffect(() => {
+    if (currentUserId && user._id && String(user._id) !== String(currentUserId)) {
+      checkFollowStatus();
+    }
+  }, [currentUserId, user._id]);
+  
+  const checkFollowStatus = async () => {
+    if (!user._id || !currentUserId) return;
+    try {
+      if (post.user?.isFollowing !== undefined) {
+        setIsFollowing(post.user.isFollowing);
+        return;
+      }
+      const response = await api.get(`/api/profile/${user._id}`);
+      if (response.data && response.data.isFollowing !== undefined) {
+        setIsFollowing(response.data.isFollowing);
+      } else {
+        const currentUserResponse = await api.get(`/api/profile/${currentUserId}`);
+        const currentUser = currentUserResponse.data;
+        if (currentUser && currentUser.following) {
+          const followingIds = (currentUser.following || []).map(id => String(id));
+          setIsFollowing(followingIds.includes(String(user._id)));
+        } else {
+          setIsFollowing(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking follow status:', error);
+      setIsFollowing(false);
+    }
+  };
+  
+  const handleFollow = async () => {
+    if (!user._id || !currentUserId || String(user._id) === String(currentUserId)) {
+      return;
+    }
+    try {
+      setIsCheckingFollow(true);
+      if (isFollowing) {
+        await api.delete(`/api/follow/unfollow/${user._id}`);
+        setIsFollowing(false);
+      } else {
+        await api.post(`/api/follow/follow/${user._id}`);
+        setIsFollowing(true);
+      }
+    } catch (error) {
+      console.error('Error following/unfollowing:', error);
+      Alert.alert('Error', 'Failed to update follow status');
+    } finally {
+      setIsCheckingFollow(false);
+    }
+  };
   
   const postType = post.postType || 'photo';
   const textContent = post.textContent || post.caption || '';
@@ -82,9 +198,28 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
   const shouldTruncate = textContent.length > TEXT_LIMIT;
   const displayText = showFullText || !shouldTruncate ? textContent : textContent.substring(0, TEXT_LIMIT) + '...';
 
-  const handleLike = () => {
-    if (onLike) {
-      onLike(post._id);
+  const handleLike = async () => {
+    if (!post._id || !currentUserId || isLiking) {
+      return;
+    }
+    
+    setIsLiking(true);
+    
+    try {
+      // Use centralized store toggleLike which handles optimistic updates and API calls
+      const isMemoryPost = post.postType === 'memory';
+      await toggleLikeInStore(post._id, isMemoryPost, currentUserId);
+      
+      // Call onLike callback if provided to sync with parent
+      if (onLike) {
+        const updatedPost = usePostsStore.getState().getPost(post._id);
+        onLike(post._id, updatedPost?.userLiked || isLiked, updatedPost?.likeCount || likeCount);
+      }
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      Alert.alert('Error', 'Failed to update like');
+    } finally {
+      setIsLiking(false);
     }
   };
 
@@ -255,13 +390,39 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
             </View>
           )}
           <View style={styles.userDetails}>
-            <Text style={styles.username}>{user.username || 'Unknown'}</Text>
-            <Text style={styles.timestamp}>
-              {niceDate(post.createdAt || post.uploadDate)}
-            </Text>
+            <Text style={styles.username}>{user.displayName || user.username || 'Unknown'}</Text>
+            <View style={styles.userMetaRow}>
+              {user.username && (
+                <Text style={styles.userHandle}>@{user.username}</Text>
+              )}
+              {user.username && (
+                <Text style={styles.metaDot}> • </Text>
+              )}
+              <Text style={styles.timestamp}>
+                {niceDate(post.createdAt || post.uploadDate)}
+              </Text>
+            </View>
           </View>
         </TouchableOpacity>
-        {isOwner && (
+        {/* Follow Button or Three-dot menu */}
+        {!isOwner && currentUserId && user._id && String(user._id) !== String(currentUserId) ? (
+          <TouchableOpacity 
+            style={[styles.followButton, isFollowing && styles.followingButton]}
+            onPress={handleFollow}
+            disabled={isCheckingFollow}
+            activeOpacity={0.7}
+          >
+            {isCheckingFollow ? (
+              <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
+                ...
+              </Text>
+            ) : (
+              <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
+                {isFollowing ? 'Following' : 'Follow'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        ) : isOwner ? (
           <View style={styles.moreButtonContainer}>
             <TouchableOpacity 
               ref={moreButtonRef}
@@ -312,7 +473,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
               </TouchableOpacity>
             </Modal>
           </View>
-        )}
+        ) : null}
       </View>
 
       {/* Content */}
@@ -401,6 +562,7 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
         <TouchableOpacity
           style={styles.engagementButton}
           onPress={handleLike}
+          disabled={isLiking}
           activeOpacity={0.7}
         >
           <Ionicons
@@ -452,9 +614,10 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
+    paddingVertical: 16,
+    marginBottom: 8,
+    borderBottomWidth: 1,
     borderBottomColor: '#E1E1E1',
-    paddingVertical: 12,
   },
   header: {
     flexDirection: 'row',
@@ -487,14 +650,27 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   username: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#000000',
+    marginBottom: 2,
+  },
+  userMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  userHandle: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#8E8E93',
+  },
+  metaDot: {
+    fontSize: 13,
+    color: '#8E8E93',
   },
   timestamp: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#8E8E93',
-    marginTop: 2,
   },
   moreButtonContainer: {
     position: 'relative',
@@ -550,15 +726,18 @@ const styles = StyleSheet.create({
   textContainer: {
     marginBottom: 12,
     paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    paddingRight: 16,
   },
   reviewCardContainer: {
     paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    paddingRight: 16,
     marginBottom: 12,
   },
   textContent: {
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 17,
+    lineHeight: 24,
     color: '#000000',
+    fontWeight: '500',
   },
   showMoreText: {
     fontSize: 16,
@@ -567,14 +746,25 @@ const styles = StyleSheet.create({
   },
   imagesContainer: {
     marginBottom: 12,
-    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
-    paddingRight: 0,
+    marginLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    marginRight: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   singleImage: {
-    width: IMAGE_WIDTH - 68, // Account for left padding
-    height: IMAGE_WIDTH - 68,
-    borderRadius: 16,
-    backgroundColor: '#E1E1E1',
+    width: IMAGE_WIDTH - 68 - 16, // Account for left and right margins
+    height: IMAGE_WIDTH - 68 - 16,
+    backgroundColor: '#F6F6F6',
   },
   multiImageContainer: {
     flexDirection: 'row',
@@ -636,8 +826,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
     paddingRight: 16,
-    paddingTop: 12,
-    gap: 32,
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 24,
   },
   engagementButton: {
     flexDirection: 'row',
@@ -650,6 +841,30 @@ const styles = StyleSheet.create({
   },
   engagementCountLiked: {
     color: '#ED4956',
+  },
+  
+  // Follow Button Styles
+  followButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#000000',
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followingButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+  },
+  followButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  followingButtonText: {
+    color: '#000000',
   },
 });
 

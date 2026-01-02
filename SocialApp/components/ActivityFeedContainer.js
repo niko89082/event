@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import useActivityStore from '../stores/activityStore';
+import usePostsStore from '../stores/postsStore';
 import api from '../services/api';
 import ActivityList from './ActivityList';
 import PostComposer from './PostComposer';
@@ -73,6 +74,17 @@ const ActivityFeedContainer = forwardRef(({
         followingCount: metadata.userConnections?.followingCount || 0,
       });
 
+      // Sync posts to centralized store for like state management with currentUserId
+      const postsToSync = newActivities.filter(a => 
+        a.activityType === 'regular_post' || 
+        a.activityType === 'text_post' || 
+        a.activityType === 'review_post' || 
+        a.activityType === 'memory_post'
+      );
+      if (postsToSync.length > 0) {
+        usePostsStore.getState().setPosts(postsToSync, currentUserId);
+      }
+
       if (reset) {
         setActivities(newActivities);
         setPage(2);
@@ -128,6 +140,23 @@ const ActivityFeedContainer = forwardRef(({
     if (currentUserId) {
       fetchPage(1, true);
     }
+  }, [currentUserId]);
+
+  const handleActivityLike = useCallback((postId, isLiked, likeCount) => {
+    // Update the activity in the activities array
+    setActivities(prev => prev.map(activity => {
+      if (activity._id === postId) {
+        return {
+          ...activity,
+          userLiked: isLiked,
+          likeCount: likeCount,
+          likes: isLiked 
+            ? [...(activity.likes || []), currentUserId].filter(Boolean)
+            : (activity.likes || []).filter(id => String(id) !== String(currentUserId))
+        };
+      }
+      return activity;
+    }));
   }, [currentUserId]);
 
   // Handle activity actions (friend requests, event invitations, etc.)
@@ -203,6 +232,7 @@ const ActivityFeedContainer = forwardRef(({
       onScroll={handleScroll}
       onLoadMore={handleLoadMore}
       onActivityAction={handleActivityActionPress}
+      onActivityLike={handleActivityLike}
       friendsCount={followingCount}
       currentUserId={currentUserId}
       scrollEventThrottle={scrollEventThrottle}

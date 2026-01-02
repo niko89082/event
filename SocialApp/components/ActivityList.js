@@ -28,6 +28,7 @@ import FriendEventActivityAlternative from './activities/FriendEventActivityAlte
 import MemoryPhotoUploadActivity from './activities/MemoryPhotoUploadActivity';
 import PhotoCommentActivity from './activities/PhotoCommentActivity';
 import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
+import FriendCohostAddedActivity from './activities/FriendCohostAddedActivity';
 import PostActivityComponent from './PostActivityComponent';
 import FriendRecommendations from './FriendRecommendations';
 
@@ -44,6 +45,7 @@ export default function ActivityList({
   onScroll,
   onLoadMore,
   onActivityAction,
+  onActivityLike, // New callback for like updates
   friendsCount = 0, // Note: This is actually followingCount now, kept as friendsCount for backward compatibility
   currentUserId,
   scrollEventThrottle = 16,
@@ -86,6 +88,11 @@ export default function ActivityList({
               navigation={navigation}
               onCommentAdded={(comment) => {
                 console.log('💬 Comment added to post:', item._id, comment);
+              }}
+              onLike={(postId, isLiked, likeCount) => {
+                if (onActivityLike) {
+                  onActivityLike(postId, isLiked, likeCount);
+                }
               }}
             />
           </View>
@@ -175,6 +182,13 @@ export default function ActivityList({
           </View>
         );
 
+      case 'friend_cohost_added':
+        return (
+          <View style={styles.activityWrapper}>
+            <FriendCohostAddedActivity {...commonProps} />
+          </View>
+        );
+
       default:
         console.warn('⚠️ Unknown activity type:', item.activityType);
         return (
@@ -194,6 +208,40 @@ export default function ActivityList({
       <View style={styles.footer}>
         <ActivityIndicator size="small" color="#3797EF" />
         <Text style={styles.footerText}>Loading more activities...</Text>
+      </View>
+    );
+  };
+
+  // Render skeleton loading placeholders
+  const renderSkeletonLoader = () => {
+    return (
+      <View style={styles.skeletonContainer}>
+        {[1, 2, 3].map((index) => (
+          <View key={index} style={styles.skeletonPost}>
+            {/* Header skeleton */}
+            <View style={styles.skeletonHeader}>
+              <View style={styles.skeletonAvatar} />
+              <View style={styles.skeletonHeaderText}>
+                <View style={styles.skeletonUsername} />
+                <View style={styles.skeletonMeta} />
+              </View>
+            </View>
+            {/* Content skeleton */}
+            <View style={styles.skeletonContent}>
+              <View style={styles.skeletonTextLine} />
+              <View style={[styles.skeletonTextLine, { width: '80%' }]} />
+              <View style={[styles.skeletonTextLine, { width: '60%' }]} />
+            </View>
+            {/* Image skeleton */}
+            <View style={styles.skeletonImage} />
+            {/* Engagement bar skeleton */}
+            <View style={styles.skeletonEngagement}>
+              <View style={styles.skeletonButton} />
+              <View style={styles.skeletonButton} />
+              <View style={styles.skeletonButton} />
+            </View>
+          </View>
+        ))}
       </View>
     );
   };
@@ -248,6 +296,18 @@ export default function ActivityList({
     
     return [styles.contentContainer, { paddingTop }];
   };
+
+  // Show skeleton loaders on initial load
+  if (loading && activities.length === 0) {
+    return (
+      <View style={{ flex: 1 }}>
+        {renderHeader()}
+        <View style={getContentContainerStyle()}>
+          {renderSkeletonLoader()}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <FlatList
@@ -330,5 +390,76 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     color: '#8E8E93',
+  },
+  // Skeleton loading styles
+  skeletonContainer: {
+    paddingTop: 10,
+  },
+  skeletonPost: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+  },
+  skeletonHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  skeletonAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E1E1E1',
+    marginRight: 12,
+  },
+  skeletonHeaderText: {
+    flex: 1,
+  },
+  skeletonUsername: {
+    width: 120,
+    height: 16,
+    backgroundColor: '#E1E1E1',
+    borderRadius: 4,
+    marginBottom: 6,
+  },
+  skeletonMeta: {
+    width: 80,
+    height: 12,
+    backgroundColor: '#E1E1E1',
+    borderRadius: 4,
+  },
+  skeletonContent: {
+    paddingLeft: 68,
+    paddingRight: 16,
+    marginBottom: 12,
+  },
+  skeletonTextLine: {
+    height: 14,
+    backgroundColor: '#E1E1E1',
+    borderRadius: 4,
+    marginBottom: 8,
+    width: '100%',
+  },
+  skeletonImage: {
+    marginLeft: 68,
+    marginRight: 16,
+    height: 300,
+    backgroundColor: '#E1E1E1',
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  skeletonEngagement: {
+    flexDirection: 'row',
+    paddingLeft: 68,
+    paddingRight: 16,
+    gap: 24,
+  },
+  skeletonButton: {
+    width: 60,
+    height: 20,
+    backgroundColor: '#E1E1E1',
+    borderRadius: 4,
   },
 });

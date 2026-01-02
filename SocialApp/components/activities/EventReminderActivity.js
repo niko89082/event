@@ -20,7 +20,28 @@ const EventReminderActivity = ({
   onAction 
 }) => {
   const { data, metadata, timestamp } = activity;
+  
+  // Safety checks
+  if (!data) {
+    console.error('❌ EventReminderActivity: No data found', { activity });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Activity data unavailable</Text>
+      </View>
+    );
+  }
+  
   const { event, hoursUntil, reminderType } = data;
+  
+  // Safety check for event
+  if (!event) {
+    console.error('❌ EventReminderActivity: No event data found', { activity });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Event information unavailable</Text>
+      </View>
+    );
+  }
 
   const isUrgent = reminderType === 'urgent' || hoursUntil <= 1;
 
@@ -380,6 +401,13 @@ const styles = StyleSheet.create({
   },
   primaryActionButton: {
     flex: 1.5, // Make the primary action slightly larger
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#FF3B30',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    textAlign: 'center',
   },
 });
 

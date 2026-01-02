@@ -10,8 +10,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
-import PostCard from '../components/PostCard';
+import PostActivityComponent from '../components/PostActivityComponent';
 import PhotoGrid from '../components/PhotoGrid';
+import usePostsStore from '../stores/postsStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -300,6 +301,11 @@ const fetchUserProfile = async (isRefresh = false) => {
       new Date(b.createdAt || b.uploadDate) - new Date(a.createdAt || a.uploadDate)
     );
     setPosts(sortedPosts);
+    
+    // Sync posts to centralized store for like state management
+    if (sortedPosts.length > 0) {
+      usePostsStore.getState().setPosts(sortedPosts, currentUser?._id);
+    }
     
     console.log('📸 Showing all posts (public by default):', sortedPosts.length);
     
@@ -1141,18 +1147,10 @@ const renderPostGrid = ({ item }) => (
       <FlatList
         data={contentData}
         renderItem={({ item }) => (
-          <PostCard
-            post={item}
+          <PostActivityComponent
+            activity={item}
             currentUserId={currentUser?._id}
             navigation={navigation}
-            onLike={handlePostLike}
-            onDeletePost={handlePostDelete}
-            onPostUpdated={handlePostUpdate}
-            profileUser={user ? {
-              _id: user._id,
-              username: user.username,
-              profilePicture: user.profilePicture
-            } : null}
           />
         )}
         keyExtractor={(item) => item._id}

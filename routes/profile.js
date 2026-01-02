@@ -639,15 +639,38 @@ router.get('/:userId', protect, async (req, res) => {
       .limit(100)
       .lean();
     
+    // ✅ ADDED: Add like status to each photo
+    const photosWithLikeStatus = photos.map(photo => {
+      const photoObj = { ...photo };
+      
+      // Initialize likes array if it doesn't exist
+      if (!photoObj.likes) {
+        photoObj.likes = [];
+      }
+      
+      // Calculate user liked status
+      const userLiked = photoObj.likes.some(likeId => 
+        String(likeId) === String(currentUserId)
+      );
+      const likeCount = photoObj.likes.length;
+      
+      return {
+        ...photoObj,
+        userLiked,
+        likeCount,
+        commentCount: photoObj.comments ? photoObj.comments.length : 0
+      };
+    });
+    
     // Get posts count
     const postsCount = await Photo.countDocuments({ user: targetUserId, isDeleted: false });
     
-    console.log(`✅ Returning all posts - ${photos.length} photos (everything is public)`);
+    console.log(`✅ Returning all posts - ${photosWithLikeStatus.length} photos (everything is public)`);
     
     const response = {
       ...user,
       attendingEvents: filteredAttendingEvents,
-      photos: photos,
+      photos: photosWithLikeStatus,
       followersCount: followersCount,
       followingCount: followingCount,
       isFollowing: isFollowing,

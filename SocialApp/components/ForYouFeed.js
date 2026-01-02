@@ -6,6 +6,7 @@ import { AuthContext } from '../services/AuthContext';
 import api from '../services/api';
 import ActivityList from './ActivityList';
 import PostComposer from './PostComposer';
+import usePostsStore from '../stores/postsStore';
 
 const ForYouFeed = forwardRef(({
   navigation,
@@ -69,6 +70,17 @@ const ForYouFeed = forwardRef(({
         total: newActivities.length,
         followingCount: metadata.userConnections?.followingCount || 0,
       });
+
+      // Sync posts to centralized store with currentUserId for proper like state calculation
+      const postsToSync = newActivities.filter(a => 
+        a.activityType === 'regular_post' || 
+        a.activityType === 'text_post' || 
+        a.activityType === 'review_post' || 
+        a.activityType === 'memory_post'
+      );
+      if (postsToSync.length > 0) {
+        usePostsStore.getState().setPosts(postsToSync, currentUserId);
+      }
 
       if (reset) {
         setActivities(newActivities);
@@ -155,6 +167,23 @@ const ForYouFeed = forwardRef(({
     }
   }, [parentOnScroll]);
 
+  const handleActivityLike = useCallback((postId, isLiked, likeCount) => {
+    // Update the activity in the activities array
+    setActivities(prev => prev.map(activity => {
+      if (activity._id === postId) {
+        return {
+          ...activity,
+          userLiked: isLiked,
+          likeCount: likeCount,
+          likes: isLiked 
+            ? [...(activity.likes || []), currentUserId].filter(Boolean)
+            : (activity.likes || []).filter(id => String(id) !== String(currentUserId))
+        };
+      }
+      return activity;
+    }));
+  }, [currentUserId]);
+
   // Show authentication error if no currentUserId
   if (!currentUserId) {
     console.warn('⚠️ ForYouFeed: No currentUserId available - user may not be logged in');
@@ -183,6 +212,7 @@ const ForYouFeed = forwardRef(({
       onScroll={handleScroll}
       onLoadMore={handleLoadMore}
       onActivityAction={() => {}}
+      onActivityLike={handleActivityLike}
       friendsCount={followingCount}
       currentUserId={currentUserId}
       scrollEventThrottle={scrollEventThrottle}

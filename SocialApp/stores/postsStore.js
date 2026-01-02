@@ -11,30 +11,78 @@ const usePostsStore = create(
     error: null,
 
     // Actions
-    setPosts: (postsArray) => {
-      const postsMap = new Map();
+    setPosts: (postsArray, currentUserId = null) => {
+      const { posts: existingPosts } = get();
+      const postsMap = new Map(existingPosts); // Start with existing posts to preserve state
+      
       postsArray.forEach(post => {
-        postsMap.set(post._id, {
-          ...post,
-          userLiked: Boolean(post.userLiked),
-          likeCount: post.likeCount || 0,
-          commentCount: post.commentCount || 0,
-          postType: post.postType || 'regular', // 'regular' or 'memory'
-        });
+        const existingPost = postsMap.get(post._id);
+        
+        // Calculate userLiked from post data if not explicitly provided
+        let calculatedUserLiked = Boolean(post.userLiked);
+        if (!calculatedUserLiked && post.likes && Array.isArray(post.likes) && currentUserId) {
+          calculatedUserLiked = post.likes.some(likeId => String(likeId) === String(currentUserId));
+        }
+        
+        // Calculate likeCount from post data if not explicitly provided
+        const calculatedLikeCount = post.likeCount || (post.likes && Array.isArray(post.likes) ? post.likes.length : 0);
+        
+        // If post exists in store, merge updates but preserve optimistic like state if it's more recent
+        if (existingPost) {
+          // Preserve optimistic like updates (they're usually more current)
+          // Only preserve if the existing state differs from incoming data (meaning user interacted)
+          const shouldPreserveLikeState = existingPost.userLiked !== undefined && 
+            existingPost.userLiked !== calculatedUserLiked;
+          
+          postsMap.set(post._id, {
+            ...existingPost,
+            ...post,
+            // Preserve like state if it exists and differs (optimistic update)
+            userLiked: shouldPreserveLikeState ? existingPost.userLiked : calculatedUserLiked,
+            likeCount: shouldPreserveLikeState ? existingPost.likeCount : calculatedLikeCount,
+            commentCount: post.commentCount || existingPost.commentCount || 0,
+            postType: post.postType || existingPost.postType || 'regular',
+          });
+        } else {
+          // New post - add it with calculated like state
+          postsMap.set(post._id, {
+            ...post,
+            userLiked: calculatedUserLiked,
+            likeCount: calculatedLikeCount,
+            commentCount: post.commentCount || 0,
+            postType: post.postType || 'regular', // 'regular' or 'memory'
+          });
+        }
       });
       set({ posts: postsMap });
     },
 
     addPost: (post) => {
       const { posts } = get();
+      const existingPost = posts.get(post._id);
       const newPosts = new Map(posts);
-      newPosts.set(post._id, {
-        ...post,
-        userLiked: Boolean(post.userLiked),
-        likeCount: post.likeCount || 0,
-        commentCount: post.commentCount || 0,
-        postType: post.postType || 'regular',
-      });
+      
+      // If post exists, merge to preserve like state
+      if (existingPost) {
+        newPosts.set(post._id, {
+          ...existingPost,
+          ...post,
+          // Preserve like state if it exists in store (optimistic update)
+          userLiked: existingPost.userLiked !== undefined ? existingPost.userLiked : Boolean(post.userLiked),
+          likeCount: existingPost.likeCount !== undefined ? existingPost.likeCount : (post.likeCount || post.likes?.length || 0),
+          commentCount: post.commentCount || existingPost.commentCount || 0,
+          postType: post.postType || existingPost.postType || 'regular',
+        });
+      } else {
+        // New post
+        newPosts.set(post._id, {
+          ...post,
+          userLiked: Boolean(post.userLiked),
+          likeCount: post.likeCount || post.likes?.length || 0,
+          commentCount: post.commentCount || 0,
+          postType: post.postType || 'regular',
+        });
+      }
       set({ posts: newPosts });
     },
 

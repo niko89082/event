@@ -849,15 +849,18 @@ router.get('/recommendations', protect, async (req, res) => {
       });
     }
 
-    // Get current friends and users to exclude
-    const currentFriends = currentUser.getAcceptedFriends();
-    const blockedUsers = currentUser.blockedUsers || [];
-    const pendingUsers = currentUser.friends.map(f => String(f.user));
+    // Get current following and users to exclude (using follow system)
+    const currentFollowing = (currentUser.following || []).map(id => String(id));
+    const currentFollowers = (currentUser.followers || []).map(id => String(id));
+    // For mutual connections, use intersection of following and followers
+    const mutualConnections = currentFollowing.filter(id => currentFollowers.includes(id));
+    // Use following as the primary list for recommendations
+    const currentFriends = currentFollowing;
+    const blockedUsers = (currentUser.blockedUsers || []).map(id => String(id));
+    const pendingUsers = []; // No pending in follow system
     
-    // Get users I've sent friend requests to (for fallback suggestions)
-    const sentRequests = currentUser.friends
-      .filter(f => f.status === 'pending' && String(f.initiatedBy) === String(currentUserId))
-      .map(f => String(f.user));
+    // No sent requests in follow system (instant follows)
+    const sentRequests = [];
 
     // Get user's event attendance history
     const userAttendedEvents = await Event.find({
@@ -892,14 +895,15 @@ router.get('/recommendations', protect, async (req, res) => {
       ...pendingUsers.map(id => new mongoose.Types.ObjectId(id))
     ];
 
-    // MongoDB aggregation pipeline
+    // MongoDB aggregation pipeline (updated for follow system)
     const aggregationPipeline = [
       {
         $match: {
           _id: { $nin: excludeIds },
           isPublic: true,
           $or: [
-            { 'friends.status': 'accepted' },
+            { following: { $in: currentFriendsObjectIds } }, // Users who follow me
+            { followers: { $in: currentFriendsObjectIds } }, // Users I follow
             { _id: { $in: Array.from(eventAttendees).map(id => new mongoose.Types.ObjectId(id)) } }
           ]
         }
@@ -922,23 +926,36 @@ router.get('/recommendations', protect, async (req, res) => {
       },
       {
         $addFields: {
-          acceptedFriends: {
-            $map: {
-              input: { $filter: { input: '$friends', cond: { $eq: ['$$this.status', 'accepted'] } } },
-              as: 'friend',
-              in: '$$friend.user'
-            }
-          }
+          // Get mutual connections: users who follow me and I follow back
+          mutualConnections: {
+            $setIntersection: [
+              { $ifNull: ['$following', []] },
+              { $ifNull: ['$followers', []] }
+            ]
+          },
+          // Get users I follow (for mutual friend calculation)
+          myFollowing: { $ifNull: ['$following', []] },
+          // Get users who follow me
+          myFollowers: { $ifNull: ['$followers', []] }
         }
       },
       {
         $addFields: {
+          // Count mutual connections (users we both follow)
           mutualFriendsCount: {
-            $size: { $setIntersection: ['$acceptedFriends', currentFriendsObjectIds] }
+            $size: {
+              $setIntersection: [
+                { $ifNull: ['$following', []] },
+                currentFriendsObjectIds
+              ]
+            }
           },
           mutualEventsCount: { $size: '$sharedEvents' },
           mutualFriendIds: {
-            $setIntersection: ['$acceptedFriends', currentFriendsObjectIds]
+            $setIntersection: [
+              { $ifNull: ['$following', []] },
+              currentFriendsObjectIds
+            ]
           }
         }
       },
@@ -1144,10 +1161,10 @@ router.get('/suggestions', protect, async (req, res) => {
       });
     }
 
-    // Get current friends and users to exclude
-    const currentFriends = currentUser.getAcceptedFriends();
-    const blockedUsers = currentUser.blockedUsers || [];
-    const pendingUsers = currentUser.friends.map(f => String(f.user));
+    // Get current following and users to exclude (using follow system)
+    const currentFriends = (currentUser.following || []).map(id => String(id));
+    const blockedUsers = (currentUser.blockedUsers || []).map(id => String(id));
+    const pendingUsers = []; // No pending in follow system
 
     console.log(`📊 Current user has ${currentFriends.length} friends`);
 
@@ -1187,15 +1204,16 @@ router.get('/suggestions', protect, async (req, res) => {
       ...pendingUsers.map(id => new mongoose.Types.ObjectId(id))
     ];
 
-    // PHASE 2: FIXED MongoDB aggregation pipeline
+    // PHASE 2: FIXED MongoDB aggregation pipeline (updated for follow system)
     const aggregationPipeline = [
-      // Stage 1: Find potential friends
+      // Stage 1: Find potential friends (using follow system)
       {
         $match: {
           _id: { $nin: excludeIds },
           isPublic: true,
           $or: [
-            { 'friends.status': 'accepted' },
+            { following: { $in: currentFriendsObjectIds } }, // Users who follow me
+            { followers: { $in: currentFriendsObjectIds } }, // Users I follow
             { _id: { $in: Array.from(eventAttendees).map(id => new mongoose.Types.ObjectId(id)) } }
           ]
         }
@@ -1219,16 +1237,13 @@ router.get('/suggestions', protect, async (req, res) => {
         }
       },
       
-      // Stage 3: Calculate mutual friends
+      // Stage 3: Calculate mutual connections (using follow system)
       {
         $addFields: {
-          acceptedFriends: {
-            $map: {
-              input: { $filter: { input: '$friends', cond: { $eq: ['$$this.status', 'accepted'] } } },
-              as: 'friend',
-              in: '$$friend.user'
-            }
-          }
+          // Get users this person follows (for mutual friend calculation)
+          theirFollowing: { $ifNull: ['$following', []] },
+          // Get users who follow this person
+          theirFollowers: { $ifNull: ['$followers', []] }
         }
       },
       
@@ -1236,11 +1251,19 @@ router.get('/suggestions', protect, async (req, res) => {
       {
         $addFields: {
           mutualFriendsCount: {
-            $size: { $setIntersection: ['$acceptedFriends', currentFriendsObjectIds] }
+            $size: {
+              $setIntersection: [
+                { $ifNull: ['$following', []] },
+                currentFriendsObjectIds
+              ]
+            }
           },
           mutualEventsCount: { $size: '$sharedEvents' },
           mutualFriendIds: {
-            $setIntersection: ['$acceptedFriends', currentFriendsObjectIds]
+            $setIntersection: [
+              { $ifNull: ['$following', []] },
+              currentFriendsObjectIds
+            ]
           }
         }
       },
@@ -1588,15 +1611,15 @@ router.get('/mutual/:userId', protect, async (req, res) => {
       });
     }
 
-    // Get friends lists
-    const currentFriends = currentUser.getAcceptedFriends();
-    const targetFriends = targetUser.getAcceptedFriends();
+    // Get following lists (using follow system)
+    const currentFriends = (currentUser.following || []).map(id => String(id));
+    const targetFriends = (targetUser.following || []).map(id => String(id));
     
-    console.log(`📊 Current user has ${currentFriends.length} friends, target user has ${targetFriends.length} friends`);
+    console.log(`📊 Current user follows ${currentFriends.length} users, target user follows ${targetFriends.length} users`);
 
-    // Find intersection (mutual friends)
+    // Find intersection (mutual connections - users we both follow)
     const mutualFriendIds = currentFriends.filter(friendId => 
-      targetFriends.includes(String(friendId))
+      targetFriends.includes(friendId)
     );
 
     console.log(`🤝 Found ${mutualFriendIds.length} mutual friends`);
@@ -1812,12 +1835,12 @@ router.get('/suggestions/debug/:userId', protect, async (req, res) => {
       });
     }
 
-    // Calculate all the metrics
-    const currentFriends = currentUser.getAcceptedFriends();
-    const targetFriends = targetUser.getAcceptedFriends();
+    // Calculate all the metrics (using follow system)
+    const currentFriends = (currentUser.following || []).map(id => String(id));
+    const targetFriends = (targetUser.following || []).map(id => String(id));
     
     const mutualFriends = currentFriends.filter(friendId => 
-      targetFriends.includes(String(friendId))
+      targetFriends.includes(friendId)
     );
 
     // Get shared events
@@ -1836,9 +1859,13 @@ router.get('/suggestions/debug/:userId', protect, async (req, res) => {
     
     const totalScore = mutualFriendsScore + mutualEventsScore + hybridBonus + strongFriendsBonus + eventOverlapBonus;
 
-    // Check why they might not be suggested
-    const friendshipStatus = currentUser.getFriendshipStatus(userId);
-    const isBlocked = (currentUser.blockedUsers || []).includes(userId);
+    // Check why they might not be suggested (using follow system)
+    const isFollowing = currentFriends.includes(String(userId));
+    const isFollowedBy = (targetUser.followers || []).map(id => String(id)).includes(String(currentUserId));
+    const friendshipStatus = {
+      status: isFollowing ? 'following' : (isFollowedBy ? 'followed-by' : 'not-friends')
+    };
+    const isBlocked = (currentUser.blockedUsers || []).map(id => String(id)).includes(String(userId));
     const isPrivate = !targetUser.isPublic;
 
     res.json({

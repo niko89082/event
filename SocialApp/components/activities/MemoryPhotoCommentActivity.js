@@ -23,7 +23,34 @@ const MemoryPhotoCommentActivity = ({
   onAction 
 }) => {
   const { data, metadata, timestamp } = activity;
+  
+  // Safety checks
+  if (!data) {
+    console.error('❌ MemoryPhotoCommentActivity: No data found', { activity });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Activity data unavailable</Text>
+      </View>
+    );
+  }
+  
   const { comment, photo, memory, commenter, photoUploader } = data;
+  
+  // Safety check for required fields
+  if (!comment || !photo || !memory || !commenter || !photoUploader) {
+    console.error('❌ MemoryPhotoCommentActivity: Missing required data', { comment, photo, memory, commenter, photoUploader });
+    return (
+      <View style={styles.container}>
+        <ActivityHeader
+          user={commenter || activity.user}
+          timestamp={timestamp}
+          activityType="memory_photo_comment"
+          onUserPress={() => {}}
+        />
+        <Text style={styles.errorText}>Comment data incomplete</Text>
+      </View>
+    );
+  }
 
   // Helper function to get proper image URL - consistent with app
   const getImageUrl = (url) => {
@@ -184,9 +211,7 @@ const MemoryPhotoCommentActivity = ({
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
-    marginVertical: 4,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 16,
   },
   messageContainer: {
     marginTop: 8,
@@ -317,6 +342,13 @@ const styles = StyleSheet.create({
     color: '#666666',
     fontStyle: 'italic',
     lineHeight: 18,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#FF3B30',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    textAlign: 'center',
   },
 });
 
