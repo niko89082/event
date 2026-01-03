@@ -154,8 +154,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E5EA',
   },
   activityTextContainer: {
-    paddingLeft: 68, // Match PostActivityComponent alignment (16px + 40px avatar + 12px margin)
-    paddingRight: 16,
+    paddingLeft: 58, // Match PostActivityComponent alignment (12px + 40px avatar + 6px margin)
+    paddingRight: 20,
     paddingTop: 0,
     paddingBottom: 8,
   },
@@ -169,8 +169,8 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   commentContainer: {
-    paddingLeft: 68,
-    paddingRight: 16,
+    paddingLeft: 58,
+    paddingRight: 20,
     paddingBottom: 12,
   },
   commentText: {
@@ -181,8 +181,8 @@ const styles = StyleSheet.create({
   },
   postCard: {
     backgroundColor: '#FFFFFF',
-    marginLeft: 68, // Match PostActivityComponent alignment
-    marginRight: 16,
+    marginLeft: 58, // Match PostActivityComponent alignment
+    marginRight: 20,
     marginTop: 8,
     borderRadius: 16,
     borderWidth: 1,

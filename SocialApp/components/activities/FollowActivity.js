@@ -143,8 +143,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E5EA',
   },
   activityTextContainer: {
-    paddingLeft: 68, // Match PostActivityComponent alignment
-    paddingRight: 16,
+    paddingLeft: 58, // Match PostActivityComponent alignment
+    paddingRight: 20,
     paddingTop: 0,
     paddingBottom: 12,
   },
@@ -159,8 +159,8 @@ const styles = StyleSheet.create({
   },
   profileCard: {
     backgroundColor: '#FFFFFF',
-    marginLeft: 68, // Match PostActivityComponent alignment
-    marginRight: 16,
+    marginLeft: 58, // Match PostActivityComponent alignment
+    marginRight: 20,
     marginTop: 8,
     borderRadius: 16,
     borderWidth: 1,

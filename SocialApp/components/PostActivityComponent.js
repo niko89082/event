@@ -1254,7 +1254,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingLeft: 12,
+    paddingRight: 20,
     marginBottom: 12,
   },
   userSection: {
@@ -1266,7 +1267,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 12,
+    marginRight: 6,
   },
   placeholderAvatar: {
     backgroundColor: '#F2F2F7',
@@ -1335,10 +1336,10 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
-  // Caption Styles - Aligned with username (16px header + 40px avatar + 12px margin = 68px)
+  // Caption Styles - Aligned with username (12px header + 40px avatar + 6px margin = 58px)
   captionContainer: {
-    paddingLeft: 68,
-    paddingRight: 16,
+    paddingLeft: 58,
+    paddingRight: 20,
     marginBottom: 12,
   },
   captionText: {
@@ -1361,8 +1362,8 @@ const styles = StyleSheet.create({
 
   // Image Styles - Enhanced with loading states and rounded corners, aligned with username
   imageContainer: {
-    marginLeft: 68,
-    marginRight: 16,
+    marginLeft: 58,
+    marginRight: 20,
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 12,
@@ -1445,7 +1446,8 @@ const styles = StyleSheet.create({
 
   // Enhanced Comments Section
   commentsSection: {
-    paddingHorizontal: 16,
+    paddingLeft: 12,
+    paddingRight: 20,
     paddingTop: 8,
   },
 
@@ -1634,8 +1636,8 @@ const styles = StyleSheet.create({
   engagementBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 68,
-    paddingRight: 16,
+    paddingLeft: 58,
+    paddingRight: 20,
     paddingTop: 8,
     paddingBottom: 4,
     gap: 24,
@@ -1656,7 +1658,8 @@ const styles = StyleSheet.create({
   
   // Follow Button Styles
   followButton: {
-    paddingHorizontal: 16,
+    paddingLeft: 12,
+    paddingRight: 20,
     paddingVertical: 6,
     borderRadius: 16,
     backgroundColor: '#000000',
@@ -1680,8 +1683,8 @@ const styles = StyleSheet.create({
   
   // Review Card Styles - Aligned with username
   reviewCardContainer: {
-    paddingLeft: 68,
-    paddingRight: 16,
+    paddingLeft: 58,
+    paddingRight: 20,
     marginBottom: 12,
   },
   reviewCard: {

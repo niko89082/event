@@ -59,7 +59,7 @@ const ActivityHeaderRedesigned = ({
   };
 
   const renderAvatars = () => {
-    const maxVisible = 3;
+    const maxVisible = 2; // Show only 2 profile pictures + 1 "+x others" indicator
     const visibleUsers = displayUsers.slice(0, maxVisible);
     const remainingCount = displayUsers.length - maxVisible;
 
@@ -97,7 +97,7 @@ const ActivityHeaderRedesigned = ({
             key={userItem._id || index}
             style={[
               styles.multiAvatar,
-              { marginLeft: index > 0 ? -8 : 0, zIndex: visibleUsers.length - index }
+              { marginLeft: index > 0 ? -20 : 0, zIndex: visibleUsers.length - index }
             ]}
           >
             {userItem.profilePicture ? (
@@ -189,7 +189,8 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingLeft: 12,
+    paddingRight: 20,
     marginBottom: 12,
     backgroundColor: '#FFFFFF',
   },
@@ -199,14 +200,14 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 12,
+    marginRight: 6,
   },
   
   // Multiple Avatars
   avatarsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 6,
   },
   multiAvatar: {
     width: 40,

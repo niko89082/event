@@ -604,7 +604,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingLeft: 12,
+    paddingRight: 20,
     marginBottom: 12,
   },
   userInfo: {
@@ -616,7 +617,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 12,
+    marginRight: 6,
   },
   avatarPlaceholder: {
     width: 40,
@@ -625,7 +626,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E1E1E1',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 6,
   },
   userDetails: {
     flex: 1,
@@ -702,16 +703,16 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingLeft: 0,
-    paddingRight: 16,
+    paddingRight: 20,
   },
   textContainer: {
     marginBottom: 12,
-    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
-    paddingRight: 16,
+    paddingLeft: 58, // Align with username (header padding 12 + avatar width 40 + margin 6)
+    paddingRight: 20,
   },
   reviewCardContainer: {
-    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
-    paddingRight: 16,
+    paddingLeft: 58, // Align with username (header padding 12 + avatar width 40 + margin 6)
+    paddingRight: 20,
     marginBottom: 12,
   },
   textContent: {
@@ -727,8 +728,8 @@ const styles = StyleSheet.create({
   },
   imagesContainer: {
     marginBottom: 12,
-    marginLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
-    marginRight: 16,
+    marginLeft: 58, // Align with username (header padding 12 + avatar width 40 + margin 6)
+    marginRight: 20,
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
@@ -746,7 +747,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 10,
-    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    paddingLeft: 58, // Align with username (header padding 12 + avatar width 40 + margin 6)
     gap: 6,
   },
   locationText: {
@@ -758,7 +759,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
     padding: 10,
-    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
+    paddingLeft: 58, // Align with username (header padding 12 + avatar width 40 + margin 6)
     backgroundColor: '#F0F8FF',
     borderRadius: 12,
     alignSelf: 'flex-start',
@@ -772,8 +773,8 @@ const styles = StyleSheet.create({
   engagementBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 68, // Align with username (header padding 16 + avatar width 40 + margin 12)
-    paddingRight: 16,
+    paddingLeft: 58, // Align with username (header padding 12 + avatar width 40 + margin 6)
+    paddingRight: 20,
     paddingTop: 8,
     paddingBottom: 4,
     gap: 24,
