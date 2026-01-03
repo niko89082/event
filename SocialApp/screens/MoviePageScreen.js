@@ -1,9 +1,9 @@
-// screens/MoviePageScreen.js - Letterboxd-style movie page
+// screens/MoviePageScreen.js - Movie review page matching the design image
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, StyleSheet, Image, ScrollView, TouchableOpacity,
   ActivityIndicator, Linking, FlatList, Dimensions, SafeAreaView,
-  StatusBar, TextInput, Alert, Modal
+  StatusBar, Share, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute } from '@react-navigation/native';
@@ -18,20 +18,20 @@ export default function MoviePageScreen({ navigation }) {
   const { currentUser } = useContext(AuthContext);
   
   const [movie, setMovie] = useState(null);
-  const [reviews, setReviews] = useState([]);
+  const [allReviews, setAllReviews] = useState([]);
+  const [followingReviews, setFollowingReviews] = useState([]);
+  const [followingWatched, setFollowingWatched] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reviewsLoading, setReviewsLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
   const [showTrailer, setShowTrailer] = useState(false);
-  const [newComment, setNewComment] = useState('');
-  const [submittingComment, setSubmittingComment] = useState(false);
 
   useEffect(() => {
     if (tmdbId) {
       fetchMovieDetails();
-      fetchReviews();
+      fetchAllReviews();
+      fetchFollowingReviews();
+      fetchFollowingWatched();
     }
   }, [tmdbId]);
 
@@ -48,52 +48,80 @@ export default function MoviePageScreen({ navigation }) {
     }
   };
 
-  const fetchReviews = async (pageNum = 1, append = false) => {
+  const fetchAllReviews = async () => {
     try {
-      setReviewsLoading(true);
       const response = await api.get(`/api/reviews/movie/${tmdbId}/reviews`, {
-        params: { page: pageNum, limit: 20 }
+        params: { page: 1, limit: 20 }
       });
-      
-      if (append) {
-        setReviews([...reviews, ...response.data.reviews]);
-      } else {
-        setReviews(response.data.reviews);
-      }
-      
+      setAllReviews(response.data.reviews);
       setStats(response.data.stats);
-      setHasMore(pageNum < response.data.pagination.totalPages);
-      setPage(pageNum);
     } catch (error) {
       console.error('Error fetching reviews:', error);
+    }
+  };
+
+  const fetchFollowingReviews = async () => {
+    try {
+      setReviewsLoading(true);
+      const response = await api.get(`/api/reviews/movie/${tmdbId}/following-reviews`, {
+        params: { page: 1, limit: 10 }
+      });
+      setFollowingReviews(response.data.reviews || []);
+    } catch (error) {
+      console.error('Error fetching following reviews:', error);
     } finally {
       setReviewsLoading(false);
     }
   };
 
-  const loadMoreReviews = () => {
-    if (!reviewsLoading && hasMore) {
-      fetchReviews(page + 1, true);
+  const fetchFollowingWatched = async () => {
+    try {
+      const response = await api.get(`/api/reviews/movie/${tmdbId}/following-watched`);
+      setFollowingWatched(response.data.users || []);
+    } catch (error) {
+      console.error('Error fetching following watched:', error);
     }
   };
 
-  const handlePostComment = async (reviewId) => {
-    if (!newComment.trim() || submittingComment) return;
-
+  const handleShare = async () => {
     try {
-      setSubmittingComment(true);
-      await api.post(`/api/photos/comment/${reviewId}`, {
-        text: newComment.trim()
+      const result = await Share.share({
+        message: `Check out ${movie.title} (${movie.year}) on Social!`,
+        url: movie.externalUrl || `https://www.themoviedb.org/movie/${tmdbId}`,
+        title: movie.title
       });
-      setNewComment('');
-      // Refresh reviews
-      fetchReviews(page, false);
     } catch (error) {
-      console.error('Error posting comment:', error);
-      Alert.alert('Error', 'Failed to post comment');
-    } finally {
-      setSubmittingComment(false);
+      console.error('Error sharing:', error);
     }
+  };
+
+  const handleReview = () => {
+    navigation.navigate('CreatePostScreen', {
+      movie: {
+        tmdbId: movie.id,
+        title: movie.title,
+        year: movie.year,
+        poster: movie.poster
+      }
+    });
+  };
+
+  const formatTimeAgo = (date) => {
+    if (!date) return '';
+    const now = new Date();
+    const reviewDate = new Date(date);
+    const diffInSeconds = Math.floor((now - reviewDate) / 1000);
+    
+    if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+    return `${Math.floor(diffInSeconds / 86400)}d ago`;
+  };
+
+  const formatNumber = (num) => {
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+    return num.toString();
   };
 
   const renderStars = (rating) => {
@@ -104,105 +132,54 @@ export default function MoviePageScreen({ navigation }) {
           key={i}
           name={i <= rating ? "star" : "star-outline"}
           size={16}
-          color={i <= rating ? "#FFD700" : "#E1E1E1"}
+          color={i <= rating ? "#4CAF50" : "#E1E1E1"}
         />
       );
     }
     return stars;
   };
 
-  const renderReview = ({ item }) => {
-    const isLiked = item.likes?.some(like => 
-      typeof like === 'object' ? like._id === currentUser?._id : like === currentUser?._id
-    ) || false;
+  const getRatingBadgeColor = (rating) => {
+    if (!rating) return '#8E8E93';
+    if (rating >= 4) return '#4CAF50';
+    if (rating >= 3) return '#FF9800';
+    return '#8E8E93';
+  };
+
+  const renderRatingsDistribution = () => {
+    if (!stats?.ratingsDistribution) return null;
+
+    const distribution = stats.ratingsDistribution;
+    const maxCount = Math.max(...Object.values(distribution));
+    const totalRatings = Object.values(distribution).reduce((a, b) => a + b, 0);
 
     return (
-      <View style={styles.reviewCard}>
-        <View style={styles.reviewHeader}>
-          <View style={styles.reviewUserInfo}>
-            {item.user?.profilePicture ? (
-              <Image
-                source={{ uri: item.user.profilePicture }}
-                style={styles.reviewAvatar}
-              />
-            ) : (
-              <View style={styles.reviewAvatarPlaceholder}>
-                <Ionicons name="person" size={16} color="#8E8E93" />
+      <View style={styles.ratingsSection}>
+        <View style={styles.ratingsHeader}>
+          <Text style={styles.ratingsTitle}>RATINGS</Text>
+          <Text style={styles.ratingsSubtitle}>{formatNumber(totalRatings)} ratings</Text>
+        </View>
+        {[5, 4, 3, 2, 1].map((star) => {
+          const count = distribution[star] || 0;
+          const percentage = maxCount > 0 ? (count / maxCount) * 100 : 0;
+          return (
+            <View key={star} style={styles.ratingBarRow}>
+              <Text style={styles.ratingBarLabel}>{star}</Text>
+              <View style={styles.ratingBarContainer}>
+                <View 
+                  style={[
+                    styles.ratingBar, 
+                    { 
+                      width: `${percentage}%`,
+                      backgroundColor: star >= 4 ? '#3797EF' : '#8E8E93'
+                    }
+                  ]} 
+                />
               </View>
-            )}
-            <Text style={styles.reviewUsername}>
-              {item.user?.username || 'Unknown'}
-            </Text>
-          </View>
-          {item.review?.rating && (
-            <View style={styles.reviewRating}>
-              {renderStars(item.review.rating)}
+              <Text style={styles.ratingBarCount}>{count}</Text>
             </View>
-          )}
-        </View>
-        
-        {(item.textContent || item.caption) && (
-          <Text style={styles.reviewText}>
-            {item.textContent || item.caption}
-          </Text>
-        )}
-
-        <View style={styles.reviewActions}>
-          <TouchableOpacity style={styles.reviewActionButton}>
-            <Ionicons
-              name={isLiked ? "heart" : "heart-outline"}
-              size={18}
-              color={isLiked ? "#FF3B30" : "#8E8E93"}
-            />
-            <Text style={styles.reviewActionText}>
-              {item.likeCount || 0}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.reviewActionButton}>
-            <Ionicons name="chatbubble-outline" size={18} color="#8E8E93" />
-            <Text style={styles.reviewActionText}>
-              {item.commentCount || 0}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Comments Section */}
-        {item.comments && item.comments.length > 0 && (
-          <View style={styles.commentsSection}>
-            {item.comments.slice(0, 3).map((comment, idx) => (
-              <View key={idx} style={styles.commentItem}>
-                <Text style={styles.commentUsername}>
-                  {comment.user?.username || 'Unknown'}
-                </Text>
-                <Text style={styles.commentText}>{comment.text}</Text>
-              </View>
-            ))}
-            {item.comments.length > 3 && (
-              <Text style={styles.viewMoreComments}>
-                View {item.comments.length - 3} more comments
-              </Text>
-            )}
-          </View>
-        )}
-
-        {/* Add Comment */}
-        <View style={styles.addCommentContainer}>
-          <TextInput
-            style={styles.commentInput}
-            placeholder="Add a comment..."
-            placeholderTextColor="#8E8E93"
-            value={newComment}
-            onChangeText={setNewComment}
-            multiline
-          />
-          <TouchableOpacity
-            style={styles.postCommentButton}
-            onPress={() => handlePostComment(item._id)}
-            disabled={!newComment.trim() || submittingComment}
-          >
-            <Ionicons name="send" size={18} color="#3797EF" />
-          </TouchableOpacity>
-        </View>
+          );
+        })}
       </View>
     );
   };
@@ -210,7 +187,7 @@ export default function MoviePageScreen({ navigation }) {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" />
+        <StatusBar barStyle="light-content" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3797EF" />
         </View>
@@ -221,7 +198,7 @@ export default function MoviePageScreen({ navigation }) {
   if (!movie) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" />
+        <StatusBar barStyle="light-content" />
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Movie not found</Text>
         </View>
@@ -229,179 +206,258 @@ export default function MoviePageScreen({ navigation }) {
     );
   }
 
-  const averageRating = stats?.averageRating || movie.rating;
+  // Convert TMDB 10-point rating to 5-star display
+  const tmdbRating = movie.rating || 0;
+  const displayRating = (tmdbRating / 2).toFixed(1);
+  const starRating = Math.round(tmdbRating / 2);
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="light-content" />
       
-      {/* Header */}
+      {/* Header with back button and menu */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerButton}
           onPress={() => navigation.goBack()}
         >
-          <Ionicons name="arrow-back" size={24} color="#000000" />
+          <View style={styles.headerButtonCircle}>
+            <Ionicons name="arrow-back" size={20} color="#000000" />
+          </View>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Movie</Text>
-        <View style={styles.headerButton} />
+        <View style={styles.headerButton}>
+          <View style={styles.headerButtonCircle}>
+            <Ionicons name="ellipsis-horizontal" size={20} color="#000000" />
+          </View>
+        </View>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Movie Hero Section */}
+        {/* Hero Section with Background and Poster */}
         <View style={styles.heroSection}>
           {movie.backdrop && (
             <Image
               source={{ uri: movie.backdrop }}
               style={styles.backdrop}
-              blurRadius={2}
             />
           )}
+          <View style={styles.heroOverlay} />
+          
           <View style={styles.heroContent}>
             {movie.poster && (
               <Image source={{ uri: movie.poster }} style={styles.poster} />
             )}
             <View style={styles.heroInfo}>
               <Text style={styles.movieTitle}>{movie.title}</Text>
-              {movie.year && (
-                <Text style={styles.movieYear}>({movie.year})</Text>
-              )}
+              <Text style={styles.movieMeta}>
+                {movie.year} | Directed by {movie.director || 'Unknown'} | {movie.runtime}m
+              </Text>
               
-              {averageRating && (
-                <View style={styles.ratingSection}>
-                  <View style={styles.starsContainer}>
-                    {renderStars(Math.round(averageRating / 2))}
-                  </View>
-                  <Text style={styles.ratingText}>
-                    {averageRating.toFixed(1)}/5
-                  </Text>
-                  {stats && (
-                    <Text style={styles.ratingCount}>
-                      ({stats.ratingCount} ratings)
-                    </Text>
-                  )}
+              <View style={styles.ratingDisplay}>
+                <View style={styles.starsContainer}>
+                  {renderStars(starRating)}
                 </View>
-              )}
-
-              {movie.director && (
-                <Text style={styles.movieMeta}>
-                  Directed by {movie.director}
+                <Text style={styles.ratingText}>
+                  {displayRating} ({formatNumber(movie.voteCount || stats?.ratingCount || 0)})
                 </Text>
-              )}
+              </View>
 
-              {movie.runtime && (
-                <Text style={styles.movieMeta}>
-                  {movie.runtime} min
-                </Text>
-              )}
-
-              {movie.genres && movie.genres.length > 0 && (
-                <View style={styles.genresContainer}>
-                  {movie.genres.map((genre, idx) => (
-                    <View key={idx} style={styles.genreTag}>
-                      <Text style={styles.genreText}>{genre}</Text>
-                    </View>
-                  ))}
+              {/* Action Buttons */}
+              <View style={styles.actionButtons}>
+                <TouchableOpacity style={styles.reviewButton} onPress={handleReview}>
+                  <Ionicons name="create-outline" size={18} color="#000000" />
+                  <Text style={styles.reviewButtonText}>Review</Text>
+                </TouchableOpacity>
+                <View style={styles.actionButtonsRow}>
+                  <TouchableOpacity style={styles.watchPartyButton}>
+                    <Ionicons name="gift-outline" size={18} color="#FFFFFF" />
+                    <Text style={styles.watchPartyButtonText}>Plan Watch Party</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
+                    <Ionicons name="share-outline" size={18} color="#000000" />
+                    <Text style={styles.shareButtonText}>Share Movie</Text>
+                  </TouchableOpacity>
                 </View>
-              )}
-
+              </View>
+              
+              {/* Trailer Button */}
               {movie.trailerUrl && (
                 <TouchableOpacity
-                  style={styles.trailerButton}
+                  style={styles.trailerButtonHero}
                   onPress={() => setShowTrailer(true)}
                 >
                   <Ionicons name="play-circle" size={24} color="#FFFFFF" />
-                  <Text style={styles.trailerButtonText}>Watch Trailer</Text>
+                  <Text style={styles.trailerButtonTextHero}>Watch Trailer</Text>
                 </TouchableOpacity>
               )}
             </View>
           </View>
         </View>
 
-        {/* Overview */}
-        {movie.overview && (
-          <View style={styles.overviewSection}>
-            <Text style={styles.sectionTitle}>Overview</Text>
-            <Text style={styles.overviewText}>{movie.overview}</Text>
+        {/* Following Watched Section */}
+        {followingWatched.length > 0 && (
+          <View style={styles.followingWatchedSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderTitle}>
+                FOLLOWING WATCHED {followingWatched.length}
+              </Text>
+              <TouchableOpacity>
+                <Text style={styles.viewAllLink}>View All</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.followingAvatars}>
+              {followingWatched.slice(0, 5).map((user, idx) => (
+                <View key={user._id || idx} style={styles.avatarContainer}>
+                  {user.profilePicture ? (
+                    <Image
+                      source={{ uri: user.profilePicture }}
+                      style={styles.followingAvatar}
+                    />
+                  ) : (
+                    <View style={[styles.followingAvatar, styles.avatarPlaceholder]}>
+                      <Ionicons name="person" size={20} color="#8E8E93" />
+                    </View>
+                  )}
+                  {user.rating && (
+                    <View style={[styles.ratingBadge, { backgroundColor: getRatingBadgeColor(user.rating) }]}>
+                      <Text style={styles.ratingBadgeText}>{user.rating.toFixed(1)}</Text>
+                    </View>
+                  )}
+                  {!user.rating && (
+                    <View style={styles.watchedBadge}>
+                      <Ionicons name="eye" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
           </View>
         )}
 
-        {/* Cast */}
+        {/* Synopsis Section */}
+        {movie.overview && (
+          <View style={styles.synopsisSection}>
+            <Text style={styles.sectionTitle}>SYNOPSIS</Text>
+            <Text style={styles.synopsisText}>{movie.overview}</Text>
+          </View>
+        )}
+
+        {/* Top Cast Section */}
         {movie.cast && movie.cast.length > 0 && (
           <View style={styles.castSection}>
-            <Text style={styles.sectionTitle}>Cast</Text>
-            <Text style={styles.castText}>
-              {movie.cast.join(', ')}
-            </Text>
+            <Text style={styles.sectionTitle}>TOP CAST</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.castList}>
+              {movie.cast.map((actor, idx) => (
+                <View key={idx} style={styles.castMember}>
+                  {actor.profileImage ? (
+                    <Image
+                      source={{ uri: actor.profileImage }}
+                      style={styles.castAvatar}
+                    />
+                  ) : (
+                    <View style={[styles.castAvatar, styles.avatarPlaceholder]}>
+                      <Ionicons name="person" size={24} color="#8E8E93" />
+                    </View>
+                  )}
+                  <Text style={styles.castName} numberOfLines={1}>{actor.name}</Text>
+                  <Text style={styles.castCharacter} numberOfLines={1}>{actor.character}</Text>
+                </View>
+              ))}
+            </ScrollView>
           </View>
         )}
 
-        {/* Reviews Section */}
-        <View style={styles.reviewsSection}>
-          <View style={styles.reviewsHeader}>
-            <Text style={styles.sectionTitle}>
-              Reviews {stats && `(${stats.totalReviews})`}
-            </Text>
+        {/* Ratings Distribution */}
+        {renderRatingsDistribution()}
+
+        {/* Following Reviews Section */}
+        <View style={styles.followingReviewsSection}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Following Reviews</Text>
+            {followingReviews.length > 2 && (
+              <TouchableOpacity>
+                <Text style={styles.viewAllLink}>View All</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
-          {reviewsLoading && reviews.length === 0 ? (
-            <ActivityIndicator size="large" color="#3797EF" style={styles.loader} />
-          ) : reviews.length === 0 ? (
+          {reviewsLoading && followingReviews.length === 0 ? (
+            <ActivityIndicator size="small" color="#3797EF" style={styles.loader} />
+          ) : followingReviews.length === 0 ? (
             <View style={styles.emptyState}>
-              <Ionicons name="star-outline" size={48} color="#C7C7CC" />
-              <Text style={styles.emptyStateText}>No reviews yet</Text>
-              <Text style={styles.emptyStateSubtext}>
-                Be the first to review this movie!
-              </Text>
+              <Text style={styles.emptyStateText}>No reviews from people you follow yet</Text>
             </View>
           ) : (
-            <FlatList
-              data={reviews}
-              renderItem={renderReview}
-              keyExtractor={(item) => item._id}
-              scrollEnabled={false}
-              onEndReached={loadMoreReviews}
-              onEndReachedThreshold={0.5}
-              ListFooterComponent={
-                reviewsLoading && reviews.length > 0 ? (
-                  <ActivityIndicator size="small" color="#3797EF" />
-                ) : null
-              }
-            />
+            followingReviews.slice(0, 2).map((review) => (
+              <View key={review._id} style={styles.followingReviewCard}>
+                <View style={styles.reviewCardHeader}>
+                  <View style={styles.reviewUserInfo}>
+                    {review.user?.profilePicture ? (
+                      <Image
+                        source={{ uri: review.user.profilePicture }}
+                        style={styles.reviewAvatar}
+                      />
+                    ) : (
+                      <View style={[styles.reviewAvatar, styles.avatarPlaceholder]}>
+                        <Ionicons name="person" size={16} color="#8E8E93" />
+                      </View>
+                    )}
+                    <View>
+                      <Text style={styles.reviewUsername}>
+                        {review.user?.username || 'Unknown'}
+                      </Text>
+                      {review.review?.rating && (
+                        <View style={styles.reviewStars}>
+                          {renderStars(review.review.rating)}
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.reviewTime}>{formatTimeAgo(review.createdAt)}</Text>
+                </View>
+                
+                {(review.textContent || review.caption) && (
+                  <Text style={styles.reviewText}>
+                    {review.textContent || review.caption}
+                  </Text>
+                )}
+
+                <View style={styles.reviewEngagement}>
+                  <View style={styles.engagementItem}>
+                    <Ionicons name="heart-outline" size={16} color="#8E8E93" />
+                    <Text style={styles.engagementText}>{review.likeCount || 0}</Text>
+                  </View>
+                  <View style={styles.engagementItem}>
+                    <Ionicons name="chatbubble-outline" size={16} color="#8E8E93" />
+                    <Text style={styles.engagementText}>{review.commentCount || 0}</Text>
+                  </View>
+                  <TouchableOpacity>
+                    <Text style={styles.replyLink}>Reply</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
           )}
         </View>
       </ScrollView>
 
       {/* Trailer Modal */}
       {showTrailer && movie.trailerUrl && (
-        <Modal
-          visible={showTrailer}
-          animationType="slide"
-          onRequestClose={() => setShowTrailer(false)}
-        >
-          <SafeAreaView style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Trailer</Text>
-              <TouchableOpacity
-                onPress={() => setShowTrailer(false)}
-                style={styles.modalCloseButton}
-              >
-                <Ionicons name="close" size={24} color="#000000" />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.trailerContainer}>
-              <TouchableOpacity
-                style={styles.trailerLinkButton}
-                onPress={() => Linking.openURL(movie.trailerUrl)}
-              >
-                <Ionicons name="play-circle" size={64} color="#3797EF" />
-                <Text style={styles.trailerLinkText}>
-                  Open in YouTube
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </SafeAreaView>
-        </Modal>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalCloseArea}
+            onPress={() => setShowTrailer(false)}
+          />
+          <View style={styles.modalContent}>
+            <TouchableOpacity
+              style={styles.trailerButton}
+              onPress={() => Linking.openURL(movie.trailerUrl)}
+            >
+              <Ionicons name="play-circle" size={64} color="#3797EF" />
+              <Text style={styles.trailerLinkText}>Open in YouTube</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -427,13 +483,17 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+    paddingTop: 50,
+    paddingBottom: 12,
+    zIndex: 10,
   },
   headerButton: {
     width: 40,
@@ -441,27 +501,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
+  headerButtonCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   content: {
     flex: 1,
   },
   heroSection: {
     position: 'relative',
-    minHeight: 300,
+    minHeight: 400,
   },
   backdrop: {
     position: 'absolute',
     width: '100%',
     height: '100%',
-    opacity: 0.3,
+  },
+  heroOverlay: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
   },
   heroContent: {
     flexDirection: 'row',
     padding: 16,
+    paddingTop: 100,
     gap: 16,
   },
   poster: {
@@ -472,22 +541,24 @@ const styles = StyleSheet.create({
   },
   heroInfo: {
     flex: 1,
+    justifyContent: 'flex-end',
   },
   movieTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: '700',
-    color: '#000000',
-    marginBottom: 4,
+    color: '#FFFFFF',
+    marginBottom: 8,
   },
-  movieYear: {
-    fontSize: 18,
-    color: '#8E8E93',
+  movieMeta: {
+    fontSize: 14,
+    color: '#FFFFFF',
     marginBottom: 12,
+    opacity: 0.9,
   },
-  ratingSection: {
+  ratingDisplay: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
     gap: 8,
   },
   starsContainer: {
@@ -497,61 +568,157 @@ const styles = StyleSheet.create({
   ratingText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000000',
-    marginLeft: 4,
+    color: '#FFFFFF',
   },
-  ratingCount: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  movieMeta: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginBottom: 4,
-  },
-  genresContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  actionButtons: {
     marginTop: 8,
+  },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  reviewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
     gap: 6,
   },
-  genreTag: {
-    backgroundColor: '#F0F0F0',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  genreText: {
-    fontSize: 12,
+  reviewButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#000000',
   },
-  trailerButton: {
+  watchPartyButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#3797EF',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    marginTop: 16,
-    gap: 8,
+    gap: 6,
   },
-  trailerButtonText: {
-    fontSize: 16,
+  watchPartyButtonText: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  overviewSection: {
+  shareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  shareButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  trailerButtonHero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(55, 151, 239, 0.9)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 8,
+    alignSelf: 'flex-start',
+  },
+  trailerButtonTextHero: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  followingWatchedSection: {
     padding: 16,
     borderTopWidth: 0.5,
     borderTopColor: '#E1E1E1',
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+    letterSpacing: 0.5,
+  },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 14,
     fontWeight: '700',
     color: '#000000',
     marginBottom: 12,
+    letterSpacing: 0.5,
   },
-  overviewText: {
+  viewAllLink: {
+    fontSize: 14,
+    color: '#3797EF',
+    fontWeight: '600',
+  },
+  followingAvatars: {
+    flexDirection: 'row',
+  },
+  avatarContainer: {
+    marginRight: 12,
+    alignItems: 'center',
+  },
+  followingAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#E1E1E1',
+  },
+  avatarPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  ratingBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    minWidth: 24,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  ratingBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  watchedBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#8E8E93',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  synopsisSection: {
+    padding: 16,
+    borderTopWidth: 0.5,
+    borderTopColor: '#E1E1E1',
+  },
+  synopsisText: {
     fontSize: 15,
     color: '#000000',
     lineHeight: 22,
@@ -561,75 +728,125 @@ const styles = StyleSheet.create({
     borderTopWidth: 0.5,
     borderTopColor: '#E1E1E1',
   },
-  castText: {
-    fontSize: 15,
-    color: '#000000',
-    lineHeight: 22,
+  castList: {
+    flexDirection: 'row',
   },
-  reviewsSection: {
+  castMember: {
+    width: 80,
+    marginRight: 16,
+    alignItems: 'center',
+  },
+  castAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#E1E1E1',
+    marginBottom: 8,
+  },
+  castName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#000000',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  castCharacter: {
+    fontSize: 11,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+  ratingsSection: {
     padding: 16,
     borderTopWidth: 0.5,
     borderTopColor: '#E1E1E1',
   },
-  reviewsHeader: {
-    marginBottom: 16,
-  },
-  loader: {
-    marginVertical: 32,
-  },
-  emptyState: {
+  ratingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 48,
+    marginBottom: 12,
   },
-  emptyStateText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
-    marginTop: 16,
-  },
-  emptyStateSubtext: {
+  ratingsTitle: {
     fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 8,
+    fontWeight: '700',
+    color: '#000000',
+    letterSpacing: 0.5,
   },
-  reviewCard: {
+  ratingsSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  ratingBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  ratingBarLabel: {
+    width: 20,
+    fontSize: 12,
+    color: '#000000',
+    fontWeight: '600',
+  },
+  ratingBarContainer: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#E1E1E1',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  ratingBar: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  ratingBarCount: {
+    width: 40,
+    fontSize: 12,
+    color: '#8E8E93',
+    textAlign: 'right',
+  },
+  followingReviewsSection: {
+    padding: 16,
+    borderTopWidth: 0.5,
+    borderTopColor: '#E1E1E1',
+  },
+  followingReviewCard: {
     backgroundColor: '#F8F9FA',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
   },
-  reviewHeader: {
+  reviewCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
   reviewUserInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flex: 1,
   },
   reviewAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-  },
-  reviewAvatarPlaceholder: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#E1E1E1',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   reviewUsername: {
     fontSize: 15,
     fontWeight: '600',
     color: '#000000',
+    marginBottom: 4,
   },
-  reviewRating: {
+  reviewStars: {
     flexDirection: 'row',
     gap: 2,
+  },
+  reviewTime: {
+    fontSize: 12,
+    color: '#8E8E93',
   },
   reviewText: {
     fontSize: 15,
@@ -637,96 +854,62 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: 12,
   },
-  reviewActions: {
+  reviewEngagement: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 16,
-    marginBottom: 12,
   },
-  reviewActionButton: {
+  engagementItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
-  reviewActionText: {
+  engagementText: {
     fontSize: 14,
     color: '#8E8E93',
   },
-  commentsSection: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: '#E1E1E1',
-  },
-  commentItem: {
-    marginBottom: 8,
-  },
-  commentUsername: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  commentText: {
-    fontSize: 14,
-    color: '#000000',
-    lineHeight: 20,
-  },
-  viewMoreComments: {
+  replyLink: {
     fontSize: 14,
     color: '#3797EF',
-    marginTop: 4,
+    fontWeight: '600',
+    marginLeft: 'auto',
   },
-  addCommentContainer: {
-    flexDirection: 'row',
+  loader: {
+    marginVertical: 32,
+  },
+  emptyState: {
+    paddingVertical: 24,
     alignItems: 'center',
-    marginTop: 8,
-    gap: 8,
   },
-  commentInput: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  emptyStateText: {
     fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
+    color: '#8E8E93',
   },
-  postCommentButton: {
-    padding: 8,
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  modalCloseButton: {
-    padding: 4,
-  },
-  trailerContainer: {
-    flex: 1,
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1000,
   },
-  trailerLinkButton: {
-    alignItems: 'center',
-    gap: 16,
+  modalCloseArea: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  modalContent: {
+    zIndex: 1001,
   },
   trailerLinkText: {
-    fontSize: 18,
+    fontSize: 16,
     color: '#FFFFFF',
+    marginTop: 16,
     fontWeight: '600',
   },
 });
-

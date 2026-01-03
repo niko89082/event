@@ -121,10 +121,18 @@ class TMDBService {
           : null,
         overview: movie.overview,
         rating: movie.vote_average,
+        voteCount: movie.vote_count || 0,
         runtime: movie.runtime, // in minutes
         genres: movie.genres.map(g => g.name),
         director: director ? director.name : null,
-        cast: credits.cast.slice(0, 5).map(actor => actor.name),
+        cast: credits.cast.slice(0, 10).map(actor => ({
+          name: actor.name,
+          character: actor.character,
+          profileImage: actor.profile_path 
+            ? `https://image.tmdb.org/t/w185${actor.profile_path}` 
+            : null,
+          order: actor.order
+        })),
         externalUrl: `https://www.themoviedb.org/movie/${movie.id}`,
         trailerUrl: trailerUrl
       };
@@ -168,10 +176,16 @@ class TMDBService {
       poster: 'https://image.tmdb.org/t/p/w500/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg',
       overview: 'A skilled thief is given a chance at redemption...',
       rating: 8.8,
+      voteCount: 2400000,
       runtime: 148,
       genres: ['Sci-Fi', 'Action', 'Thriller'],
       director: 'Christopher Nolan',
-      cast: ['Leonardo DiCaprio', 'Marion Cotillard', 'Tom Hardy'],
+      cast: [
+        { name: 'Leonardo DiCaprio', character: 'Cobb', profileImage: null, order: 0 },
+        { name: 'Elliot Page', character: 'Ariadne', profileImage: null, order: 1 },
+        { name: 'Joseph Gordon-Levitt', character: 'Arthur', profileImage: null, order: 2 },
+        { name: 'Tom Hardy', character: 'Eames', profileImage: null, order: 3 }
+      ],
       externalUrl: `https://www.themoviedb.org/movie/${movieId}`,
       trailerUrl: 'https://www.youtube.com/watch?v=YoHD9XEInc0'
     };

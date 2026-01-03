@@ -13,6 +13,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../services/AuthContext';
 import usePostsStore from '../stores/postsStore';
 import { useCommentManager } from '../hooks/useCommentManager';
+import PhotoCarousel from '../components/PhotoCarousel';
 import api from '../services/api';
 import { API_BASE_URL } from '@env';
 
@@ -117,6 +118,8 @@ export default function UnifiedDetailsScreen() {
   const [showCommentActions, setShowCommentActions] = useState(false);
 
   // Derived data
+  const hasPhotos = currentPost?.paths && currentPost.paths.length > 0;
+  const photos = currentPost?.paths || [];
   const imgURL = currentPost?.url 
     ? `http://${API_BASE_URL}:3000${currentPost.url}`
     : currentPost?.paths?.[0] 
@@ -975,8 +978,31 @@ const renderHeader = () => {
         </View>
       )}
 
-      {/* Image with tap to zoom - Show if image exists (even for review posts) */}
-      {imgURL && (
+      {/* Photos - Instagram-style carousel or single image */}
+      {hasPhotos && (
+        <View style={styles.imageContainer}>
+          <PhotoCarousel
+            photos={photos}
+            width={SCREEN_WIDTH}
+            onPhotoPress={(index) => {
+              // Set the current image for zoom modal
+              const selectedImageUrl = photos[index] 
+                ? (photos[index].startsWith('http') 
+                    ? photos[index] 
+                    : `http://${API_BASE_URL}:3000${photos[index]}`)
+                : null;
+              if (selectedImageUrl) {
+                // Update imgURL state for zoom modal
+                setShowImageModal(true);
+              }
+            }}
+            showIndicators={photos.length > 1}
+          />
+        </View>
+      )}
+      
+      {/* Legacy single image support (for posts with url instead of paths) */}
+      {!hasPhotos && imgURL && (
         <TouchableOpacity 
           onPress={() => setShowImageModal(true)}
           style={[

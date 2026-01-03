@@ -4,6 +4,7 @@ const protect = require('../middleware/auth');
 const TMDBService = require('../services/tmdbService');
 const SpotifyService = require('../services/spotifyService');
 const Photo = require('../models/Photo');
+const User = require('../models/User');
 
 const router = express.Router();
 
@@ -153,7 +154,7 @@ router.get('/movie/:tmdbId/reviews', protect, async (req, res) => {
       isDeleted: false
     });
 
-    // Calculate average rating
+    // Calculate average rating and ratings distribution
     const allReviews = await Photo.find({
       'review.type': 'movie',
       'review.mediaId': tmdbId.toString(),
@@ -170,6 +171,15 @@ router.get('/movie/:tmdbId/reviews', protect, async (req, res) => {
     const averageRating = ratings.length > 0
       ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
       : null;
+
+    // Calculate ratings distribution (1-5 stars)
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    ratings.forEach(rating => {
+      const starRating = Math.round(rating);
+      if (starRating >= 1 && starRating <= 5) {
+        distribution[starRating] = (distribution[starRating] || 0) + 1;
+      }
+    });
 
     res.json({
       success: true,
@@ -195,13 +205,165 @@ router.get('/movie/:tmdbId/reviews', protect, async (req, res) => {
       stats: {
         totalReviews: total,
         averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
-        ratingCount: ratings.length
+        ratingCount: ratings.length,
+        ratingsDistribution: distribution
       }
     });
   } catch (error) {
     console.error('Movie reviews error:', error);
     res.status(500).json({ 
       message: 'Failed to get movie reviews',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Get reviews from following users for a movie by TMDB ID
+ * GET /api/reviews/movie/:tmdbId/following-reviews?page=...&limit=...
+ */
+router.get('/movie/:tmdbId/following-reviews', protect, async (req, res) => {
+  try {
+    const { tmdbId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const currentUserId = req.user._id;
+
+    if (!tmdbId) {
+      return res.status(400).json({ message: 'Movie ID is required' });
+    }
+
+    // Get current user's following list
+    const currentUser = await User.findById(currentUserId).select('following');
+    const followingIds = currentUser?.following || [];
+
+    if (followingIds.length === 0) {
+      return res.json({
+        success: true,
+        reviews: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          totalPages: 0
+        }
+      });
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Find photos with reviews for this movie from following users
+    const reviews = await Photo.find({
+      'review.type': 'movie',
+      'review.mediaId': tmdbId.toString(),
+      user: { $in: followingIds },
+      isDeleted: false
+    })
+      .populate('user', '_id username profilePicture')
+      .populate('comments.user', '_id username profilePicture')
+      .sort({ uploadDate: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    const total = await Photo.countDocuments({
+      'review.type': 'movie',
+      'review.mediaId': tmdbId.toString(),
+      user: { $in: followingIds },
+      isDeleted: false
+    });
+
+    res.json({
+      success: true,
+      reviews: reviews.map(r => ({
+        _id: r._id,
+        user: r.user,
+        textContent: r.textContent,
+        caption: r.caption,
+        review: r.review,
+        likes: r.likes || [],
+        likeCount: r.likes?.length || 0,
+        commentCount: r.comments?.length || 0,
+        comments: r.comments || [],
+        uploadDate: r.uploadDate,
+        createdAt: r.createdAt
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Following reviews error:', error);
+    res.status(500).json({ 
+      message: 'Failed to get following reviews',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Get list of following users who have reviewed this movie
+ * GET /api/reviews/movie/:tmdbId/following-watched
+ */
+router.get('/movie/:tmdbId/following-watched', protect, async (req, res) => {
+  try {
+    const { tmdbId } = req.params;
+    const currentUserId = req.user._id;
+
+    if (!tmdbId) {
+      return res.status(400).json({ message: 'Movie ID is required' });
+    }
+
+    // Get current user's following list
+    const currentUser = await User.findById(currentUserId).select('following');
+    const followingIds = currentUser?.following || [];
+
+    if (followingIds.length === 0) {
+      return res.json({
+        success: true,
+        users: [],
+        count: 0
+      });
+    }
+
+    // Find distinct users who reviewed this movie and are in following list
+    const reviews = await Photo.find({
+      'review.type': 'movie',
+      'review.mediaId': tmdbId.toString(),
+      user: { $in: followingIds },
+      isDeleted: false
+    })
+      .populate('user', '_id username profilePicture')
+      .select('user review.rating')
+      .lean();
+
+    // Group by user and get their rating
+    const userMap = new Map();
+    reviews.forEach(review => {
+      const userId = review.user._id.toString();
+      if (!userMap.has(userId)) {
+        userMap.set(userId, {
+          _id: review.user._id,
+          username: review.user.username,
+          profilePicture: review.user.profilePicture,
+          rating: review.review?.rating || null
+        });
+      }
+    });
+
+    const users = Array.from(userMap.values());
+
+    res.json({
+      success: true,
+      users,
+      count: users.length
+    });
+  } catch (error) {
+    console.error('Following watched error:', error);
+    res.status(500).json({ 
+      message: 'Failed to get following watched',
       error: error.message 
     });
   }

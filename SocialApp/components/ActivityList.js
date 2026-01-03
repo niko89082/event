@@ -17,20 +17,30 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CompletePostItem from './PostItem';
 import MemoryPostActivityComponent from './MemoryPostActivityComponent';
 import EventInvitationActivity from './activities/EventInvitationActivity';
+import EventInvitationActivityRedesigned from './activities/EventInvitationActivityRedesigned';
 import EventPhotoActivity from './activities/EventPhotoActivity';
 import FriendEventActivity from './activities/FriendEventActivity';
 import EventReminderActivity from './activities/EventReminderActivity';
 import MemoryCreatedActivity from './activities/MemoryCreatedActivity';
 import EventCreatedActivity from './activities/EventCreatedActivity';
 import EventCreatedActivityAlternative from './activities/EventCreatedActivityAlternative';
+import EventCreatedActivityRedesigned from './activities/EventCreatedActivityRedesigned';
 import FriendEventActivityRedesigned from './activities/FriendEventActivityRedesigned';
+import FriendEventActivityRedesignedNew from './activities/FriendEventActivityRedesignedNew';
 import FriendEventActivityAlternative from './activities/FriendEventActivityAlternative';
 import MemoryPhotoUploadActivity from './activities/MemoryPhotoUploadActivity';
 import PhotoCommentActivity from './activities/PhotoCommentActivity';
+import PhotoCommentActivityRedesigned from './activities/PhotoCommentActivityRedesigned';
 import MemoryPhotoCommentActivity from './activities/MemoryPhotoCommentActivity';
 import FriendCohostAddedActivity from './activities/FriendCohostAddedActivity';
+import FriendCohostAddedActivityRedesigned from './activities/FriendCohostAddedActivityRedesigned';
+import PostLikeActivity from './activities/PostLikeActivity';
+import FollowActivity from './activities/FollowActivity';
 import PostActivityComponent from './PostActivityComponent';
 import FriendRecommendations from './FriendRecommendations';
+
+// Toggle to use redesigned components
+const USE_REDESIGNED_COMPONENTS = true;
 
 // Testing toggles
 const USE_ALTERNATIVE_LAYOUT = true;
@@ -115,14 +125,20 @@ export default function ActivityList({
       case 'event_invitation':
         return (
           <View style={styles.activityWrapper}>
-            <EventInvitationActivity {...commonProps} />
+            {USE_REDESIGNED_COMPONENTS ? (
+              <EventInvitationActivityRedesigned {...commonProps} />
+            ) : (
+              <EventInvitationActivity {...commonProps} />
+            )}
           </View>
         );
 
       case 'event_created':
         return (
           <View style={styles.activityWrapper}>
-            {USE_ALTERNATIVE_LAYOUT ? (
+            {USE_REDESIGNED_COMPONENTS ? (
+              <EventCreatedActivityRedesigned {...commonProps} />
+            ) : USE_ALTERNATIVE_LAYOUT ? (
               <EventCreatedActivityAlternative {...commonProps} />
             ) : (
               <EventCreatedActivity {...commonProps} />
@@ -140,7 +156,9 @@ export default function ActivityList({
       case 'friend_event_join':
         return (
           <View style={styles.activityWrapper}>
-            {USE_ALTERNATIVE_LAYOUT ? (
+            {USE_REDESIGNED_COMPONENTS ? (
+              <FriendEventActivityRedesignedNew {...commonProps} />
+            ) : USE_ALTERNATIVE_LAYOUT ? (
               <FriendEventActivityAlternative {...commonProps} />
             ) : (
               USE_REDESIGNED_JOIN ? (
@@ -171,7 +189,11 @@ export default function ActivityList({
       case 'photo_comment':
         return (
           <View style={styles.activityWrapper}>
-            <PhotoCommentActivity {...commonProps} />
+            {USE_REDESIGNED_COMPONENTS ? (
+              <PhotoCommentActivityRedesigned {...commonProps} />
+            ) : (
+              <PhotoCommentActivity {...commonProps} />
+            )}
           </View>
         );
 
@@ -185,7 +207,26 @@ export default function ActivityList({
       case 'friend_cohost_added':
         return (
           <View style={styles.activityWrapper}>
-            <FriendCohostAddedActivity {...commonProps} />
+            {USE_REDESIGNED_COMPONENTS ? (
+              <FriendCohostAddedActivityRedesigned {...commonProps} />
+            ) : (
+              <FriendCohostAddedActivity {...commonProps} />
+            )}
+          </View>
+        );
+
+      case 'post_like':
+        return (
+          <View style={styles.activityWrapper}>
+            <PostLikeActivity {...commonProps} />
+          </View>
+        );
+
+      case 'follow':
+      case 'follow_activity':
+        return (
+          <View style={styles.activityWrapper}>
+            <FollowActivity {...commonProps} />
           </View>
         );
 

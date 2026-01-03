@@ -7,6 +7,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@env';
 import ReviewCard from './ReviewCard';
+import PhotoCarousel from './PhotoCarousel';
 import api from '../services/api';
 import usePostsStore from '../stores/postsStore';
 
@@ -503,35 +504,15 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
           </View>
         )}
 
-        {/* Photo(s) */}
+        {/* Photo(s) - Instagram-style carousel */}
         {post.paths && post.paths.length > 0 && (
           <View style={styles.imagesContainer}>
-            {post.paths.length === 1 ? (
-              <Image
-                source={{ uri: getImageUrl(post.paths[0]) }}
-                style={styles.singleImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.multiImageContainer}>
-                {post.paths.slice(0, 4).map((path, index) => (
-                  <Image
-                    key={index}
-                    source={{ uri: getImageUrl(path) }}
-                    style={[
-                      styles.multiImage,
-                      post.paths.length > 2 && index === 3 && styles.lastImageOverlay
-                    ]}
-                    resizeMode="cover"
-                  />
-                ))}
-                {post.paths.length > 4 && (
-                  <View style={styles.moreImagesOverlay}>
-                    <Text style={styles.moreImagesText}>+{post.paths.length - 4}</Text>
-                  </View>
-                )}
-              </View>
-            )}
+            <PhotoCarousel
+              photos={post.paths}
+              width={IMAGE_WIDTH - 68 - 16} // Account for left padding (68) and right margin (16)
+              onPhotoPress={() => handlePostPress()}
+              showIndicators={post.paths.length > 1}
+            />
           </View>
         )}
 
@@ -760,39 +741,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
-  },
-  singleImage: {
-    width: IMAGE_WIDTH - 68 - 16, // Account for left and right margins
-    height: IMAGE_WIDTH - 68 - 16,
-    backgroundColor: '#F6F6F6',
-  },
-  multiImageContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-  },
-  multiImage: {
-    width: ((IMAGE_WIDTH - 68) - 4) / 2, // Account for left padding and gap
-    height: ((IMAGE_WIDTH - 68) - 4) / 2,
-    borderRadius: 12,
-    backgroundColor: '#E1E1E1',
-  },
-  lastImageOverlay: {
-    position: 'relative',
-  },
-  moreImagesOverlay: {
-    position: 'absolute',
-    bottom: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  moreImagesText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
   },
   locationContainer: {
     flexDirection: 'row',

@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ActivityHeader from './activities/ActivityHeader';
+import PhotoCarousel from './PhotoCarousel';
 import { niceDate } from '../utils/helpers';
 import { API_BASE_URL } from '@env';
 import api from '../services/api';
@@ -427,6 +428,9 @@ const PostActivityComponent = ({
   }, [post._id]);
 
   // Image URL processing
+  const hasPhotos = post.paths && post.paths.length > 0;
+  const photos = post.paths || [];
+  
   const imageUrl = useMemo(() => {
     if (!post.paths || !post.paths[0]) return null;
     
@@ -1139,8 +1143,35 @@ const PostActivityComponent = ({
         </View>
       )}
 
-      {/* Enhanced Image Display with Loading States - Only show if image exists */}
-      {!isTextOnlyPost && imageUrl && (
+      {/* Enhanced Image Display - Instagram-style carousel for multiphoto posts */}
+      {!isTextOnlyPost && hasPhotos && (
+        <View style={styles.imageContainer}>
+          <PhotoCarousel
+            photos={photos}
+            width={IMAGE_WIDTH}
+            onPhotoPress={handleImagePress}
+            showIndicators={photos.length > 1}
+          />
+          
+          {/* Enhanced Memory Post Overlay */}
+          {isMemoryPost && (
+            <Animated.View 
+              style={[
+                styles.memoryOverlay,
+                { opacity: fadeAnim }
+              ]}
+            >
+              <View style={styles.memoryBadge}>
+                <Ionicons name="heart" size={14} color="#FFFFFF" />
+                <Text style={styles.memoryBadgeText}>Memory</Text>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+      )}
+      
+      {/* Legacy single image support (for posts with url instead of paths) */}
+      {!isTextOnlyPost && !hasPhotos && imageUrl && (
         <TouchableOpacity 
           style={styles.imageContainer}
           onPress={handleImagePress}

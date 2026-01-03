@@ -114,6 +114,14 @@ export default function FeedScreen({ navigation }) {
     }
   };
 
+  const handleActivityTabLongPress = () => {
+    try {
+      navigation.navigate('ActivityDebugScreen');
+    } catch (error) {
+      console.error('Error navigating to ActivityDebugScreen:', error);
+    }
+  };
+
   const handleGlobalRefresh = async () => {
     try {
       if (activeTabIndex === 0 && forYouRef.current?.refresh) {
@@ -239,6 +247,7 @@ export default function FeedScreen({ navigation }) {
                   key={tab}
                   style={styles.tabButton}
                   onPress={() => handleTabPress(index)}
+                  onLongPress={index === 1 ? handleActivityTabLongPress : undefined}
                   activeOpacity={0.8}
                 >
                   <Text style={[

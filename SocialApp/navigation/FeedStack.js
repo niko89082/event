@@ -4,6 +4,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 
 import FeedScreen        from '../screens/FeedScreen';
 import FeedTemplateScreen from '../screens/FeedTemplateScreen';
+import ActivityDebugScreen from '../screens/ActivityDebugScreen';
 import PostDetailsScreen from '../screens/PostDetailsScreen';
 import CreateEventScreen from '../screens/CreateEventScreen';
 import CreatePostScreen  from '../screens/CreatePostScreen';
@@ -54,6 +55,13 @@ export default function FeedStack() {
           headerShown: true,
           title: 'Feed Post Types Template',
           headerBackTitle: 'Back'
+        }}
+      />
+      <Stack.Screen
+        name="ActivityDebugScreen"
+        component={ActivityDebugScreen}
+        options={{ 
+          headerShown: false
         }}
       />
     </Stack.Navigator>
