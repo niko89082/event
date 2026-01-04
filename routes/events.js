@@ -7997,6 +7997,117 @@ router.get('/discover', protect, async (req, res) => {
   }
 });
 
+// Get Featured Events
+router.get('/featured', protect, async (req, res) => {
+  try {
+    console.log('⭐ GET /api/events/featured - Featured events');
+    
+    const { limit = 3 } = req.query;
+    const userId = req.user._id;
+    
+    // Get user's friends for privacy filtering
+    const user = await User.findById(userId).select('following friends').lean();
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+    
+    const userFollowing = user.following ? user.following.map(f => String(f)) : [];
+    // Handle both old and new friends structure
+    const friendIds = (user.friends || [])
+      .filter(friendship => {
+        if (typeof friendship === 'object' && friendship.status) {
+          return friendship.status === 'accepted';
+        }
+        return true; // If it's just an ID, include it
+      })
+      .map(friendship => {
+        if (typeof friendship === 'object' && friendship.user) {
+          return String(friendship.user);
+        }
+        return String(friendship);
+      });
+    
+    // Build query for featured events (public or friends-only from followed users)
+    const query = {
+      time: { $gte: new Date() }, // Only future events
+    };
+    
+    // Add privacy filter - if user has following, include friends-only events
+    if (userFollowing.length > 0) {
+      query.$or = [
+        { privacyLevel: 'public' },
+        { 
+          privacyLevel: 'friends',
+          host: { $in: userFollowing }
+        }
+      ];
+    } else {
+      // If no following, only show public events
+      query.privacyLevel = 'public';
+    }
+    
+    // Get events and sort by attendee count (using aggregation or post-sort)
+    let events = [];
+    try {
+      events = await Event.find(query)
+        .populate('host', 'username profilePicture displayName')
+        .populate('attendees', 'username profilePicture')
+        .populate('coHosts', 'username profilePicture')
+        .sort({ createdAt: -1 }) // Sort by newest first
+        .limit(parseInt(limit) * 2) // Get more to sort by attendee count
+        .lean();
+    } catch (queryError) {
+      console.error('❌ Featured events query error:', queryError);
+      throw queryError;
+    }
+    
+    // Add metadata and sort by attendee count
+    const eventsWithMetadata = events
+      .filter(event => event.host) // Filter out events without hosts
+      .map(event => ({
+        ...event,
+        isAttending: event.attendees?.some(a => {
+          const attendeeId = a._id || a;
+          return String(attendeeId) === String(userId);
+        }) || false,
+        attendeeCount: event.attendees?.length || 0,
+        isHost: event.host && String(event.host._id) === String(userId),
+        isFeatured: true
+      }))
+      .sort((a, b) => {
+        // Sort by attendee count (descending), then by creation date
+        if (b.attendeeCount !== a.attendeeCount) {
+          return b.attendeeCount - a.attendeeCount;
+        }
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      })
+      .slice(0, parseInt(limit)); // Take only the requested limit
+    
+    console.log(`✅ Featured: Found ${eventsWithMetadata.length} events`);
+    
+    // Always return success, even if no events found
+    res.json({
+      success: true,
+      events: eventsWithMetadata || [],
+      limit: parseInt(limit),
+      count: eventsWithMetadata.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Featured events error:', error);
+    console.error('❌ Featured events error stack:', error.stack);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to fetch featured events',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error',
+      ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+    });
+  }
+});
+
 router.get('/:eventId/real-time-stats', protect, async (req, res) => {
   try {
     const { eventId } = req.params;

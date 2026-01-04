@@ -1,4 +1,6 @@
-// components/EventsHub.js - Updated with dynamic tabs (PRESERVING ALL ANIMATIONS)
+// components/EventsHub.js - DEPRECATED: Use EventsScreen instead
+// This component is kept for backward compatibility but should not be used in new code.
+// The new EventsScreen provides the redesigned UI with Featured Events section.
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useContext, useCallback } from 'react';
 import {
   View,

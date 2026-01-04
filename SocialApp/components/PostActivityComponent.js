@@ -1336,9 +1336,9 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
-  // Caption Styles - Aligned with username (12px header + 40px avatar + 6px margin = 58px)
+  // Caption Styles - Aligned with left side of profile photo
   captionContainer: {
-    paddingLeft: 58,
+    paddingLeft: 12,
     paddingRight: 20,
     marginBottom: 12,
   },
@@ -1360,9 +1360,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Image Styles - Enhanced with loading states and rounded corners, aligned with username
+  // Image Styles - Enhanced with loading states and rounded corners, aligned with left side of profile photo
   imageContainer: {
-    marginLeft: 58,
+    marginLeft: 12,
     marginRight: 20,
     borderRadius: 16,
     overflow: 'hidden',
@@ -1632,11 +1632,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   
-  // Engagement Bar Styles - Aligned with username
+  // Engagement Bar Styles - Aligned with left side of profile photo
   engagementBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 58,
+    paddingLeft: 12,
     paddingRight: 20,
     paddingTop: 8,
     paddingBottom: 4,
@@ -1681,9 +1681,9 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   
-  // Review Card Styles - Aligned with username
+  // Review Card Styles - Aligned with left side of profile photo
   reviewCardContainer: {
-    paddingLeft: 58,
+    paddingLeft: 12,
     paddingRight: 20,
     marginBottom: 12,
   },

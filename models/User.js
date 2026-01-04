@@ -252,6 +252,41 @@ const UserSchema = new mongoose.Schema({
   }],
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+
+  // ============================================
+  // FRIENDS SYSTEM (Phase 1)
+  // ============================================
+  friends: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'accepted', 'blocked'],
+      default: 'pending'
+    },
+    initiatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    requestMessage: {
+      type: String,
+      default: ''
+    },
+    acceptedAt: {
+      type: Date
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  migratedToFriendsAt: {
+    type: Date
+  },
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
@@ -536,9 +571,240 @@ UserSchema.virtual('fullName').get(function() {
 });
 
 // ============================================
+// FRIENDS SYSTEM METHODS
+// ============================================
+
+/**
+ * Get list of accepted friend user IDs
+ * @returns {Array<string>} Array of friend user IDs as strings
+ */
+UserSchema.methods.getAcceptedFriends = function() {
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return [];
+  }
+  
+  return this.friends
+    .filter(f => f.status === 'accepted')
+    .map(f => String(f.user));
+};
+
+/**
+ * Get friendship status with another user
+ * @param {string|ObjectId} targetUserId - The target user ID
+ * @returns {Object} Friendship status object
+ */
+UserSchema.methods.getFriendshipStatus = function(targetUserId) {
+  const targetIdStr = String(targetUserId);
+  const currentIdStr = String(this._id);
+  
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return {
+      status: 'none',
+      exists: false
+    };
+  }
+  
+  const friendship = this.friends.find(f => String(f.user) === targetIdStr);
+  
+  if (!friendship) {
+    return {
+      status: 'none',
+      exists: false
+    };
+  }
+  
+  if (friendship.status === 'accepted') {
+    return {
+      status: 'friends',
+      exists: true,
+      friendship: friendship
+    };
+  }
+  
+  if (friendship.status === 'pending') {
+    const initiatedByMe = String(friendship.initiatedBy) === currentIdStr;
+    return {
+      status: initiatedByMe ? 'request-sent' : 'request-received',
+      exists: true,
+      friendship: friendship,
+      initiatedByMe: initiatedByMe
+    };
+  }
+  
+  if (friendship.status === 'blocked') {
+    return {
+      status: 'blocked',
+      exists: true,
+      friendship: friendship
+    };
+  }
+  
+  return {
+    status: 'none',
+    exists: false
+  };
+};
+
+/**
+ * Send a friend request to another user
+ * @param {string|ObjectId} targetUserId - The target user ID
+ * @param {string} message - Optional request message
+ * @returns {Promise} Save promise
+ */
+UserSchema.methods.sendFriendRequest = async function(targetUserId, message = '') {
+  const targetIdStr = String(targetUserId);
+  const currentIdStr = String(this._id);
+  
+  if (targetIdStr === currentIdStr) {
+    throw new Error('Cannot send friend request to yourself');
+  }
+  
+  if (!this.friends) {
+    this.friends = [];
+  }
+  
+  // Check if friendship already exists
+  const existingFriendship = this.friends.find(f => String(f.user) === targetIdStr);
+  
+  if (existingFriendship) {
+    if (existingFriendship.status === 'accepted') {
+      throw new Error('Already friends with this user');
+    }
+    if (existingFriendship.status === 'pending') {
+      throw new Error('Friend request already sent');
+    }
+    // If blocked, remove and create new request
+    this.friends = this.friends.filter(f => String(f.user) !== targetIdStr);
+  }
+  
+  // Add friend request
+  this.friends.push({
+    user: targetUserId,
+    status: 'pending',
+    initiatedBy: this._id,
+    requestMessage: message,
+    createdAt: new Date()
+  });
+  
+  // Also add to target user's friends list (bidirectional)
+  const targetUser = await mongoose.model('User').findById(targetUserId);
+  if (targetUser) {
+    if (!targetUser.friends) {
+      targetUser.friends = [];
+    }
+    
+    const targetExisting = targetUser.friends.find(f => String(f.user) === currentIdStr);
+    if (!targetExisting) {
+      targetUser.friends.push({
+        user: this._id,
+        status: 'pending',
+        initiatedBy: this._id,
+        requestMessage: message,
+        createdAt: new Date()
+      });
+      await targetUser.save();
+    }
+  }
+  
+  return this.save();
+};
+
+/**
+ * Accept a friend request from another user
+ * @param {string|ObjectId} requesterUserId - The requester user ID
+ * @returns {Promise} Save promise
+ */
+UserSchema.methods.acceptFriendRequest = async function(requesterUserId) {
+  const requesterIdStr = String(requesterUserId);
+  const currentIdStr = String(this._id);
+  
+  if (!this.friends || !Array.isArray(this.friends)) {
+    this.friends = [];
+  }
+  
+  // Find the friend request
+  const friendship = this.friends.find(f => String(f.user) === requesterIdStr);
+  
+  if (!friendship) {
+    throw new Error('No friend request found from this user');
+  }
+  
+  if (friendship.status === 'accepted') {
+    throw new Error('Already friends with this user');
+  }
+  
+  if (friendship.status !== 'pending') {
+    throw new Error('Cannot accept this friend request');
+  }
+  
+  // Update status to accepted
+  friendship.status = 'accepted';
+  friendship.acceptedAt = new Date();
+  
+  // Also update the requester's side (bidirectional)
+  const requesterUser = await mongoose.model('User').findById(requesterUserId);
+  if (requesterUser) {
+    if (!requesterUser.friends) {
+      requesterUser.friends = [];
+    }
+    
+    const requesterFriendship = requesterUser.friends.find(f => String(f.user) === currentIdStr);
+    if (requesterFriendship) {
+      requesterFriendship.status = 'accepted';
+      requesterFriendship.acceptedAt = new Date();
+      await requesterUser.save();
+    } else {
+      // If not found, create it
+      requesterUser.friends.push({
+        user: this._id,
+        status: 'accepted',
+        initiatedBy: requesterUserId,
+        acceptedAt: new Date(),
+        createdAt: new Date()
+      });
+      await requesterUser.save();
+    }
+  }
+  
+  return this.save();
+};
+
+/**
+ * Get pending friend requests received by this user
+ * @returns {Array} Array of pending friend request objects
+ */
+UserSchema.methods.getPendingRequests = function() {
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return [];
+  }
+  
+  const currentIdStr = String(this._id);
+  return this.friends.filter(f => 
+    f.status === 'pending' && String(f.initiatedBy) !== currentIdStr
+  );
+};
+
+/**
+ * Get sent friend requests (pending) by this user
+ * @returns {Array} Array of sent friend request objects
+ */
+UserSchema.methods.getSentRequests = function() {
+  if (!this.friends || !Array.isArray(this.friends)) {
+    return [];
+  }
+  
+  const currentIdStr = String(this._id);
+  return this.friends.filter(f => 
+    f.status === 'pending' && String(f.initiatedBy) === currentIdStr
+  );
+};
+
+// ============================================
 // INDEXES FOR PERFORMANCE
 // ============================================
 UserSchema.index({ 'paymentAccounts.paypal.email': 1 });
 UserSchema.index({ 'paymentAccounts.stripe.accountId': 1 });
+UserSchema.index({ 'friends.user': 1 });
+UserSchema.index({ 'friends.status': 1 });
 
 module.exports = mongoose.model('User', UserSchema);

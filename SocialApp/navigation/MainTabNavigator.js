@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import FeedStack from './FeedStack';
 import ProfileScreen from '../screens/ProfileScreen';
 import SearchStack from './SearchStack';
-import EventsHubScreen from '../screens/EventsHubScreen';
+import EventsScreen from '../screens/EventsScreen';
 
 // Create Screens
 import CreateEventScreen from '../screens/CreateEventScreen';
@@ -254,11 +254,11 @@ function CreateStackNavigator({ navigation }) {
   );
 }
 
-// Events Hub Stack Navigator
+// Events Stack Navigator
 function EventsHubStackNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="EventsHub" component={EventsHubScreen} />
+      <Stack.Screen name="EventsHub" component={EventsScreen} />
     </Stack.Navigator>
   );
 }

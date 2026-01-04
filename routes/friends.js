@@ -645,17 +645,21 @@ router.get('/list', protect, async (req, res) => {
   try {
     const { status = 'accepted', limit = 50, offset = 0 } = req.query;
     
-    const user = await User.findById(req.user._id)
-      .populate({
-        path: 'friends.user',
-        select: 'username displayName profilePicture bio isPublic',
-        options: { limit: parseInt(limit), skip: parseInt(offset) }
-      });
+    const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({ 
         success: false,
         message: 'User not found' 
+      });
+    }
+
+    if (!user.friends || !Array.isArray(user.friends)) {
+      return res.status(200).json({
+        success: true,
+        friends: [],
+        total: 0,
+        hasMore: false
       });
     }
 
@@ -673,21 +677,38 @@ router.get('/list', protect, async (req, res) => {
       );
     }
 
+    // Apply pagination
+    const paginatedFriends = friends.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+
+    // Populate user details for each friend
+    const populatedFriends = await Promise.all(
+      paginatedFriends.map(async (f) => {
+        const friendUser = await User.findById(f.user).select('username displayName profilePicture bio isPublic');
+        if (!friendUser) {
+          return null;
+        }
+        return {
+          _id: friendUser._id,
+          username: friendUser.username,
+          displayName: friendUser.displayName || friendUser.username,
+          profilePicture: friendUser.profilePicture,
+          bio: friendUser.bio,
+          isPublic: friendUser.isPublic,
+          friendshipDate: f.acceptedAt || f.createdAt,
+          requestMessage: f.requestMessage,
+          initiatedByMe: String(f.initiatedBy) === String(req.user._id)
+        };
+      })
+    );
+
+    // Filter out null values (deleted users)
+    const validFriends = populatedFriends.filter(f => f !== null);
+
     res.status(200).json({
       success: true,
-      friends: friends.map(f => ({
-        _id: f.user._id,
-        username: f.user.username,
-        displayName: f.user.displayName,
-        profilePicture: f.user.profilePicture,
-        bio: f.user.bio,
-        isPublic: f.user.isPublic,
-        friendshipDate: f.acceptedAt || f.createdAt,
-        requestMessage: f.requestMessage,
-        initiatedByMe: String(f.initiatedBy) === String(req.user._id)
-      })),
+      friends: validFriends,
       total: friends.length,
-      hasMore: friends.length === parseInt(limit)
+      hasMore: friends.length > parseInt(offset) + parseInt(limit)
     });
 
   } catch (error) {
@@ -707,11 +728,7 @@ router.get('/requests', protect, async (req, res) => {
   try {
     const { type = 'received' } = req.query; // 'received', 'sent', or 'all'
     
-    const user = await User.findById(req.user._id)
-      .populate({
-        path: 'friends.user',
-        select: 'username displayName profilePicture bio'
-      });
+    const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({ 
@@ -723,31 +740,45 @@ router.get('/requests', protect, async (req, res) => {
     let requests = [];
     
     if (type === 'received' || type === 'all') {
-      const receivedRequests = user.getPendingRequests().map(f => ({
-        _id: f.user._id,
-        username: f.user.username,
-        displayName: f.user.displayName,
-        profilePicture: f.user.profilePicture,
-        bio: f.user.bio,
-        requestDate: f.createdAt,
-        requestMessage: f.requestMessage,
-        type: 'received'
-      }));
-      requests = [...requests, ...receivedRequests];
+      const pendingRequests = user.getPendingRequests();
+      const receivedRequests = await Promise.all(
+        pendingRequests.map(async (f) => {
+          const friendUser = await User.findById(f.user).select('username displayName profilePicture bio');
+          if (!friendUser) return null;
+          return {
+            _id: friendUser._id,
+            username: friendUser.username,
+            displayName: friendUser.displayName || friendUser.username,
+            profilePicture: friendUser.profilePicture,
+            bio: friendUser.bio,
+            requestDate: f.createdAt,
+            requestMessage: f.requestMessage,
+            type: 'received'
+          };
+        })
+      );
+      requests = [...requests, ...receivedRequests.filter(r => r !== null)];
     }
     
     if (type === 'sent' || type === 'all') {
-      const sentRequests = user.getSentRequests().map(f => ({
-        _id: f.user._id,
-        username: f.user.username,
-        displayName: f.user.displayName,
-        profilePicture: f.user.profilePicture,
-        bio: f.user.bio,
-        requestDate: f.createdAt,
-        requestMessage: f.requestMessage,
-        type: 'sent'
-      }));
-      requests = [...requests, ...sentRequests];
+      const sentRequestsList = user.getSentRequests();
+      const sentRequests = await Promise.all(
+        sentRequestsList.map(async (f) => {
+          const friendUser = await User.findById(f.user).select('username displayName profilePicture bio');
+          if (!friendUser) return null;
+          return {
+            _id: friendUser._id,
+            username: friendUser.username,
+            displayName: friendUser.displayName || friendUser.username,
+            profilePicture: friendUser.profilePicture,
+            bio: friendUser.bio,
+            requestDate: f.createdAt,
+            requestMessage: f.requestMessage,
+            type: 'sent'
+          };
+        })
+      );
+      requests = [...requests, ...sentRequests.filter(r => r !== null)];
     }
 
     // Sort by request date (most recent first)
@@ -1928,12 +1959,7 @@ router.get('/:userId', protect, async (req, res) => {
     const currentUserId = req.user._id;
     const { limit = 50, offset = 0 } = req.query;
 
-    const targetUser = await User.findById(targetUserId)
-      .populate({
-        path: 'friends.user',
-        select: 'username displayName profilePicture',
-        options: { limit: parseInt(limit), skip: parseInt(offset) }
-      });
+    const targetUser = await User.findById(targetUserId);
 
     if (!targetUser) {
       return res.status(404).json({ 
@@ -1967,22 +1993,46 @@ router.get('/:userId', protect, async (req, res) => {
       });
     }
 
+    if (!targetUser.friends || !Array.isArray(targetUser.friends)) {
+      return res.status(200).json({
+        success: true,
+        friends: [],
+        total: 0,
+        friendsCount: 0,
+        hasMore: false
+      });
+    }
+
     const friends = targetUser.friends
       .filter(f => f.status === 'accepted')
       .sort((a, b) => new Date(b.acceptedAt || b.createdAt) - new Date(a.acceptedAt || a.createdAt));
 
+    // Apply pagination
+    const paginatedFriends = friends.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+
+    // Populate user details
+    const populatedFriends = await Promise.all(
+      paginatedFriends.map(async (f) => {
+        const friendUser = await User.findById(f.user).select('username displayName profilePicture');
+        if (!friendUser) return null;
+        return {
+          _id: friendUser._id,
+          username: friendUser.username,
+          displayName: friendUser.displayName || friendUser.username,
+          profilePicture: friendUser.profilePicture,
+          friendshipDate: f.acceptedAt
+        };
+      })
+    );
+
+    const validFriends = populatedFriends.filter(f => f !== null);
+
     res.status(200).json({
       success: true,
-      friends: friends.map(f => ({
-        _id: f.user._id,
-        username: f.user.username,
-        displayName: f.user.displayName,
-        profilePicture: f.user.profilePicture,
-        friendshipDate: f.acceptedAt
-      })),
+      friends: validFriends,
       total: friends.length,
-      friendsCount: targetUser.friendsCount,
-      hasMore: friends.length === parseInt(limit)
+      friendsCount: friends.length,
+      hasMore: friends.length > parseInt(offset) + parseInt(limit)
     });
 
   } catch (error) {
