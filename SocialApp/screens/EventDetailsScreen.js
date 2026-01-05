@@ -29,6 +29,7 @@ import { useStripe } from '@stripe/stripe-react-native';
 import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
@@ -64,6 +65,7 @@ export default function EventDetailsScreen() {
   const { currentUser } = useContext(AuthContext);
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const { eventId } = route.params;
+  const insets = useSafeAreaInsets();
 
   // Centralized store integration
   const {
@@ -1528,15 +1530,21 @@ const handleInviteSuccess = (result) => {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
-      {/* FIXED: Back button moved outside cover image */}
-      <View style={styles.headerContainer}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.8}
+      {/* Fixed header - stays in place while scrolling */}
+      <View style={[styles.headerContainer, { top: insets.top + 10 }]}>
+        <BlurView 
+          intensity={20} 
+          tint="dark"
+          style={styles.headerBlur}
         >
-          <Ionicons name="arrow-back" size={24} color="#000000" />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+        </BlurView>
       </View>
       
       <Animated.View style={[styles.animatedContainer, { opacity: fadeAnim }]}>
@@ -1837,34 +1845,41 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  // FIXED: Header container for back button
+  // FIXED: Header container for back button - fixed position, stays on screen while scrolling
   headerContainer: {
     position: 'absolute',
-    top: 50,
     left: 0,
     right: 0,
-    zIndex: 10,
+    zIndex: 100, // Higher z-index to stay above scrolling content
     paddingHorizontal: 20,
+    // top will be set dynamically using safe area insets
+    pointerEvents: 'box-none', // Allow touches to pass through to content below
+  },
+  headerBlur: {
+    alignSelf: 'flex-start',
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   backButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)', // More transparent since we have blur behind
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 8,
+    pointerEvents: 'auto', // Ensure button is tappable
   },
   animatedContainer: {
     flex: 1,
   },
   scrollContent: {
     paddingBottom: 80, // Reduced for smaller bottom bar
-    paddingTop: 20
+    paddingTop: 0 // Removed padding to allow image to reach top
   },
   centered: {
     flex: 1,
@@ -1900,6 +1915,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     width: '100%',
     overflow: 'hidden', // Ensure proper clipping
+    marginTop: 0, // Ensure it starts at the very top
   },
   coverImage: {
     width: '100%',

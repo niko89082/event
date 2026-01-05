@@ -731,24 +731,6 @@ const pickCoverImage = () => {
       />
     </View>
 
-    {/* Description with Character Counter */}
-    <View style={styles.descriptionContainer}>
-      <TextInput
-        style={styles.descriptionInput}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="Tell people what your event is about..."
-        placeholderTextColor="#8E8E93"
-        multiline
-        numberOfLines={4}
-        textAlignVertical="top"
-        maxLength={500}
-      />
-      <Text style={styles.characterCounter}>
-        {description.length}/500
-      </Text>
-    </View>
-
     {/* Category Pills */}
     <View style={styles.categorySection}>
       <Text style={styles.categoryLabel}>CATEGORY</Text>
@@ -776,6 +758,25 @@ const pickCoverImage = () => {
           </TouchableOpacity>
         ))}
       </ScrollView>
+    </View>
+
+    {/* Description with Character Counter */}
+    <View style={styles.descriptionContainer}>
+      <Text style={styles.descriptionLabel}>DESCRIPTION</Text>
+      <TextInput
+        style={styles.descriptionInput}
+        value={description}
+        onChangeText={setDescription}
+        placeholder="Tell people what your event is about..."
+        placeholderTextColor="#8E8E93"
+        multiline
+        numberOfLines={4}
+        textAlignVertical="top"
+        maxLength={500}
+      />
+      <Text style={styles.characterCounter}>
+        {description.length}/500
+      </Text>
     </View>
 
           {/* When */}
@@ -836,18 +837,32 @@ const pickCoverImage = () => {
 
           {/* Combined Settings Section: Privacy, Hosts, Max Attendees, Hide Guest List */}
           <View style={styles.combinedSettingsSection}>
-            {/* Privacy Control */}
+            {/* Privacy Control - Improved UI */}
             <View style={styles.combinedSectionItem}>
-              <Text style={styles.combinedSectionLabel}>PRIVACY CONTROL</Text>
-              <TouchableOpacity
-                style={styles.privacySelectButton}
-                onPress={() => setShowPrivacyModal(true)}
-              >
-                <Text style={styles.privacySelectText}>
-                  {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'} Event
-                </Text>
-                <Ionicons name="chevron-down" size={20} color="#8E8E93" />
-              </TouchableOpacity>
+              <View style={styles.privacyControlHeader}>
+                <View style={styles.privacyControlHeaderLeft}>
+                  <Ionicons 
+                    name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+                    size={20} 
+                    color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
+                  />
+                  <View style={styles.privacyControlTextContainer}>
+                    <Text style={styles.combinedSectionLabel}>PRIVACY</Text>
+                    <Text style={styles.privacyControlSubtext}>
+                      {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.privacySelectButton}
+                  onPress={() => setShowPrivacyModal(true)}
+                >
+                  <Text style={styles.privacySelectText}>
+                    {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={16} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Hosts */}
@@ -2288,6 +2303,14 @@ descriptionContainer: {
   marginBottom: 24,
   position: 'relative',
 },
+descriptionLabel: {
+  fontSize: 11,
+  fontWeight: '700',
+  color: '#8E8E93',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginBottom: 12,
+},
 descriptionInput: {
   minHeight: 140,
   borderRadius: 16,
@@ -2448,19 +2471,40 @@ combinedSectionDivider: {
   backgroundColor: '#E2E8F0',
   marginVertical: 20,
 },
-privacySelectButton: {
-  backgroundColor: '#FFFFFF',
-  borderRadius: 12,
-  padding: 12,
-  borderWidth: 1,
-  borderColor: '#E2E8F0',
+privacyControlHeader: {
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'space-between',
+  width: '100%',
+},
+privacyControlHeaderLeft: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  flex: 1,
+  gap: 12,
+},
+privacyControlTextContainer: {
+  flex: 1,
+},
+privacyControlSubtext: {
+  fontSize: 12,
+  color: '#64748B',
+  marginTop: 2,
+},
+privacySelectButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 4,
+  paddingHorizontal: 12,
+  paddingVertical: 6,
+  backgroundColor: '#F8F9FA',
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: '#E2E8F0',
 },
 privacySelectText: {
   fontSize: 14,
-  fontWeight: '500',
+  fontWeight: '600',
   color: '#1E293B',
 },
 hostsRow: {
