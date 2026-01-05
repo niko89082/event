@@ -122,7 +122,7 @@ export default function FeedEventCard({ event, navigation, currentUserId, onPres
               )}
             </View>
             <Text style={styles.friendsText}>
-              {friendsGoingCount} friend{friendsGoingCount === 1 ? '' : 's'} going
+              {friendsGoingCount} friend{friendsGoingCount === 1 ? '' : 's'} {new Date(event.time) <= new Date() ? 'went' : 'going'}
             </Text>
           </View>
         )}

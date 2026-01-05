@@ -11,6 +11,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { API_BASE_URL } from '@env';
 import api from '../services/api';
 import usePostsStore from '../stores/postsStore'; // ADD CENTRALIZED STORE
+import RepostButton from './RepostButton';
+import RepostWrapper from './RepostWrapper';
+import QuoteRepostModal from './QuoteRepostModal';
+import { repostAPI } from '../services/api';
 
 /* ------------------------------------------------------------------ */
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -569,6 +573,12 @@ export default function CompletePostItem({
   // Loading states
   const [initialLoading, setInitialLoading] = useState(false);
 
+  // ✅ NEW: Repost state
+  const [hasReposted, setHasReposted] = useState(false);
+  const [repostCount, setRepostCount] = useState(currentPost.repostCount || 0);
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const [repostLoading, setRepostLoading] = useState(false);
+
   // Animation refs
   const heartScale = useRef(new Animated.Value(0)).current;
   const scaleValue = useRef(new Animated.Value(1)).current;
@@ -670,8 +680,56 @@ export default function CompletePostItem({
     
     if (currentPost._id && !initialLoading) {
       loadInitialData();
+      loadRepostStatus();
     }
   }, [currentPost._id]);
+
+  // ✅ NEW: Load repost status
+  const loadRepostStatus = async () => {
+    if (!currentPost._id || !currentUserId || isMemoryPost) return;
+    
+    try {
+      const response = await repostAPI.getRepostStatus(currentPost._id);
+      setHasReposted(response.data.hasReposted);
+      setRepostCount(currentPost.repostCount || 0);
+    } catch (error) {
+      console.error('Error loading repost status:', error);
+      // Default to false on error
+      setHasReposted(false);
+    }
+  };
+
+  // ✅ NEW: Handle repost changes
+  const handleRepostChange = ({ action, postId, repost }) => {
+    if (action === 'quote') {
+      setShowQuoteModal(true);
+    } else if (action === 'repost') {
+      setHasReposted(true);
+      setRepostCount(prev => prev + 1);
+      // Update store if needed
+      usePostsStore.getState().updatePost(postId, {
+        repostCount: repostCount + 1
+      });
+    } else if (action === 'undo') {
+      setHasReposted(false);
+      setRepostCount(prev => Math.max(0, prev - 1));
+      // Update store if needed
+      usePostsStore.getState().updatePost(postId, {
+        repostCount: Math.max(0, repostCount - 1)
+      });
+    }
+  };
+
+  // ✅ NEW: Handle quote repost creation
+  const handleQuoteRepostCreated = (repost) => {
+    setHasReposted(true);
+    setRepostCount(prev => prev + 1);
+    setShowQuoteModal(false);
+    // Update store if needed
+    usePostsStore.getState().updatePost(currentPost._id, {
+      repostCount: repostCount + 1
+    });
+  };
 
   const loadInitialData = async () => {
     console.log('🔄 Loading initial data for post:', {
@@ -1073,14 +1131,25 @@ export default function CompletePostItem({
   /*                      MAIN RENDER                                  */
   /* ================================================================== */
 
-  return (
-    <View style={[
-      styles.postContainer,
-      isMemoryPost && styles.memoryPostContainer,
-      isMemoryPost && memoryMood?.mood === 'vintage' && styles.vintagePostContainer
-    ]}>
+  // ✅ NEW: Check if this is a repost
+  const isRepost = currentPost.isRepost === true;
+  const originalPost = currentPost.originalPost || null;
 
-      {/* Memory Story Header */}
+  return (
+    <RepostWrapper
+      repost={isRepost ? currentPost : null}
+      originalPost={originalPost}
+      onReposterPress={(userId) => navigation?.navigate('Profile', { userId })}
+      onOriginalPostPress={(postId) => navigation?.navigate('PostDetails', { postId })}
+    >
+      <View style={[
+        styles.postContainer,
+        isMemoryPost && styles.memoryPostContainer,
+        isMemoryPost && memoryMood?.mood === 'vintage' && styles.vintagePostContainer,
+        isRepost && styles.repostContainer
+      ]}>
+
+        {/* Memory Story Header */}
       {isMemoryPost && (
         <View style={styles.memoryStoryHeader}>
           <View style={styles.memoryIndicator}>
@@ -1261,6 +1330,17 @@ export default function CompletePostItem({
               color="#000" 
             />
           </TouchableOpacity>
+
+          {/* ✅ NEW: Repost button - only for regular posts */}
+          {!isMemoryPost && (
+            <RepostButton
+              postId={currentPost._id}
+              repostCount={repostCount}
+              hasReposted={hasReposted}
+              onRepostChange={handleRepostChange}
+              showQuoteOption={true}
+            />
+          )}
 
           {/* Only show share for regular posts */}
           {!isMemoryPost && (
@@ -1446,7 +1526,18 @@ export default function CompletePostItem({
         currentUserId={currentUserId}
         onCommentAdded={handleCommentAdded}
       />
+
+      {/* ✅ NEW: Quote Repost Modal */}
+      {!isMemoryPost && (
+        <QuoteRepostModal
+          visible={showQuoteModal}
+          onClose={() => setShowQuoteModal(false)}
+          post={isRepost && originalPost ? originalPost : currentPost}
+          onRepostCreated={handleQuoteRepostCreated}
+        />
+      )}
     </View>
+    </RepostWrapper>
   );
 }
 

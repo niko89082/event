@@ -8,8 +8,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@env';
 import ReviewCard from './ReviewCard';
 import PhotoCarousel from './PhotoCarousel';
+import RepostButton from './RepostButton';
+import RepostWrapper from './RepostWrapper';
+import QuoteRepostModal from './QuoteRepostModal';
 import api from '../services/api';
 import usePostsStore from '../stores/postsStore';
+import { repostAPI } from '../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_WIDTH = SCREEN_WIDTH - 32;
@@ -133,6 +137,12 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
     : (post.commentCount || (post.comments ? post.comments.length : 0));
   const repostCount = post.repostCount || 0;
   
+  // ✅ NEW: Repost state
+  const [hasReposted, setHasReposted] = useState(false);
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const isRepost = post.isRepost === true;
+  const originalPost = post.originalPost || null;
+  
   // Local state for like loading
   const [isLiking, setIsLiking] = useState(false);
   
@@ -236,7 +246,52 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
     }
   };
 
+  // ✅ NEW: Load repost status
+  useEffect(() => {
+    if (post._id && currentUserId) {
+      loadRepostStatus();
+    }
+  }, [post._id, currentUserId]);
+
+  const loadRepostStatus = async () => {
+    if (!post._id || !currentUserId) return;
+    
+    try {
+      const response = await repostAPI.getRepostStatus(post._id);
+      setHasReposted(response.data.hasReposted);
+    } catch (error) {
+      console.error('Error loading repost status:', error);
+      setHasReposted(false);
+    }
+  };
+
+  // ✅ NEW: Handle repost changes
+  const handleRepostChange = ({ action, postId, repost }) => {
+    if (action === 'quote') {
+      setShowQuoteModal(true);
+    } else if (action === 'repost') {
+      setHasReposted(true);
+      if (onPostUpdated) {
+        onPostUpdated({ ...post, repostCount: repostCount + 1 });
+      }
+    } else if (action === 'undo') {
+      setHasReposted(false);
+      if (onPostUpdated) {
+        onPostUpdated({ ...post, repostCount: Math.max(0, repostCount - 1) });
+      }
+    }
+  };
+
+  const handleQuoteRepostCreated = (repost) => {
+    setHasReposted(true);
+    setShowQuoteModal(false);
+    if (onPostUpdated) {
+      onPostUpdated({ ...post, repostCount: repostCount + 1 });
+    }
+  };
+
   const handleRepost = () => {
+    // Legacy handler - now handled by RepostButton
     // TODO: Implement repost functionality
     console.log('Repost:', post._id);
   };
@@ -376,8 +431,14 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
+    <RepostWrapper
+      repost={isRepost ? post : null}
+      originalPost={originalPost}
+      onReposterPress={(userId) => navigation?.navigate('Profile', { userId })}
+      onOriginalPostPress={(postId) => navigation?.navigate('PostDetails', { postId })}
+    >
+      <View style={styles.container}>
+        {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.userInfo} onPress={handleUserPress}>
           {user.profilePicture ? (
@@ -569,16 +630,14 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.engagementButton}
-          onPress={handleRepost}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="repeat-outline" size={20} color="#000000" />
-          {repostCount > 0 && (
-            <Text style={styles.engagementCount}>{repostCount}</Text>
-          )}
-        </TouchableOpacity>
+        {/* ✅ NEW: Repost button */}
+        <RepostButton
+          postId={post._id}
+          repostCount={repostCount}
+          hasReposted={hasReposted}
+          onRepostChange={handleRepostChange}
+          showQuoteOption={true}
+        />
 
         <TouchableOpacity
           style={styles.engagementButton}
@@ -588,7 +647,16 @@ export default function PostCard({ post, currentUserId, navigation, onLike, onCo
           <Ionicons name="share-outline" size={20} color="#000000" />
         </TouchableOpacity>
       </View>
+
+      {/* ✅ NEW: Quote Repost Modal */}
+      <QuoteRepostModal
+        visible={showQuoteModal}
+        onClose={() => setShowQuoteModal(false)}
+        post={isRepost && originalPost ? originalPost : post}
+        onRepostCreated={handleQuoteRepostCreated}
+      />
     </View>
+    </RepostWrapper>
   );
 }
 

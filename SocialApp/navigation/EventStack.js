@@ -11,6 +11,7 @@ import AttendeeListScreen from '../screens/AttendeeListScreen';
 import CheckinListScreen from '../screens/CheckinListScreen';     
 
 import CalendarScreen from '../screens/CalendarScreen';
+import EventDateTimePickerScreen from '../screens/EventDateTimePickerScreen';
 const Stack = createStackNavigator();
 
 export default function EventStack() {
@@ -30,6 +31,11 @@ export default function EventStack() {
         name="CreateEventScreen"
         component={CreateEventScreen}
         options={{ title: 'Create Event' }}
+      />
+      <Stack.Screen
+        name="EventDateTimePickerScreen"
+        component={EventDateTimePickerScreen}
+        options={{ title: 'Select Date & Time' }}
       />
       <Stack.Screen
         name="QrScanScreen"

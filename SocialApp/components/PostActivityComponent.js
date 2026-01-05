@@ -1254,7 +1254,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingLeft: 12,
+    paddingLeft: 20,
     paddingRight: 20,
     marginBottom: 12,
   },
@@ -1338,7 +1338,7 @@ const styles = StyleSheet.create({
 
   // Caption Styles - Aligned with left side of profile photo
   captionContainer: {
-    paddingLeft: 12,
+    paddingLeft: 20,
     paddingRight: 20,
     marginBottom: 12,
   },
@@ -1362,7 +1362,7 @@ const styles = StyleSheet.create({
 
   // Image Styles - Enhanced with loading states and rounded corners, aligned with left side of profile photo
   imageContainer: {
-    marginLeft: 12,
+    marginLeft: 20,
     marginRight: 20,
     borderRadius: 16,
     overflow: 'hidden',
@@ -1446,7 +1446,7 @@ const styles = StyleSheet.create({
 
   // Enhanced Comments Section
   commentsSection: {
-    paddingLeft: 12,
+    paddingLeft: 20,
     paddingRight: 20,
     paddingTop: 8,
   },
@@ -1636,7 +1636,7 @@ const styles = StyleSheet.create({
   engagementBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 12,
+    paddingLeft: 20,
     paddingRight: 20,
     paddingTop: 8,
     paddingBottom: 4,
@@ -1683,7 +1683,7 @@ const styles = StyleSheet.create({
   
   // Review Card Styles - Aligned with left side of profile photo
   reviewCardContainer: {
-    paddingLeft: 12,
+    paddingLeft: 20,
     paddingRight: 20,
     marginBottom: 12,
   },

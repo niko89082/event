@@ -491,7 +491,8 @@ const fetchForYouPosts = async (userId, timeRange) => {
             $or: [
               { postType: { $in: ['photo', 'text'] } },
               { postType: { $exists: false } },
-              { postType: null }
+              { postType: null },
+              { isRepost: true } // Include reposts
             ]
           }
         ]
@@ -513,6 +514,15 @@ const fetchForYouPosts = async (userId, timeRange) => {
         as: 'event'
       }
     },
+    // ✅ NEW: Lookup original post for reposts
+    {
+      $lookup: {
+        from: 'photos',
+        localField: 'originalPost',
+        foreignField: '_id',
+        as: 'originalPost'
+      }
+    },
     {
       $unwind: { path: '$user', preserveNullAndEmptyArrays: false }
     },
@@ -520,15 +530,50 @@ const fetchForYouPosts = async (userId, timeRange) => {
       $unwind: { path: '$event', preserveNullAndEmptyArrays: true }
     },
     {
+      $unwind: { path: '$originalPost', preserveNullAndEmptyArrays: true }
+    },
+    // ✅ NEW: Populate original post user
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'originalPost.user',
+        foreignField: '_id',
+        as: 'originalPostUser'
+      }
+    },
+    {
+      $unwind: { path: '$originalPostUser', preserveNullAndEmptyArrays: true }
+    },
+    {
+      $addFields: {
+        'originalPost.user': '$originalPostUser'
+      }
+    },
+    {
       $match: {
         // ✅ FOR YOU FEED: Only show public posts (no followers-only)
-        $or: [
-          // Posts not associated with any event (personal posts - all visible)
-          { event: { $exists: false } },
-          { event: null },
-          // Only posts from public events
-          { 'event.privacyLevel': 'public' }
-          // Private and followers-only event posts excluded from For You feed
+        // ✅ NEW: Filter out reposts of deleted posts
+        $and: [
+          {
+            $or: [
+              // Posts not associated with any event (personal posts - all visible)
+              { event: { $exists: false } },
+              { event: null },
+              // Only posts from public events
+              { 'event.privacyLevel': 'public' }
+              // Private and followers-only event posts excluded from For You feed
+            ]
+          },
+          {
+            $or: [
+              { isRepost: { $ne: true } }, // Not a repost
+              { 
+                isRepost: true,
+                'originalPost.isDeleted': { $ne: true }, // Repost of non-deleted post
+                'originalPost': { $exists: true, $ne: null } // Original post exists
+              }
+            ]
+          }
         ]
       }
     },
@@ -554,6 +599,14 @@ const fetchForYouPosts = async (userId, timeRange) => {
             if: { $isArray: '$comments' },
             then: { $size: '$comments' },
             else: 0
+          }
+        },
+        // ✅ NEW: For reposts, use original post's engagement metrics
+        repostCount: {
+          $cond: {
+            if: { $eq: ['$isRepost', true] },
+            then: { $ifNull: ['$originalPost.repostCount', 0] },
+            else: { $ifNull: ['$repostCount', 0] }
           }
         }
       }
@@ -610,7 +663,8 @@ const fetchRegularPosts = async (userId, followingIds, timeRange) => {
             $or: [
               { postType: { $in: ['photo', 'text'] } },
               { postType: { $exists: false } },
-              { postType: null }
+              { postType: null },
+              { isRepost: true } // Include reposts
             ]
           }
         ]
@@ -632,6 +686,15 @@ const fetchRegularPosts = async (userId, followingIds, timeRange) => {
         as: 'event'
       }
     },
+    // ✅ NEW: Lookup original post for reposts
+    {
+      $lookup: {
+        from: 'photos',
+        localField: 'originalPost',
+        foreignField: '_id',
+        as: 'originalPost'
+      }
+    },
     {
       $unwind: { path: '$user', preserveNullAndEmptyArrays: false }
     },
@@ -639,20 +702,55 @@ const fetchRegularPosts = async (userId, followingIds, timeRange) => {
       $unwind: { path: '$event', preserveNullAndEmptyArrays: true }
     },
     {
+      $unwind: { path: '$originalPost', preserveNullAndEmptyArrays: true }
+    },
+    // ✅ NEW: Populate original post user
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'originalPost.user',
+        foreignField: '_id',
+        as: 'originalPostUser'
+      }
+    },
+    {
+      $unwind: { path: '$originalPostUser', preserveNullAndEmptyArrays: true }
+    },
+    {
+      $addFields: {
+        'originalPost.user': '$originalPostUser'
+      }
+    },
+    {
       $match: {
         // ✅ CRITICAL PRIVACY FILTER: Exclude photos from private events
-        $or: [
-          // Posts not associated with any event (personal posts)
-          { event: { $exists: false } },
-          { event: null },
-          // Posts from public events
-          { 'event.privacyLevel': 'public' },
-          // Posts from followers-only events where user follows the host
-          { 
-            'event.privacyLevel': 'followers',
-            'event.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
+        // ✅ NEW: Filter out reposts of deleted posts
+        $and: [
+          {
+            $or: [
+              // Posts not associated with any event (personal posts)
+              { event: { $exists: false } },
+              { event: null },
+              // Posts from public events
+              { 'event.privacyLevel': 'public' },
+              // Posts from followers-only events where user follows the host
+              { 
+                'event.privacyLevel': 'followers',
+                'event.host': { $in: followingIds.map(id => new mongoose.Types.ObjectId(id)) }
+              }
+              // Private event posts completely excluded
+            ]
+          },
+          {
+            $or: [
+              { isRepost: { $ne: true } }, // Not a repost
+              { 
+                isRepost: true,
+                'originalPost.isDeleted': { $ne: true }, // Repost of non-deleted post
+                'originalPost': { $exists: true, $ne: null } // Original post exists
+              }
+            ]
           }
-          // Private event posts completely excluded
         ]
       }
     },
@@ -678,6 +776,14 @@ const fetchRegularPosts = async (userId, followingIds, timeRange) => {
             if: { $isArray: '$comments' },
             then: { $size: '$comments' },
             else: 0
+          }
+        },
+        // ✅ NEW: For reposts, use original post's engagement metrics
+        repostCount: {
+          $cond: {
+            if: { $eq: ['$isRepost', true] },
+            then: { $ifNull: ['$originalPost.repostCount', 0] },
+            else: { $ifNull: ['$repostCount', 0] }
           }
         }
       }

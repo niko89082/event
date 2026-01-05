@@ -2,6 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import FeedEventCard from './FeedEventCard';
+import FriendsActivityFeed from './FriendsActivityFeed';
+import HostingEventsView from './HostingEventsView';
+import AttendingEventsView from './AttendingEventsView';
 import { getMockFeedEvents } from './templates/MockEventData';
 import api from '../../services/api';
 
@@ -11,6 +14,38 @@ export default function EventsFeedSection({
   currentUserId,
   useMockData = false 
 }) {
+  // For friends tab, use the new FriendsActivityFeed component
+  if (activeTab === 'friends') {
+    return (
+      <FriendsActivityFeed
+        navigation={navigation}
+        currentUserId={currentUserId}
+        useMockData={useMockData}
+      />
+    );
+  }
+
+  // For hosting tab, use the new HostingEventsView component
+  if (activeTab === 'hosting') {
+    return (
+      <HostingEventsView
+        navigation={navigation}
+        currentUserId={currentUserId}
+        useMockData={useMockData}
+      />
+    );
+  }
+
+  // For attending tab, use the new AttendingEventsView component
+  if (activeTab === 'attending') {
+    return (
+      <AttendingEventsView
+        navigation={navigation}
+        currentUserId={currentUserId}
+        useMockData={useMockData}
+      />
+    );
+  }
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

@@ -24,7 +24,25 @@ export default function EventsScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('for-you');
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const scrollViewRef = useRef(null);
+  const isScrollingProgrammatically = useRef(false);
   const activeTabIndex = TABS.indexOf(activeTab);
+  
+  const SAFE_AREA_TOP = insets.top;
+  const HEADER_HEIGHT = 52;
+
+  // Initialize scroll position to 'for-you' tab on mount
+  useEffect(() => {
+    const forYouIndex = TABS.indexOf('for-you');
+    if (scrollViewRef.current && forYouIndex !== -1) {
+      // Use setTimeout to ensure the ScrollView is fully rendered
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({
+          x: forYouIndex * SCREEN_WIDTH,
+          animated: false,
+        });
+      }, 100);
+    }
+  }, []);
 
   // Fetch unread notification count when screen is focused
   useEffect(() => {
@@ -68,19 +86,33 @@ export default function EventsScreen({ navigation }) {
 
   const handleTabChange = (tab) => {
     const tabIndex = TABS.indexOf(tab);
+    if (tabIndex === -1 || tabIndex === activeTabIndex) return;
+    
+    // Mark that we're programmatically scrolling
+    isScrollingProgrammatically.current = true;
+    
+    // Update active tab
     setActiveTab(tab);
     
     // Scroll to the corresponding tab content
-    if (scrollViewRef.current && tabIndex !== -1) {
+    if (scrollViewRef.current) {
       scrollViewRef.current.scrollTo({
         x: tabIndex * SCREEN_WIDTH,
         animated: true,
       });
     }
+    
+    // Reset flag after animation completes
+    setTimeout(() => {
+      isScrollingProgrammatically.current = false;
+    }, 300);
   };
 
-  // Handle horizontal scroll to detect tab changes
+  // Handle horizontal scroll to detect tab changes (from swiping)
   const handleScroll = useCallback((event) => {
+    // Don't update tab if we're programmatically scrolling
+    if (isScrollingProgrammatically.current) return;
+    
     const offsetX = event.nativeEvent.contentOffset.x;
     const newIndex = Math.round(offsetX / SCREEN_WIDTH);
     
@@ -88,20 +120,6 @@ export default function EventsScreen({ navigation }) {
       setActiveTab(TABS[newIndex]);
     }
   }, [activeTabIndex]);
-
-  const SAFE_AREA_TOP = insets.top;
-  const HEADER_HEIGHT = 52;
-
-  // Sync scroll position when activeTab changes from tab bar
-  useEffect(() => {
-    const tabIndex = TABS.indexOf(activeTab);
-    if (scrollViewRef.current && tabIndex !== -1) {
-      scrollViewRef.current.scrollTo({
-        x: tabIndex * SCREEN_WIDTH,
-        animated: true,
-      });
-    }
-  }, [activeTab]);
 
   return (
     <View style={styles.container}>
@@ -187,8 +205,10 @@ export default function EventsScreen({ navigation }) {
               showsVerticalScrollIndicator={false}
               nestedScrollEnabled={true}
             >
-              {/* Featured Events Section */}
-              <FeaturedEventsSection navigation={navigation} />
+              {/* Featured Events Section - Only show for for-you tab */}
+              {tab === 'for-you' && (
+                <FeaturedEventsSection navigation={navigation} />
+              )}
               
               {/* Feed Section */}
               <EventsFeedSection 

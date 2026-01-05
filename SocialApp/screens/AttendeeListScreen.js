@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import api from '../services/api';
-import { API_BASE_URL } from '../services/api';
+import apiConfig from '../config/apiConfig';
 import QRCode from 'react-native-qrcode-svg';
 import SwipeableRow from '../components/SwipeableRow'; // Enhanced Apple-style swipe component
 import { AuthContext } from '../services/AuthContext';
@@ -479,6 +479,14 @@ const AttendeeListScreen = ({ route, navigation }) => {
     return matchesSearch;
   });
 
+  // Get user display name
+  const getUserDisplayName = (user) => {
+    if (!user) return 'Unknown User';
+    if (user.fullName) return user.fullName;
+    if (user.firstName && user.lastName) return `${user.firstName} ${user.lastName}`;
+    return user.username || 'Unknown User';
+  };
+
   // Render attendee item
   const renderAttendeeItem = ({ item }) => {
     const isCheckedIn = event?.checkedIn?.includes(item._id);
@@ -487,6 +495,8 @@ const AttendeeListScreen = ({ route, navigation }) => {
     const isCurrentUser = currentUser && item._id === currentUser._id;
     const friendshipStatus = friendshipStatuses[item._id] || 'not-friends';
     const isFriendActionLoading = friendActionLoading.has(item._id);
+    const displayName = getUserDisplayName(item);
+    const username = item.username || '';
 
     // Show loading state for removing users
     if (isRemoving) {
@@ -505,28 +515,60 @@ const AttendeeListScreen = ({ route, navigation }) => {
           onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
           activeOpacity={0.8}
         >
-          {/* Circular Profile Photo */}
-          <Image
-            source={{
-              uri: item.profilePicture
-                ? `${API_BASE_URL}${item.profilePicture}`
-                : 'https://placehold.co/50x50.png?text=👤'
-            }}
-            style={styles.profilePicture}
-          />
+          {/* Circular Profile Photo with Checkmark Overlay */}
+          <View style={styles.profilePictureContainer}>
+            {item.profilePicture ? (
+              <Image
+                source={{
+                  uri: `${apiConfig.BASE_URL}${item.profilePicture}`
+                }}
+                style={styles.profilePicture}
+              />
+            ) : (
+              <View style={[styles.profilePicture, styles.profilePicturePlaceholder]}>
+                <Text style={styles.profilePictureInitials}>
+                  {displayName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                </Text>
+              </View>
+            )}
+            {/* Checkmark Overlay - Always show for hosts (gray/green), only green for others if checked in */}
+            {canManage && !isCurrentUser ? (
+              // Hosts: Always show checkmark (gray if not checked in, green if checked in) - tappable
+              <TouchableOpacity
+                style={styles.checkmarkOverlay}
+                onPress={() => handleCheckInToggle(item._id, isCheckedIn)}
+                disabled={isToggleLoading}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color={isCheckedIn ? "#22c55e" : "#9ca3af"}
+                  style={styles.checkmarkIcon}
+                />
+              </TouchableOpacity>
+            ) : isCheckedIn ? (
+              // Non-hosts: Only show green checkmark if checked in
+              <View style={styles.checkmarkOverlay}>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color="#22c55e"
+                  style={styles.checkmarkIcon}
+                />
+              </View>
+            ) : null}
+          </View>
           
           <View style={styles.attendeeInfo}>
-            <Text style={styles.attendeeName}>
-              {item.username || 'Unknown User'}
+            <Text style={styles.attendeeName} numberOfLines={1}>
+              {displayName}
             </Text>
-            <View style={styles.statusRow}>
-              {isCheckedIn && (
-                <View style={styles.checkedInBadge}>
-                  <Ionicons name="checkmark-circle" size={14} color="#34C759" />
-                  <Text style={styles.checkedInText}>Checked In</Text>
-                </View>
-              )}
-            </View>
+            {username && (
+              <Text style={styles.attendeeUsername} numberOfLines={1}>
+                {username}
+              </Text>
+            )}
           </View>
         </TouchableOpacity>
 
@@ -538,8 +580,6 @@ const AttendeeListScreen = ({ route, navigation }) => {
               style={[
                 styles.friendButton,
                 friendshipStatus === 'friends' && styles.friendsButton,
-                friendshipStatus === 'request-sent' && styles.pendingButton,
-                friendshipStatus === 'request-received' && styles.acceptButton,
                 isFriendActionLoading && styles.loadingButton
               ]}
               onPress={() => handleFriendAction(item._id, friendshipStatus)}
@@ -547,26 +587,15 @@ const AttendeeListScreen = ({ route, navigation }) => {
               activeOpacity={0.7}
             >
               {isFriendActionLoading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <ActivityIndicator size="small" color="#1f2937" />
               ) : (
-                <>
-                  <Ionicons 
-                    name={
-                      friendshipStatus === 'friends' ? "people" :
-                      friendshipStatus === 'request-sent' ? "time" :
-                      friendshipStatus === 'request-received' ? "checkmark" :
-                      "person-add"
-                    }
-                    size={16} 
-                    color="#FFFFFF" 
-                  />
-                  <Text style={styles.friendButtonText}>
-                    {friendshipStatus === 'friends' ? 'Friends' :
-                     friendshipStatus === 'request-sent' ? 'Pending' :
-                     friendshipStatus === 'request-received' ? 'Accept' :
-                     'Add Friend'}
-                  </Text>
-                </>
+                <Text style={styles.friendButtonText}>
+                  {friendshipStatus === 'friends' 
+                    ? 'Following' 
+                    : friendshipStatus === 'request-sent'
+                    ? 'Pending'
+                    : 'Follow'}
+                </Text>
               )}
             </TouchableOpacity>
           )}
@@ -609,46 +638,35 @@ const AttendeeListScreen = ({ route, navigation }) => {
   // Header component
   const renderHeader = () => (
     <View style={styles.header}>
-      <View style={styles.titleRow}>
-        <Text style={styles.title}>
-          Attendees ({filteredAttendees.length})
-        </Text>
-        {canManage && (
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={styles.qrButton}
-              onPress={handleShowQR}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="qr-code" size={24} color="#3797EF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.scanButton}
-              onPress={handleOpenScanner}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="scan" size={24} color="#3797EF" />
-            </TouchableOpacity>
-          </View>
-        )}
+      {/* Top Row: Back Button, Title, Spacer */}
+      <View style={styles.headerTopRow}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={24} color="#1f2937" />
+        </TouchableOpacity>
+        <Text style={styles.title}>Attendees</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
       {/* Search Bar */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
+        <Ionicons name="search" size={20} color="#9ca3af" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search attendees..."
+          placeholder="Search"
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholderTextColor="#8E8E93"
+          placeholderTextColor="#9ca3af"
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity
             onPress={() => setSearchQuery('')}
             style={styles.clearButton}
           >
-            <Ionicons name="close-circle" size={20} color="#8E8E93" />
+            <Ionicons name="close-circle" size={20} color="#9ca3af" />
           </TouchableOpacity>
         )}
       </View>
@@ -689,11 +707,15 @@ const AttendeeListScreen = ({ route, navigation }) => {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
+      {/* Sticky Header */}
+      <View style={styles.stickyHeader}>
+        {renderHeader()}
+      </View>
+      
       <FlatList
         data={filteredAttendees}
         keyExtractor={item => item._id}
         renderItem={renderAttendeeItem}
-        ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyState}
         refreshControl={
           <RefreshControl
@@ -805,6 +827,12 @@ const styles = {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  stickyHeader: {
+    backgroundColor: '#FFFFFF',
+    zIndex: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -819,49 +847,51 @@ const styles = {
 
   // Header Styles
   header: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E5EA',
     backgroundColor: '#FFFFFF',
+    paddingTop: 0,
+    paddingBottom: 12,
   },
-  titleRow: {
+  headerTopRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    justifyContent: 'space-between',
+    height: 50,
+    paddingHorizontal: 16,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: -8,
   },
   title: {
-    fontSize: 24,
+    fontSize: 16,
     fontWeight: '700',
-    color: '#000000',
+    color: '#1f2937',
   },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 12,
+  headerSpacer: {
+    width: 32,
   },
-  qrButton: {
-    padding: 8,
-  },
-  scanButton: {
-    padding: 8,
-  },
-
   // Search Styles
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F2F2F7',
+    backgroundColor: '#f3f4f6',
     borderRadius: 10,
     paddingHorizontal: 12,
     height: 40,
+    marginHorizontal: 16,
+    marginTop: 4,
   },
   searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 16,
-    color: '#000000',
+    fontSize: 14,
+    color: '#1f2937',
+    fontWeight: '500',
   },
   clearButton: {
     marginLeft: 8,
@@ -871,12 +901,12 @@ const styles = {
   attendeeItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F2F2F7',
+    borderBottomColor: '#f9fafb',
     backgroundColor: '#FFFFFF',
-    minHeight: 85,
   },
   attendeeContent: {
     flex: 1,
@@ -885,67 +915,74 @@ const styles = {
   },
   actionButtons: {
     flexDirection: 'row',
-    gap: 8,
     alignItems: 'center',
   },
   
-  // Circular Profile Photo
+  // Profile Picture Container with Checkmark
+  profilePictureContainer: {
+    position: 'relative',
+    marginRight: 12,
+  },
   profilePicture: {
     width: 50,
     height: 50,
-    borderRadius: 25, // Perfect circle
-    marginRight: 12,
-    backgroundColor: '#F2F2F7',
+    borderRadius: 25,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  profilePicturePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#dbeafe',
+  },
+  profilePictureInitials: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  checkmarkOverlay: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 2,
+  },
+  checkmarkIcon: {
+    // Icon styling handled by Ionicons component
   },
   
   attendeeInfo: {
     flex: 1,
+    justifyContent: 'center',
   },
   attendeeName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 2,
   },
-  statusRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  checkedInBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  checkedInText: {
+  attendeeUsername: {
     fontSize: 12,
-    color: '#34C759',
-    fontWeight: '500',
+    color: '#6b7280',
   },
 
   // Friend Button Styles
   friendButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3797EF',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
     borderRadius: 8,
-    gap: 4,
-    minWidth: 80,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   friendsButton: {
-    backgroundColor: '#5856D6',
-  },
-  pendingButton: {
-    backgroundColor: '#FF9500',
-  },
-  acceptButton: {
-    backgroundColor: '#34C759',
+    backgroundColor: '#f3f4f6',
   },
   friendButtonText: {
     fontSize: 12,
-    color: '#FFFFFF',
+    color: '#1f2937',
     fontWeight: '600',
   },
   loadingButton: {

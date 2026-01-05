@@ -90,4 +90,48 @@ api.interceptors.response.use(
   }
 );
 
+// ✅ NEW: Repost API methods
+export const repostAPI = {
+  /**
+   * Repost a post
+   * @param {string} postId - The ID of the post to repost
+   * @param {string} comment - Optional comment for quote repost
+   * @returns {Promise} API response
+   */
+  repostPost: async (postId, comment = null) => {
+    return api.post(`/api/photos/repost/${postId}`, { comment });
+  },
+
+  /**
+   * Remove a repost
+   * @param {string} postId - The ID of the original post
+   * @returns {Promise} API response
+   */
+  undoRepost: async (postId) => {
+    return api.delete(`/api/photos/repost/${postId}`);
+  },
+
+  /**
+   * Get repost status for a post
+   * @param {string} postId - The ID of the post to check
+   * @returns {Promise} API response with { hasReposted: boolean, repostId: string | null }
+   */
+  getRepostStatus: async (postId) => {
+    return api.get(`/api/photos/${postId}/repost-status`);
+  },
+
+  /**
+   * Create a quote repost (repost with comment)
+   * @param {string} postId - The ID of the post to repost
+   * @param {string} comment - The comment text (required for quote repost)
+   * @returns {Promise} API response
+   */
+  quoteRepost: async (postId, comment) => {
+    if (!comment || !comment.trim()) {
+      throw new Error('Comment is required for quote repost');
+    }
+    return api.post(`/api/photos/repost/${postId}`, { comment: comment.trim() });
+  }
+};
+
 export default api;

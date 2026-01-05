@@ -1441,6 +1441,101 @@ router.get('/user/:userId', protect, async (req, res) => {
   }
 });
 
+// Get Hosting Events with Stats (includes both hosted and co-hosted)
+router.get('/hosting', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { limit = 50, skip = 0 } = req.query;
+
+    console.log(`📅 Getting hosting events for user: ${userId}`);
+
+    // Get events where user is the main host OR a co-host
+    const hostedQuery = {
+      host: userId,
+      time: { $gte: new Date() }, // Only upcoming events
+    };
+
+    const cohostedQuery = {
+      coHosts: userId,
+      time: { $gte: new Date() }, // Only upcoming events
+    };
+
+    // Fetch both hosted and co-hosted events
+    const [hostedEvents, cohostedEvents] = await Promise.all([
+      Event.find(hostedQuery)
+        .populate('host', 'username profilePicture')
+        .populate('attendees', 'username profilePicture')
+        .populate('coHosts', 'username profilePicture')
+        .sort({ time: 1 })
+        .lean(),
+      Event.find(cohostedQuery)
+        .populate('host', 'username profilePicture')
+        .populate('attendees', 'username profilePicture')
+        .populate('coHosts', 'username profilePicture')
+        .sort({ time: 1 })
+        .lean(),
+    ]);
+
+    // Combine and deduplicate events (in case user is both host and co-host)
+    const eventMap = new Map();
+    
+    hostedEvents.forEach(event => {
+      eventMap.set(event._id.toString(), {
+        ...event,
+        hostingType: 'hosted', // User is the main host
+        isHost: true,
+        isCoHost: false,
+      });
+    });
+
+    cohostedEvents.forEach(event => {
+      const existing = eventMap.get(event._id.toString());
+      if (!existing) {
+        eventMap.set(event._id.toString(), {
+          ...event,
+          hostingType: 'co-hosting', // User is a co-host
+          isHost: false,
+          isCoHost: true,
+        });
+      }
+    });
+
+    const allEvents = Array.from(eventMap.values())
+      .sort((a, b) => new Date(a.time) - new Date(b.time))
+      .slice(parseInt(skip), parseInt(skip) + parseInt(limit));
+
+    // Calculate stats - only count events where user is the main host
+    const totalHostedQuery = {
+      host: userId,
+    };
+    const allHostedEvents = await Event.find(totalHostedQuery).select('attendees');
+    
+    const eventsCreated = allHostedEvents.length;
+    const totalAttendees = allHostedEvents.reduce((sum, event) => {
+      return sum + (event.attendees?.length || 0);
+    }, 0);
+
+    console.log(`✅ Returning ${allEvents.length} hosting events (${hostedEvents.length} hosted, ${cohostedEvents.length} co-hosted, ${eventsCreated} total created, ${totalAttendees} total attendees)`);
+
+    res.json({
+      events: allEvents,
+      stats: {
+        eventsCreated,
+        totalAttendees,
+      },
+      total: allEvents.length,
+      hasMore: allEvents.length === parseInt(limit),
+    });
+
+  } catch (error) {
+    console.error('❌ Get hosting events error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
 // Get User Calendar Events
 router.get('/user/:userId/calendar', protect, async (req, res) => {
   try {

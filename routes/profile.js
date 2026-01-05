@@ -633,8 +633,17 @@ router.get('/:userId', protect, async (req, res) => {
     console.log(`📅 Attending events: ${user.attendingEvents?.length || 0} total, ${filteredAttendingEvents.length} filtered (excluding hosted)`);
     
     // ✅ SIMPLIFIED: Get all posts (everything is public by default)
+    // ✅ NEW: Populate originalPost for reposts
     const photos = await Photo.find({ user: targetUserId, isDeleted: false })
       .populate('user', 'username profilePicture _id')
+      .populate({
+        path: 'originalPost',
+        populate: {
+          path: 'user',
+          select: 'username profilePicture _id'
+        },
+        select: '-__v'
+      })
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();

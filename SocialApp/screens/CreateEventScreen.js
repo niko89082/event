@@ -1,5 +1,5 @@
 // screens/CreateEventScreen.js - Phase 2: Simplified Privacy + Form Toggle + Photos
-import React, { useState, useEffect, useRef, useContext } from 'react';
+import React, { useState, useEffect, useRef, useContext, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
   Switch, TouchableOpacity, Modal, FlatList, SafeAreaView, StatusBar,
@@ -74,9 +74,7 @@ const PRIVACY_LEVELS = [
 ];
 
 const CATEGORIES = [
-  'General', 'Party', 'Social', 'Meeting', 'Club', 'Education', 
-  'Business', 'Professional', 'Entertainment', 'Music', 'Sports',
-  'Food', 'Art', 'Technology', 'Health', 'Travel', 'Celebration'
+  'Party', 'Music', 'Workshop', 'Meetup'
 ];
 
 // PHASE 2: Smart form recommendations based on category
@@ -115,19 +113,16 @@ export default function CreateEventScreen({ navigation, route }) {
   const [description, setDescription] = useState('');
   const [dateTime, setDateTime] = useState(new Date());
   const [endDateTime, setEndDateTime] = useState(null);  // Optional
-  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
-  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
   const [locQuery, setLocQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [location, setLocation] = useState('');
   const [coords, setCoords] = useState(null);
-  const [category, setCategory] = useState('General');
-  const [cover, setCover] = useState(null); 
+  const [category, setCategory] = useState('Party');
+  const [cover, setCover] = useState(null);
+  const [hideGuestList, setHideGuestList] = useState(false); 
 
   // Advanced fields (Step 2)
-  const [maxAttendees, setMaxAttendees] = useState('50');
+  const [maxAttendees, setMaxAttendees] = useState('');
   const [price, setPrice] = useState('0');
   
   // PHASE 2: Simplified privacy (no redundant toggles)
@@ -167,52 +162,44 @@ export default function CreateEventScreen({ navigation, route }) {
   const [creating, setCreating] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showFormModal, setShowFormModal] = useState(false);
-  const scrollY = useRef(new Animated.Value(0)).current;
 
   const [showCoverModal, setShowCoverModal] = useState(false);
   const [coverSource, setCoverSource] = useState(null); // 'template' | 'upload'
+  const [coverImageDimensions, setCoverImageDimensions] = useState({ width: 0, height: 0 });
+  const [coverHeight, setCoverHeight] = useState(400);
+  const HEADER_MAX_HEIGHT = 400;
+  const HEADER_MIN_HEIGHT = 150;
+  
+  // Handle navigation params from date picker screen
+  useEffect(() => {
+    if (route.params?.startDateTime) {
+      setDateTime(new Date(route.params.startDateTime));
+    }
+    if (route.params?.endDateTime) {
+      setEndDateTime(new Date(route.params.endDateTime));
+    } else if (route.params?.endDateTime === null) {
+      setEndDateTime(null);
+    }
+  }, [route.params]);
+
   useEffect(() => {
     checkPaymentStatus();
     
     navigation.setOptions({
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#E1E1E1',
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 18,
-        color: '#000000',
-      },
-      headerTitle: 'New Event',
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-        >
-          <Ionicons name="arrow-back" size={24} color="#000000" />
-        </TouchableOpacity>
-      ),
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={handleCreate}
-          style={[styles.headerButton, (!canProceed() || creating) && styles.headerButtonDisabled]}
-          disabled={!canProceed() || creating}
-        >
-          {creating ? (
-            <ActivityIndicator size="small" color="#3797EF" />
-          ) : (
-            <Text style={[styles.headerButtonText, (!canProceed() || creating) && styles.headerButtonTextDisabled]}>
-              Create
-            </Text>
-          )}
-        </TouchableOpacity>
-      ),
-          });
-}, [title, location, dateTime, creating, coHosts, isPaidEvent, price, requiresCheckInForm, selectedForm]);
+      headerShown: false,
+    });
+  }, [title, location, dateTime, creating, coHosts, isPaidEvent, price, requiresCheckInForm, selectedForm]);
+
+  // Debug: Log initial dimensions
+  useEffect(() => {
+    console.log('🎬 CreateEventScreen mounted:', {
+      SCREEN_WIDTH,
+      coverHeight,
+      cover: cover ? 'has cover' : 'no cover',
+      HEADER_MIN_HEIGHT,
+      HEADER_MAX_HEIGHT: 600
+    });
+  }, []);
 
   // PHASE 2: Load available forms when user wants to add form
   const loadAvailableForms = async () => {
@@ -412,11 +399,12 @@ export default function CreateEventScreen({ navigation, route }) {
     }
     formData.append('location', location.trim());
     formData.append('category', category);
-    formData.append('maxAttendees', parseInt(maxAttendees) || 0);
+    formData.append('maxAttendees', maxAttendees && maxAttendees.trim() !== '' ? parseInt(maxAttendees) || 0 : 0);
     formData.append('coverImageSource', coverSource || 'upload');
     // PHASE 1: Only send privacy level - backend sets appropriate permissions
     formData.append('privacyLevel', privacyLevel);
     formData.append('allowGuestPasses', true); // Enable guest passes for all privacy levels
+    formData.append('hideGuestList', hideGuestList);
     
       // PHASE 2: Form integration
       if (requiresCheckInForm && selectedForm) {
@@ -562,40 +550,40 @@ const pickCoverImage = () => {
   const handleCoverSelect = (imageSource, sourceType) => {
   console.log('🖼️ Cover selected:', { sourceType, imageSource });
   
+  let imageUri;
   if (sourceType === 'template') {
     // For templates, imageSource is a require() object
     // We need to resolve it to get the URI
     const resolvedSource = Image.resolveAssetSource(imageSource);
     console.log('📷 Resolved template URI:', resolvedSource.uri);
-    setCover({ uri: resolvedSource.uri });
+    imageUri = resolvedSource.uri;
+    setCover({ uri: imageUri });
+    // Get dimensions from resolved source
+    if (resolvedSource.width && resolvedSource.height) {
+      const aspectRatio = resolvedSource.height / resolvedSource.width;
+      const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+      setCoverHeight(Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600)));
+      setCoverImageDimensions({ width: resolvedSource.width, height: resolvedSource.height });
+    }
   } else {
     // For uploaded images, imageSource should already be a URI
+    imageUri = imageSource;
     setCover(imageSource);
+    // Get image dimensions
+    Image.getSize(imageUri, (width, height) => {
+      const aspectRatio = height / width;
+      const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+      setCoverHeight(Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600)));
+      setCoverImageDimensions({ width, height });
+    }, (error) => {
+      console.error('Error getting image size:', error);
+      setCoverHeight(340);
+    });
   }
   
   setCoverSource(sourceType);
   console.log('📷 Cover set - Source type:', sourceType);
 };
-  const onDateChange = (event, selectedDate) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      const newDateTime = new Date(dateTime);
-      newDateTime.setFullYear(selectedDate.getFullYear());
-      newDateTime.setMonth(selectedDate.getMonth());
-      newDateTime.setDate(selectedDate.getDate());
-      setDateTime(newDateTime);
-    }
-  };
-
-  const onTimeChange = (event, selectedTime) => {
-    setShowTimePicker(false);
-    if (selectedTime) {
-      const newDateTime = new Date(dateTime);
-      newDateTime.setHours(selectedTime.getHours());
-      newDateTime.setMinutes(selectedTime.getMinutes());
-      setDateTime(newDateTime);
-    }
-  };
 
   const onEarlyBirdDateChange = (event, selectedDate) => {
     setShowEarlyBirdDatePicker(false);
@@ -626,219 +614,340 @@ const pickCoverImage = () => {
     setSuggestions([]);
   };
 
+
   return (
-  <SafeAreaView style={styles.container}>
-    <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+  <View style={styles.container}>
+    <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-  {/* Cover Photo Section at Top */}
- {/* Cover Photo Section at Top */}
-<View style={styles.coverSection}>
-  {cover ? (
-    <Image 
-      source={typeof cover === 'string' ? { uri: cover } : cover} 
-      style={styles.coverImage} 
-    />
-  ) : (
-    <View style={styles.coverPlaceholder}>
-      <Ionicons name="camera-outline" size={48} color="#C7C7CC" />
-      <Text style={styles.coverPlaceholderText}>Add Cover Photo</Text>
-      <Text style={styles.coverPlaceholderSubtext}>Make your event stand out</Text>
-    </View>
-  )}
-  <TouchableOpacity
-    style={styles.coverOverlay}
-    onPress={() => setShowCoverModal(true)}
-  >
-    <Ionicons name="camera" size={20} color="#FFFFFF" />
-  </TouchableOpacity>
-</View>
-
-  <View style={styles.formContainer}>
-    
-    {/* Basic Event Information */}
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Event Details</Text>
+      {/* Header Overlay - Consistent styling */}
+      <View style={styles.safeAreaHeader} pointerEvents="box-none">
+        <View style={styles.headerOverlay} pointerEvents="box-none">
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.headerCancelButton}
+          >
+            <Text style={styles.headerCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>Create New Event</Text>
+          </View>
+          <View style={styles.headerSpacer} />
+        </View>
+      </View>
       
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>Event Title *</Text>
-        <TextInput
-          style={styles.input}
-          value={title}
-          onChangeText={setTitle}
-          placeholder="What's the name of your event?"
-          placeholderTextColor="#C7C7CC"
-        />
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>Description</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          value={description}
-          onChangeText={setDescription}
-          placeholder="Tell people what your event is about..."
-          placeholderTextColor="#C7C7CC"
-          multiline
-          numberOfLines={4}
-          textAlignVertical="top"
-        />
-      </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Category</Text>
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => setShowCategoryModal(true)}
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false} 
+        contentContainerStyle={styles.scrollContent}
+        bounces={true}
+      >
+        {/* Cover Photo Section at Top - Hero Container */}
+        <View 
+          style={[
+            styles.heroContainer,
+            { 
+              height: coverHeight,
+              backgroundColor: 'transparent',
+              marginTop: 0,
+              paddingTop: 0,
+            }
+          ]}
+        >
+          <TouchableOpacity 
+            style={styles.coverTouchable}
+            onPress={() => setShowCoverModal(true)}
+            activeOpacity={0.9}
+          >
+            {cover ? (
+              <Image 
+                source={typeof cover === 'string' ? { uri: cover } : cover} 
+                style={[
+                  styles.heroImage,
+                  { 
+                    width: SCREEN_WIDTH,
+                    height: coverHeight,
+                  }
+                ]}
+                resizeMode="cover"
+                onLoad={(e) => {
+                  const { width, height } = e.nativeEvent.source;
+                  console.log('🖼️ Image loaded:', { 
+                    sourceWidth: width, 
+                    sourceHeight: height,
+                    screenWidth: SCREEN_WIDTH,
+                    coverHeight,
+                  });
+                  if (width && height) {
+                    const aspectRatio = height / width;
+                    const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+                    const finalHeight = Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600));
+                    console.log('📐 Height calculation:', {
+                      aspectRatio,
+                      calculatedHeight,
+                      finalHeight,
+                      HEADER_MIN_HEIGHT
+                    });
+                    setCoverHeight(finalHeight);
+                    setCoverImageDimensions({ width, height });
+                  }
+                }}
+                onError={(error) => {
+                  console.error('❌ Image load error:', error);
+                }}
+              />
+            ) : (
+              <View 
+                style={[
+                  styles.coverPlaceholder,
+                  {
+                    width: SCREEN_WIDTH,
+                    height: coverHeight,
+                  }
+                ]}
               >
-                <Text style={styles.selectButtonText}>{category}</Text>
+                <View style={styles.coverIconContainer}>
+                  <Ionicons name="add-a-photo" size={32} color="#8E8E93" />
+                </View>
+                <Text style={styles.coverPlaceholderText}>Add Cover Photo</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.formContainerWrapper}>
+          <View style={styles.formContainer}>
+            
+            {/* Event Name - Large Input */}
+    <View style={styles.eventNameContainer}>
+      <TextInput
+        style={styles.eventNameInput}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Event Name"
+        placeholderTextColor="#C7C7CC"
+      />
+    </View>
+
+    {/* Description with Character Counter */}
+    <View style={styles.descriptionContainer}>
+      <TextInput
+        style={styles.descriptionInput}
+        value={description}
+        onChangeText={setDescription}
+        placeholder="Tell people what your event is about..."
+        placeholderTextColor="#8E8E93"
+        multiline
+        numberOfLines={4}
+        textAlignVertical="top"
+        maxLength={500}
+      />
+      <Text style={styles.characterCounter}>
+        {description.length}/500
+      </Text>
+    </View>
+
+    {/* Category Pills */}
+    <View style={styles.categorySection}>
+      <Text style={styles.categoryLabel}>CATEGORY</Text>
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        style={styles.categoryPillsContainer}
+        contentContainerStyle={styles.categoryPillsContent}
+      >
+        {CATEGORIES.map((cat) => (
+          <TouchableOpacity
+            key={cat}
+            style={[
+              styles.categoryPill,
+              category === cat && styles.categoryPillSelected
+            ]}
+            onPress={() => setCategory(cat)}
+          >
+            <Text style={[
+              styles.categoryPillText,
+              category === cat && styles.categoryPillTextSelected
+            ]}>
+              {cat}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+
+          {/* When */}
+          <View style={styles.whenWhereSection}>
+            <TouchableOpacity
+              style={styles.whenCard}
+              onPress={() => navigation.navigate('EventDateTimePickerScreen', {
+                startDateTime: dateTime ? dateTime.toISOString() : new Date().toISOString(),
+                endDateTime: endDateTime ? endDateTime.toISOString() : null
+              })}
+              activeOpacity={0.7}
+            >
+              <View style={styles.whenCardIcon}>
+                <Ionicons name="calendar-month" size={20} color="#3b82f6" />
+              </View>
+              <View style={styles.whenCardContent}>
+                <Text style={styles.whenCardLabel}>When</Text>
+                <Text style={styles.whenCardValue}>
+                  {dateTime ? `${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Select Date & Time'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#8E8E93" />
+            </TouchableOpacity>
+
+            {/* Where */}
+            <View style={styles.whereCard}>
+              <View style={styles.whereCardIcon}>
+                <Ionicons name="location-on" size={20} color="#3b82f6" />
+              </View>
+              <View style={styles.whereCardContent}>
+                <Text style={styles.whereCardLabel}>Where</Text>
+                <TextInput
+                  style={styles.whereCardInput}
+                  value={locQuery}
+                  onChangeText={onLocQuery}
+                  placeholder="Location or Address"
+                  placeholderTextColor="#8E8E93"
+                />
+              </View>
+              <Ionicons name="search" size={20} color="#8E8E93" />
+            </View>
+            
+            {suggestions.length > 0 && (
+              <View style={styles.suggestionsContainer}>
+                {suggestions.map((suggestion, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.suggestionItem}
+                    onPress={() => selectLocation(suggestion)}
+                  >
+                    <Ionicons name="location-outline" size={16} color="#8E8E93" />
+                    <Text style={styles.suggestionText}>{suggestion.display_name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Combined Settings Section: Privacy, Hosts, Max Attendees, Hide Guest List */}
+          <View style={styles.combinedSettingsSection}>
+            {/* Privacy Control */}
+            <View style={styles.combinedSectionItem}>
+              <Text style={styles.combinedSectionLabel}>PRIVACY CONTROL</Text>
+              <TouchableOpacity
+                style={styles.privacySelectButton}
+                onPress={() => setShowPrivacyModal(true)}
+              >
+                <Text style={styles.privacySelectText}>
+                  {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'} Event
+                </Text>
                 <Ionicons name="chevron-down" size={20} color="#8E8E93" />
               </TouchableOpacity>
             </View>
-          </View>
 
-          {/* When & Where */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>When & Where</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Date & Time *</Text>
-              <View style={styles.dateTimeRow}>
-                <TouchableOpacity
-                  style={[styles.dateTimeButton, { flex: 1, marginRight: 8 }]}
-                  onPress={() => setShowDatePicker(true)}
-                >
-                  <Ionicons name="calendar-outline" size={20} color="#3797EF" />
-                  <Text style={styles.dateTimeText}>
-                    {dateTime.toLocaleDateString()}
-                  </Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[styles.dateTimeButton, { flex: 1, marginLeft: 8 }]}
-                  onPress={() => setShowTimePicker(true)}
-                >
-                  <Ionicons name="time-outline" size={20} color="#3797EF" />
-                  <Text style={styles.dateTimeText}>
-                    {dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* End Time Picker - only show if start time is set */}
-            {dateTime && (
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Text style={styles.label}>End Time (Optional)</Text>
-                  {endDateTime && (
-                    <TouchableOpacity 
-                      onPress={() => setEndDateTime(null)}
-                      style={styles.clearButton}
-                    >
-                      <Text style={styles.clearButtonText}>Clear</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                
-                {endDateTime ? (
-                  <View style={styles.dateTimeRow}>
-                    <TouchableOpacity
-                      style={[styles.dateTimeButton, { flex: 1, marginRight: 8 }]}
-                      onPress={() => setShowEndDatePicker(true)}
-                    >
-                      <Ionicons name="calendar-outline" size={20} color="#3797EF" />
-                      <Text style={styles.dateTimeText}>
-                        {endDateTime.toLocaleDateString()}
-                      </Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                      style={[styles.dateTimeButton, { flex: 1, marginLeft: 8 }]}
-                      onPress={() => setShowEndTimePicker(true)}
-                    >
-                      <Ionicons name="time-outline" size={20} color="#3797EF" />
-                      <Text style={styles.dateTimeText}>
-                        {endDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </Text>
-                    </TouchableOpacity>
+            {/* Hosts */}
+            <View style={styles.combinedSectionItem}>
+              <Text style={styles.combinedSectionLabel}>HOSTS</Text>
+              <View style={styles.hostsRow}>
+                <View style={styles.hostItem}>
+                  <View style={styles.hostAvatarContainer}>
+                    {currentUser?.profilePicture ? (
+                      <Image 
+                        source={{ uri: currentUser.profilePicture }} 
+                        style={styles.hostAvatar} 
+                      />
+                    ) : (
+                      <View style={styles.hostAvatarPlaceholder}>
+                        <Text style={styles.hostAvatarText}>
+                          {currentUser?.username?.charAt(0).toUpperCase() || 'U'}
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.addEndTimeButton}
-                    onPress={() => {
-                      // Default to 2 hours after start
-                      const defaultEnd = new Date(dateTime.getTime() + 2 * 60 * 60 * 1000);
-                      setEndDateTime(defaultEnd);
-                    }}
-                  >
-                    <Ionicons name="add-circle-outline" size={20} color="#3797EF" />
-                    <Text style={styles.addEndTimeText}>Add End Time</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Location *</Text>
-              <TextInput
-                style={styles.input}
-                value={locQuery}
-                onChangeText={onLocQuery}
-                placeholder="Where is your event?"
-                placeholderTextColor="#C7C7CC"
-              />
-              
-              {suggestions.length > 0 && (
-                <View style={styles.suggestionsContainer}>
-                  {suggestions.map((suggestion, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      style={styles.suggestionItem}
-                      onPress={() => selectLocation(suggestion)}
-                    >
-                      <Ionicons name="location-outline" size={16} color="#8E8E93" />
-                      <Text style={styles.suggestionText}>{suggestion.display_name}</Text>
-                    </TouchableOpacity>
-                  ))}
                 </View>
-              )}
+                
+                {coHosts.length > 0 && (
+                  coHosts.map((coHost) => (
+                    <View key={coHost._id} style={styles.hostItem}>
+                      <View style={styles.hostAvatarContainer}>
+                        {coHost.profilePicture ? (
+                          <Image 
+                            source={{ uri: coHost.profilePicture }} 
+                            style={styles.hostAvatar} 
+                          />
+                        ) : (
+                          <View style={styles.hostAvatarPlaceholder}>
+                            <Text style={styles.hostAvatarText}>
+                              {coHost.username.charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => removeCoHost(coHost._id)}
+                        style={styles.removeHostButton}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+
+                <TouchableOpacity
+                  style={styles.addCoHostButtonNew}
+                  onPress={() => setShowCoHostModal(true)}
+                >
+                  <Ionicons name="add-circle" size={20} color="#3b82f6" />
+                  <Text style={styles.addCoHostButtonTextNew}>Add Co-host</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Divider */}
+            <View style={styles.combinedSectionDivider} />
+
+            {/* Max Attendees */}
+            <View style={styles.combinedSectionItem}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingTitle}>Max Attendees</Text>
+                  <Text style={styles.settingSubtitle}>Limit number of guests</Text>
+                </View>
+                <View style={styles.maxAttendeesContainer}>
+                  <TextInput
+                    style={styles.maxAttendeesInput}
+                    value={maxAttendees}
+                    onChangeText={setMaxAttendees}
+                    placeholder="N/A"
+                    placeholderTextColor="#8E8E93"
+                    keyboardType="numeric"
+                    textAlign="center"
+                  />
+                </View>
+              </View>
+            </View>
+
+            {/* Hide Guest List */}
+            <View style={styles.combinedSectionItem}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingTitle}>Hide Guest List</Text>
+                  <Text style={styles.settingSubtitle}>Only hosts can see who's going</Text>
+                </View>
+                <Switch
+                  value={hideGuestList}
+                  onValueChange={setHideGuestList}
+                  trackColor={{ false: '#E5E5EA', true: '#3b82f6' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
             </View>
           </View>
-
-          {/* Privacy Settings */}
-         {/* Privacy Settings */}
-<View style={styles.section}>
-  <Text style={styles.sectionTitle}>Privacy Level</Text>
-  <Text style={styles.sectionDescription}>
-    Controls who can see and join your event
-  </Text>
-
-  <TouchableOpacity
-    style={styles.privacyButton}
-    onPress={() => setShowPrivacyModal(true)}
-  >
-    <View style={styles.privacyButtonContent}>
-      <Ionicons 
-        name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
-        size={24} 
-        color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
-      />
-      <View style={styles.privacyButtonText}>
-        <Text style={styles.privacyLabel}>
-          {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
-        </Text>
-        <Text style={styles.privacyDesc}>
-          {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
-        </Text>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-    </View>
-  </TouchableOpacity>
-</View>
           {showPrivacyModal && (
   <Modal
     visible={showPrivacyModal}
@@ -886,153 +995,28 @@ const pickCoverImage = () => {
     </View>
   </Modal>
 )}
-          {/* Event Settings */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Settings</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Max Attendees</Text>
-              <TextInput
-                style={styles.input}
-                value={maxAttendees}
-                onChangeText={setMaxAttendees}
-                placeholder="50"
-                placeholderTextColor="#C7C7CC"
-                keyboardType="numeric"
-              />
-            </View>
 
-            {FEATURES.PAYMENTS && (
-              <>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Ticket Price ($)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={price}
-                    onChangeText={setPrice}
-                    placeholder="0.00"
-                    placeholderTextColor="#C7C7CC"
-                    keyboardType="numeric"
-                  />
-                </View>
-              </>
-            )}
           </View>
-
-          {/* Co-hosts Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Co-hosts</Text>
-            <Text style={styles.sectionDescription}>
-              Invite friends to help you manage this event
-            </Text>
-
-            {coHosts.length > 0 && (
-              <View style={styles.coHostsList}>
-                {coHosts.map((coHost) => (
-                  <View key={coHost._id} style={styles.coHostItem}>
-                    <View style={styles.coHostInfo}>
-                      <View style={styles.coHostAvatar}>
-                        {coHost.profilePicture ? (
-                          <Image 
-                            source={{ uri: coHost.profilePicture }} 
-                            style={styles.coHostAvatarImage} 
-                          />
-                        ) : (
-                          <View style={styles.coHostAvatarPlaceholder}>
-                            <Text style={styles.coHostAvatarText}>
-                              {coHost.username.charAt(0).toUpperCase()}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                      <View style={styles.coHostDetails}>
-                        <Text style={styles.coHostName}>{coHost.username}</Text>
-                        <Text style={styles.coHostRole}>Co-host</Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeCoHost(coHost._id)}
-                      style={styles.removeCoHostButton}
-                    >
-                      <Ionicons name="close" size={20} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={styles.addCoHostButton}
-              onPress={() => setShowCoHostModal(true)}
-            >
-              <Ionicons name="person-add-outline" size={20} color="#3797EF" />
-              <Text style={styles.addCoHostButtonText}>Add Co-host</Text>
-            </TouchableOpacity>
-          </View>
-
         </View>
       </ScrollView>
 
-      {/* Date/Time Pickers */}
-      {showDatePicker && (
-        <DateTimePicker
-          value={dateTime}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={onDateChange}
-          minimumDate={new Date()}
-        />
-      )}
-
-      {showTimePicker && (
-        <DateTimePicker
-          value={dateTime}
-          mode="time"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={onTimeChange}
-        />
-      )}
-
-      {/* Date/Time Pickers for End Time */}
-      {showEndDatePicker && endDateTime && (
-        <DateTimePicker
-          value={endDateTime}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={(event, selectedDate) => {
-            setShowEndDatePicker(false);
-            if (selectedDate) {
-              const newEndDateTime = new Date(endDateTime);
-              newEndDateTime.setFullYear(selectedDate.getFullYear());
-              newEndDateTime.setMonth(selectedDate.getMonth());
-              newEndDateTime.setDate(selectedDate.getDate());
-              setEndDateTime(newEndDateTime);
-            }
-          }}
-          minimumDate={dateTime}
-        />
-      )}
-
-      {showEndTimePicker && endDateTime && (
-        <DateTimePicker
-          value={endDateTime}
-          mode="time"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={(event, selectedTime) => {
-            setShowEndTimePicker(false);
-            if (selectedTime) {
-              const newEndDateTime = new Date(endDateTime);
-              newEndDateTime.setHours(selectedTime.getHours());
-              newEndDateTime.setMinutes(selectedTime.getMinutes());
-              setEndDateTime(newEndDateTime);
-            }
-          }}
-        />
-      )}
+      {/* Fixed Create Event Button */}
+      <View style={styles.createButtonContainer}>
+        <TouchableOpacity
+          style={[styles.createButton, (!canProceed() || creating) && styles.createButtonDisabled]}
+          onPress={handleCreate}
+          disabled={!canProceed() || creating}
+        >
+          {creating ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={styles.createButtonText}>Create Event</Text>
+          )}
+        </TouchableOpacity>
+      </View>
 
       {/* Modals */}
-      {/* Modals */}
-<Modal
+      <Modal
   visible={showCategoryModal}
   transparent={true}
   animationType="slide"
@@ -1297,19 +1281,26 @@ const pickCoverImage = () => {
         onSelectCover={handleCoverSelect}
         eventTitle={title || "Your Event"}
       />
-    </KeyboardAvoidingView>
-  </SafeAreaView>
-);
-}
+     </KeyboardAvoidingView>
+   </View>
+ );
+ }
 
 // Enhanced Styles with Photo Toggle additions
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent', // Changed from #E5E7EB to prevent gray showing
+    overflow: 'hidden',
+    // No padding or margin - image should start at absolute top
   },
   scrollView: {
     flex: 1,
+    backgroundColor: 'transparent', // Transparent so image shows through
+    overflow: 'visible',
+    // Ensure content starts at absolute top
+    contentInset: { top: 0, bottom: 0, left: 0, right: 0 },
+    contentOffset: { x: 0, y: 0 },
   },
   headerButton: {
     paddingHorizontal: 16,
@@ -1327,27 +1318,112 @@ const styles = StyleSheet.create({
     color: '#C7C7CC',
   },
 
-  // Cover Image
-  coverSection: {
-    height: 200,
-    backgroundColor: '#F6F6F6',
+  safeAreaHeader: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 44 : 0,
+    left: 0,
+    right: 0,
+    zIndex: 100, // Above everything
+    backgroundColor: 'transparent',
+    // No background - completely transparent
+  },
+  // Header Overlay - Consistent styling
+  headerOverlay: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     position: 'relative',
   },
-  coverImage: {
+  headerCancelButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 9999,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    backdropFilter: 'blur(10px)',
+    zIndex: 1,
+  },
+  headerCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  headerTitleContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 0,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  headerSpacer: {
+    width: 32,
+  },
+
+  // Hero Container - Stretchy header with proper clipping
+  heroContainer: {
+    width: '100%',
+    backgroundColor: 'transparent', // Always transparent - image covers everything
+    overflow: 'hidden', // Clip to container bounds - image extends beyond but is clipped
+    position: 'relative',
+    zIndex: 1, // Lower than form container so it can overlap
+    elevation: 1, // Android
+    marginTop: 0,
+    marginBottom: 0,
+    marginLeft: 0,
+    marginRight: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    paddingLeft: 0,
+    paddingRight: 0,
+    // Container starts at ABSOLUTE top of ScrollView - NO spacing whatsoever
+  },
+  coverTouchable: {
     width: '100%',
     height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    overflow: 'hidden', // Clip to container - image extends beyond but is clipped
+  },
+  heroImage: {
     resizeMode: 'cover',
+    backgroundColor: '#E5E7EB', // Opaque fallback - prevents transparency (should never show)
+    position: 'absolute',
+    // top, left, width, height are set dynamically via animated values
+    // to ensure image ALWAYS covers container, even when stretched
   },
   coverPlaceholder: {
-    flex: 1,
+    width: '100%',
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#E5E7EB',
   },
   coverPlaceholderText: {
-    marginTop: 8,
-    fontSize: 16,
-    color: '#C7C7CC',
-    fontWeight: '500',
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 9999,
+    overflow: 'hidden',
   },
   coverOverlay: {
     position: 'absolute',
@@ -1361,9 +1437,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Form
+  // Form - Curved overlap with image
+  formContainerWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24, // Overlap the image by 24px to show curved border
+    zIndex: 10, // Above the hero container
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 30,
+    elevation: 10, // Android - ensure it's above hero
+    // Clip content but show the curved border
+    overflow: 'hidden',
+    position: 'relative', // Ensure proper stacking
+  },
   formContainer: {
-    padding: 16,
+    padding: 24,
+    paddingTop: 32,
   },
   section: {
     marginBottom: 32,
@@ -2140,5 +2232,379 @@ addEndTimeText: {
   fontSize: 16,
   fontWeight: '600',
   color: '#3797EF',
+},
+// New Design Styles
+scrollContent: {
+  paddingBottom: 100,
+  backgroundColor: 'transparent', // Don't cover the image
+  paddingTop: 0, // NO padding at top - image starts at absolute top
+  marginTop: 0, // NO margin at top
+},
+coverIconContainer: {
+  width: 64,
+  height: 64,
+  borderRadius: 32,
+  backgroundColor: 'rgba(255, 255, 255, 0.6)',
+  justifyContent: 'center',
+  alignItems: 'center',
+  backdropFilter: 'blur(8px)',
+},
+// Debug overlay styles
+debugOverlay: {
+  position: 'absolute',
+  top: 10,
+  left: 10,
+  backgroundColor: 'rgba(255, 0, 0, 0.7)',
+  padding: 8,
+  borderRadius: 8,
+  zIndex: 1000,
+  elevation: 1000,
+},
+debugText: {
+  color: '#FFFFFF',
+  fontSize: 10,
+  fontWeight: 'bold',
+  fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+},
+coverOverlayContent: {
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+eventNameContainer: {
+  marginBottom: 16,
+},
+eventNameInput: {
+  fontSize: 28,
+  fontWeight: '700',
+  color: '#000000',
+  padding: 0,
+  backgroundColor: 'transparent',
+},
+descriptionContainer: {
+  marginBottom: 24,
+  position: 'relative',
+},
+descriptionInput: {
+  minHeight: 140,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderStyle: 'dashed',
+  borderColor: '#E5E5EA',
+  backgroundColor: '#F8F8F8',
+  padding: 16,
+  fontSize: 16,
+  color: '#000000',
+  textAlignVertical: 'top',
+},
+characterCounter: {
+  position: 'absolute',
+  bottom: 12,
+  right: 12,
+  fontSize: 12,
+  color: '#8E8E93',
+},
+categorySection: {
+  marginBottom: 24,
+  marginLeft: -24,
+  marginRight: -24,
+},
+categoryLabel: {
+  fontSize: 11,
+  fontWeight: '700',
+  color: '#8E8E93',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginBottom: 12,
+  paddingHorizontal: 24,
+},
+categoryPillsContainer: {
+  paddingHorizontal: 24,
+},
+categoryPillsContent: {
+  paddingHorizontal: 0,
+  gap: 10,
+},
+categoryPill: {
+  paddingHorizontal: 20,
+  paddingVertical: 10,
+  borderRadius: 9999,
+  backgroundColor: '#EFF6FF',
+  borderWidth: 1,
+  borderColor: '#DBEAFE',
+},
+categoryPillSelected: {
+  backgroundColor: '#3b82f6',
+  borderColor: '#3b82f6',
+},
+categoryPillText: {
+  fontSize: 14,
+  fontWeight: '500',
+  color: '#3b82f6',
+},
+categoryPillTextSelected: {
+  color: '#FFFFFF',
+  fontWeight: '600',
+},
+whenWhereSection: {
+  marginBottom: 24,
+  gap: 12,
+},
+whenCard: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#F8F9FA',
+  borderRadius: 16,
+  padding: 16,
+  borderWidth: 1,
+  borderColor: '#E2E8F0',
+},
+whenCardIcon: {
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: '#DBEAFE',
+  justifyContent: 'center',
+  alignItems: 'center',
+  marginRight: 12,
+},
+whenCardContent: {
+  flex: 1,
+},
+whenCardLabel: {
+  fontSize: 12,
+  fontWeight: '700',
+  color: '#64748B',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginBottom: 2,
+},
+whenCardValue: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#1E293B',
+},
+whereCard: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#F8F9FA',
+  borderRadius: 16,
+  padding: 16,
+  borderWidth: 1,
+  borderColor: '#E2E8F0',
+},
+whereCardIcon: {
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: '#DBEAFE',
+  justifyContent: 'center',
+  alignItems: 'center',
+  marginRight: 12,
+},
+whereCardContent: {
+  flex: 1,
+},
+whereCardLabel: {
+  fontSize: 12,
+  fontWeight: '700',
+  color: '#64748B',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginBottom: 2,
+},
+whereCardInput: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#1E293B',
+  padding: 0,
+  backgroundColor: 'transparent',
+},
+combinedSettingsSection: {
+  backgroundColor: '#F8F9FA',
+  borderRadius: 16,
+  padding: 20,
+  marginBottom: 24,
+  borderWidth: 1,
+  borderColor: '#E2E8F0',
+  gap: 20,
+},
+combinedSectionItem: {
+  // No margin - using gap on parent
+},
+combinedSectionLabel: {
+  fontSize: 11,
+  fontWeight: '700',
+  color: '#64748B',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginBottom: 12,
+},
+combinedSectionDivider: {
+  height: 1,
+  backgroundColor: '#E2E8F0',
+  marginVertical: 20,
+},
+privacySelectButton: {
+  backgroundColor: '#FFFFFF',
+  borderRadius: 12,
+  padding: 12,
+  borderWidth: 1,
+  borderColor: '#E2E8F0',
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+},
+privacySelectText: {
+  fontSize: 14,
+  fontWeight: '500',
+  color: '#1E293B',
+},
+hostsRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 12,
+},
+hostItem: {
+  position: 'relative',
+},
+hostAvatarContainer: {
+  position: 'relative',
+},
+hostAvatar: {
+  width: 48,
+  height: 48,
+  borderRadius: 24,
+  borderWidth: 2,
+  borderColor: '#FFFFFF',
+},
+hostAvatarPlaceholder: {
+  width: 48,
+  height: 48,
+  borderRadius: 24,
+  backgroundColor: '#3b82f6',
+  justifyContent: 'center',
+  alignItems: 'center',
+  borderWidth: 2,
+  borderColor: '#FFFFFF',
+},
+hostAvatarText: {
+  fontSize: 18,
+  fontWeight: '600',
+  color: '#FFFFFF',
+},
+removeHostButton: {
+  position: 'absolute',
+  top: -8,
+  right: -8,
+  backgroundColor: '#FFFFFF',
+  borderRadius: 12,
+},
+addCoHostButtonNew: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  paddingHorizontal: 16,
+  paddingVertical: 10,
+  borderRadius: 12,
+  backgroundColor: '#FFFFFF',
+  borderWidth: 1,
+  borderStyle: 'dashed',
+  borderColor: '#CBD5E1',
+},
+addCoHostButtonTextNew: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#475569',
+},
+settingsSection: {
+  backgroundColor: '#F8F8F8',
+  borderRadius: 16,
+  padding: 20,
+  marginBottom: 24,
+  borderWidth: 1,
+  borderColor: '#E5E5EA',
+  gap: 20,
+},
+settingRow: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+},
+settingInfo: {
+  flex: 1,
+},
+settingTitle: {
+  fontSize: 14,
+  fontWeight: '700',
+  color: '#000000',
+  marginBottom: 4,
+},
+settingSubtitle: {
+  fontSize: 12,
+  color: '#8E8E93',
+},
+maxAttendeesContainer: {
+  backgroundColor: '#FFFFFF',
+  borderRadius: 8,
+  paddingHorizontal: 12,
+  paddingVertical: 8,
+  borderWidth: 1,
+  borderColor: '#E5E5EA',
+  minWidth: 60,
+},
+maxAttendeesInput: {
+  fontSize: 14,
+  fontWeight: '700',
+  color: '#000000',
+  textAlign: 'center',
+  minWidth: 40,
+  padding: 0,
+},
+createButtonContainer: {
+  position: 'absolute',
+  bottom: 0,
+  left: 0,
+  right: 0,
+  backgroundColor: 'rgba(255, 255, 255, 0.95)',
+  paddingHorizontal: 24,
+  paddingTop: 16,
+  paddingBottom: 32,
+  borderTopWidth: 0.5,
+  borderTopColor: '#E5E5EA',
+  zIndex: 30, // Stay above scroll content and form
+  elevation: 30, // Android
+},
+createButton: {
+  backgroundColor: '#3b82f6',
+  borderRadius: 12,
+  paddingVertical: 16,
+  alignItems: 'center',
+  justifyContent: 'center',
+  shadowColor: '#3b82f6',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.3,
+  shadowRadius: 8,
+  elevation: 4,
+},
+createButtonDisabled: {
+  backgroundColor: '#C7C7CC',
+  shadowOpacity: 0,
+  elevation: 0,
+},
+createButtonText: {
+  color: '#FFFFFF',
+  fontSize: 18,
+  fontWeight: '700',
+},
+cancelHeaderButton: {
+  fontSize: 16,
+  color: '#000000',
+  fontWeight: '500',
 },
 });

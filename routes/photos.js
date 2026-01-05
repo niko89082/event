@@ -1389,40 +1389,115 @@ router.post('/repost/:postId', protect, async (req, res) => {
   try {
     const { postId } = req.params;
     const { comment } = req.body; // Optional comment for quote posts
+    const currentUserId = req.user._id;
+    const currentUserIdStr = String(currentUserId);
 
-    const originalPost = await Photo.findById(postId)
-      .populate('user', 'username profilePicture');
+    // Get original post - handle nested reposts by getting the actual original
+    let originalPost = await Photo.findById(postId)
+      .populate('user', 'username profilePicture _id isPublic')
+      .populate('event', 'privacyLevel host attendees');
 
     if (!originalPost) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
+    // Handle nested reposts: if reposting a repost, get the original
+    if (originalPost.isRepost && originalPost.originalPost) {
+      originalPost = await Photo.findById(originalPost.originalPost)
+        .populate('user', 'username profilePicture _id isPublic')
+        .populate('event', 'privacyLevel host attendees');
+      
+      if (!originalPost) {
+        return res.status(404).json({ message: 'Original post not found' });
+      }
+    }
+
+    const originalPostId = originalPost._id;
+    const originalPostIdStr = String(originalPostId);
+    const originalAuthorIdStr = String(originalPost.user._id || originalPost.user);
+
+    // ✅ VALIDATION: Can't repost your own posts
+    if (originalAuthorIdStr === currentUserIdStr) {
+      return res.status(400).json({ message: 'You cannot repost your own post' });
+    }
+
+    // ✅ VALIDATION: Can't repost deleted posts
     if (originalPost.isDeleted) {
       return res.status(400).json({ message: 'Cannot repost deleted post' });
     }
 
-    // Check if already reposted
+    // ✅ PRIVACY CHECK: Check if user can view the original post
+    const photoAccess = await checkPhotoAccess(currentUserId, originalPost);
+    if (!photoAccess.hasAccess) {
+      return res.status(403).json({ 
+        message: 'You do not have permission to repost this post',
+        reason: photoAccess.reason
+      });
+    }
+
+    // ✅ PRIVACY CHECK: Additional validation for private accounts
+    const currentUser = await User.findById(currentUserId).select('following');
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    const isFollowingAuthor = currentUser.following.some(f => 
+      String(f) === originalAuthorIdStr
+    );
+
+    // If original author has private account and user doesn't follow them
+    if (originalPost.user.isPublic === false && !isFollowingAuthor) {
+      // Check if they have access through event
+      if (originalPost.event) {
+        const eventAccess = await checkEventAccess(currentUserId, originalPost.event);
+        if (!eventAccess.hasAccess) {
+          return res.status(403).json({ 
+            message: 'Cannot repost from private accounts unless you follow them',
+            reason: 'Private account - not following'
+          });
+        }
+      } else {
+        return res.status(403).json({ 
+          message: 'Cannot repost from private accounts unless you follow them',
+          reason: 'Private account - not following'
+        });
+      }
+    }
+
+    // ✅ VALIDATION: Check if already reposted
     const existingRepost = await Photo.findOne({
-      user: req.user._id,
+      user: currentUserId,
       isRepost: true,
-      originalPost: postId
+      originalPost: originalPostId
     });
 
     if (existingRepost) {
-      return res.status(400).json({ message: 'Already reposted' });
+      return res.status(400).json({ message: 'You have already reposted this post' });
     }
 
-    // Create repost
+    // ✅ VALIDATION: Prevent circular references (can't repost a repost of your own post)
+    // This is already handled above by checking original author, but double-check
+    if (originalPost.isRepost) {
+      const actualOriginal = await Photo.findById(originalPost.originalPost)
+        .select('user');
+      if (actualOriginal && String(actualOriginal.user) === currentUserIdStr) {
+        return res.status(400).json({ message: 'You cannot repost a repost of your own post' });
+      }
+    }
+
+    // Create repost - always reference the actual original post
     const repost = new Photo({
-      user: req.user._id,
-      postType: comment ? 'text' : 'photo', // Quote posts are text posts
+      user: currentUserId,
+      postType: comment ? 'text' : originalPost.postType || 'photo',
       textContent: comment || '',
+      caption: comment || '',
       isRepost: true,
-      originalPost: postId,
+      originalPost: originalPostId, // Always reference the actual original
       repostComment: comment || null,
       visibleInEvent: false,
       likes: [],
       comments: [],
+      paths: [], // Reposts don't have their own media
       visibility: {
         level: 'public',
         inheritFromUser: false
@@ -1432,18 +1507,27 @@ router.post('/repost/:postId', protect, async (req, res) => {
     await repost.save();
 
     // Increment repost count on original post
-    await Photo.findByIdAndUpdate(postId, {
+    await Photo.findByIdAndUpdate(originalPostId, {
       $inc: { repostCount: 1 }
     });
 
     // Add to user's photos
-    const User = require('../models/User');
     await User.findByIdAndUpdate(
-      req.user._id,
+      currentUserId,
       { $addToSet: { photos: repost._id } }
     );
 
-    console.log(`✅ Repost created: ${repost._id}`);
+    // Populate repost with original post data for response
+    await repost.populate({
+      path: 'originalPost',
+      populate: {
+        path: 'user',
+        select: 'username profilePicture _id'
+      }
+    });
+    await repost.populate('user', 'username profilePicture _id');
+
+    console.log(`✅ Repost created: ${repost._id} -> Original: ${originalPostId}`);
 
     res.status(201).json({
       success: true,
@@ -1462,9 +1546,11 @@ router.post('/repost/:postId', protect, async (req, res) => {
 router.delete('/repost/:postId', protect, async (req, res) => {
   try {
     const { postId } = req.params;
+    const currentUserId = req.user._id;
 
+    // Find the repost - handle both direct reposts and nested reposts
     const repost = await Photo.findOne({
-      user: req.user._id,
+      user: currentUserId,
       isRepost: true,
       originalPost: postId
     });
@@ -1473,10 +1559,18 @@ router.delete('/repost/:postId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Repost not found' });
     }
 
+    const originalPostId = repost.originalPost;
+
     // Decrement repost count on original post
-    await Photo.findByIdAndUpdate(postId, {
+    await Photo.findByIdAndUpdate(originalPostId, {
       $inc: { repostCount: -1 }
     });
+
+    // Remove from user's photos
+    await User.findByIdAndUpdate(
+      currentUserId,
+      { $pull: { photos: repost._id } }
+    );
 
     // Delete repost
     await Photo.findByIdAndDelete(repost._id);
@@ -1490,6 +1584,30 @@ router.delete('/repost/:postId', protect, async (req, res) => {
 
   } catch (error) {
     console.error('❌ Remove repost error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ✅ NEW: Get repost status for a post
+router.get('/:postId/repost-status', protect, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const currentUserId = req.user._id;
+
+    // Find if user has reposted this post
+    const repost = await Photo.findOne({
+      user: currentUserId,
+      isRepost: true,
+      originalPost: postId
+    }).select('_id');
+
+    res.json({
+      hasReposted: !!repost,
+      repostId: repost ? repost._id.toString() : null
+    });
+
+  } catch (error) {
+    console.error('❌ Get repost status error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

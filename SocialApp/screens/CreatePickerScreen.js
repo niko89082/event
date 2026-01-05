@@ -97,6 +97,11 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 8,
   },
+  headerButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3797EF',
+  },
   content: {
     flex: 1,
     paddingHorizontal: 20,
