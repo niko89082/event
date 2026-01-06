@@ -1,14 +1,11 @@
-// screens/EditEventScreen.js - Updated with Co-host management functionality + Photo Toggle
-import React, { useState, useEffect, useContext, useRef} from 'react';
+// screens/EditEventScreen.js - Redesigned to match CreateEventScreen
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Image, Alert, ScrollView,
   Switch, TouchableOpacity, Modal, FlatList, SafeAreaView, StatusBar,
-  ActivityIndicator, KeyboardAvoidingView, Platform
+  ActivityIndicator, KeyboardAvoidingView, Platform, Dimensions
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import CoverPhotoSelectionModal from '../components/CoverPhotoSelectionModal';
 import api from '../services/api';
@@ -18,10 +15,10 @@ import { API_BASE_URL } from '@env';
 import { FEATURES } from '../config/features';
 import useEventStore from '../stores/eventStore';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 const CATEGORIES = [
-  'General', 'Music', 'Arts', 'Sports', 'Food', 'Technology', 'Business',
-  'Health', 'Education', 'Travel', 'Photography', 'Gaming', 'Fashion',
-  'Movies', 'Books', 'Fitness', 'Outdoor', 'Indoor'
+  'Party', 'Music', 'Workshop', 'Meetup'
 ];
 
 const PRIVACY_LEVELS = [
@@ -54,51 +51,38 @@ export default function EditEventScreen() {
   const navigation = useNavigation();
   const { currentUser } = useContext(AuthContext);
   const { eventId } = route.params;
-const [categoryModalVisible, setCategoryModalVisible] = useState(false);
-const [coverModalVisible, setCoverModalVisible] = useState(false);
-const [coverSource, setCoverSource] = useState('upload');
 
   // Basic event fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dateTime, setDateTime] = useState(new Date());
-  const [endDateTime, setEndDateTime] = useState(null);  // Optional
-  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
-  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [endDateTime, setEndDateTime] = useState(null);
   const [locQuery, setLocQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [location, setLocation] = useState('');
   const [coords, setCoords] = useState(null);
-  const [category, setCategory] = useState('General');
+  const [category, setCategory] = useState('Party');
   const [cover, setCover] = useState(null);
   const [originalCoverImage, setOriginalCoverImage] = useState(null);
-  const [debugToggleCount, setDebugToggleCount] = useState(0);
-  const privacyLevelRef = useRef('public');
+  const [coverSource, setCoverSource] = useState('upload');
+  const [coverHeight, setCoverHeight] = useState(400);
+  const [coverImageDimensions, setCoverImageDimensions] = useState({ width: 0, height: 0 });
+  const HEADER_MAX_HEIGHT = 400;
+  const HEADER_MIN_HEIGHT = 150;
 
   // Advanced fields
   const [maxAttendees, setMaxAttendees] = useState('50');
   const [price, setPrice] = useState('0');
   const [privacyLevel, setPrivacyLevel] = useState('public');
-  const [permissions, setPermissions] = useState({
-    appearInFeed: true,
-    appearInSearch: true,
-    canJoin: 'anyone',
-    canShare: 'attendees',
-    canInvite: 'attendees',
-    showAttendeesToPublic: true
-  });
-
-  // ADDED: Photo sharing toggle
+  const [hideGuestList, setHideGuestList] = useState(false);
   const [allowPhotos, setAllowPhotos] = useState(true);
-  const allowPhotosRef = useRef(true); 
+  
+  // Refs for state management
+  const privacyLevelRef = useRef('public');
+  const allowPhotosRef = useRef(true);
   const coHostsRef = useRef([]);
-const descriptionRef = useRef('');
-const categoryRef = useRef('General');
-  // ADDED: Missing pricing fields that might be causing the issue
-  const [isPaidEvent, setIsPaidEvent] = useState(false);
-  const [refundPolicy, setRefundPolicy] = useState('no-refund');
+  const descriptionRef = useRef('');
+  const categoryRef = useRef('Party');
 
   // Co-hosts management
   const [coHosts, setCoHosts] = useState([]);
@@ -110,10 +94,10 @@ const categoryRef = useRef('General');
   // UI state
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showCoverModal, setShowCoverModal] = useState(false);
 
-  // ✅ FIXED: Delete functionality state moved inside component
+  // Delete functionality
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirmationText, setDeleteConfirmationText] = useState('');
@@ -123,142 +107,47 @@ const categoryRef = useRef('General');
   useEffect(() => {
     fetchEventData();
   }, [eventId]);
-const PrivacyDebugPanel = ({ privacyLevel, onPrivacyChange }) => {
-  if (process.env.NODE_ENV !== 'development') return null;
 
+  // Handle navigation params from date picker screen
+  useEffect(() => {
+    if (route.params?.startDateTime) {
+      setDateTime(new Date(route.params.startDateTime));
+    }
+    if (route.params?.endDateTime) {
+      setEndDateTime(new Date(route.params.endDateTime));
+    } else if (route.params?.endDateTime === null) {
+      setEndDateTime(null);
+    }
+  }, [route.params]);
 
-  const updatedEvent = response.data.event;
-if (updatedEvent) {
-  setTitle(updatedEvent.title || '');
-  setDescription(updatedEvent.description || '');
-  setCategory(updatedEvent.category || 'General');
-  setAllowPhotos(updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true);
-  setMaxAttendees(String(updatedEvent.maxAttendees || 50));
-  setLocation(updatedEvent.location || '');
-  setPrivacyLevel(updatedEvent.privacyLevel || 'public');
-  
-  // Update refs too
-  allowPhotosRef.current = updatedEvent.allowPhotos !== undefined ? updatedEvent.allowPhotos : true;
-  privacyLevelRef.current = updatedEvent.privacyLevel || 'public';
-  
-  console.log('✅ Local state updated with fresh data from backend');
-}
+  // Update refs when state changes
+  useEffect(() => {
+    privacyLevelRef.current = privacyLevel;
+  }, [privacyLevel]);
 
-  return (
-    <View style={{
-      backgroundColor: '#FFF3CD',
-      borderWidth: 1,
-      borderColor: '#FFEAA7',
-      borderRadius: 8,
-      padding: 16,
-      margin: 16
-    }}>
-      <Text style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 8 }}>
-        🐛 DEBUG: Privacy Level State
-      </Text>
-      <Text style={{ fontSize: 12, marginBottom: 4 }}>
-        State: "{privacyLevel}" | Ref: "{privacyLevelRef.current}" | Match: {privacyLevel === privacyLevelRef.current ? '✅' : '❌'}
-      </Text>
-      <Text style={{ fontSize: 12, marginBottom: 4 }}>
-        Type: {typeof privacyLevel} | Timestamp: {new Date().toLocaleTimeString()}
-      </Text>
-      
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-        {['public', 'friends', 'private'].map(level => (
-          <TouchableOpacity
-            key={level}
-            onPress={() => {
-              console.log(`🐛 DEBUG: Manually setting privacy to "${level}"`);
-              onPrivacyChange(level);
-            }}
-            style={{
-              backgroundColor: privacyLevel === level ? '#007AFF' : '#E0E0E0',
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 4,
-              marginRight: 8,
-              marginBottom: 4
-            }}
-          >
-            <Text style={{
-              color: privacyLevel === level ? 'white' : 'black',
-              fontSize: 12
-            }}>
-              {level}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-};
+  useEffect(() => {
+    allowPhotosRef.current = allowPhotos;
+  }, [allowPhotos]);
 
-useEffect(() => {
-  privacyLevelRef.current = privacyLevel;
-  console.log(`🔒 FRONTEND: Privacy level ref updated to: "${privacyLevelRef.current}"`);
-}, [privacyLevel]);
-
-useEffect(() => {
-  console.log(`🔒 FRONTEND: Privacy level state changed to: "${privacyLevel}" (type: ${typeof privacyLevel})`);
-  console.log(`🔒 FRONTEND: Privacy level state update timestamp: ${new Date().toISOString()}`);
-}, [privacyLevel]);
-// PHASE 2: Enhanced privacy selection handler
-const handlePrivacySelect = (newPrivacyLevel) => {
-  console.log(`🔒 FRONTEND: Privacy selection - changing from "${privacyLevel}" to "${newPrivacyLevel}"`);
-  
-  // Validate the new privacy level
-  if (!['public', 'friends', 'private'].includes(newPrivacyLevel)) {
-    console.error(`❌ Invalid privacy level: "${newPrivacyLevel}"`);
-    return;
-  }
-  
-  // Update state
-  setPrivacyLevel(newPrivacyLevel);
-  setShowPrivacyModal(false);
-  
-  // FIXED: Remove setTimeout verification - it reads old state due to React's async nature
-  // Instead, log the new value directly
-  console.log(`✅ FRONTEND: Privacy level set to: "${newPrivacyLevel}"`);
-  
-  // Show confirmation with the new value (not state)
-  Alert.alert(
-    'Privacy Updated',
-    `Event privacy changed to: ${newPrivacyLevel}`,
-    [{ text: 'OK' }]
-  );
-};
+  useEffect(() => {
+    coHostsRef.current = coHosts;
+  }, [coHosts]);
 
   // Set up navigation header
   useEffect(() => {
     navigation.setOptions({
-      headerStyle: {
-        backgroundColor: '#FFFFFF',
-        shadowOpacity: 0,
-        elevation: 0,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#E1E1E1',
-      },
-      headerTitleStyle: {
-        fontWeight: '700',
-        fontSize: 18,
-        color: '#000000',
-      },
-      headerTitle: 'Edit Event',
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={handleSaveEvent}
-          style={[styles.headerButton, saving && styles.headerButtonDisabled]}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color="#3797EF" />
-          ) : (
-            <Text style={styles.headerButtonText}>Save</Text>
-          )}
-        </TouchableOpacity>
-      ),
+      headerShown: false,
     });
-  }, [saving, title, location, dateTime]);
+  }, [navigation]);
+const handlePrivacySelect = (newPrivacyLevel) => {
+  if (!['public', 'friends', 'private'].includes(newPrivacyLevel)) {
+    return;
+  }
+  setPrivacyLevel(newPrivacyLevel);
+  privacyLevelRef.current = newPrivacyLevel;
+  setShowPrivacyModal(false);
+};
+
 
   const fetchEventData = async () => {
   try {
@@ -296,17 +185,18 @@ console.log('  - Setting category state to:', JSON.stringify(categoryValue));
     setLocQuery(eventData.location || '');
     setMaxAttendees(String(eventData.maxAttendees || 50));
     
-    // PHASE 2: Enhanced privacy level setting with validation
+    // Privacy level setting
     const incomingPrivacyLevel = eventData.privacyLevel || 'public';
-    console.log(`🔒 FRONTEND: Setting privacy level from server: "${incomingPrivacyLevel}"`);
-    
     if (['public', 'friends', 'private'].includes(incomingPrivacyLevel)) {
       setPrivacyLevel(incomingPrivacyLevel);
-      console.log(`✅ FRONTEND: Privacy level set to: "${incomingPrivacyLevel}"`);
+      privacyLevelRef.current = incomingPrivacyLevel;
     } else {
-      console.warn(`⚠️ Invalid privacy level from server: "${incomingPrivacyLevel}", defaulting to "public"`);
       setPrivacyLevel('public');
+      privacyLevelRef.current = 'public';
     }
+    
+    // Hide guest list
+    setHideGuestList(eventData.hideGuestList || false);
     
     // Co-hosts handling
     const coHostsData = eventData.coHosts || [];
@@ -322,6 +212,24 @@ console.log('  - Setting category state to:', JSON.stringify(categoryValue));
     setOriginalCoverImage(eventData.coverImage);
     if (eventData.coverImageSource) {
       setCoverSource(eventData.coverImageSource);
+    }
+    
+    // Set cover image if exists
+    if (eventData.coverImage) {
+      const coverUri = eventData.coverImage.startsWith('http') 
+        ? eventData.coverImage 
+        : `http://${API_BASE_URL}:3000${eventData.coverImage}`;
+      setCover({ uri: coverUri });
+      // Calculate cover height
+      Image.getSize(coverUri, (width, height) => {
+        const aspectRatio = height / width;
+        const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+        setCoverHeight(Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600)));
+        setCoverImageDimensions({ width, height });
+      }, (error) => {
+        console.error('Error getting image size:', error);
+        setCoverHeight(400);
+      });
     }
     
     if (eventData.coordinates) {
@@ -446,11 +354,6 @@ const getPrivacyDescription = (privacyLevel) => {
   }
 };
 
-const handlePhotoToggle = (newValue) => {
-  console.log('🔧 SWITCH TOGGLE - Old value:', allowPhotos, 'New value:', newValue);
-  setAllowPhotos(newValue);
-  allowPhotosRef.current = newValue; // Immediately update ref
-};
 
   // Search for potential co-hosts
   const searchCoHosts = async (query) => {
@@ -604,6 +507,7 @@ const handleSaveEvent = async () => {
   privacyLevel: currentPrivacyLevel,
   allowPhotos: currentAllowPhotos,
   allowGuestPasses: true,
+  hideGuestList: hideGuestList,
   coHosts: currentCoHosts.map(coHost => coHost._id),
 };
 
@@ -745,32 +649,32 @@ const handleSaveEvent = async () => {
     setSaving(false);
   }
 };
-  const pickCoverImage = () => {
-  setCoverModalVisible(true);
-};
-const handleCoverSelection = (coverImage, source) => {
-  setCover(coverImage.uri || coverImage);
-  setCoverSource(source);
-};
-  const onDateChange = (event, selectedDate) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      const newDateTime = new Date(dateTime);
-      newDateTime.setFullYear(selectedDate.getFullYear());
-      newDateTime.setMonth(selectedDate.getMonth());
-      newDateTime.setDate(selectedDate.getDate());
-      setDateTime(newDateTime);
+  const handleCoverSelect = (imageSource, sourceType) => {
+    let imageUri;
+    if (sourceType === 'template') {
+      const resolvedSource = Image.resolveAssetSource(imageSource);
+      imageUri = resolvedSource.uri;
+      setCover({ uri: imageUri });
+      if (resolvedSource.width && resolvedSource.height) {
+        const aspectRatio = resolvedSource.height / resolvedSource.width;
+        const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+        setCoverHeight(Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600)));
+        setCoverImageDimensions({ width: resolvedSource.width, height: resolvedSource.height });
+      }
+    } else {
+      imageUri = imageSource;
+      setCover(imageSource);
+      Image.getSize(imageUri, (width, height) => {
+        const aspectRatio = height / width;
+        const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+        setCoverHeight(Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600)));
+        setCoverImageDimensions({ width, height });
+      }, (error) => {
+        console.error('Error getting image size:', error);
+        setCoverHeight(400);
+      });
     }
-  };
-
-  const onTimeChange = (event, selectedTime) => {
-    setShowTimePicker(false);
-    if (selectedTime) {
-      const newDateTime = new Date(dateTime);
-      newDateTime.setHours(selectedTime.getHours());
-      newDateTime.setMinutes(selectedTime.getMinutes());
-      setDateTime(newDateTime);
-    }
+    setCoverSource(sourceType);
   };
 
   const onLocQuery = async (text) => {
@@ -797,755 +701,635 @@ const handleCoverSelection = (coverImage, source) => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#3797EF" />
+          <ActivityIndicator size="large" color="#3b82f6" />
           <Text style={styles.loadingText}>Loading event...</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
-  const currentCoverImage = cover || (originalCoverImage ? `http://${API_BASE_URL}:3000${originalCoverImage}` : null);
+  const currentCoverImage = cover || (originalCoverImage ? (originalCoverImage.startsWith('http') ? originalCoverImage : `http://${API_BASE_URL}:3000${originalCoverImage}`) : null);
+
+  const canProceed = () => {
+    return title.trim() && location.trim() && dateTime > new Date();
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       <KeyboardAvoidingView 
         style={styles.container} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
+        {/* Header Overlay - Consistent styling */}
+        <View style={styles.safeAreaHeader} pointerEvents="box-none">
+          <View style={styles.headerOverlay} pointerEvents="box-none">
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={styles.headerCancelButton}
+            >
+              <Text style={styles.headerCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitle}>Edit Event</Text>
+            </View>
+            <View style={styles.headerSpacer} />
+          </View>
+        </View>
+        
         <ScrollView 
           style={styles.scrollView} 
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false} 
+          contentContainerStyle={styles.scrollContent}
+          bounces={true}
         >
-          {/* Cover Image */}
-          <View style={styles.section}>
-            <TouchableOpacity
-              style={styles.coverImageContainer}
-              onPress={pickCoverImage}
-              activeOpacity={0.8}
+          {/* Cover Photo Section at Top - Hero Container */}
+          <View 
+            style={[
+              styles.heroContainer,
+              { 
+                height: coverHeight,
+                backgroundColor: 'transparent',
+                marginTop: 0,
+                paddingTop: 0,
+              }
+            ]}
+          >
+            <TouchableOpacity 
+              style={styles.coverTouchable}
+              onPress={() => setShowCoverModal(true)}
+              activeOpacity={0.9}
             >
               {currentCoverImage ? (
-                <Image source={{ uri: currentCoverImage }} style={styles.coverImage} />
+                <Image 
+                  source={typeof currentCoverImage === 'string' ? { uri: currentCoverImage } : currentCoverImage} 
+                  style={[
+                    styles.heroImage,
+                    { 
+                      width: SCREEN_WIDTH,
+                      height: coverHeight,
+                    }
+                  ]}
+                  resizeMode="cover"
+                  onLoad={(e) => {
+                    const { width, height } = e.nativeEvent.source;
+                    if (width && height) {
+                      const aspectRatio = height / width;
+                      const calculatedHeight = SCREEN_WIDTH * aspectRatio;
+                      const finalHeight = Math.max(HEADER_MIN_HEIGHT, Math.min(calculatedHeight, 600));
+                      setCoverHeight(finalHeight);
+                      setCoverImageDimensions({ width, height });
+                    }
+                  }}
+                />
               ) : (
-                <LinearGradient
-                  colors={['#667eea', '#764ba2']}
-                  style={styles.coverImagePlaceholder}
+                <View 
+                  style={[
+                    styles.coverPlaceholder,
+                    {
+                      width: SCREEN_WIDTH,
+                      height: coverHeight,
+                    }
+                  ]}
                 >
-                  <Ionicons name="camera" size={32} color="#FFFFFF" />
-                  <Text style={styles.placeholderText}>Add Cover Photo</Text>
-                </LinearGradient>
+                  <View style={styles.coverIconContainer}>
+                    <Ionicons name="add-a-photo" size={32} color="#8E8E93" />
+                  </View>
+                  <Text style={styles.coverPlaceholderText}>Add Cover Photo</Text>
+                </View>
               )}
-              <View style={styles.coverImageOverlay}>
-                <Ionicons name="camera" size={24} color="#FFFFFF" />
-              </View>
             </TouchableOpacity>
           </View>
-          {/* Co-host Permission Banner */}
-          {isEventCoHost() && (
-            <View style={styles.coHostBanner}>
-              <View style={styles.coHostBannerContent}>
-                <Ionicons name="information-circle" size={20} color="#3797EF" />
-                <Text style={styles.coHostBannerText}>
-                  You're a co-host! You can edit event details, but some settings are restricted to the main host.
-                </Text>
-              </View>
-            </View>
-          )}
-          {/* Basic Information */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Event Details</Text>
-            
-            <View style={styles.inputGroup}>
-  <Text style={styles.label}>
-    Event Title *
-    {!canEditField('title') && (
-      <Text style={styles.restrictedLabel}> (Host Only)</Text>
-    )}
-  </Text>
-  <TextInput
-    style={[
-      styles.input,
-      !canEditField('title') && styles.inputDisabled
-    ]}
-    value={title}
-    onChangeText={canEditField('title') ? setTitle : undefined}
-    placeholder="What's your event called?"
-    placeholderTextColor="#C7C7CC"
-    maxLength={100}
-    editable={canEditField('title')}
-  />
-  {!canEditField('title') && (
-    <Text style={styles.restrictedHint}>
-      Only the event host can change the title
-    </Text>
-  )}
-</View>
+          
+          <View style={styles.formContainerWrapper}>
+            <View style={styles.formContainer}>
+              
+              {/* Co-host Permission Banner */}
+              {isEventCoHost() && (
+                <View style={styles.coHostBanner}>
+                  <View style={styles.coHostBannerContent}>
+                    <Ionicons name="information-circle" size={20} color="#3b82f6" />
+                    <Text style={styles.coHostBannerText}>
+                      You're a co-host! You can edit event details, but some settings are restricted to the main host.
+                    </Text>
+                  </View>
+                </View>
+              )}
 
-           <View style={styles.inputGroup}>
-  <Text style={styles.label}>Description</Text>
-  <TextInput
-  style={[styles.input, styles.textArea]}
-  value={description}
-  onChangeText={(text) => {
-    console.log('🔍 DESCRIPTION INPUT CHANGE:', JSON.stringify(text));
-    setDescription(text);
-    descriptionRef.current = text; // ✅ Update ref immediately
-  }}
-  placeholder="Tell people what your event is about..."
-  placeholderTextColor="#C7C7CC"
-  multiline
-  numberOfLines={4}
-  maxLength={500}
-/>
-  {__DEV__ && (
-    <Text style={{fontSize: 12, color: '#999', marginTop: 4}}>
-      DEBUG - Description length: {description?.length || 0} | Value: "{description}"
-    </Text>
-  )}
-</View>
-
-            <View style={styles.inputGroup}>
-  <Text style={styles.label}>
-    Category *
-    {!canEditField('category') && (
-      <Text style={styles.restrictedLabel}> (Host Only)</Text>
-    )}
-  </Text>
-  <TouchableOpacity
-    style={[
-      styles.selectButton,
-      !canEditField('category') && styles.inputDisabled
-    ]}
-    onPress={canEditField('category') ? () => setCategoryModalVisible(true) : undefined}
-    disabled={!canEditField('category')}
-  >
-    <Text style={styles.selectButtonText}>{category || 'Select Category'}</Text>
-    <Ionicons name="chevron-down" size={20} color="#8E8E93" />
-  </TouchableOpacity>
-</View>
-          </View>
-
-          {/* Date & Time */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>When</Text>
-            
-            <View style={styles.dateTimeContainer}>
-              <TouchableOpacity
-                style={styles.dateTimeButton}
-                onPress={() => setShowDatePicker(true)}
-              >
-                <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
-                <Text style={styles.dateTimeText}>
-                  {dateTime.toLocaleDateString()}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.dateTimeButton}
-                onPress={() => setShowTimePicker(true)}
-              >
-                <Ionicons name="time-outline" size={20} color="#8E8E93" />
-                <Text style={styles.dateTimeText}>
-                  {dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {showDatePicker && (
-              <DateTimePicker
-                value={dateTime}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={onDateChange}
-                minimumDate={new Date()}
-              />
-            )}
-
-            {showTimePicker && (
-              <DateTimePicker
-                value={dateTime}
-                mode="time"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={onTimeChange}
-              />
-            )}
-
-            {/* Date/Time Pickers for End Time */}
-            {showEndDatePicker && endDateTime && (
-              <DateTimePicker
-                value={endDateTime}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(event, selectedDate) => {
-                  setShowEndDatePicker(false);
-                  if (selectedDate) {
-                    const newEndDateTime = new Date(endDateTime);
-                    newEndDateTime.setFullYear(selectedDate.getFullYear());
-                    newEndDateTime.setMonth(selectedDate.getMonth());
-                    newEndDateTime.setDate(selectedDate.getDate());
-                    setEndDateTime(newEndDateTime);
-                  }
-                }}
-                minimumDate={dateTime}
-              />
-            )}
-
-            {showEndTimePicker && endDateTime && (
-              <DateTimePicker
-                value={endDateTime}
-                mode="time"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(event, selectedTime) => {
-                  setShowEndTimePicker(false);
-                  if (selectedTime) {
-                    const newEndDateTime = new Date(endDateTime);
-                    newEndDateTime.setHours(selectedTime.getHours());
-                    newEndDateTime.setMinutes(selectedTime.getMinutes());
-                    setEndDateTime(newEndDateTime);
-                  }
-                }}
-              />
-            )}
-          </View>
-
-          {/* End Time Picker - only show if start time is set */}
-          {dateTime && (
-            <View style={styles.section}>
-              <View style={styles.labelRow}>
-                <Text style={styles.sectionTitle}>End Time (Optional)</Text>
-                {endDateTime && (
-                  <TouchableOpacity 
-                    onPress={() => setEndDateTime(null)}
-                    style={styles.clearButton}
-                  >
-                    <Text style={styles.clearButtonText}>Clear</Text>
-                  </TouchableOpacity>
+              {/* Event Name - Large Input */}
+              <View style={styles.eventNameContainer}>
+                <TextInput
+                  style={[
+                    styles.eventNameInput,
+                    !canEditField('title') && styles.inputDisabled
+                  ]}
+                  value={title}
+                  onChangeText={canEditField('title') ? setTitle : undefined}
+                  placeholder="Event Name"
+                  placeholderTextColor="#C7C7CC"
+                  maxLength={100}
+                  editable={canEditField('title')}
+                />
+                {!canEditField('title') && (
+                  <Text style={styles.restrictedHint}>
+                    Only the event host can change the title
+                  </Text>
                 )}
               </View>
-              
-              {endDateTime ? (
-                <View style={styles.dateTimeContainer}>
-                  <TouchableOpacity
-                    style={styles.dateTimeButton}
-                    onPress={() => setShowEndDatePicker(true)}
-                  >
-                    <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
-                    <Text style={styles.dateTimeText}>
-                      {endDateTime.toLocaleDateString()}
-                    </Text>
-                  </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.dateTimeButton}
-                    onPress={() => setShowEndTimePicker(true)}
+              {/* Category Pills */}
+              {canEditField('category') && (
+                <View style={styles.categorySection}>
+                  <Text style={styles.categoryLabel}>CATEGORY</Text>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.categoryPillsContainer}
+                    contentContainerStyle={styles.categoryPillsContent}
                   >
-                    <Ionicons name="time-outline" size={20} color="#8E8E93" />
-                    <Text style={styles.dateTimeText}>
-                      {endDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </TouchableOpacity>
+                    {CATEGORIES.map((cat) => (
+                      <TouchableOpacity
+                        key={cat}
+                        style={[
+                          styles.categoryPill,
+                          category === cat && styles.categoryPillSelected
+                        ]}
+                        onPress={() => {
+                          setCategory(cat);
+                          categoryRef.current = cat;
+                        }}
+                      >
+                        <Text style={[
+                          styles.categoryPillText,
+                          category === cat && styles.categoryPillTextSelected
+                        ]}>
+                          {cat}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
                 </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.addEndTimeButton}
-                  onPress={() => {
-                    // Default to 2 hours after start
-                    const defaultEnd = new Date(dateTime.getTime() + 2 * 60 * 60 * 1000);
-                    setEndDateTime(defaultEnd);
+              )}
+
+              {/* Description with Character Counter */}
+              <View style={styles.descriptionContainer}>
+                <Text style={styles.descriptionLabel}>DESCRIPTION</Text>
+                <TextInput
+                  style={styles.descriptionInput}
+                  value={description}
+                  onChangeText={(text) => {
+                    setDescription(text);
+                    descriptionRef.current = text;
                   }}
+                  placeholder="Tell people what your event is about..."
+                  placeholderTextColor="#8E8E93"
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  maxLength={500}
+                />
+                <Text style={styles.characterCounter}>
+                  {description.length}/500
+                </Text>
+              </View>
+
+              {/* When */}
+              <View style={styles.whenWhereSection}>
+                <TouchableOpacity
+                  style={styles.whenCard}
+                  onPress={() => navigation.navigate('EventDateTimePickerScreen', {
+                    fromScreen: 'EditEventScreen',
+                    startDateTime: dateTime ? dateTime.toISOString() : new Date().toISOString(),
+                    endDateTime: endDateTime ? endDateTime.toISOString() : null
+                  })}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="add-circle-outline" size={20} color="#3797EF" />
-                  <Text style={styles.addEndTimeText}>Add End Time</Text>
+                  <View style={styles.whenCardIcon}>
+                    <Ionicons name="calendar-month" size={20} color="#3b82f6" />
+                  </View>
+                  <View style={styles.whenCardContent}>
+                    <Text style={styles.whenCardLabel}>When</Text>
+                    <Text style={styles.whenCardValue}>
+                      {dateTime ? `${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Select Date & Time'}
+                    </Text>
+                    {endDateTime && (
+                      <Text style={[styles.whenCardValue, { fontSize: 12, marginTop: 4, color: '#8E8E93' }]}>
+                        Ends: {endDateTime.toLocaleDateString()} at {endDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    )}
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#8E8E93" />
                 </TouchableOpacity>
-              )}
-            </View>
-          )}
 
-          {/* Location */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Where</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Location *</Text>
-              <TextInput
-                style={styles.input}
-                value={locQuery}
-                onChangeText={onLocQuery}
-                placeholder="Where is your event?"
-                placeholderTextColor="#C7C7CC"
-              />
-              
-              {suggestions.length > 0 && (
-                <View style={styles.suggestionsContainer}>
-                  {suggestions.map((suggestion, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      style={styles.suggestionItem}
-                      onPress={() => selectLocation(suggestion)}
-                    >
-                      <Ionicons name="location-outline" size={16} color="#8E8E93" />
-                      <Text style={styles.suggestionText}>{suggestion.display_name}</Text>
-                    </TouchableOpacity>
-                  ))}
+                {/* Where */}
+                <View style={styles.whereCard}>
+                  <View style={styles.whereCardIcon}>
+                    <Ionicons name="location-on" size={20} color="#3b82f6" />
+                  </View>
+                  <View style={styles.whereCardContent}>
+                    <Text style={styles.whereCardLabel}>Where</Text>
+                    <TextInput
+                      style={styles.whereCardInput}
+                      value={locQuery}
+                      onChangeText={onLocQuery}
+                      placeholder="Location or Address"
+                      placeholderTextColor="#8E8E93"
+                    />
+                  </View>
+                  <Ionicons name="search" size={20} color="#8E8E93" />
                 </View>
-              )}
-            </View>
-          </View>
+                
+                {suggestions.length > 0 && (
+                  <View style={styles.suggestionsContainer}>
+                    {suggestions.map((suggestion, index) => (
+                      <TouchableOpacity
+                        key={index}
+                        style={styles.suggestionItem}
+                        onPress={() => selectLocation(suggestion)}
+                      >
+                        <Ionicons name="location-outline" size={16} color="#8E8E93" />
+                        <Text style={styles.suggestionText}>{suggestion.display_name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
 
 
-          {/* Co-hosts Section - Only show if user can edit co-hosts */}
-          {canEditField('coHosts') && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Co-hosts</Text>
-              <Text style={styles.sectionDescription}>
-                Manage friends who can help you run this event
-              </Text>
+              {/* Combined Settings Section: Privacy, Hosts, Max Attendees, Hide Guest List */}
+              <View style={styles.combinedSettingsSection}>
+                {/* Privacy Control - Improved UI */}
+                {canEditField('privacyLevel') ? (
+                  <View style={styles.combinedSectionItem}>
+                    <View style={styles.privacyControlHeader}>
+                      <View style={styles.privacyControlHeaderLeft}>
+                        <Ionicons 
+                          name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+                          size={20} 
+                          color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3b82f6'} 
+                        />
+                        <View style={styles.privacyControlTextContainer}>
+                          <Text style={styles.combinedSectionLabel}>PRIVACY</Text>
+                          <Text style={styles.privacyControlSubtext}>
+                            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+                          </Text>
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.privacySelectButton}
+                        onPress={() => setShowPrivacyModal(true)}
+                      >
+                        <Text style={styles.privacySelectText}>
+                          {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
+                        </Text>
+                        <Ionicons name="chevron-forward" size={16} color="#8E8E93" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.combinedSectionItem}>
+                    <View style={styles.privacyControlHeader}>
+                      <View style={styles.privacyControlHeaderLeft}>
+                        <Ionicons 
+                          name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
+                          size={20} 
+                          color="#8E8E93"
+                        />
+                        <View style={styles.privacyControlTextContainer}>
+                          <Text style={styles.combinedSectionLabel}>PRIVACY (Host Only)</Text>
+                          <Text style={styles.privacyControlSubtext}>
+                            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                )}
 
-              {/* Selected Co-hosts */}
-              {coHosts.length > 0 && (
-                <View style={styles.coHostsList}>
-                  {coHosts.map((coHost) => (
-                    <View key={coHost._id} style={styles.coHostItem}>
-                      <View style={styles.coHostInfo}>
-                        <View style={styles.coHostAvatar}>
-                          {coHost.profilePicture ? (
+                {/* Hosts */}
+                {canEditField('coHosts') && (
+                  <View style={styles.combinedSectionItem}>
+                    <Text style={styles.combinedSectionLabel}>HOSTS</Text>
+                    <View style={styles.hostsRow}>
+                      <View style={styles.hostItem}>
+                        <View style={styles.hostAvatarContainer}>
+                          {currentUser?.profilePicture ? (
                             <Image 
-                              source={{ uri: coHost.profilePicture }} 
-                              style={styles.coHostAvatarImage} 
+                              source={{ uri: currentUser.profilePicture }} 
+                              style={styles.hostAvatar} 
                             />
                           ) : (
-                            <View style={styles.coHostAvatarPlaceholder}>
-                              <Text style={styles.coHostAvatarText}>
-                                {coHost.username.charAt(0).toUpperCase()}
+                            <View style={styles.hostAvatarPlaceholder}>
+                              <Text style={styles.hostAvatarText}>
+                                {currentUser?.username?.charAt(0).toUpperCase() || 'U'}
                               </Text>
                             </View>
                           )}
                         </View>
-                        <View style={styles.coHostDetails}>
-                          <Text style={styles.coHostName}>{coHost.username}</Text>
-                          <Text style={styles.coHostRole}>Co-host</Text>
-                        </View>
                       </View>
+                      
+                      {coHosts.length > 0 && (
+                        coHosts.map((coHost) => (
+                          <View key={coHost._id} style={styles.hostItem}>
+                            <View style={styles.hostAvatarContainer}>
+                              {coHost.profilePicture ? (
+                                <Image 
+                                  source={{ uri: coHost.profilePicture }} 
+                                  style={styles.hostAvatar} 
+                                />
+                              ) : (
+                                <View style={styles.hostAvatarPlaceholder}>
+                                  <Text style={styles.hostAvatarText}>
+                                    {coHost.username.charAt(0).toUpperCase()}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                            <TouchableOpacity
+                              onPress={() => removeCoHost(coHost._id)}
+                              style={styles.removeHostButton}
+                            >
+                              <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                            </TouchableOpacity>
+                          </View>
+                        ))
+                      )}
+
                       <TouchableOpacity
-                        onPress={() => removeCoHost(coHost._id)}
-                        style={styles.removeCoHostButton}
+                        style={styles.addCoHostButtonNew}
+                        onPress={() => setShowCoHostModal(true)}
                       >
-                        <Ionicons name="close" size={20} color="#FF3B30" />
+                        <Ionicons name="add-circle" size={20} color="#3b82f6" />
+                        <Text style={styles.addCoHostButtonTextNew}>Add Co-host</Text>
                       </TouchableOpacity>
                     </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Add Co-host Button */}
-              <TouchableOpacity
-                style={styles.addCoHostButton}
-                onPress={() => setShowCoHostModal(true)}
-              >
-                <Ionicons name="person-add-outline" size={20} color="#3797EF" />
-                <Text style={styles.addCoHostButtonText}>Add Co-host</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Event Settings */}
-<View style={styles.section}>
-  <Text style={styles.sectionTitle}>Settings</Text>
-
-  {/* Max Attendees - Host Only */}
-  {canEditField('maxAttendees') ? (
-    <View style={styles.inputGroup}>
-      <Text style={styles.label}>Max Attendees</Text>
-      <TextInput
-        style={styles.input}
-        value={maxAttendees}
-        onChangeText={setMaxAttendees}
-        placeholder="50"
-        placeholderTextColor="#C7C7CC"
-        keyboardType="numeric"
-      />
-    </View>
-  ) : (
-    <View style={styles.inputGroup}>
-      <Text style={styles.label}>
-        Max Attendees <Text style={styles.restrictedLabel}>(Host Only)</Text>
-      </Text>
-      <View style={[styles.input, styles.inputDisabled]}>
-        <Text style={styles.disabledText}>{maxAttendees}</Text>
-      </View>
-      <Text style={styles.restrictedHint}>
-        Only the host can change attendee limits
-      </Text>
-    </View>
-  )}
-
-  {/* Ticket Price - Host Only */}
-  
-  {/* Ticket Price - Host Only
-{FEATURES.PAYMENTS && (
-  <>
-    {canEditField('pricing') ? (
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>Ticket Price ($)</Text>
-        <TextInput
-          style={styles.input}
-          value={price}
-          onChangeText={setPrice}
-          placeholder="0.00"
-          placeholderTextColor="#C7C7CC"
-          keyboardType="numeric"
-        />
-      </View>
-    ) : (
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>
-          Ticket Price ($) <Text style={styles.restrictedLabel}>(Host Only)</Text>
-        </Text>
-        <View style={[styles.input, styles.inputDisabled]}>
-          <Text style={styles.disabledText}>${price}</Text>
-        </View>
-        <Text style={styles.restrictedHint}>
-          Only the host can change pricing
-        </Text>
-      </View>
-    )}
-  </>
-)} */}
-
-</View>
-
-          {/* Privacy Settings */}
-{canEditField('privacyLevel') ? (
-  <View style={styles.section}>
-    <Text style={styles.sectionTitle}>Privacy Level</Text>
-    <Text style={styles.sectionDescription}>
-      Controls who can see and join your event
-    </Text>
-
-    <TouchableOpacity
-      style={styles.privacyButton}
-      onPress={() => setShowPrivacyModal(true)}
-    >
-      <View style={styles.privacyButtonContent}>
-        <Ionicons 
-          name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
-          size={24} 
-          color={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.color || '#3797EF'} 
-        />
-        <View style={styles.privacyButtonText}>
-          <Text style={styles.privacyLabel}>
-            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
-          </Text>
-          <Text style={styles.privacyDesc}>
-            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-      </View>
-    </TouchableOpacity>
-  </View>
-) : (
-  <View style={styles.section}>
-    <Text style={styles.sectionTitle}>
-      Privacy Level <Text style={styles.restrictedLabel}>(Host Only)</Text>
-    </Text>
-    <Text style={styles.sectionDescription}>
-      Only the host can change privacy settings
-    </Text>
-
-    <View style={[styles.privacyButton, styles.privacyButtonDisabled]}>
-      <View style={styles.privacyButtonContent}>
-        <Ionicons 
-          name={PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.icon || 'globe-outline'} 
-          size={24} 
-          color="#8E8E93"
-        />
-        <View style={styles.privacyButtonText}>
-          <Text style={styles.disabledText}>
-            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.label || 'Public'}
-          </Text>
-          <Text style={styles.restrictedHint}>
-            {PRIVACY_LEVELS.find(p => p.key === privacyLevel)?.desc || 'Anyone can see and join'}
-          </Text>
-        </View>
-      </View>
-    </View>
-  </View>
-)}
-
-          {/* Delete Event Section - Only show for event host */}
-          {canEditField('deleteEvent') && (
-            <View style={styles.section}>
-              <Text style={styles.dangerSectionTitle}>Danger Zone</Text>
-              <Text style={styles.sectionDescription}>
-                Permanent actions that cannot be undone
-              </Text>
-
-              <View style={styles.dangerContainer}>
-                <View style={styles.deleteEventInfo}>
-                  <View style={styles.deleteEventIcon}>
-                    <Ionicons name="trash-outline" size={24} color="#FF3B30" />
                   </View>
-                  <View style={styles.deleteEventText}>
-                    <Text style={styles.deleteEventLabel}>Delete Event</Text>
-                    <Text style={styles.deleteEventDesc}>
-                      Permanently delete this event and all associated data
-                    </Text>
-                  </View>
-                </View>
+                )}
 
-                <TouchableOpacity
-                  style={styles.deleteEventButton}
-                  onPress={showDeleteConfirmation}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.deleteEventButtonText}>Delete Event</Text>
-                </TouchableOpacity>
+                {/* Divider */}
+                <View style={styles.combinedSectionDivider} />
 
-                {/* Warning indicators */}
-                <View style={styles.deleteWarningContainer}>
-                  <View style={styles.deleteWarning}>
-                    <Ionicons name="warning" size={16} color="#FF9500" />
-                    <Text style={styles.deleteWarningText}>
-                      This will notify all {event?.attendees?.length || 0} attendees
-                    </Text>
-                  </View>
-                  <View style={styles.deleteWarning}>
-                    <Ionicons name="image" size={16} color="#FF9500" />
-                    <Text style={styles.deleteWarningText}>
-                      Photos will be untagged but preserved in user galleries
-                    </Text>
-                  </View>
-                  {event?.pricing?.amount > 0 && (
-                    <View style={styles.deleteWarning}>
-                      <Ionicons name="card" size={16} color="#FF9500" />
-                      <Text style={styles.deleteWarningText}>
-                        Paid event - future refund handling may be needed
-                      </Text>
+                {/* Max Attendees */}
+                {canEditField('maxAttendees') && (
+                  <View style={styles.combinedSectionItem}>
+                    <View style={styles.settingRow}>
+                      <View style={styles.settingInfo}>
+                        <Text style={styles.settingTitle}>Max Attendees</Text>
+                        <Text style={styles.settingSubtitle}>Limit number of guests</Text>
+                      </View>
+                      <View style={styles.maxAttendeesContainer}>
+                        <TextInput
+                          style={styles.maxAttendeesInput}
+                          value={maxAttendees}
+                          onChangeText={setMaxAttendees}
+                          placeholder="N/A"
+                          placeholderTextColor="#8E8E93"
+                          keyboardType="numeric"
+                          textAlign="center"
+                        />
+                      </View>
                     </View>
-                  )}
+                  </View>
+                )}
+
+                {/* Hide Guest List */}
+                <View style={styles.combinedSectionItem}>
+                  <View style={styles.settingRow}>
+                    <View style={styles.settingInfo}>
+                      <Text style={styles.settingTitle}>Hide Guest List</Text>
+                      <Text style={styles.settingSubtitle}>Only hosts can see who's going</Text>
+                    </View>
+                    <Switch
+                      value={hideGuestList}
+                      onValueChange={setHideGuestList}
+                      trackColor={{ false: '#E5E5EA', true: '#3b82f6' }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
                 </View>
               </View>
-            </View>
-          )}
 
-          <CoverPhotoSelectionModal
-  visible={coverModalVisible}
-  onClose={() => setCoverModalVisible(false)}
-  onSelectCover={handleCoverSelection}
-  eventTitle={title}
-/>
+              {/* Delete Event Section - Only show for event host */}
+              {canEditField('deleteEvent') && (
+                <View style={styles.section}>
+                  <Text style={styles.dangerSectionTitle}>Danger Zone</Text>
+                  <Text style={styles.sectionDescription}>
+                    Permanent actions that cannot be undone
+                  </Text>
+
+                  <View style={styles.dangerContainer}>
+                    <View style={styles.deleteEventInfo}>
+                      <View style={styles.deleteEventIcon}>
+                        <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+                      </View>
+                      <View style={styles.deleteEventText}>
+                        <Text style={styles.deleteEventLabel}>Delete Event</Text>
+                        <Text style={styles.deleteEventDesc}>
+                          Permanently delete this event and all associated data
+                        </Text>
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.deleteEventButton}
+                      onPress={showDeleteConfirmation}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.deleteEventButtonText}>Delete Event</Text>
+                    </TouchableOpacity>
+
+                    {/* Warning indicators */}
+                    <View style={styles.deleteWarningContainer}>
+                      <View style={styles.deleteWarning}>
+                        <Ionicons name="warning" size={16} color="#FF9500" />
+                        <Text style={styles.deleteWarningText}>
+                          This will notify all {event?.attendees?.length || 0} attendees
+                        </Text>
+                      </View>
+                      <View style={styles.deleteWarning}>
+                        <Ionicons name="image" size={16} color="#FF9500" />
+                        <Text style={styles.deleteWarningText}>
+                          Photos will be untagged but preserved in user galleries
+                        </Text>
+                      </View>
+                      {event?.pricing?.amount > 0 && (
+                        <View style={styles.deleteWarning}>
+                          <Ionicons name="card" size={16} color="#FF9500" />
+                          <Text style={styles.deleteWarningText}>
+                            Paid event - future refund handling may be needed
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
         </ScrollView>
+
+        {/* Fixed Save Event Button */}
+        <View style={styles.createButtonContainer}>
+          <TouchableOpacity
+            style={[styles.createButton, (!canProceed() || saving) && styles.createButtonDisabled]}
+            onPress={handleSaveEvent}
+            disabled={!canProceed() || saving}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.createButtonText}>Save Changes</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Privacy Modal */}
+        {showPrivacyModal && (
+          <Modal
+            visible={showPrivacyModal}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowPrivacyModal(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Privacy Level</Text>
+                  <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
+                    <Ionicons name="close" size={24} color="#8E8E93" />
+                  </TouchableOpacity>
+                </View>
+                
+                {PRIVACY_LEVELS.map((level) => (
+                  <TouchableOpacity
+                    key={level.key}
+                    style={styles.privacyModalOption}
+                    onPress={() => {
+                      handlePrivacySelect(level.key);
+                    }}
+                  >
+                    <View style={styles.privacyModalOptionContent}>
+                      <View style={[styles.privacyModalIcon, { backgroundColor: level.color + '20' }]}>
+                        <Ionicons 
+                          name={level.icon} 
+                          size={20} 
+                          color={level.color} 
+                        />
+                      </View>
+                      <View style={styles.privacyModalText}>
+                        <Text style={styles.privacyModalLabel}>{level.label}</Text>
+                        <Text style={styles.privacyModalDesc}>{level.desc}</Text>
+                      </View>
+                    </View>
+                    {privacyLevel === level.key && (
+                      <Ionicons name="checkmark" size={20} color={level.color} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </Modal>
+        )}
+
+        <CoverPhotoSelectionModal
+          visible={showCoverModal}
+          onClose={() => setShowCoverModal(false)}
+          onSelectCover={handleCoverSelect}
+          eventTitle={title || "Your Event"}
+        />
       </KeyboardAvoidingView>
 
       {/* Co-host Search Modal */}
-        <Modal
-      visible={showCoHostModal}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowCoHostModal(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.coHostModal}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add Co-host</Text>
-            <TouchableOpacity onPress={() => setShowCoHostModal(false)}>
-              <Ionicons name="close" size={24} color="#8E8E93" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.searchContainer}>
-            <View style={styles.searchInputContainer}>
-              <Ionicons name="search" size={20} color="#8E8E93" />
-              <TextInput
-                style={styles.searchInput}
-                value={coHostSearchQuery}
-                onChangeText={setCoHostSearchQuery}
-                placeholder="Search for friends..."
-                placeholderTextColor="#C7C7CC"
-                autoFocus
-              />
-              {searchingCoHosts && (
-                <ActivityIndicator size="small" color="#8E8E93" />
-              )}
+      <Modal
+        visible={showCoHostModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCoHostModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.coHostModal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Co-host</Text>
+              <TouchableOpacity onPress={() => setShowCoHostModal(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
             </View>
-          </View>
 
-          <FlatList
-            data={coHostSearchResults}
-            keyExtractor={(item) => item._id}
-            style={styles.searchResultsList}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.searchResultItem}
-                onPress={() => addCoHost(item)}
-              >
-                <View style={styles.searchResultAvatar}>
-                  {item.profilePicture ? (
-                    <Image 
-                      source={{ 
-                        uri: item.profilePicture.startsWith('http') 
-                          ? item.profilePicture 
-                          : `http://${API_BASE_URL}:3000${item.profilePicture}` 
-                      }} 
-                      style={styles.searchResultAvatarImage} 
-                    />
-                  ) : (
-                    <View style={styles.searchResultAvatarPlaceholder}>
-                      <Text style={styles.searchResultAvatarText}>
-                        {item.username.charAt(0).toUpperCase()}
+            <View style={styles.searchContainer}>
+              <View style={styles.searchInputContainer}>
+                <Ionicons name="search" size={20} color="#8E8E93" />
+                <TextInput
+                  style={styles.searchInput}
+                  value={coHostSearchQuery}
+                  onChangeText={setCoHostSearchQuery}
+                  placeholder="Search for friends..."
+                  placeholderTextColor="#C7C7CC"
+                  autoFocus
+                />
+                {searchingCoHosts && (
+                  <ActivityIndicator size="small" color="#8E8E93" />
+                )}
+              </View>
+            </View>
+
+            <FlatList
+              data={coHostSearchResults}
+              keyExtractor={(item) => item._id}
+              style={styles.searchResultsList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.searchResultItem}
+                  onPress={() => addCoHost(item)}
+                >
+                  <View style={styles.searchResultAvatar}>
+                    {item.profilePicture ? (
+                      <Image 
+                        source={{ 
+                          uri: item.profilePicture.startsWith('http') 
+                            ? item.profilePicture 
+                            : `http://${API_BASE_URL}:3000${item.profilePicture}` 
+                        }} 
+                        style={styles.searchResultAvatarImage} 
+                      />
+                    ) : (
+                      <View style={styles.searchResultAvatarPlaceholder}>
+                        <Text style={styles.searchResultAvatarText}>
+                          {item.username.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.searchResultInfo}>
+                    <Text style={styles.searchResultName}>{item.username}</Text>
+                    {item.bio && (
+                      <Text style={styles.searchResultDisplayName} numberOfLines={1}>
+                        {item.bio}
                       </Text>
-                    </View>
-                  )}
-                </View>
-                <View style={styles.searchResultInfo}>
-                  <Text style={styles.searchResultName}>{item.username}</Text>
-                  {item.bio && (
-                    <Text style={styles.searchResultDisplayName} numberOfLines={1}>
-                      {item.bio}
+                    )}
+                  </View>
+                  <Ionicons name="add-circle" size={24} color="#3797EF" />
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={() => (
+                <View style={styles.emptySearchResults}>
+                  {coHostSearchQuery ? (
+                    <Text style={styles.emptySearchText}>
+                      {searchingCoHosts ? 'Searching...' : 'No users found'}
+                    </Text>
+                  ) : (
+                    <Text style={styles.emptySearchText}>
+                      Search for friends to add as co-hosts {coHosts.length >= 10 ? '(Limit: 10)' : `(${coHosts.length}/10)`}
                     </Text>
                   )}
                 </View>
-                <Ionicons name="add-circle" size={24} color="#3797EF" />
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={() => (
-              <View style={styles.emptySearchResults}>
-                {coHostSearchQuery ? (
-                  <Text style={styles.emptySearchText}>
-                    {searchingCoHosts ? 'Searching...' : 'No users found'}
-                  </Text>
-                ) : (
-                  <Text style={styles.emptySearchText}>
-                    Search for friends to add as co-hosts {coHosts.length >= 10 ? '(Limit: 10)' : `(${coHosts.length}/10)`}
-                  </Text>
-                )}
-              </View>
-            )}
-          />
-        </View>
-      </View>
-        </Modal>
-
-      {/* Category Modal */}
-      <Modal
-  visible={categoryModalVisible}
-  animationType="slide"
-  presentationStyle="pageSheet"
-  onRequestClose={() => setCategoryModalVisible(false)}
->
-  <SafeAreaView style={styles.modalContainer}>
-    <View style={styles.modalHeader}>
-      <TouchableOpacity
-        onPress={() => setCategoryModalVisible(false)}
-        style={styles.modalCloseButton}
-      >
-        <Text style={styles.modalCloseText}>Cancel</Text>
-      </TouchableOpacity>
-      <Text style={styles.modalTitle}>Select Category</Text>
-      <View style={styles.modalSpacer} />
-    </View>
-
-    <FlatList
-      data={CATEGORIES}
-      keyExtractor={(item) => item}
-      renderItem={({ item }) => (
-        <TouchableOpacity
-          style={styles.categoryOption}
-         onPress={() => {
-  setCategory(item);
-  categoryRef.current = item; // ✅ Update ref immediately
-  setCategoryModalVisible(false);
-}}
-
-
-        >
-          <Text style={styles.categoryOptionText}>{item}</Text>
-          {category === item && (
-            <Ionicons name="checkmark" size={20} color="#3797EF" />
-          )}
-        </TouchableOpacity>
-      )}
-    />
-  </SafeAreaView>
-</Modal>
-
-      {/* Privacy Level Modal */}
-     <Modal
-  visible={showPrivacyModal}
-  transparent={true}
-  animationType="slide"
-  onRequestClose={() => setShowPrivacyModal(false)}
->
-  <View style={styles.modalOverlay}>
-    <View style={styles.modalContent}>
-      <View style={styles.modalHeader}>
-        <Text style={styles.modalTitle}>Privacy Level</Text>
-        <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
-          <Ionicons name="close" size={24} color="#8E8E93" />
-        </TouchableOpacity>
-      </View>
-
-      {/* PHASE 2: Debug current selection */}
-      <View style={styles.debugSection}>
-        <Text style={styles.debugText}>
-          Current: {privacyLevel} | Type: {typeof privacyLevel}
-        </Text>
-      </View>
-
-      <FlatList
-        data={PRIVACY_LEVELS}
-        keyExtractor={(item) => item.key}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.privacyOption}
-            onPress={() => {
-              console.log(`🔒 FRONTEND: Modal selection - "${item.key}"`);
-              handlePrivacySelect(item.key); // Use the enhanced handler instead of direct setState
-            }}
-          >
-            <View style={styles.privacyOptionContent}>
-              <Ionicons name={item.icon} size={24} color={item.color} />
-              <View style={styles.privacyOptionText}>
-                <Text style={styles.privacyOptionLabel}>{item.label}</Text>
-                <Text style={styles.privacyOptionDesc}>{item.desc}</Text>
-              </View>
-              {privacyLevel === item.key && (
-                <Ionicons name="checkmark" size={20} color="#3797EF" />
               )}
-            </View>
-          </TouchableOpacity>
-        )}
-      />
+            />
+          </View>
+        </View>
+      </Modal>
 
-      {/* PHASE 2: Manual testing buttons */}
-      <View style={styles.testSection}>
-        <Text style={styles.testTitle}>🧪 Quick Test (Development Only)</Text>
-        {['public', 'friends', 'private'].map(testLevel => (
-          <TouchableOpacity
-            key={testLevel}
-            style={[styles.testButton, privacyLevel === testLevel && styles.testButtonActive]}
-            onPress={() => {
-              console.log(`🧪 TEST: Setting privacy to "${testLevel}"`);
-              setPrivacyLevel(testLevel);
-              setShowPrivacyModal(false);
-            }}
-          >
-            <Text style={[
-              styles.testButtonText, 
-              privacyLevel === testLevel && styles.testButtonTextActive
-            ]}>
-              {testLevel.toUpperCase()}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  </View>
-</Modal>
 
       {/* ✅ FIXED: Delete Confirmation Modal */}
       <Modal
@@ -1646,14 +1430,15 @@ const handleCoverSelection = (coverImage, source) => {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
   },
   centered: {
     flex: 1,
@@ -1667,6 +1452,141 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+    backgroundColor: 'transparent',
+    overflow: 'visible',
+  },
+  scrollContent: {
+    paddingBottom: 100,
+    backgroundColor: 'transparent',
+    paddingTop: 0,
+    marginTop: 0,
+  },
+  safeAreaHeader: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 44 : 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    backgroundColor: 'transparent',
+  },
+  headerOverlay: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    position: 'relative',
+  },
+  headerCancelButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 9999,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    backdropFilter: 'blur(10px)',
+    zIndex: 1,
+  },
+  headerCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  headerTitleContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 0,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  headerSpacer: {
+    width: 32,
+  },
+  heroContainer: {
+    width: '100%',
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+    position: 'relative',
+    zIndex: 1,
+    elevation: 1,
+    marginTop: 0,
+    marginBottom: 0,
+    marginLeft: 0,
+    marginRight: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    paddingLeft: 0,
+    paddingRight: 0,
+  },
+  coverTouchable: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    overflow: 'hidden',
+  },
+  heroImage: {
+    resizeMode: 'cover',
+    backgroundColor: '#E5E7EB',
+    position: 'absolute',
+  },
+  coverPlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#E5E7EB',
+  },
+  coverPlaceholderText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 9999,
+    overflow: 'hidden',
+  },
+  coverIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backdropFilter: 'blur(8px)',
+  },
+  formContainerWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24,
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 30,
+    elevation: 10,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  formContainer: {
+    padding: 24,
+    paddingTop: 32,
   },
   headerButton: {
     paddingHorizontal: 16,
@@ -1681,10 +1601,9 @@ const styles = StyleSheet.create({
     color: '#3797EF',
   },
 
-  // Sections
   section: {
     marginBottom: 32,
-    paddingHorizontal: 16,
+    paddingHorizontal: 24,
   },
   sectionTitle: {
     fontSize: 20,
@@ -1696,6 +1615,354 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
     marginBottom: 16,
+  },
+  eventNameContainer: {
+    marginBottom: 16,
+  },
+  eventNameInput: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#000000',
+    padding: 0,
+    backgroundColor: 'transparent',
+  },
+  descriptionContainer: {
+    marginBottom: 24,
+    position: 'relative',
+  },
+  descriptionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8E8E93',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  descriptionInput: {
+    minHeight: 140,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#E5E5EA',
+    backgroundColor: '#F8F8F8',
+    padding: 16,
+    fontSize: 16,
+    color: '#000000',
+    textAlignVertical: 'top',
+  },
+  characterCounter: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  categorySection: {
+    marginBottom: 24,
+    marginLeft: -24,
+    marginRight: -24,
+  },
+  categoryLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8E8E93',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+    paddingHorizontal: 24,
+  },
+  categoryPillsContainer: {
+    paddingHorizontal: 24,
+  },
+  categoryPillsContent: {
+    paddingHorizontal: 0,
+    gap: 10,
+  },
+  categoryPill: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 9999,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  categoryPillSelected: {
+    backgroundColor: '#3b82f6',
+    borderColor: '#3b82f6',
+  },
+  categoryPillText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#3b82f6',
+  },
+  categoryPillTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  whenWhereSection: {
+    marginBottom: 24,
+    gap: 12,
+  },
+  whenCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  whenCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  whenCardContent: {
+    flex: 1,
+  },
+  whenCardLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  whenCardValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  whereCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  whereCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  whereCardContent: {
+    flex: 1,
+  },
+  whereCardLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  whereCardInput: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    padding: 0,
+    backgroundColor: 'transparent',
+  },
+  combinedSettingsSection: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 20,
+  },
+  combinedSectionItem: {
+    // No margin - using gap on parent
+  },
+  combinedSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  combinedSectionDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 20,
+  },
+  privacyControlHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  privacyControlHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  privacyControlTextContainer: {
+    flex: 1,
+  },
+  privacyControlSubtext: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  privacySelectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  privacySelectText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  hostsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  hostItem: {
+    position: 'relative',
+  },
+  hostAvatarContainer: {
+    position: 'relative',
+  },
+  hostAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  hostAvatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#3b82f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  hostAvatarText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  removeHostButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+  },
+  addCoHostButtonNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#CBD5E1',
+  },
+  addCoHostButtonTextNew: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  settingInfo: {
+    flex: 1,
+  },
+  settingTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  settingSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  maxAttendeesContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    minWidth: 60,
+  },
+  maxAttendeesInput: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+    textAlign: 'center',
+    minWidth: 40,
+    padding: 0,
+  },
+  createButtonContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 32,
+    borderTopWidth: 0.5,
+    borderTopColor: '#E5E5EA',
+    zIndex: 30,
+    elevation: 30,
+  },
+  createButton: {
+    backgroundColor: '#3b82f6',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  createButtonDisabled: {
+    backgroundColor: '#C7C7CC',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  createButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
   },
 
   // Cover Image
@@ -2451,10 +2718,403 @@ modalContainer: {
     borderColor: '#E5E5EA',
     borderStyle: 'dashed',
   },
-  addEndTimeText: {
-    marginLeft: 8,
+  // Co-host Banner
+  coHostBanner: {
+    backgroundColor: '#E3F2FD',
+    borderRadius: 12,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#3b82f6',
+  },
+  coHostBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  coHostBannerText: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 14,
+    color: '#1976D2',
+    lineHeight: 20,
+  },
+  // Restricted Fields
+  restrictedLabel: {
+    fontSize: 12,
+    color: '#FF9500',
+    fontWeight: '500',
+  },
+  restrictedHint: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  inputDisabled: {
+    backgroundColor: '#F0F0F0',
+    borderColor: '#E5E5EA',
+    opacity: 0.7,
+  },
+  disabledText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    paddingVertical: 14,
+  },
+  // Modals
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 34,
+  },
+  coHostModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '80%',
+    paddingBottom: 34,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  // Privacy Modal
+  privacyModalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  privacyModalOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  privacyModalIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  privacyModalText: {
+    flex: 1,
+  },
+  privacyModalLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#3797EF',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  privacyModalDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  // Co-host Search
+  searchContainer: {
+    padding: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#000000',
+    paddingVertical: 8,
+  },
+  searchResultsList: {
+    flex: 1,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  searchResultAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginRight: 12,
+  },
+  searchResultAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+  },
+  searchResultAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 22,
+    backgroundColor: '#3b82f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchResultAvatarText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  searchResultInfo: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  searchResultDisplayName: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  emptySearchResults: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptySearchText: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+  // Location Suggestions
+  suggestionsContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    maxHeight: 200,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E5E5EA',
+  },
+  suggestionText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#000000',
+    flex: 1,
+  },
+  // Delete Event Styles
+  dangerSectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FF3B30',
+    marginBottom: 4,
+  },
+  dangerContainer: {
+    backgroundColor: '#FFF5F5',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#FFE5E5',
+  },
+  deleteEventInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  deleteEventIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFE5E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  deleteEventText: {
+    flex: 1,
+  },
+  deleteEventLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FF3B30',
+  },
+  deleteEventDesc: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  deleteEventButton: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  deleteEventButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  deleteWarningContainer: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#FFE5E5',
+  },
+  deleteWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  deleteWarningText: {
+    marginLeft: 8,
+    fontSize: 12,
+    color: '#FF9500',
+    flex: 1,
+  },
+  // Delete Modal Styles
+  deleteModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 34,
+    maxHeight: '85%',
+  },
+  deleteModalHeader: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  deleteModalIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFE5E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deleteModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  deleteModalSubtitle: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+  deleteImpactContainer: {
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+  },
+  deleteImpactTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 16,
+  },
+  deleteImpactItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    paddingRight: 16,
+  },
+  deleteImpactText: {
+    marginLeft: 12,
+    fontSize: 14,
+    color: '#8E8E93',
+    flex: 1,
+    lineHeight: 20,
+  },
+  deleteImpactDanger: {
+    color: '#FF3B30',
+    fontWeight: '500',
+  },
+  deleteConfirmationContainer: {
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  deleteConfirmationText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 12,
+  },
+  deleteConfirmationInput: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  deleteModalActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    gap: 12,
+  },
+  deleteModalCancelButton: {
+    flex: 1,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  deleteModalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  deleteModalConfirmButton: {
+    flex: 1,
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  deleteModalConfirmButtonDisabled: {
+    backgroundColor: '#FFB3B3',
+    opacity: 0.5,
+  },
+  deleteModalConfirmText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

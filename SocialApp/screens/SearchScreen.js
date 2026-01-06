@@ -3,7 +3,7 @@ import React, { useState, useEffect, useContext, useRef, useCallback } from 'rea
 import {
   View, TextInput, FlatList, Text, TouchableOpacity, StyleSheet,
   SafeAreaView, StatusBar, ActivityIndicator, Alert, Image, RefreshControl,
-  ScrollView, Dimensions, Animated, PanResponder
+  ScrollView, Dimensions, Animated, PanResponder, Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../services/AuthContext';
@@ -11,6 +11,7 @@ import api from '../services/api';
 import CategoryManager from '../components/CategoryManager';
 import PostCard from '../components/PostCard';
 import ReviewCard from '../components/ReviewCard';
+import SearchHistoryService from '../services/searchHistoryService';
 
 import { API_BASE_URL as ENV_API_BASE_URL } from '@env';
 // Use the IP from .env, add port 3000 when constructing URLs
@@ -39,10 +40,25 @@ export default function SearchScreen({ navigation, route }) {
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'people', 'songs', 'movies', 'posts', 'events'
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   
-  // Following suggestions state
-  const [suggestions, setSuggestions] = useState([]);
+  // Search suggestions state
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [recentSearches, setRecentSearches] = useState([]);
+  
+  // Following suggestions state (for people tab)
+  const [peopleSuggestions, setPeopleSuggestions] = useState([]);
+  
+  // Loading states per type (for progressive loading)
+  const [loadingStates, setLoadingStates] = useState({
+    users: false,
+    events: false,
+    posts: false,
+    songs: false,
+    movies: false
+  });
   
   // Trending hashtags (mock data for now)
   const [trendingHashtags] = useState([
@@ -62,6 +78,21 @@ export default function SearchScreen({ navigation, route }) {
   const isAnimating = useRef(false);
   const tabScrollViewRef = useRef(null);
   const tabLayouts = useRef({}); // Store tab layout positions
+  
+  // Search debouncing refs
+  const searchTimeoutRef = useRef(null);
+  const suggestionsTimeoutRef = useRef(null);
+  const lastTypingTime = useRef(0);
+  const searchAbortController = useRef(null);
+
+  // Load recent searches on mount
+  useEffect(() => {
+    const loadRecentSearches = async () => {
+      const recent = await SearchHistoryService.getRecentSearches();
+      setRecentSearches(recent);
+    };
+    loadRecentSearches();
+  }, []);
 
   // Fetch following suggestions (based on who your following follow)
   const fetchFollowingSuggestions = async () => {
@@ -72,13 +103,35 @@ export default function SearchScreen({ navigation, route }) {
       });
       
       if (data.success) {
-        setSuggestions(data.suggestions || []);
+        setPeopleSuggestions(data.suggestions || []);
       } else {
-        setSuggestions([]);
+        setPeopleSuggestions([]);
       }
     } catch (error) {
       console.error('Error fetching following suggestions:', error);
-      setSuggestions([]);
+      setPeopleSuggestions([]);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  // Fetch search suggestions for autocomplete
+  const fetchSearchSuggestions = async (searchQuery) => {
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+
+    try {
+      setLoadingSuggestions(true);
+      const { data } = await api.get('/api/search/suggestions', {
+        params: { q: searchQuery, limit: 5 }
+      });
+      
+      setSearchSuggestions(data.suggestions || []);
+    } catch (error) {
+      console.error('Error fetching search suggestions:', error);
+      setSearchSuggestions([]);
     } finally {
       setLoadingSuggestions(false);
     }
@@ -216,21 +269,61 @@ export default function SearchScreen({ navigation, route }) {
     }
   }, [activeTab]);
 
-  // Debounced search
+  // Smart debounced search with adaptive timing
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (query.trim().length > 0) {
-        performSearch();
-      } else {
-        setResults([]);
-        // Load suggestions for people tab when query is empty
-        if (activeTab === 'people') {
-          fetchFollowingSuggestions();
-        }
-      }
-    }, 300);
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
 
-    return () => clearTimeout(timeoutId);
+    // Cancel previous search request
+    if (searchAbortController.current) {
+      searchAbortController.current.abort();
+    }
+
+    const currentTime = Date.now();
+    const timeSinceLastType = currentTime - lastTypingTime.current;
+    lastTypingTime.current = currentTime;
+
+    // Adaptive debounce: 150ms for fast typing, 300ms for pauses
+    const debounceDelay = timeSinceLastType < 200 ? 150 : 300;
+
+    if (query.trim().length > 0) {
+      // Show suggestions dropdown
+      setShowSuggestions(true);
+      
+      // Fetch suggestions with shorter delay
+      if (suggestionsTimeoutRef.current) {
+        clearTimeout(suggestionsTimeoutRef.current);
+      }
+      suggestionsTimeoutRef.current = setTimeout(() => {
+        fetchSearchSuggestions(query);
+      }, 150);
+
+      // Perform search with adaptive debounce
+      searchTimeoutRef.current = setTimeout(() => {
+        performSearch();
+      }, debounceDelay);
+    } else {
+      setResults([]);
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      setError(null);
+      
+      // Load suggestions for people tab when query is empty
+      if (activeTab === 'people') {
+        fetchFollowingSuggestions();
+      }
+    }
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+      if (suggestionsTimeoutRef.current) {
+        clearTimeout(suggestionsTimeoutRef.current);
+      }
+    };
   }, [query, activeTab]);
 
   // Navigation header setup
@@ -248,98 +341,155 @@ export default function SearchScreen({ navigation, route }) {
       setResults([]);
       return;
     }
+
+    // Create new abort controller for this search
+    searchAbortController.current = new AbortController();
+    const signal = searchAbortController.current.signal;
     
     setLoading(true);
+    setError(null);
+    setShowSuggestions(false);
+    
+    // Add to search history
+    await SearchHistoryService.addSearch(query);
+    const recent = await SearchHistoryService.getRecentSearches();
+    setRecentSearches(recent);
+
     try {
-      let endpoint = '';
-      let params = { q: query };
-
-      switch (activeTab) {
-        case 'all':
-          // Search all types
-          await searchAll();
-          return;
-        case 'people':
-          endpoint = '/api/users/search';
-          params.limit = 20;
-          break;
-        case 'songs':
-          endpoint = '/api/reviews/search-songs';
-          params.query = query;
-          params.limit = 20;
-          break;
-        case 'movies':
-          endpoint = '/api/reviews/search-movies';
-          params.query = query;
-          params.page = 1;
-          break;
-        case 'posts':
-          endpoint = '/api/search/posts';
-          break;
-        case 'events':
-          endpoint = '/api/search/events';
-          break;
-        default:
-          setLoading(false);
-          return;
-      }
-
-      const response = await api.get(endpoint, { params });
-      
-      if (activeTab === 'songs' || activeTab === 'movies') {
-        setResults(response.data.items || response.data.results || []);
+      if (activeTab === 'all') {
+        // Use unified search endpoint
+        await searchAllUnified(signal);
       } else {
-        setResults(response.data || []);
+        // Use specific endpoint for each tab
+        let endpoint = '';
+        let params = { q: query };
+
+        switch (activeTab) {
+          case 'people':
+            endpoint = '/api/search/users';
+            params.limit = 20;
+            break;
+          case 'songs':
+            endpoint = '/api/reviews/search-songs';
+            params.query = query;
+            params.limit = 20;
+            break;
+          case 'movies':
+            endpoint = '/api/reviews/search-movies';
+            params.query = query;
+            params.page = 1;
+            break;
+          case 'posts':
+            endpoint = '/api/search/posts';
+            params.limit = 20;
+            break;
+          case 'events':
+            endpoint = '/api/search/events';
+            params.limit = 20;
+            break;
+          default:
+            setLoading(false);
+            return;
+        }
+
+        const response = await api.get(endpoint, { params, signal });
+        
+        if (activeTab === 'songs') {
+          setResults(response.data.items || response.data.tracks || []);
+        } else if (activeTab === 'movies') {
+          setResults(response.data.results || []);
+        } else {
+          setResults(response.data || []);
+        }
       }
     } catch (error) {
+      if (error.name === 'AbortError' || error.name === 'CanceledError') {
+        // Request was cancelled, ignore
+        return;
+      }
       console.error('Search error:', error);
+      setError('Could not complete search. Please try again.');
       setResults([]);
-      Alert.alert('Search Error', 'Could not complete search. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Search all types
-  const searchAll = async () => {
+  // Unified search for "all" tab
+  const searchAllUnified = async (signal) => {
     try {
-      const [usersRes, postsRes, eventsRes, songsRes, moviesRes] = await Promise.allSettled([
-        api.get('/api/users/search', { params: { q: query, limit: 5 } }),
-        api.get('/api/search/posts', { params: { q: query } }).then(r => r.data.slice(0, 5)),
-        api.get('/api/search/events', { params: { q: query } }).then(r => r.data.slice(0, 5)),
-        api.get('/api/reviews/search-songs', { params: { query, limit: 5 } }),
-        api.get('/api/reviews/search-movies', { params: { query, page: 1 } })
-      ]);
+      setLoadingStates({
+        users: true,
+        events: true,
+        posts: true,
+        songs: true,
+        movies: true
+      });
 
+      const response = await api.get('/api/search/unified', {
+        params: {
+          q: query,
+          types: 'users,events,posts,songs,movies',
+          limit: 5
+        },
+        signal
+      });
+
+      const { results: searchResults } = response.data;
       const allResults = [];
-      
-      if (usersRes.status === 'fulfilled' && usersRes.value.data) {
-        allResults.push(...usersRes.value.data.map(u => ({ ...u, _type: 'user' })));
+
+      // Combine results with type markers
+      if (searchResults.users) {
+        allResults.push(...searchResults.users.map(u => ({ ...u, _type: 'user' })));
+        setLoadingStates(prev => ({ ...prev, users: false }));
       }
-      if (postsRes.status === 'fulfilled' && postsRes.value) {
-        allResults.push(...postsRes.value.map(p => ({ ...p, _type: 'post' })));
+      if (searchResults.events) {
+        allResults.push(...searchResults.events.map(e => ({ ...e, _type: 'event' })));
+        setLoadingStates(prev => ({ ...prev, events: false }));
       }
-      if (eventsRes.status === 'fulfilled' && eventsRes.value) {
-        allResults.push(...eventsRes.value.map(e => ({ ...e, _type: 'event' })));
+      if (searchResults.posts) {
+        allResults.push(...searchResults.posts.map(p => ({ ...p, _type: 'post' })));
+        setLoadingStates(prev => ({ ...prev, posts: false }));
       }
-      if (songsRes.status === 'fulfilled' && songsRes.value.data?.items) {
-        allResults.push(...songsRes.value.data.items.map(s => ({ ...s, _type: 'song' })));
+      if (searchResults.songs) {
+        allResults.push(...searchResults.songs.map(s => ({ ...s, _type: 'song' })));
+        setLoadingStates(prev => ({ ...prev, songs: false }));
       }
-      if (moviesRes.status === 'fulfilled' && moviesRes.value.data?.results) {
-        allResults.push(...moviesRes.value.data.results.map(m => ({ ...m, _type: 'movie' })));
+      if (searchResults.movies) {
+        allResults.push(...searchResults.movies.map(m => ({ ...m, _type: 'movie' })));
+        setLoadingStates(prev => ({ ...prev, movies: false }));
       }
 
       setResults(allResults);
     } catch (error) {
-      console.error('Search all error:', error);
-      setResults([]);
+      if (error.name !== 'AbortError' && error.name !== 'CanceledError') {
+        console.error('Unified search error:', error);
+        setError('Could not complete search. Please try again.');
+      }
+    } finally {
+      setLoadingStates({
+        users: false,
+        events: false,
+        posts: false,
+        songs: false,
+        movies: false
+      });
     }
+  };
+
+  // Handle suggestion selection
+  const handleSuggestionSelect = async (suggestion) => {
+    setQuery(suggestion.text || suggestion);
+    setShowSuggestions(false);
+    // Search will be triggered by the query change
   };
 
   // Send friend request
   const handleFollow = async (userId, username) => {
     try {
-      const user = results.find(u => u._id === userId) || suggestions.find(u => u._id === userId);
+      const user = results.find(u => u._id === userId) || 
+                   peopleSuggestions.find(u => u._id === userId) ||
+                   searchSuggestions.find(u => u.id === userId);
       const isCurrentlyFollowing = user?.isFollowing || false;
 
       if (isCurrentlyFollowing) {
@@ -348,7 +498,7 @@ export default function SearchScreen({ navigation, route }) {
         setResults(prev => prev.map(u => 
           u._id === userId ? { ...u, isFollowing: false } : u
         ));
-        setSuggestions(prev => prev.map(u => 
+        setPeopleSuggestions(prev => prev.map(u => 
           u._id === userId ? { ...u, isFollowing: false } : u
         ));
       } else {
@@ -357,7 +507,7 @@ export default function SearchScreen({ navigation, route }) {
         setResults(prev => prev.map(u => 
           u._id === userId ? { ...u, isFollowing: true } : u
         ));
-        setSuggestions(prev => prev.map(u => 
+        setPeopleSuggestions(prev => prev.map(u => 
           u._id === userId ? { ...u, isFollowing: true } : u
         ));
       }
@@ -620,22 +770,65 @@ export default function SearchScreen({ navigation, route }) {
     );
   };
 
-  // Render all results (for "All" tab)
-  const renderAllResult = ({ item }) => {
-    switch (item._type) {
-      case 'user':
-        return renderUserRow({ item });
-      case 'post':
-        return renderPostCard({ item });
-      case 'event':
-        return renderEventCard({ item });
-      case 'song':
-        return renderSongCard({ item });
-      case 'movie':
-        return renderMovieCard({ item });
-      default:
-        return null;
+  // Render all results (for "All" tab) with section headers
+  const renderAllResult = ({ item, index }) => {
+    // Check if this is the first item of its type to show section header
+    const prevItem = index > 0 ? results[index - 1] : null;
+    const showHeader = !prevItem || prevItem._type !== item._type;
+    
+    const renderItem = () => {
+      switch (item._type) {
+        case 'user':
+          return renderUserRow({ item });
+        case 'post':
+          return renderPostCard({ item });
+        case 'event':
+          return renderEventCard({ item });
+        case 'song':
+          return renderSongCard({ item });
+        case 'movie':
+          return renderMovieCard({ item });
+        default:
+          return null;
+      }
+    };
+
+    if (showHeader) {
+      const typeLabels = {
+        user: 'People',
+        event: 'Events',
+        post: 'Posts',
+        song: 'Songs',
+        movie: 'Movies'
+      };
+      const typeCounts = {
+        user: results.filter(r => r._type === 'user').length,
+        event: results.filter(r => r._type === 'event').length,
+        post: results.filter(r => r._type === 'post').length,
+        song: results.filter(r => r._type === 'song').length,
+        movie: results.filter(r => r._type === 'movie').length
+      };
+      const loadingKey = item._type === 'user' ? 'users' : 
+                        item._type === 'post' ? 'posts' : 
+                        item._type === 'event' ? 'events' : 
+                        item._type === 'song' ? 'songs' : 'movies';
+
+      return (
+        <View>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionHeaderText}>
+              {typeLabels[item._type]} ({typeCounts[item._type]})
+            </Text>
+            {loadingStates[loadingKey] && (
+              <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: 8 }} />
+            )}
+          </View>
+          {renderItem()}
+        </View>
+      );
     }
+
+    return renderItem();
   };
 
   // Render result based on active tab
@@ -692,13 +885,30 @@ export default function SearchScreen({ navigation, route }) {
       );
     }
 
+    // Show error state
+    if (error) {
+      return (
+        <View style={styles.emptyState}>
+          <Ionicons name="alert-circle-outline" size={64} color={COLORS.textSecondary} />
+          <Text style={styles.emptyTitle}>Search Error</Text>
+          <Text style={styles.emptySubtext}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={performSearch}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     // Show suggestions or trending content when no query
-    if (activeTab === 'people' && suggestions.length > 0) {
+    if (activeTab === 'people' && peopleSuggestions.length > 0) {
       return (
         <View style={styles.suggestionsContainer}>
           <Text style={styles.sectionTitle}>People to connect with</Text>
           <FlatList
-            data={suggestions}
+            data={peopleSuggestions}
             keyExtractor={(item) => item._id}
             renderItem={renderUserRow}
             scrollEnabled={false}
@@ -758,6 +968,15 @@ export default function SearchScreen({ navigation, route }) {
             style={styles.searchInput}
             autoCapitalize="none"
             autoCorrect={false}
+            onFocus={() => {
+              if (query.trim().length === 0 && recentSearches.length > 0) {
+                setShowSuggestions(true);
+              }
+            }}
+            onBlur={() => {
+              // Delay to allow suggestion clicks
+              setTimeout(() => setShowSuggestions(false), 200);
+            }}
           />
           {query.length > 0 && (
             <TouchableOpacity onPress={() => setQuery('')}>
@@ -768,6 +987,61 @@ export default function SearchScreen({ navigation, route }) {
             <Ionicons name="mic-outline" size={20} color={COLORS.textSecondary} />
           </TouchableOpacity>
         </View>
+
+        {/* Search Suggestions Dropdown */}
+        {showSuggestions && (searchSuggestions.length > 0 || recentSearches.length > 0) && (
+          <View style={styles.suggestionsDropdown}>
+            {recentSearches.length > 0 && query.trim().length === 0 && (
+              <View>
+                <View style={styles.suggestionsHeader}>
+                  <Text style={styles.suggestionsHeaderText}>Recent Searches</Text>
+                  <TouchableOpacity onPress={async () => {
+                    await SearchHistoryService.clearHistory();
+                    setRecentSearches([]);
+                  }}>
+                    <Text style={styles.clearText}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+                {recentSearches.slice(0, 5).map((search, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.suggestionItem}
+                    onPress={() => handleSuggestionSelect(search)}
+                  >
+                    <Ionicons name="time-outline" size={20} color={COLORS.textSecondary} />
+                    <Text style={styles.suggestionText}>{search}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {searchSuggestions.length > 0 && (
+              <View>
+                {recentSearches.length > 0 && query.trim().length > 0 && (
+                  <Text style={styles.suggestionsHeaderText}>Suggestions</Text>
+                )}
+                {searchSuggestions.map((suggestion, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.suggestionItem}
+                    onPress={() => handleSuggestionSelect(suggestion)}
+                  >
+                    <Ionicons 
+                      name={
+                        suggestion.type === 'user' ? 'person-outline' :
+                        suggestion.type === 'event' ? 'calendar-outline' :
+                        suggestion.type === 'post' ? 'document-text-outline' :
+                        'search-outline'
+                      } 
+                      size={20} 
+                      color={COLORS.textSecondary} 
+                    />
+                    <Text style={styles.suggestionText}>{suggestion.text}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Tabs */}
         <View style={styles.tabsWrapper}>
@@ -844,7 +1118,7 @@ export default function SearchScreen({ navigation, route }) {
                 <FlatList
                   data={isCurrentTab ? results : []}
                   keyExtractor={(item, idx) => item._id || item.id || `item-${idx}`}
-                  renderItem={renderResult}
+                  renderItem={activeTab === 'all' ? renderAllResult : renderResult}
                   contentContainerStyle={styles.resultsList}
                   showsVerticalScrollIndicator={false}
                   ListHeaderComponent={() => {
@@ -1346,6 +1620,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 12,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: COLORS.background,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  sectionHeaderText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
   separator: {
     height: 1,
     backgroundColor: COLORS.border,
@@ -1353,5 +1641,65 @@ const styles = StyleSheet.create({
   },
   resultsList: {
     paddingBottom: 20,
+  },
+  // Suggestions Dropdown Styles
+  suggestionsDropdown: {
+    backgroundColor: COLORS.surface,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    maxHeight: 300,
+    marginHorizontal: 16,
+    borderRadius: 12,
+    marginTop: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  suggestionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  suggestionsHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  clearText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: COLORS.primary,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  suggestionText: {
+    fontSize: 16,
+    color: COLORS.text,
+    marginLeft: 12,
+    flex: 1,
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: COLORS.primary,
+    borderRadius: 20,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

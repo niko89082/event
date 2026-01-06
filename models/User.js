@@ -807,4 +807,12 @@ UserSchema.index({ 'paymentAccounts.stripe.accountId': 1 });
 UserSchema.index({ 'friends.user': 1 });
 UserSchema.index({ 'friends.status': 1 });
 
+// Text search index for search functionality
+UserSchema.index({ 
+  username: 'text', 
+  displayName: 'text', 
+  fullName: 'text', 
+  bio: 'text' 
+});
+
 module.exports = mongoose.model('User', UserSchema);

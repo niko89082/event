@@ -199,6 +199,12 @@ PhotoSchema.index({ user: 1, 'visibility.level': 1, createdAt: -1 });
 PhotoSchema.index({ 'review.type': 1, 'review.mediaId': 1 });
 PhotoSchema.index({ 'review.type': 1, createdAt: -1 });
 
+// Text search index for search functionality
+PhotoSchema.index({ 
+  caption: 'text', 
+  textContent: 'text' 
+});
+
 // ✅ PHASE 1: Pre-save middleware to sync fields and set privacy context
 PhotoSchema.pre('save', async function(next) {
   try {

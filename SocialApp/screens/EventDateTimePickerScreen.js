@@ -104,7 +104,10 @@ export default function EventDateTimePickerScreen({ navigation, route }) {
 
   // Handle set times button
   const handleSetTimes = () => {
-    navigation.navigate('CreateEventScreen', {
+    const previousScreen = route.params?.fromScreen || 'CreateEventScreen';
+    const screenName = previousScreen === 'EditEventScreen' ? 'EditEventScreen' : 'CreateEventScreen';
+    
+    navigation.navigate(screenName, {
       startDateTime: startTime.toISOString(),
       endDateTime: endTime ? endTime.toISOString() : null
     });

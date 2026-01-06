@@ -1550,4 +1550,12 @@ EventSchema.index({ checkInForm: 1 });
 EventSchema.index({ requiresFormForCheckIn: 1 });
 EventSchema.index({ 'checkInQR.isActive': 1, 'checkInQR.expiresAt': 1 });
 
+// Text search index for search functionality
+EventSchema.index({ 
+  title: 'text', 
+  description: 'text', 
+  tags: 'text', 
+  category: 'text' 
+});
+
 module.exports = mongoose.model('Event', EventSchema);

@@ -4,6 +4,7 @@ const Event    = require('../models/Event');
 const User     = require('../models/User');
 const Photo    = require('../models/Photo');
 const protect  = require('../middleware/auth');
+const SearchService = require('../services/searchService');
 
 const router = express.Router();
 
@@ -18,123 +19,135 @@ const buildDateFilter = (raw) => {
   return { $gte: start, $lte: end };
 };
 
-/* ───── /search/users?q=alice ─────────────────────────────── */
+/* ───── /search/users?q=alice&limit=20&skip=0 ─────────────────────────────── */
 
 router.get('/users', protect, async (req, res) => {
   const q = (req.query.q || '').trim();
-  if (!q) return res.json([]);
+  const limit = parseInt(req.query.limit || 20);
+  const skip = parseInt(req.query.skip || 0);
+
+  if (!q || q.length < 1) return res.json([]);
 
   try {
-    const users = await User.find(
-      { $text: { $search: q }, isPublic: true },
-      { score: { $meta: 'textScore' }, username: 1, displayName: 1, profilePicture: 1 }
-    )
-      .sort({ score: { $meta: 'textScore' } })
-      .limit(20);
-
-    /* prefix boost */
-    users.forEach((u) => {
-      if (u.username.toLowerCase().startsWith(q.toLowerCase())) u.score += 5;
-    });
-
-    res.json(users);
+    const userId = req.user._id;
+    const results = await SearchService.searchUsers(q, userId, { limit, skip });
+    res.json(results);
   } catch (err) {
     console.error('/search/users →', err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-/* ───── /search/events?q=concert&when=this%20weekend ─────── */
+/* ───── /search/events?q=concert&when=this%20weekend&limit=30&skip=0 ─────── */
 
 router.get('/events', protect, async (req, res) => {
-  const q       = (req.query.q || '').trim();
+  const q = (req.query.q || '').trim();
   const whenRaw = req.query.when || '';
+  const limit = parseInt(req.query.limit || 30);
+  const skip = parseInt(req.query.skip || 0);
 
-  const dateFilter = buildDateFilter(whenRaw);
-
-  const match = {
-    isPublic: true,
-    ...(q ? { $text: { $search: q } } : {}),
-    ...(dateFilter ? { time: dateFilter } : {}),
-  };
+  if (!q || q.length < 1) return res.json([]);
 
   try {
-    const events = await Event.find(
-      match,
-      { score: { $meta: 'textScore' }, title: 1, time: 1, coverImage: 1, location: 1 }
-    )
-      .sort({ score: { $meta: 'textScore' }, time: 1 })
-      .limit(30)
-      .populate('host', 'username');
-
-    res.json(events);
+    const userId = req.user._id;
+    const results = await SearchService.searchEvents(q, userId, { 
+      limit, 
+      skip, 
+      when: whenRaw 
+    });
+    res.json(results);
   } catch (err) {
     console.error('/search/events →', err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-/* ───── /search/posts?q=text ─────────────────────────────── */
+/* ───── /search/posts?q=text&limit=30&skip=0 ─────────────────────────────── */
 
 router.get('/posts', protect, async (req, res) => {
   const q = (req.query.q || '').trim();
-  if (!q) return res.json([]);
+  const limit = parseInt(req.query.limit || 30);
+  const skip = parseInt(req.query.skip || 0);
 
-  const userId = req.user._id;
+  if (!q || q.length < 1) return res.json([]);
 
   try {
-    // Get user's friends for privacy filtering
-    const user = await User.findById(userId).select('following');
-    const userFollowing = user.following.map(f => String(f));
-
-    // Search posts (text posts and photo posts with captions)
-    const posts = await Photo.find({
-      $and: [
-        {
-          $or: [
-            { textContent: { $regex: q, $options: 'i' } },
-            { caption: { $regex: q, $options: 'i' } }
-          ]
-        },
-        {
-          $or: [
-            // User's own posts
-            { user: userId },
-            // Posts from followed users
-            { user: { $in: userFollowing } },
-            // Public posts
-            { 'visibility.level': 'public' }
-          ]
-        },
-        {
-          $or: [
-            { isDeleted: { $exists: false } },
-            { isDeleted: false }
-          ]
-        }
-      ]
-    })
-      .populate('user', 'username displayName profilePicture')
-      .sort({ uploadDate: -1 })
-      .limit(30)
-      .lean();
-
-    // Add like status for current user
-    const postsWithLikes = posts.map(post => {
-      const likesArray = post.likes || [];
-      const likesAsStrings = likesArray.map(like => String(like));
-      return {
-        ...post,
-        userLiked: likesAsStrings.includes(String(userId)),
-        likeCount: likesArray.length,
-        commentCount: post.comments ? post.comments.length : 0
-      };
-    });
-
-    res.json(postsWithLikes);
+    const userId = req.user._id;
+    const results = await SearchService.searchPosts(q, userId, { limit, skip });
+    res.json(results);
   } catch (err) {
     console.error('/search/posts →', err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+/* ───── /search/unified?q=query&types=users,events,posts&limit=10 ───── */
+
+router.get('/unified', protect, async (req, res) => {
+  try {
+    const { q: query, types, limit = 10, skip = 0, when } = req.query;
+    const userId = req.user._id;
+
+    if (!query || query.trim().length < 1) {
+      return res.json({
+        query: '',
+        results: {
+          users: [],
+          events: [],
+          posts: [],
+          songs: [],
+          movies: []
+        },
+        metadata: {
+          totalResults: 0,
+          searchTime: 0,
+          hasMore: false
+        }
+      });
+    }
+
+    // Parse types parameter
+    const typeArray = types 
+      ? types.split(',').map(t => t.trim().toLowerCase())
+      : ['users', 'events', 'posts', 'songs', 'movies'];
+
+    const results = await SearchService.unifiedSearch(query, userId, {
+      types: typeArray,
+      limit: parseInt(limit),
+      skip: parseInt(skip),
+      when
+    });
+
+    res.json(results);
+  } catch (err) {
+    console.error('/search/unified →', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+/* ───── /search/suggestions?q=qu ───── */
+
+router.get('/suggestions', protect, async (req, res) => {
+  try {
+    const { q: query, limit = 5 } = req.query;
+    const userId = req.user._id;
+
+    if (!query || query.trim().length < 2) {
+      return res.json({
+        suggestions: [],
+        recent: [],
+        trending: []
+      });
+    }
+
+    const suggestions = await SearchService.getSuggestions(query, userId, {
+      limit: parseInt(limit)
+    });
+
+    res.json(suggestions);
+  } catch (err) {
+    console.error('/search/suggestions →', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
