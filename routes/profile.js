@@ -24,7 +24,7 @@ const upload = multer({ storage });
 router.get('/', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('username profilePicture bio displayName pronouns isPublic createdAt following');
+      .select('username profilePicture bio displayName pronouns isPublic createdAt following school classYear major minor hometown relationshipStatus lookingFor favoriteMovie favoriteArtist favoriteTVShow favoriteCampusSpot');
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -397,7 +397,13 @@ router.put('/primary-payment', protect, async (req, res) => {
 
 // Update profile
 router.put('/', protect, async (req, res) => {
-  const { bio, displayName, socialMediaLinks, backgroundImage, theme, colorScheme, profilePicture } = req.body;
+  const { 
+    bio, displayName, socialMediaLinks, backgroundImage, theme, colorScheme, profilePicture,
+    // About section fields
+    school, classYear, major, minor, hometown,
+    relationshipStatus, lookingFor,
+    favoriteMovie, favoriteArtist, favoriteTVShow, favoriteCampusSpot
+  } = req.body;
   try {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: 'User not found' });
@@ -413,6 +419,19 @@ router.put('/', protect, async (req, res) => {
     if (backgroundImage) user.backgroundImage = backgroundImage;
     if (theme) user.theme = theme;
     if (colorScheme) user.colorScheme = colorScheme;
+
+    // About section fields
+    if (school !== undefined) user.school = school;
+    if (classYear !== undefined) user.classYear = classYear;
+    if (major !== undefined) user.major = major;
+    if (minor !== undefined) user.minor = minor;
+    if (hometown !== undefined) user.hometown = hometown;
+    if (relationshipStatus !== undefined) user.relationshipStatus = relationshipStatus;
+    if (lookingFor !== undefined) user.lookingFor = lookingFor;
+    if (favoriteMovie !== undefined) user.favoriteMovie = favoriteMovie;
+    if (favoriteArtist !== undefined) user.favoriteArtist = favoriteArtist;
+    if (favoriteTVShow !== undefined) user.favoriteTVShow = favoriteTVShow;
+    if (favoriteCampusSpot !== undefined) user.favoriteCampusSpot = favoriteCampusSpot;
 
     await user.save();
     return res.status(200).json(user);
@@ -593,9 +612,9 @@ router.get('/:userId', protect, async (req, res) => {
     
     console.log(`🟡 Profile request: userId=${targetUserId}, currentUserId=${currentUserId}, isSelf=${isSelf}`);
     
-    // ✅ FIXED: Get user with populated attendingEvents
+    // ✅ FIXED: Get user with populated attendingEvents and About fields
     const user = await User.findById(targetUserId)
-      .select('username profilePicture bio createdAt displayName attendingEvents')
+      .select('username profilePicture bio createdAt displayName attendingEvents school classYear major minor hometown relationshipStatus lookingFor favoriteMovie favoriteArtist favoriteTVShow favoriteCampusSpot')
       .populate({
         path: 'attendingEvents',
         populate: {
@@ -674,6 +693,50 @@ router.get('/:userId', protect, async (req, res) => {
     // Get posts count
     const postsCount = await Photo.countDocuments({ user: targetUserId, isDeleted: false });
     
+    // ✅ NEW: Derive recently watched/listened from app activity
+    // Get last 3 movie reviews and last 3 song reviews from user's posts
+    const movieReviews = await Photo.find({
+      user: targetUserId,
+      isDeleted: false,
+      'review.type': 'movie'
+    })
+      .select('review.title review.artist review.year review.poster')
+      .sort({ createdAt: -1 })
+      .limit(3)
+      .lean();
+    
+    const songReviews = await Photo.find({
+      user: targetUserId,
+      isDeleted: false,
+      'review.type': 'song'
+    })
+      .select('review.title review.artist review.year review.poster')
+      .sort({ createdAt: -1 })
+      .limit(3)
+      .lean();
+    
+    // Format recently watched (movies/TV shows)
+    const recentlyWatched = movieReviews
+      .filter(photo => photo.review && photo.review.title)
+      .map(photo => ({
+        title: photo.review.title,
+        artist: photo.review.artist || '',
+        year: photo.review.year || null,
+        poster: photo.review.poster || null
+      }))
+      .slice(0, 3);
+    
+    // Format recently listened (songs/artists)
+    const recentlyListened = songReviews
+      .filter(photo => photo.review && photo.review.title)
+      .map(photo => ({
+        title: photo.review.title,
+        artist: photo.review.artist || '',
+        year: photo.review.year || null,
+        poster: photo.review.poster || null
+      }))
+      .slice(0, 3);
+    
     console.log(`✅ Returning all posts - ${photosWithLikeStatus.length} photos (everything is public)`);
     
     const response = {
@@ -684,7 +747,9 @@ router.get('/:userId', protect, async (req, res) => {
       followingCount: followingCount,
       isFollowing: isFollowing,
       postsCount: postsCount,
-      canViewPrivateContent: true // Always true - everything is public
+      canViewPrivateContent: true, // Always true - everything is public
+      recentlyWatched: recentlyWatched,
+      recentlyListened: recentlyListened
     };
     
     console.log(`🟢 Profile data: photos=${photos.length}, postsCount=${postsCount}, followersCount=${followersCount}, followingCount=${followingCount}, attendingEvents=${filteredAttendingEvents.length}`);

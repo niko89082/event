@@ -287,6 +287,69 @@ const UserSchema = new mongoose.Schema({
   migratedToFriendsAt: {
     type: Date
   },
+
+  // ============================================
+  // ABOUT SECTION
+  // ============================================
+  // Basic Identity
+  school: {
+    type: String,
+    required: false,
+  },
+  classYear: {
+    type: String,
+    required: false,
+  },
+  major: {
+    type: String,
+    required: false,
+  },
+  minor: {
+    type: String,
+    required: false,
+  },
+  hometown: {
+    type: String,
+    required: false,
+  },
+
+  // Social Context
+  relationshipStatus: {
+    type: String,
+    enum: ['single', 'in-relationship', 'complicated', 'prefer-not-say'],
+    required: false,
+  },
+  lookingFor: {
+    type: String,
+    enum: ['roommates', 'study-group', 'parties', 'nothing'],
+    required: false,
+  },
+
+  // Interests (constrained to 1 each)
+  favoriteMovie: {
+    type: String,
+    required: false,
+  },
+  favoriteArtist: {
+    type: String,
+    required: false,
+  },
+  favoriteTVShow: {
+    type: String,
+    required: false,
+  },
+  favoriteCampusSpot: {
+    type: String,
+    required: false,
+  },
+
+  // Activity-driven (auto-populated)
+  recentlyWatched: [{
+    type: String,
+  }],
+  recentlyListened: [{
+    type: String,
+  }],
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },

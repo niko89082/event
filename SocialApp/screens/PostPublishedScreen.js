@@ -1,3 +1,8 @@
+/* THIS WAS PRETTY MUCH DEPRICATED
+
+
+*/
+
 import React from 'react';
 import { View, Text, Image, Button, StyleSheet } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';

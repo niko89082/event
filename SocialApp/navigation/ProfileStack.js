@@ -7,6 +7,7 @@ import FollowListScreen              from '../screens/FollowListScreen';
 import UserSettingsScreen            from '../screens/UserSettingsScreen';
 import SelectShareableEventsScreen   from '../screens/SelectShareableEventsScreen';
 import EditProfileScreen             from '../screens/EditProfileScreen';
+import EditAboutScreen               from '../screens/EditAboutScreen';
 import PostDetailsScreen             from '../screens/PostDetailsScreen';
 import QrScreen                      from '../screens/QrScreen';
 
@@ -78,6 +79,14 @@ export default function ProfileStack({ onLogout }) {
       <Stack.Screen 
         name="EditProfileScreen" 
         component={EditProfileScreen}
+        options={{
+          headerShown: false,
+        }}
+      />
+      
+      <Stack.Screen 
+        name="EditAboutScreen" 
+        component={EditAboutScreen}
         options={{
           headerShown: false,
         }}

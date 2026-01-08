@@ -12,13 +12,18 @@ import CategoryManager from '../components/CategoryManager';
 import PostCard from '../components/PostCard';
 import ReviewCard from '../components/ReviewCard';
 import SearchHistoryService from '../services/searchHistoryService';
+import SearchEventCard from '../components/SearchEventCard';
+import SearchPeopleCard from '../components/SearchPeopleCard';
+import SearchMovieCard from '../components/SearchMovieCard';
+import SearchSongCard from '../components/SearchSongCard';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { API_BASE_URL as ENV_API_BASE_URL } from '@env';
 // Use the IP from .env, add port 3000 when constructing URLs
 const API_BASE_URL = ENV_API_BASE_URL ? `${ENV_API_BASE_URL}:3000` : (process.env.EXPO_PUBLIC_API_URL || 'localhost:3000');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const TABS = ['all', 'people', 'songs', 'movies', 'posts', 'events'];
+const TABS = ['all', 'people', 'events', 'movies', 'songs'];
 
 // Blue theme colors
 const COLORS = {
@@ -38,7 +43,211 @@ export default function SearchScreen({ navigation, route }) {
   // Search state
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'people', 'songs', 'movies', 'posts', 'events'
+  // POPULATED WITH MOCK DATA FOR PREVIEW - will be replaced when user searches
   const [results, setResults] = useState([]);
+  
+  // Mock data for each tab when no query (for preview)
+  const mockMoviesResults = [
+    {
+      id: 'movie1',
+      title: 'Oppenheimer',
+      release_date: '2023-07-21',
+      poster_path: null,
+      overview: 'The story of American scientist J. Robert Oppenheimer and his role in the development of the atomic bomb.',
+      vote_average: 8.3,
+      popularity: 95.2,
+    },
+    {
+      id: 'movie2',
+      title: 'Barbie',
+      release_date: '2023-07-21',
+      poster_path: null,
+      overview: 'Barbie suffers a crisis that leads her to question her world and her existence.',
+      vote_average: 7.8,
+      popularity: 92.5,
+    },
+    {
+      id: 'movie3',
+      title: 'Dune: Part Two',
+      release_date: '2024-03-01',
+      poster_path: null,
+      overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.',
+      vote_average: 8.5,
+      popularity: 88.7,
+    },
+    {
+      id: 'movie4',
+      title: 'The Holdovers',
+      release_date: '2023-11-10',
+      poster_path: null,
+      overview: 'A curmudgeonly instructor at a New England prep school is forced to remain on campus during Christmas break.',
+      vote_average: 8.1,
+      popularity: 76.3,
+    },
+    {
+      id: 'movie5',
+      title: 'Poor Things',
+      release_date: '2023-12-08',
+      poster_path: null,
+      overview: 'The incredible tale of the fantastical evolution of Bella Baxter, a young woman brought back to life by the brilliant and unorthodox scientist Dr. Godwin Baxter.',
+      vote_average: 8.0,
+      popularity: 74.2,
+    },
+    {
+      id: 'movie6',
+      title: 'Killers of the Flower Moon',
+      release_date: '2023-10-20',
+      poster_path: null,
+      overview: 'When oil is discovered in 1920s Oklahoma under Osage Nation land, the Osage people are murdered one by one.',
+      vote_average: 7.7,
+      popularity: 72.8,
+    },
+  ];
+
+  const mockSongsResults = [
+    {
+      id: 'song1',
+      name: 'Flowers',
+      artists: [{ name: 'Miley Cyrus' }],
+      album: { name: 'Endless Summer Vacation' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/4Z2HD6q0' },
+      popularity: 95,
+      hasReview: false,
+    },
+    {
+      id: 'song2',
+      name: 'As It Was',
+      artists: [{ name: 'Harry Styles' }],
+      album: { name: "Harry's House" },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/4LRqX' },
+      popularity: 92,
+      hasReview: true,
+    },
+    {
+      id: 'song3',
+      name: 'Watermelon Sugar',
+      artists: [{ name: 'Harry Styles' }],
+      album: { name: 'Fine Line' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/6Uel' },
+      popularity: 88,
+      hasReview: false,
+    },
+    {
+      id: 'song4',
+      name: 'Blinding Lights',
+      artists: [{ name: 'The Weeknd' }],
+      album: { name: 'After Hours' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/0VjIj' },
+      popularity: 85,
+      hasReview: true,
+    },
+    {
+      id: 'song5',
+      name: 'Levitating',
+      artists: [{ name: 'Dua Lipa' }],
+      album: { name: 'Future Nostalgia' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/463Ck' },
+      popularity: 83,
+      hasReview: false,
+    },
+    {
+      id: 'song6',
+      name: 'Good 4 U',
+      artists: [{ name: 'Olivia Rodrigo' }],
+      album: { name: 'SOUR' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/4ZtQ' },
+      popularity: 81,
+      hasReview: false,
+    },
+  ];
+
+  const mockEventsResults = [
+    {
+      _id: 'event1',
+      title: 'Tech Meetup 2024',
+      description: 'Join us for an evening of networking and tech talks',
+      time: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'San Francisco, CA' },
+      coverImage: null,
+      category: 'Technology',
+      attendees: [
+        { _id: 'user1', username: 'alexchen', profilePicture: null },
+        { _id: 'user2', username: 'mariagarcia', profilePicture: null },
+      ],
+      attendeeCount: 42,
+    },
+    {
+      _id: 'event2',
+      title: 'Summer Music Festival',
+      description: 'Outdoor music festival featuring local artists',
+      time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'Golden Gate Park, SF' },
+      coverImage: null,
+      category: 'Music & Nightlife',
+      attendees: [
+        { _id: 'user3', username: 'davidkim', profilePicture: null },
+      ],
+      attendeeCount: 128,
+    },
+    {
+      _id: 'event3',
+      title: 'Art Gallery Opening',
+      description: 'Contemporary art exhibition featuring local artists',
+      time: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'Downtown Gallery, SF' },
+      coverImage: null,
+      category: 'Arts & Culture',
+      attendees: [
+        { _id: 'user4', username: 'emilyjones', profilePicture: null },
+      ],
+      attendeeCount: 67,
+    },
+    {
+      _id: 'event4',
+      title: 'Food & Wine Tasting',
+      description: 'Sample local wines and artisanal foods',
+      time: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'Napa Valley, CA' },
+      coverImage: null,
+      category: 'Food & Drink',
+      attendees: [
+        { _id: 'user2', username: 'mariagarcia', profilePicture: null },
+      ],
+      attendeeCount: 35,
+    },
+    {
+      _id: 'event5',
+      title: 'Yoga in the Park',
+      description: 'Morning yoga session in the beautiful park setting',
+      time: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'Central Park, SF' },
+      coverImage: null,
+      category: 'Health & Wellness',
+      attendees: [
+        { _id: 'user5', username: 'jameswilson', profilePicture: null },
+      ],
+      attendeeCount: 24,
+    },
+    {
+      _id: 'event6',
+      title: 'Photography Workshop',
+      description: 'Learn photography techniques from professionals',
+      time: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'SF Art Institute' },
+      coverImage: null,
+      category: 'Education',
+      attendees: [
+        { _id: 'user6', username: 'sophiamartinez', profilePicture: null },
+      ],
+      attendeeCount: 18,
+    },
+  ];
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
@@ -48,8 +257,74 @@ export default function SearchScreen({ navigation, route }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
   
-  // Following suggestions state (for people tab)
-  const [peopleSuggestions, setPeopleSuggestions] = useState([]);
+  // Following suggestions state (for people tab) - POPULATED WITH MOCK DATA FOR PREVIEW
+  const [peopleSuggestions, setPeopleSuggestions] = useState([
+    {
+      _id: 'user1',
+      username: 'alexchen',
+      displayName: 'Alex Chen',
+      profilePicture: null,
+      bio: 'Tech enthusiast & event organizer • SF',
+      followersCount: 1240,
+      followingCount: 342,
+      isFollowing: false,
+      followedBy: [{ username: 'sarahm' }, { username: 'mikej' }],
+    },
+    {
+      _id: 'user2',
+      username: 'mariagarcia',
+      displayName: 'Maria Garcia',
+      profilePicture: null,
+      bio: 'Food blogger & event curator • NYC',
+      followersCount: 3420,
+      followingCount: 890,
+      isFollowing: false,
+      reviewedMoviesCount: 12,
+    },
+    {
+      _id: 'user3',
+      username: 'davidkim',
+      displayName: 'David Kim',
+      profilePicture: null,
+      bio: 'Music producer & DJ • LA',
+      followersCount: 890,
+      followingCount: 234,
+      isFollowing: false,
+      attendingEvent: 'Summer Music Festival',
+    },
+    {
+      _id: 'user4',
+      username: 'emilyjones',
+      displayName: 'Emily Jones',
+      profilePicture: null,
+      bio: 'Art curator & gallery owner • Chicago',
+      followersCount: 2100,
+      followingCount: 567,
+      isFollowing: false,
+      followedBy: [{ username: 'alexchen' }],
+    },
+    {
+      _id: 'user5',
+      username: 'jameswilson',
+      displayName: 'James Wilson',
+      profilePicture: null,
+      bio: 'Fitness coach & wellness advocate',
+      followersCount: 1560,
+      followingCount: 412,
+      isFollowing: true,
+    },
+    {
+      _id: 'user6',
+      username: 'sophiamartinez',
+      displayName: 'Sophia Martinez',
+      profilePicture: null,
+      bio: 'Photographer & travel blogger',
+      followersCount: 2890,
+      followingCount: 678,
+      isFollowing: false,
+      reviewedMoviesCount: 8,
+    },
+  ]);
   
   // Loading states per type (for progressive loading)
   const [loadingStates, setLoadingStates] = useState({
@@ -69,6 +344,189 @@ export default function SearchScreen({ navigation, route }) {
     '#FoodieHeaven'
   ]);
 
+  // New state for enhanced sections - POPULATED WITH MOCK DATA FOR PREVIEW
+  const [trendingTopics, setTrendingTopics] = useState([
+    { id: 1, category: 'Technology', tag: '#TechMeetup2024', posts: '12.5K', trending: true },
+    { id: 2, category: 'Movies', tag: 'Barbie & Oppenheimer', posts: '85.2K', trending: true },
+    { id: 3, category: 'Music', tag: 'Summer Festival Lineup', posts: '4.1K', live: true },
+    { id: 4, category: 'Food', tag: '#FoodieWeekend', posts: '8.3K', trending: true },
+    { id: 5, category: 'Art', tag: '#ArtBasel2024', posts: '15.2K', trending: true },
+  ]);
+  const [suggestedPeople, setSuggestedPeople] = useState([
+    {
+      _id: 'user1',
+      username: 'alexchen',
+      displayName: 'Alex Chen',
+      profilePicture: null,
+      bio: 'Tech enthusiast & event organizer',
+      followersCount: 1240,
+      isFollowing: false,
+      followedBy: [{ username: 'sarahm' }, { username: 'mikej' }],
+    },
+    {
+      _id: 'user2',
+      username: 'mariagarcia',
+      displayName: 'Maria Garcia',
+      profilePicture: null,
+      bio: 'Food blogger & event curator',
+      followersCount: 3420,
+      isFollowing: false,
+      reviewedMoviesCount: 12,
+    },
+    {
+      _id: 'user3',
+      username: 'davidkim',
+      displayName: 'David Kim',
+      profilePicture: null,
+      bio: 'Music producer & DJ',
+      followersCount: 890,
+      isFollowing: false,
+      attendingEvent: 'Summer Music Festival',
+    },
+    {
+      _id: 'user4',
+      username: 'emilyjones',
+      displayName: 'Emily Jones',
+      profilePicture: null,
+      bio: 'Art curator & gallery owner',
+      followersCount: 2100,
+      isFollowing: false,
+      followedBy: [{ username: 'alexchen' }],
+    },
+  ]);
+  const [upcomingEvents, setUpcomingEvents] = useState([
+    {
+      _id: 'event1',
+      title: 'Tech Meetup 2024',
+      description: 'Join us for an evening of networking and tech talks',
+      time: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'San Francisco, CA' },
+      coverImage: null,
+      category: 'Technology',
+      attendees: [
+        { _id: 'user1', username: 'alexchen', profilePicture: null },
+        { _id: 'user2', username: 'mariagarcia', profilePicture: null },
+      ],
+      attendeeCount: 42,
+    },
+    {
+      _id: 'event2',
+      title: 'Summer Music Festival',
+      description: 'Outdoor music festival featuring local artists',
+      time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'Golden Gate Park, SF' },
+      coverImage: null,
+      category: 'Music & Nightlife',
+      attendees: [
+        { _id: 'user3', username: 'davidkim', profilePicture: null },
+      ],
+      attendeeCount: 128,
+    },
+    {
+      _id: 'event3',
+      title: 'Art Gallery Opening',
+      description: 'Contemporary art exhibition featuring local artists',
+      time: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      location: { address: 'Downtown Gallery, SF' },
+      coverImage: null,
+      category: 'Arts & Culture',
+      attendees: [
+        { _id: 'user4', username: 'emilyjones', profilePicture: null },
+      ],
+      attendeeCount: 67,
+    },
+  ]);
+  const [popularMovies, setPopularMovies] = useState([
+    {
+      id: 'movie1',
+      title: 'Oppenheimer',
+      release_date: '2023-07-21',
+      poster_path: null,
+      overview: 'The story of American scientist J. Robert Oppenheimer and his role in the development of the atomic bomb.',
+      vote_average: 8.3,
+      popularity: 95.2,
+    },
+    {
+      id: 'movie2',
+      title: 'Barbie',
+      release_date: '2023-07-21',
+      poster_path: null,
+      overview: 'Barbie suffers a crisis that leads her to question her world and her existence.',
+      vote_average: 7.8,
+      popularity: 92.5,
+    },
+    {
+      id: 'movie3',
+      title: 'Dune: Part Two',
+      release_date: '2024-03-01',
+      poster_path: null,
+      overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.',
+      vote_average: 8.5,
+      popularity: 88.7,
+    },
+    {
+      id: 'movie4',
+      title: 'The Holdovers',
+      release_date: '2023-11-10',
+      poster_path: null,
+      overview: 'A curmudgeonly instructor at a New England prep school is forced to remain on campus during Christmas break.',
+      vote_average: 8.1,
+      popularity: 76.3,
+    },
+  ]);
+  const [trendingSongs, setTrendingSongs] = useState([
+    {
+      id: 'song1',
+      name: 'Flowers',
+      artists: [{ name: 'Miley Cyrus' }],
+      album: { name: 'Endless Summer Vacation' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/4Z2HD6q0' },
+      popularity: 95,
+      hasReview: false,
+    },
+    {
+      id: 'song2',
+      name: 'As It Was',
+      artists: [{ name: 'Harry Styles' }],
+      album: { name: "Harry's House" },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/4LRqX' },
+      popularity: 92,
+      hasReview: true,
+    },
+    {
+      id: 'song3',
+      name: 'Watermelon Sugar',
+      artists: [{ name: 'Harry Styles' }],
+      album: { name: 'Fine Line' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/6Uel' },
+      popularity: 88,
+      hasReview: false,
+    },
+    {
+      id: 'song4',
+      name: 'Blinding Lights',
+      artists: [{ name: 'The Weeknd' }],
+      album: { name: 'After Hours' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/0VjIj' },
+      popularity: 85,
+      hasReview: true,
+    },
+    {
+      id: 'song5',
+      name: 'Levitating',
+      artists: [{ name: 'Dua Lipa' }],
+      album: { name: 'Future Nostalgia' },
+      preview_url: null,
+      external_urls: { spotify: 'https://open.spotify.com/track/463Ck' },
+      popularity: 83,
+      hasReview: false,
+    },
+  ]);
+
   // Auth context
   const { currentUser } = useContext(AuthContext);
 
@@ -77,7 +535,11 @@ export default function SearchScreen({ navigation, route }) {
   const currentTabIndex = useRef(0);
   const isAnimating = useRef(false);
   const tabScrollViewRef = useRef(null);
+  const tabsWrapperRef = useRef(null);
   const tabLayouts = useRef({}); // Store tab layout positions
+  const tabScrollOffset = useRef(0); // Track ScrollView scroll offset
+  const indicatorPosition = useRef(new Animated.Value(16)).current; // Animated indicator position
+  const indicatorWidth = useRef(new Animated.Value(60)).current; // Animated indicator width
   
   // Search debouncing refs
   const searchTimeoutRef = useRef(null);
@@ -137,6 +599,16 @@ export default function SearchScreen({ navigation, route }) {
     }
   };
 
+  // Update indicator position for a specific tab index (simpler approach like ProfileScreen)
+  const updateIndicatorPosition = useCallback((index) => {
+    const tabLayout = tabLayouts.current[index];
+    if (tabLayout && tabLayout.x !== undefined) {
+      const screenX = tabLayout.x - tabScrollOffset.current;
+      indicatorPosition.setValue(screenX);
+      indicatorWidth.setValue(tabLayout.width);
+    }
+  }, []);
+
   // Switch to tab function
   const switchToTab = useCallback((index) => {
     if (isAnimating.current) return;
@@ -149,15 +621,44 @@ export default function SearchScreen({ navigation, route }) {
     setQuery('');
     setResults([]);
 
-    Animated.spring(scrollX, {
-      toValue: -index * SCREEN_WIDTH,
+    // Animate content scroll (using timing like ProfileScreen for smoother performance)
+    const targetContentOffset = -index * SCREEN_WIDTH;
+    Animated.timing(scrollX, {
+      toValue: targetContentOffset,
+      duration: 250,
       useNativeDriver: true,
-      tension: 50,
-      friction: 7,
-    }).start(() => {
+    }).start((finished) => {
+      if (finished) {
       isAnimating.current = false;
+        // Update indicator to final position after animation
+        updateIndicatorPosition(index);
+      }
     });
 
+    // Animate indicator position (simpler approach like ProfileScreen)
+    const tabLayout = tabLayouts.current[index];
+    if (tabLayout) {
+      const screenX = tabLayout.x - tabScrollOffset.current;
+      const targetWidth = tabLayout.width;
+      
+      Animated.parallel([
+        Animated.timing(indicatorPosition, {
+          toValue: screenX,
+          duration: 250,
+          useNativeDriver: false,
+        }),
+        Animated.timing(indicatorWidth, {
+          toValue: targetWidth,
+          duration: 250,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    } else {
+      // Fallback if layout not yet measured
+      setTimeout(() => {
+        updateIndicatorPosition(index);
+      }, 100);
+    }
 
     // Scroll tab indicator to center
     if (tabScrollViewRef.current) {
@@ -171,27 +672,22 @@ export default function SearchScreen({ navigation, route }) {
     if (newTab === 'people') {
       fetchFollowingSuggestions();
     }
-  }, [scrollX]);
+  }, [scrollX, updateIndicatorPosition]);
 
-  // PanResponder for horizontal swipe - only in main content area
+  // PanResponder for horizontal swipe - allow swipes anywhere
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (evt, gestureState) => {
-        const { dx, dy, y0 } = gestureState;
+        const { dx, dy } = gestureState;
         
-        // Don't capture if gesture started in header area (search bar, tabs, trending)
-        const HEADER_AREA_HEIGHT = 200; // Approximate height of header + tabs + trending
-        if (y0 < HEADER_AREA_HEIGHT) {
-          return false;
-        }
-        
-        // Only respond to strong horizontal swipes in main content area
+        // Only respond to strong horizontal swipes
         const isStrongHorizontalSwipe = Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy) * 2;
         return isStrongHorizontalSwipe && !isAnimating.current;
       },
       onPanResponderGrant: () => {
         scrollX.stopAnimation();
+        isAnimating.current = false; // Allow real-time updates during swipe
       },
       onPanResponderMove: (evt, gestureState) => {
         if (isAnimating.current) return;
@@ -214,9 +710,6 @@ export default function SearchScreen({ navigation, route }) {
         
         if (Number.isFinite(newOffset)) {
           scrollX.setValue(newOffset);
-          // Update indicator position proportionally during swipe
-          const progress = -newOffset / SCREEN_WIDTH;
-          // Indicator position will be updated by onLayout when tab changes
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
@@ -261,6 +754,7 @@ export default function SearchScreen({ navigation, route }) {
       },
     })
   ).current;
+
 
   // Load suggestions on mount for people tab
   useEffect(() => {
@@ -378,10 +872,6 @@ export default function SearchScreen({ navigation, route }) {
             endpoint = '/api/reviews/search-movies';
             params.query = query;
             params.page = 1;
-            break;
-          case 'posts':
-            endpoint = '/api/search/posts';
-            params.limit = 20;
             break;
           case 'events':
             endpoint = '/api/search/events';
@@ -528,150 +1018,46 @@ export default function SearchScreen({ navigation, route }) {
     return { text: 'Follow', color: COLORS.primary, bgColor: COLORS.primaryLight, disabled: false };
   };
 
-  // Render user row (modernized UI)
+  // Render user row (using new SearchPeopleCard component)
   const renderUserRow = ({ item }) => {
-    const avatar = item.profilePicture
-      ? `http://${API_BASE_URL}${item.profilePicture}`
-      : `https://placehold.co/48x48/C7C7CC/FFFFFF?text=${item.username?.charAt(0).toUpperCase() || '?'}`;
-
-    const isFollowing = item.isFollowing || false;
-    const isSelf = item.isSelf || false;
-    const buttonConfig = getButtonConfig(isFollowing, isSelf);
+    // Determine connection context
+    let connectionContext = null;
+    if (item.followedBy && item.followedBy.length > 0) {
+      connectionContext = {
+        type: 'followed_by',
+        data: { name: item.followedBy[0].username, count: item.followedBy.length }
+      };
+    } else if (item.attendingEvent) {
+      connectionContext = {
+        type: 'attending',
+        data: { eventName: item.attendingEvent }
+      };
+    } else if (item.reviewedMoviesCount) {
+      connectionContext = {
+        type: 'reviewed',
+        data: { count: item.reviewedMoviesCount }
+      };
+    }
 
     return (
-      <TouchableOpacity
-        style={styles.userRow}
-        onPress={() => navigation.navigate('ProfileScreen', { userId: item._id })}
-        activeOpacity={0.95}
-      >
-        <View style={styles.userContent}>
-          <View style={styles.avatarContainer}>
-            <Image source={{ uri: avatar }} style={styles.userAvatar} />
-            {item.verified && (
-              <View style={styles.verifiedBadge}>
-                <Ionicons name="checkmark" size={12} color="#FFFFFF" />
-              </View>
-            )}
-          </View>
-          
-          <View style={styles.userInfo}>
-            <View style={styles.userNameRow}>
-              <Text style={styles.username} numberOfLines={1}>
-                {item.displayName || item.username}
-              </Text>
-            </View>
-            <Text style={styles.handle} numberOfLines={1}>
-              @{item.username}
-            </Text>
-            {item.profession && (
-              <Text style={styles.profession} numberOfLines={1}>
-                {item.profession}
-              </Text>
-            )}
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.friendButton,
-              { 
-                backgroundColor: buttonConfig.disabled ? COLORS.border : COLORS.primary,
-                borderColor: buttonConfig.disabled ? COLORS.border : COLORS.primary
-              }
-            ]}
-            onPress={(e) => {
-              e.stopPropagation();
-              if (!isSelf) {
-                handleFollow(item._id, item.username);
-              }
-            }}
-            activeOpacity={0.7}
-            disabled={isSelf}
-          >
-            <Text style={[
-              styles.friendButtonText, 
-              { color: buttonConfig.disabled ? COLORS.textSecondary : '#FFFFFF' }
-            ]}>
-              {buttonConfig.text}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
+      <SearchPeopleCard
+        user={item}
+        onPress={(user) => navigation.navigate('ProfileScreen', { userId: user._id })}
+        onFollow={handleFollow}
+        API_BASE_URL={API_BASE_URL}
+        connectionContext={connectionContext}
+      />
     );
   };
 
-  // Render event card (keeping existing UI)
+  // Render event card (using new SearchEventCard component)
   const renderEventCard = ({ item }) => {
-    const eventDate = item.time ? new Date(item.time) : null;
-    const month = eventDate ? eventDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '';
-    const day = eventDate ? eventDate.getDate() : '';
-    
-    const coverImage = item.coverImage 
-      ? `http://${API_BASE_URL}${item.coverImage}`
-      : null;
-
     return (
-      <TouchableOpacity 
-        style={styles.eventCard}
-        onPress={() => navigation.navigate('EventDetailsScreen', { eventId: item._id })}
-        activeOpacity={0.95}
-      >
-        <View style={styles.eventCardContent}>
-          {/* Date Badge */}
-          <View style={styles.eventDateBadge}>
-            <Text style={styles.eventMonth}>{month}</Text>
-            <Text style={styles.eventDay}>{day}</Text>
-          </View>
-          
-          {/* Content */}
-          <View style={styles.eventInfo}>
-            <View style={styles.eventHeader}>
-              <View style={styles.eventStatusBadge}>
-                <Text style={styles.eventStatusText}>Selling Fast</Text>
-              </View>
-              <TouchableOpacity>
-                <Ionicons name="bookmark-outline" size={20} color={COLORS.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            
-            <Text style={styles.eventTitle} numberOfLines={1}>{item.title}</Text>
-            
-            {item.location?.address && (
-              <View style={styles.eventLocation}>
-                <Ionicons name="location" size={16} color={COLORS.primary} />
-                <Text style={styles.eventLocationText} numberOfLines={1}>
-                  {item.location.address}
-                </Text>
-              </View>
-            )}
-            
-            {item.attendees && item.attendees.length > 0 && (
-              <View style={styles.eventAttendees}>
-                <View style={styles.attendeeAvatars}>
-                  {item.attendees.slice(0, 3).map((attendee, idx) => (
-                    <Image
-                      key={idx}
-                      source={{ 
-                        uri: attendee.profilePicture 
-                          ? `http://${API_BASE_URL}${attendee.profilePicture}`
-                          : `https://placehold.co/20x20/C7C7CC/FFFFFF?text=${attendee.username?.charAt(0) || '?'}`
-                      }}
-                      style={styles.attendeeAvatar}
-                    />
-                  ))}
-                </View>
-                <Text style={styles.attendeeCount}>
-                  +{item.attendees.length} going
-                </Text>
-              </View>
-            )}
-          </View>
-          
-          {/* Image */}
-          {coverImage && (
-            <Image source={{ uri: coverImage }} style={styles.eventImage} />
-          )}
-        </View>
-      </TouchableOpacity>
+      <SearchEventCard
+        event={item}
+        onPress={(event) => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
+        API_BASE_URL={API_BASE_URL}
+      />
     );
   };
 
@@ -688,85 +1074,41 @@ export default function SearchScreen({ navigation, route }) {
     );
   };
 
-  // Render song card
+  // Render song card (using new SearchSongCard component)
   const renderSongCard = ({ item }) => {
     return (
-      <TouchableOpacity
-        style={styles.mediaCard}
-        onPress={() => {
-          // Navigate to song details or create review
+      <SearchSongCard
+        song={item}
+        onPress={(song) => {
           navigation.navigate('PostDetailsScreen', { 
-            songId: item.id,
-            song: item 
+            songId: song.id,
+            song: song 
           });
         }}
-        activeOpacity={0.95}
-      >
-        <Image
-          source={{ uri: item.album?.images?.[0]?.url || item.images?.[0]?.url }}
-          style={styles.mediaImage}
-        />
-        <View style={styles.mediaInfo}>
-          <Text style={styles.mediaTitle} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <Text style={styles.mediaSubtitle} numberOfLines={1}>
-            {item.artists?.[0]?.name || 'Unknown Artist'}
-          </Text>
-          {item.album && (
-            <Text style={styles.mediaMeta} numberOfLines={1}>
-              {item.album.name}
-            </Text>
-          )}
-        </View>
-        <Ionicons name="musical-notes" size={24} color={COLORS.primary} />
-      </TouchableOpacity>
+        onAction={(song) => {
+          // Handle review/add action
+          navigation.navigate('PostDetailsScreen', { 
+            songId: song.id,
+            song: song 
+          });
+        }}
+        hasReview={item.hasReview || false}
+      />
     );
   };
 
-  // Render movie card
+  // Render movie card (using new SearchMovieCard component)
   const renderMovieCard = ({ item }) => {
-    const posterUrl = item.poster_path 
-      ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
-      : null;
-
     return (
-      <TouchableOpacity
-        style={styles.mediaCard}
-        onPress={() => {
-          // Navigate to movie details or create review
+      <SearchMovieCard
+        movie={item}
+        onPress={(movie) => {
           navigation.navigate('PostDetailsScreen', { 
-            movieId: item.id,
-            movie: item 
+            movieId: movie.id,
+            movie: movie 
           });
         }}
-        activeOpacity={0.95}
-      >
-        {posterUrl ? (
-          <Image source={{ uri: posterUrl }} style={styles.mediaImage} />
-        ) : (
-          <View style={[styles.mediaImage, styles.mediaImagePlaceholder]}>
-            <Ionicons name="film-outline" size={32} color={COLORS.textSecondary} />
-          </View>
-        )}
-        <View style={styles.mediaInfo}>
-          <Text style={styles.mediaTitle} numberOfLines={2}>
-            {item.title}
-          </Text>
-          {item.release_date && (
-            <Text style={styles.mediaSubtitle}>
-              {new Date(item.release_date).getFullYear()}
-            </Text>
-          )}
-          {item.vote_average && (
-            <View style={styles.ratingContainer}>
-              <Ionicons name="star" size={14} color="#FFD700" />
-              <Text style={styles.ratingText}>{item.vote_average.toFixed(1)}</Text>
-            </View>
-          )}
-        </View>
-        <Ionicons name="film" size={24} color={COLORS.primary} />
-      </TouchableOpacity>
+      />
     );
   };
 
@@ -811,7 +1153,8 @@ export default function SearchScreen({ navigation, route }) {
       const loadingKey = item._type === 'user' ? 'users' : 
                         item._type === 'post' ? 'posts' : 
                         item._type === 'event' ? 'events' : 
-                        item._type === 'song' ? 'songs' : 'movies';
+                        item._type === 'song' ? 'songs' : 
+                        item._type === 'movie' ? 'movies' : 'users';
 
       return (
         <View>
@@ -836,8 +1179,6 @@ export default function SearchScreen({ navigation, route }) {
     switch (activeTab) {
       case 'people':
         return renderUserRow({ item });
-      case 'posts':
-        return renderPostCard({ item });
       case 'events':
         return renderEventCard({ item });
       case 'songs':
@@ -919,12 +1260,88 @@ export default function SearchScreen({ navigation, route }) {
     }
 
     if (activeTab === 'events') {
+      // Show horizontal category sections when no query
+      if (!query.trim()) {
       return (
-        <CategoryManager
-          navigation={navigation}
-          currentUserId={currentUser?._id}
-        />
-      );
+          <ScrollView 
+            style={styles.fullHeightScroll}
+            contentContainerStyle={styles.eventsCategoriesContainer}
+            showsVerticalScrollIndicator={false}
+          >
+            {['Music', 'Party', 'Social', 'Sports', 'Food', 'Business', 'Entertainment', 'Art', 'Technology'].map((category) => {
+              const categoryConfig = {
+                'Music': { icon: 'musical-notes', colors: ['#FF6B6B', '#FF8E8E'] },
+                'Party': { icon: 'sparkles', colors: ['#4ECDC4', '#6FE8E0'] },
+                'Social': { icon: 'people', colors: ['#45B7D1', '#66C5F0'] },
+                'Sports': { icon: 'fitness', colors: ['#FECA57', '#FED569'] },
+                'Food': { icon: 'restaurant', colors: ['#FF9FF3', '#FFB3F7'] },
+                'Business': { icon: 'briefcase', colors: ['#54A0FF', '#74B9FF'] },
+                'Entertainment': { icon: 'film', colors: ['#5F27CD', '#7C4DFF'] },
+                'Art': { icon: 'color-palette', colors: ['#00D2D3', '#1DD1A1'] },
+                'Technology': { icon: 'laptop', colors: ['#FF3838', '#FF6B6B'] },
+              }[category] || { icon: 'calendar', colors: ['#6366F1', '#8B5CF6'] };
+              
+              const categoryEvents = mockEventsResults.filter(e => 
+                e.category === category || 
+                e.category?.includes(category) ||
+                category === 'Music' && (e.category?.includes('Music') || e.category?.includes('Nightlife'))
+              );
+              
+              if (categoryEvents.length === 0) {
+                // Add some mock events for each category
+                categoryEvents.push(...mockEventsResults.slice(0, 3).map((e, i) => ({
+                  ...e,
+                  _id: `${category}-${i}`,
+                  title: `${category} Event ${i + 1}`,
+                  category: category,
+                })));
+              }
+              
+              return (
+                <View key={category} style={styles.categorySection}>
+                  <View style={styles.categorySectionHeader}>
+                    <Text style={styles.categorySectionTitle}>{category}</Text>
+                    <TouchableOpacity>
+                      <Text style={styles.seeAllText}>See all</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={[styles.categoryEventsScroll, { paddingLeft: 16, paddingRight: 16 }]}
+                    style={{ marginLeft: -16, marginRight: -16 }}
+                    nestedScrollEnabled={true}
+                    onStartShouldSetResponder={() => true}
+                    onMoveShouldSetResponder={() => true}
+                    onResponderTerminationRequest={() => false}
+                    onScrollBeginDrag={() => {
+                      isAnimating.current = true;
+                    }}
+                    onScrollEndDrag={() => {
+                      setTimeout(() => {
+                        isAnimating.current = false;
+                      }, 100);
+                    }}
+                  >
+                    {categoryEvents.map((event) => (
+                      <SearchEventCard
+                        key={event._id}
+                        event={event}
+                        onPress={(e) => navigation.navigate('EventDetailsScreen', { eventId: e._id })}
+                        API_BASE_URL={API_BASE_URL}
+                        horizontal={true}
+                      />
+                    ))}
+                  </ScrollView>
+                </View>
+              );
+            })}
+          </ScrollView>
+        );
+      }
+      
+      // Show search results when query exists
+      return null; // Will be handled by FlatList below
     }
 
     return (
@@ -949,21 +1366,22 @@ export default function SearchScreen({ navigation, route }) {
       
       {/* Search Header */}
       <View style={styles.searchHeader}>
-        {/* Back Button */}
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="arrow-back" size={24} color={COLORS.text} />
-        </TouchableOpacity>
-        
-        <View style={styles.searchContainer}>
+        <View style={[
+          styles.searchContainer,
+          showSuggestions && (searchSuggestions.length > 0 || recentSearches.length > 0) && styles.searchContainerWithSuggestions
+        ]}>
           <Ionicons name="search" size={24} color={COLORS.textSecondary} style={styles.searchIcon} />
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Search Events, People, & Tags"
+            placeholder={
+              activeTab === 'all' ? "Search events, people, movies..." :
+              activeTab === 'people' ? "Search people..." :
+              activeTab === 'events' ? "Search events..." :
+              activeTab === 'movies' ? "Search movies..." :
+              activeTab === 'songs' ? "Search songs, artists, lyrics..." :
+              "Search..."
+            }
             placeholderTextColor={COLORS.textSecondary}
             style={styles.searchInput}
             autoCapitalize="none"
@@ -1044,13 +1462,29 @@ export default function SearchScreen({ navigation, route }) {
         )}
 
         {/* Tabs */}
-        <View style={styles.tabsWrapper}>
+        <View ref={tabsWrapperRef} style={styles.tabsWrapper}>
           <ScrollView 
             ref={tabScrollViewRef}
             horizontal 
             showsHorizontalScrollIndicator={false}
             style={styles.tabsContainer}
             contentContainerStyle={styles.tabsContent}
+            onScroll={(event) => {
+              const newOffset = event.nativeEvent.contentOffset.x;
+              tabScrollOffset.current = newOffset;
+              // Update indicator position when scrolling
+              const activeIndex = TABS.indexOf(activeTab);
+              if (activeIndex >= 0) {
+                const tabLayout = tabLayouts.current[activeIndex];
+                if (tabLayout && tabLayout.x !== undefined) {
+                  // Adjust for scroll offset - tabs are in ScrollView, indicator is outside
+                  // Position relative to tabsWrapper = tab.x (in ScrollView content) - scrollOffset
+                  const adjustedX = tabLayout.x - newOffset;
+                  indicatorPosition.setValue(adjustedX);
+                }
+              }
+            }}
+            scrollEventThrottle={16}
           >
             {TABS.map((tab, index) => {
               const isActive = activeTab === tab;
@@ -1062,7 +1496,20 @@ export default function SearchScreen({ navigation, route }) {
                   activeOpacity={0.7}
                   onLayout={(event) => {
                     const { x, width } = event.nativeEvent.layout;
-                    tabLayouts.current[index] = { x, width };
+                    // x is relative to ScrollView's contentContainer
+                    // tabsContent has paddingHorizontal: 16, so first tab is at x=16
+                    // When ScrollView scrolls by offset, tab's position relative to tabsWrapper is: x - offset
+                    // Store both for use in animations
+                    const screenX = x - tabScrollOffset.current;
+                    tabLayouts.current[index] = { 
+                      x, // Position in ScrollView content
+                      width,
+                      xScreen: screenX // Position relative to tabsWrapper (for indicator)
+                    };
+                    // Update indicator position if this is the active tab
+                    if (activeTab === tab) {
+                      updateIndicatorPosition(index);
+                    }
                   }}
                 >
                   <Text style={[
@@ -1075,29 +1522,19 @@ export default function SearchScreen({ navigation, route }) {
               );
             })}
           </ScrollView>
-          {/* Tab Indicator - positioned at border, aligned with active tab */}
+          {/* Tab Indicator - animated position directly under active tab */}
           <View style={styles.tabIndicatorContainer}>
-            {TABS.map((tab, index) => {
-              const isActive = activeTab === tab;
-              const tabLayout = tabLayouts.current[index];
-              const indicatorWidth = tabLayout ? Math.min(tabLayout.width, 60) : 60;
-              const indicatorLeft = tabLayout ? tabLayout.x + (tabLayout.width / 2) - (indicatorWidth / 2) : 16 + index * 84;
-              
-              return (
-                <View
-                  key={tab}
+            <Animated.View
                   style={[
                     styles.tabIndicator,
-                    isActive && styles.tabIndicatorActive,
-                    isActive && {
+                styles.tabIndicatorActive,
+                {
                       position: 'absolute',
-                      left: indicatorLeft,
+                  left: indicatorPosition,
                       width: indicatorWidth,
                     }
                   ]}
                 />
-              );
-            })}
           </View>
         </View>
       </View>
@@ -1114,51 +1551,325 @@ export default function SearchScreen({ navigation, route }) {
           {TABS.map((tab, index) => {
             const isCurrentTab = activeTab === tab;
             return (
-              <View key={tab} style={[styles.tabContentWrapper, { width: SCREEN_WIDTH }]}>
+              <View key={tab} style={styles.tabContentWrapper}>
+                {/* Results Header for Movies and Songs tabs */}
+                {isCurrentTab && query.trim() && (activeTab === 'movies' || activeTab === 'songs') && (
+                  <View style={styles.resultsHeader}>
+                    <Text style={styles.resultsHeaderText}>
+                      {activeTab === 'movies' 
+                        ? `Found ${results.length} movie${results.length !== 1 ? 's' : ''}`
+                        : 'Top Results'}
+                    </Text>
+                    <TouchableOpacity style={styles.filterButton}>
+                      <Ionicons 
+                        name={activeTab === 'movies' ? 'filter-outline' : 'options-outline'} 
+                        size={16} 
+                        color={COLORS.primary} 
+                      />
+                      <Text style={styles.filterButtonText}>Filter</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                
+                {/* Movies Grid Layout - Use FlatList with numColumns for proper 2-column grid */}
+                {isCurrentTab && activeTab === 'movies' ? (
                 <FlatList
-                  data={isCurrentTab ? results : []}
+                    data={query.trim() ? results : mockMoviesResults}
+                    keyExtractor={(item, idx) => item.id || `movie-${idx}`}
+                    renderItem={({ item }) => (
+                      <SearchMovieCard
+                        movie={item}
+                        onPress={(m) => navigation.navigate('PostDetailsScreen', { movieId: m.id, movie: m })}
+                      />
+                    )}
+                    numColumns={2}
+                    columnWrapperStyle={styles.moviesRow}
+                    contentContainerStyle={styles.moviesGridContainer}
+                    showsVerticalScrollIndicator={false}
+                    ListEmptyComponent={renderEmptyState}
+                  />
+                ) : (
+                  <FlatList
+                    key={`${activeTab}-${activeTab === 'events' ? 'grid' : 'list'}`}
+                    style={styles.fullHeightList}
+                    data={isCurrentTab ? (
+                      query.trim() ? results : (
+                        activeTab === 'movies' ? mockMoviesResults :
+                        activeTab === 'songs' ? mockSongsResults :
+                        activeTab === 'events' ? mockEventsResults :
+                        results
+                      )
+                    ) : []}
                   keyExtractor={(item, idx) => item._id || item.id || `item-${idx}`}
                   renderItem={activeTab === 'all' ? renderAllResult : renderResult}
-                  contentContainerStyle={styles.resultsList}
+                    contentContainerStyle={[
+                      styles.resultsList,
+                      results.length === 0 && styles.emptyListContainer
+                    ]}
                   showsVerticalScrollIndicator={false}
+                    numColumns={activeTab === 'events' ? 2 : undefined}
+                    columnWrapperStyle={activeTab === 'events' ? styles.eventsRow : undefined}
                   ListHeaderComponent={() => {
-                    // Trending Section (only when no query and on "all" tab)
+                    // Enhanced All Tab Sections (only when no query and on "all" tab)
                     if (!query.trim() && activeTab === 'all' && isCurrentTab) {
                       return (
-                        <View style={styles.trendingSection}>
-                          <View style={styles.trendingHeader}>
-                            <View style={styles.trendingTitleRow}>
-                              <Ionicons name="trending-up" size={20} color={COLORS.primary} />
-                              <Text style={styles.trendingTitle}>Trending Now</Text>
+                        <View>
+                          {/* Trends for you Section */}
+                          <View style={styles.sectionContainer}>
+                            <Text style={styles.sectionTitle}>Trends for you</Text>
+                            {trendingTopics.slice(0, 3).map((topic) => (
+                              <TouchableOpacity
+                                key={topic.id}
+                                style={styles.trendItem}
+                                onPress={() => setQuery(topic.tag)}
+                              >
+                                <View style={styles.trendItemContent}>
+                                  <View style={styles.trendItemLeft}>
+                                    <Text style={styles.trendItemRank}>{topic.id}.</Text>
+                                    <View style={styles.trendItemInfo}>
+                                      <Text style={styles.trendItemCategory}>
+                                        {topic.category} {topic.trending ? '• Trending' : topic.live ? '• Live' : ''}
+                                      </Text>
+                                      <Text style={styles.trendItemTag}>{topic.tag}</Text>
+                                      <Text style={styles.trendItemPosts}>{topic.posts} posts</Text>
+                                    </View>
                             </View>
                             <TouchableOpacity>
+                                    <Ionicons name="ellipsis-horizontal" size={20} color={COLORS.textSecondary} />
+                                  </TouchableOpacity>
+                                </View>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+
+                          {/* Suggested People Section */}
+                          {suggestedPeople.length > 0 && (
+                            <View style={styles.sectionContainer}>
+                              <View style={styles.sectionHeaderRow}>
+                                <Text style={styles.sectionTitle}>Suggested People</Text>
+                                <TouchableOpacity onPress={() => switchToTab(TABS.indexOf('people'))}>
                               <Text style={styles.seeAllText}>See all</Text>
                             </TouchableOpacity>
                           </View>
                           <ScrollView 
                             horizontal 
                             showsHorizontalScrollIndicator={false}
-                            style={styles.trendingChips}
-                            contentContainerStyle={styles.trendingChipsContent}
+                            contentContainerStyle={[styles.horizontalScrollContent, { paddingLeft: 16, paddingRight: 16 }]}
+                            style={{ marginLeft: -16, marginRight: -16 }}
                             nestedScrollEnabled={true}
+                            onStartShouldSetResponder={() => true}
+                            onMoveShouldSetResponder={() => true}
+                            onResponderTerminationRequest={() => false}
+                            onScrollBeginDrag={() => {
+                              isAnimating.current = true;
+                            }}
+                            onScrollEndDrag={() => {
+                              setTimeout(() => {
+                                isAnimating.current = false;
+                              }, 100);
+                            }}
                           >
-                            {trendingHashtags.map((tag, idx) => (
+                            {suggestedPeople.map((person) => (
+                                  <View key={person._id} style={styles.suggestedPersonCard}>
+                                    <View style={styles.suggestedPersonAvatarContainer}>
+                                      <Image
+                                        source={{ 
+                                          uri: person.profilePicture 
+                                            ? `http://${API_BASE_URL}${person.profilePicture}`
+                                            : `https://placehold.co/60x60/C7C7CC/FFFFFF?text=${person.username?.charAt(0) || '?'}`
+                                        }}
+                                        style={styles.suggestedPersonAvatar}
+                                      />
+                                      {person.verified && (
+                                        <View style={styles.suggestedPersonVerified}>
+                                          <Ionicons name="checkmark-circle" size={16} color={COLORS.primary} />
+                                        </View>
+                                      )}
+                                    </View>
+                                    <Text style={styles.suggestedPersonName} numberOfLines={1}>
+                                      {person.displayName || person.username}
+                                    </Text>
+                                    <Text style={styles.suggestedPersonHandle} numberOfLines={1}>
+                                      @{person.username}
+                                    </Text>
                               <TouchableOpacity
+                                      style={styles.suggestedPersonFollowButton}
+                                      onPress={() => handleFollow(person._id, person.username)}
+                                    >
+                                      <Text style={styles.suggestedPersonFollowText}>Follow</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+
+                          {/* Upcoming Events Section */}
+                          {upcomingEvents.length > 0 && (
+                            <View style={styles.sectionContainer}>
+                              <View style={styles.sectionHeaderRow}>
+                                <Text style={styles.sectionTitle}>Upcoming Events</Text>
+                                <TouchableOpacity>
+                                  <Text style={styles.seeAllText}>See all</Text>
+                                </TouchableOpacity>
+                              </View>
+                              {upcomingEvents.slice(0, 1).map((event) => {
+                                const eventDate = event.time ? new Date(event.time) : null;
+                                const month = eventDate ? eventDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '';
+                                const day = eventDate ? eventDate.getDate() : '';
+                                return (
+                                  <TouchableOpacity
+                                    key={event._id}
+                                    style={styles.upcomingEventCard}
+                                    onPress={() => navigation.navigate('EventDetailsScreen', { eventId: event._id })}
+                                  >
+                                    <View style={styles.upcomingEventDateBlock}>
+                                      <Text style={styles.upcomingEventMonth}>{month}</Text>
+                                      <Text style={styles.upcomingEventDay}>{day}</Text>
+                                    </View>
+                                    <View style={styles.upcomingEventInfo}>
+                                      <Text style={styles.upcomingEventTitle}>{event.title}</Text>
+                                      <View style={styles.upcomingEventLocation}>
+                                        <Ionicons name="location" size={14} color={COLORS.textSecondary} />
+                                        <Text style={styles.upcomingEventLocationText}>
+                                          {event.location?.address || 'Location TBD'}
+                                        </Text>
+                                      </View>
+                                      {event.attendees && event.attendees.length > 0 && (
+                                        <View style={styles.upcomingEventAttendees}>
+                                          <View style={styles.upcomingEventAvatars}>
+                                            {event.attendees.slice(0, 3).map((attendee, idx) => (
+                                              <Image
                                 key={idx}
-                                style={styles.trendingChip}
-                                onPress={() => setQuery(tag)}
+                                                source={{ 
+                                                  uri: attendee.profilePicture 
+                                                    ? `http://${API_BASE_URL}${attendee.profilePicture}`
+                                                    : `https://placehold.co/20x20/C7C7CC/FFFFFF?text=${attendee.username?.charAt(0) || '?'}`
+                                                }}
+                                                style={[styles.upcomingEventAvatar, { marginLeft: idx > 0 ? -8 : 0 }]}
+                                              />
+                                            ))}
+                                          </View>
+                                          <Text style={styles.upcomingEventAttendeeCount}>
+                                            {event.attendees.length}
+                                          </Text>
+                                        </View>
+                                      )}
+                                    </View>
+                                    {event.coverImage && (
+                                      <Image
+                                        source={{ uri: `http://${API_BASE_URL}${event.coverImage}` }}
+                                        style={styles.upcomingEventImage}
+                                      />
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          )}
+
+                          {/* Popular Movies Section */}
+                          {popularMovies.length > 0 && (
+                            <View style={styles.sectionContainer}>
+                              <View style={styles.sectionHeaderRow}>
+                                <Text style={styles.sectionTitle}>Popular Movies</Text>
+                                <TouchableOpacity>
+                                  <Text style={styles.seeAllText}>See all</Text>
+                                </TouchableOpacity>
+                              </View>
+                              <ScrollView 
+                                horizontal 
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={[styles.horizontalScrollContent, { paddingLeft: 16, paddingRight: 16 }]}
+                                style={{ marginLeft: -16, marginRight: -16 }}
+                                nestedScrollEnabled={true}
+                                onStartShouldSetResponder={() => true}
+                                onMoveShouldSetResponder={() => true}
+                                onResponderTerminationRequest={() => false}
+                                onScrollBeginDrag={() => {
+                                  isAnimating.current = true;
+                                }}
+                                onScrollEndDrag={() => {
+                                  setTimeout(() => {
+                                    isAnimating.current = false;
+                                  }, 100);
+                                }}
                               >
-                                <Text style={styles.trendingChipHash}>#</Text>
-                                <Text style={styles.trendingChipText}>{tag.replace('#', '')}</Text>
+                                {popularMovies.slice(0, 3).map((movie) => (
+                                  <SearchMovieCard
+                                    key={movie.id}
+                                    movie={movie}
+                                    onPress={(m) => navigation.navigate('PostDetailsScreen', { movieId: m.id, movie: m })}
+                                  />
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+
+                          {/* Trending Songs Section */}
+                          {trendingSongs.length > 0 && (
+                            <View style={styles.sectionContainer}>
+                              <View style={styles.sectionHeaderRow}>
+                                <Text style={styles.sectionTitle}>Trending Songs</Text>
+                                <TouchableOpacity>
+                                  <Text style={styles.seeAllText}>See all</Text>
                               </TouchableOpacity>
+                              </View>
+                              <ScrollView 
+                                horizontal 
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={[styles.horizontalScrollContent, { paddingLeft: 16, paddingRight: 16 }]}
+                                style={{ marginLeft: -16, marginRight: -16 }}
+                                nestedScrollEnabled={true}
+                                onStartShouldSetResponder={() => true}
+                                onMoveShouldSetResponder={() => true}
+                                onResponderTerminationRequest={() => false}
+                                onScrollBeginDrag={() => {
+                                  isAnimating.current = true;
+                                }}
+                                onScrollEndDrag={() => {
+                                  setTimeout(() => {
+                                    isAnimating.current = false;
+                                  }, 100);
+                                }}
+                              >
+                                {trendingSongs.slice(0, 3).map((song) => (
+                                  <View key={song.id} style={styles.trendingSongCard}>
+                                    <LinearGradient
+                                      colors={['#8B5CF6', '#6366F1']}
+                                      style={styles.trendingSongGradient}
+                                      start={{ x: 0, y: 0 }}
+                                      end={{ x: 1, y: 1 }}
+                                    >
+                                      <Ionicons name="musical-notes" size={32} color="rgba(255, 255, 255, 0.8)" />
+                                    </LinearGradient>
+                                    <Text style={styles.trendingSongTitle} numberOfLines={1}>
+                                      {song.name}
+                                    </Text>
+                                    <Text style={styles.trendingSongArtist} numberOfLines={1}>
+                                      {song.artists?.[0]?.name || 'Unknown Artist'}
+                                    </Text>
+                                  </View>
                             ))}
                           </ScrollView>
+                            </View>
+                          )}
                         </View>
                       );
                     }
                     return null;
                   }}
                   ListEmptyComponent={isCurrentTab ? renderEmptyState : () => null}
+                  ListFooterComponent={() => {
+                    if (isCurrentTab && activeTab === 'people' && results.length > 0 && !loading) {
+                      return (
+                        <View style={styles.endOfResults}>
+                          <Text style={styles.endOfResultsText}>End of results</Text>
+                        </View>
+                      );
+                    }
+                    return null;
+                  }}
                   refreshControl={
                     isCurrentTab ? (
                       <RefreshControl
@@ -1171,6 +1882,7 @@ export default function SearchScreen({ navigation, route }) {
                   scrollEnabled={isCurrentTab}
                   nestedScrollEnabled={true}
                 />
+              )}
               </View>
             );
           })}
@@ -1194,6 +1906,7 @@ const styles = StyleSheet.create({
     paddingBottom: 0,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    zIndex: 10,
   },
   backButton: {
     position: 'absolute',
@@ -1207,10 +1920,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
     marginHorizontal: 16,
-    marginLeft: 56, // Make room for back button
-    marginBottom: 12,
+    marginBottom: 0,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderWidth: 1,
@@ -1220,6 +1935,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 1,
+  },
+  searchContainerWithSuggestions: {
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    borderBottomWidth: 0,
   },
   searchIcon: {
     marginRight: 8,
@@ -1243,8 +1963,11 @@ const styles = StyleSheet.create({
   },
   tab: {
     paddingVertical: 12,
+    paddingHorizontal: 16,
     alignItems: 'center',
     minWidth: 60,
+    borderRadius: 20,
+    marginRight: 8,
   },
   tabText: {
     fontSize: 14,
@@ -1252,24 +1975,24 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   tabTextActive: {
-    color: COLORS.text,
+    color: COLORS.primary,
     fontWeight: '700',
   },
   tabIndicatorContainer: {
     position: 'absolute',
-    bottom: -1, // Position right on the border
+    bottom: 0,
     left: 0,
     right: 0,
-    height: 2,
+    height: 3,
     zIndex: 10,
   },
   tabIndicator: {
-    height: 2,
+    height: 3,
     backgroundColor: 'transparent',
   },
   tabIndicatorActive: {
     backgroundColor: COLORS.primary,
-    borderRadius: 1,
+    borderRadius: 1.5,
   },
   trendingSection: {
     paddingTop: 24,
@@ -1405,12 +2128,27 @@ const styles = StyleSheet.create({
   // Swipeable Container
   swipeableContainer: {
     flex: 1,
+    width: SCREEN_WIDTH,
   },
   swipeableContent: {
     flexDirection: 'row',
     width: SCREEN_WIDTH * TABS.length,
+    height: '100%',
   },
   tabContentWrapper: {
+    width: SCREEN_WIDTH,
+    flex: 1,
+  },
+  fullHeightScroll: {
+    flex: 1,
+  },
+  fullHeightList: {
+    flex: 1,
+  },
+  emptyListContainer: {
+    flexGrow: 1,
+  },
+  fullHeightContainer: {
     flex: 1,
   },
   // Event Card Styles (keeping existing UI)
@@ -1586,10 +2324,12 @@ const styles = StyleSheet.create({
   },
   // Empty State Styles
   emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 60,
     paddingHorizontal: 32,
+    minHeight: 400,
   },
   emptyTitle: {
     fontSize: 20,
@@ -1645,17 +2385,22 @@ const styles = StyleSheet.create({
   // Suggestions Dropdown Styles
   suggestionsDropdown: {
     backgroundColor: COLORS.surface,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
     maxHeight: 300,
     marginHorizontal: 16,
-    borderRadius: 12,
-    marginTop: 4,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    marginTop: -1,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    zIndex: 10,
   },
   suggestionsHeader: {
     flexDirection: 'row',
@@ -1701,5 +2446,328 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // New All Tab Section Styles
+  sectionContainer: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 16,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  seeAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  // Trends Section
+  trendItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  trendItemContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  trendItemLeft: {
+    flexDirection: 'row',
+    flex: 1,
+  },
+  trendItemRank: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+    marginRight: 12,
+    minWidth: 20,
+  },
+  trendItemInfo: {
+    flex: 1,
+  },
+  trendItemCategory: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  trendItemTag: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 4,
+  },
+  trendItemPosts: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  showMoreButton: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  showMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  // Suggested People Section
+  horizontalScrollContent: {
+    paddingLeft: 16,
+    paddingRight: 16,
+    gap: 12,
+  },
+  suggestedPersonCard: {
+    width: 120,
+    alignItems: 'center',
+    marginRight: 12,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  suggestedPersonAvatarContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+  },
+  suggestedPersonAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  suggestedPersonVerified: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+  },
+  suggestedPersonName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  suggestedPersonHandle: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  suggestedPersonFollowButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+  },
+  suggestedPersonFollowText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // Upcoming Events Section
+  upcomingEventCard: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  upcomingEventDateBlock: {
+    width: 60,
+    backgroundColor: COLORS.primaryLight,
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  upcomingEventMonth: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginBottom: 4,
+  },
+  upcomingEventDay: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: COLORS.text,
+  },
+  upcomingEventInfo: {
+    flex: 1,
+  },
+  upcomingEventTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  upcomingEventLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 4,
+  },
+  upcomingEventLocationText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    flex: 1,
+  },
+  upcomingEventAttendees: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  upcomingEventAvatars: {
+    flexDirection: 'row',
+  },
+  upcomingEventAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+  },
+  upcomingEventAttendeeCount: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  upcomingEventImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    marginLeft: 12,
+  },
+  // Trending Songs Section
+  trendingSongCard: {
+    width: 120,
+    marginRight: 12,
+  },
+  trendingSongGradient: {
+    width: 120,
+    height: 120,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  trendingSongTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 4,
+  },
+  trendingSongArtist: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  // Results Header (for Movies and Songs tabs)
+  resultsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  resultsHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  filterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: COLORS.primaryLight,
+  },
+  filterButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  // Movies Grid Layout
+  moviesGridContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 20,
+  },
+  moviesRow: {
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  eventsCategoriesContainer: {
+    paddingBottom: 20,
+  },
+  categorySection: {
+    marginBottom: 24,
+  },
+  categorySectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  categorySectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  categoryEventsScroll: {
+    paddingLeft: 16,
+    paddingRight: 16,
+  },
+  eventsRow: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  // Category Buttons
+  categoryButton: {
+    alignItems: 'center',
+    marginRight: 16,
+    width: 100,
+  },
+  categoryIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  categoryButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.text,
+    textAlign: 'center',
+  },
+  // End of results indicator
+  endOfResults: {
+    paddingVertical: 24,
+    alignItems: 'center',
+  },
+  endOfResultsText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
   },
 });

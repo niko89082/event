@@ -13,6 +13,7 @@ import { API_BASE_URL } from '@env';
 import PostActivityComponent from '../components/PostActivityComponent';
 import PhotoGrid from '../components/PhotoGrid';
 import usePostsStore from '../stores/postsStore';
+import AboutSection from '../components/AboutSection';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -663,73 +664,112 @@ const fetchUserEvents = async () => {
     }
   };
 
-  // UPDATED: Profile header with follower-following system
+  // UPDATED: Profile header matching new UI design
 const renderProfileHeader = () => {
   // All accounts are public, so show events count
   const visibleEventsCount = eventsCount;
   
+  // Format numbers for display
+  const formatNumber = (num) => {
+    if (num >= 1000) {
+      return (num / 1000).toFixed(1) + 'k';
+    }
+    return num.toString();
+  };
+  
   return (
     <View style={styles.profileHeader}>
-      {/* Centered Avatar */}
-      <View style={styles.centeredAvatarSection}>
-        <Image
-          source={{
-            uri: user?.profilePicture
-              ? `http://${API_BASE_URL}:3000${user.profilePicture}`
-              : 'https://via.placeholder.com/88x88/F6F6F6/999999?text=User'
-          }}
-          style={styles.profileImage}
-        />
+      {/* Profile Picture and Stats Row */}
+      <View style={styles.profileTopRow}>
+        <View style={styles.profileImageContainer}>
+          <Image
+            source={{
+              uri: user?.profilePicture
+                ? `http://${API_BASE_URL}:3000${user.profilePicture}`
+                : 'https://via.placeholder.com/84x84/F6F6F6/999999?text=User'
+            }}
+            style={styles.profileImage}
+          />
+          {isSelf && (
+            <TouchableOpacity
+              style={styles.profilePictureEditButton}
+              onPress={() => navigation.navigate('EditProfileScreen')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add" size={14} color="#FFFFFF" />
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        {/* Stats Row - Horizontal */}
+        <View style={styles.statsRow}>
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={() => navigation.navigate('FollowListScreen', { 
+              userId, 
+              mode: 'followers'
+            })}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.statNumber}>{formatNumber(followersCount)}</Text>
+            <Text style={styles.statLabel}>Followers</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={() => navigation.navigate('FollowListScreen', { 
+              userId, 
+              mode: 'following'
+            })}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.statNumber}>{formatNumber(followingCount)}</Text>
+            <Text style={styles.statLabel}>Following</Text>
+          </TouchableOpacity>
+          
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{visibleEventsCount}</Text>
+            <Text style={styles.statLabel}>Events</Text>
+          </View>
+        </View>
       </View>
 
-      {/* Centered Username and Bio */}
-      <View style={styles.centeredProfileInfo}>
-        <Text style={styles.username}>{user?.username}</Text>
+      {/* Username with Verification Badge */}
+      <View style={styles.profileInfo}>
+        <View style={styles.usernameRow}>
+          <Text style={styles.username}>{user?.username || 'User'}</Text>
+          {/* Verification badge - can be added based on user verification status */}
+        </View>
+        
+        {/* Bio */}
         {user?.bio && (
           <Text style={styles.bio}>{user.bio}</Text>
         )}
-      </View>
-
-      {/* Stats Container WITH Events count */}
-      <View style={styles.statsContainer}>
-        {/* Events Count */}
-        <View style={styles.statItem}>
-          <Text style={styles.statNumber}>{visibleEventsCount}</Text>
-          <Text style={styles.statLabel}>Events</Text>
+        
+        {/* Location and Website */}
+        <View style={styles.metaInfo}>
+          {user?.hometown && (
+            <View style={styles.metaItem}>
+              <Ionicons name="location" size={14} color="#4C739A" />
+              <Text style={styles.metaText}>{user.hometown}</Text>
+            </View>
+          )}
+          {user?.socialMediaLinks?.website && (
+            <View style={styles.metaItem}>
+              <Text style={styles.metaSeparator}>•</Text>
+              <Ionicons name="link" size={14} color="#4C739A" />
+              <Text style={[styles.metaText, styles.metaLink]}>{user.socialMediaLinks.website}</Text>
+            </View>
+          )}
         </View>
-        
-        {/* Friends Count */}
-        <TouchableOpacity
-          style={styles.statItem}
-          onPress={() => navigation.navigate('FollowersListScreen', { 
-            userId, 
-            mode: 'followers'
-          })}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.statNumber}>{followersCount}</Text>
-          <Text style={styles.statLabel}>Followers</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={styles.statItem}
-          onPress={() => navigation.navigate('FollowingListScreen', { 
-            userId, 
-            mode: 'following'
-          })}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.statNumber}>{followingCount}</Text>
-          <Text style={styles.statLabel}>Following</Text>
-        </TouchableOpacity>
       </View>
 
-      {/* Action Buttons with Friends System */}
+      {/* Action Buttons */}
       <View style={styles.actionButtons}>
         {isSelf ? (
           <View style={styles.selfActionButtons}>
             <TouchableOpacity
-              style={styles.editProfileButton}
+              style={styles.editProfileButtonFull}
               onPress={() => navigation.navigate('EditProfileScreen')}
               activeOpacity={0.8}
             >
@@ -741,18 +781,8 @@ const renderProfileHeader = () => {
               onPress={() => navigation.navigate('QrScreen')}
               activeOpacity={0.8}
             >
-              <Ionicons name="qr-code-outline" size={20} color="#FFFFFF" />
+              <Ionicons name="qr-code-outline" size={20} color="#2B8CEE" />
             </TouchableOpacity>
-            
-            {/* Temporarily removed settings screen
-            <TouchableOpacity
-              style={styles.shareEventsButton}
-              onPress={() => navigation.navigate('UserSettingsScreen')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="settings-outline" size={20} color="#000000" />
-            </TouchableOpacity>
-            */}
           </View>
         ) : (
           renderFollowButton()
@@ -761,7 +791,7 @@ const renderProfileHeader = () => {
     </View>
   );
 };
-  // Tab bar (same as before)
+  // Tab bar - Updated to match new design
   const renderTabBar = () => (
     <View style={styles.tabBar}>
       {tabs.map((tab, index) => (
@@ -771,15 +801,7 @@ const renderProfileHeader = () => {
           onPress={() => handleTabPress(index)}
           activeOpacity={0.8}
         >
-          <Ionicons 
-            name={
-              tab === 'Posts' ? 'grid-outline' : 
-              tab === 'Events' ? 'calendar-outline' : 
-              'library-outline'
-            } 
-            size={24} 
-            color={activeTabIndex === index ? '#3797EF' : '#8E8E93'} 
-          />
+          {activeTabIndex === index && <View style={styles.activeTabIndicator} />}
           <Text style={[
             styles.tabText,
             activeTabIndex === index && styles.activeTabText
@@ -1241,6 +1263,16 @@ const renderPostGrid = ({ item }) => (
         {/* Profile Header */}
         {renderProfileHeader()}
         
+        {/* About Section */}
+        {user && (
+          <AboutSection 
+            user={user} 
+            isSelf={isSelf}
+            onEditPress={(section) => navigation.navigate('EditAboutScreen', { section, userAbout: user.about })}
+            navigation={navigation}
+          />
+        )}
+        
         {/* Tab Bar */}
         {renderTabBar()}
         
@@ -1316,86 +1348,115 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Profile Header (same as before)
+  // Profile Header - Updated to match new UI design
   profileHeader: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingVertical: 24,
-    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  centeredAvatarSection: {
+  profileTopRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    gap: 24,
+    marginBottom: 12,
+  },
+  profileImageContainer: {
+    position: 'relative',
+    width: 84,
+    height: 84,
   },
   profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#F6F6F6',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#E2E8F0',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
-  centeredProfileInfo: {
+  profilePictureEditButton: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#2B8CEE',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
-  username: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  bio: {
-    fontSize: 15,
-    color: '#8E8E93',
-    lineHeight: 20,
-    textAlign: 'center',
-    maxWidth: 280,
-  },
-
-  // Stats Container
-  statsContainer: {
+  statsRow: {
+    flex: 1,
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginBottom: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 20,
-    width: '90%',
-    alignSelf: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 3.84,
-    elevation: 3,
   },
   statItem: {
     alignItems: 'center',
-    flex: 1,
-    paddingHorizontal: 8,
   },
   statNumber: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#000000',
-    marginBottom: 8,
+    color: '#0D141B',
+    lineHeight: 20,
+    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 13,
-    color: '#8E8E93',
+    fontSize: 12,
     fontWeight: '500',
-    textAlign: 'center',
+    color: '#4C739A',
+  },
+  profileInfo: {
+    marginBottom: 16,
+  },
+  usernameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 4,
+  },
+  username: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0D141B',
+    lineHeight: 24,
+  },
+  bio: {
+    fontSize: 14,
+    color: '#0D141B',
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  metaInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 8,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  metaSeparator: {
+    fontSize: 12,
+    color: '#4C739A',
+    marginHorizontal: 4,
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#4C739A',
+  },
+  metaLink: {
+    fontWeight: '500',
+    color: '#0D141B',
   },
 
   // Action Buttons
   actionButtons: {
     width: '100%',
-    alignItems: 'center',
+    marginBottom: 16,
   },
   selfActionButtons: {
     flexDirection: 'row',
@@ -1403,32 +1464,24 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 8,
   },
-  editProfileButton: {
+  editProfileButtonFull: {
     flex: 1,
-    backgroundColor: '#F0F0F0',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    backgroundColor: '#2B8CEE',
+    paddingVertical: 9,
+    borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   editProfileButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  shareEventsButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   qrCodeButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#3797EF',
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#E7EDF3',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1478,31 +1531,39 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-    paddingVertical: 8,
-    paddingTop: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E7EDF3',
+    paddingTop: 4,
   },
   tab: {
     flex: 1,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    flexDirection: 'column',
-    gap: 4,
+    position: 'relative',
   },
   activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#3797EF',
+    // Active indicator handled by activeTabIndicator
+  },
+  activeTabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#2B8CEE',
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
   },
   tabText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '500',
-    color: '#8E8E93',
+    color: '#4C739A',
+    letterSpacing: 0.5,
   },
   activeTabText: {
-    color: '#3797EF',
-    fontWeight: '600',
+    color: '#0D141B',
+    fontWeight: '700',
   },
 
   // Event Filter Bar
