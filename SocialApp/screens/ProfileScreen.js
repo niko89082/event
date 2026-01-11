@@ -783,6 +783,14 @@ const renderProfileHeader = () => {
             >
               <Ionicons name="qr-code-outline" size={20} color="#2B8CEE" />
             </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.settingsButton}
+              onPress={() => navigation.navigate('UserSettingsScreen')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="settings-outline" size={20} color="#2B8CEE" />
+            </TouchableOpacity>
           </View>
         ) : (
           renderFollowButton()
@@ -1479,6 +1487,14 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   qrCodeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#E7EDF3',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsButton: {
     width: 36,
     height: 36,
     borderRadius: 8,

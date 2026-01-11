@@ -1,5 +1,5 @@
 // navigation/MainTabNavigator.js - Modern Glassmorphic Bottom Tab Navigator
-import React, { useLayoutEffect } from 'react';
+import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { View, Platform, StyleSheet, TouchableOpacity } from 'react-native';
@@ -21,26 +21,39 @@ import PostPublishedScreen from '../screens/PostPublishedScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
+// Helper function to recursively traverse navigation state and find the active route name
+const getActiveRouteName = (navState) => {
+  if (!navState) return null;
+  
+  const route = navState.routes[navState.index];
+  if (!route.state) {
+    return route.name;
+  }
+  
+  return getActiveRouteName(route.state);
+};
+
 // Custom Tab Bar Component with Glassmorphism
 function CustomTabBar({ state, descriptors, navigation }) {
-  // Check if we're on CreatePost screen - hide tab bar
-  const isCreatePost = React.useMemo(() => {
+  // Check if we're on CreatePost or CreateEvent screen - hide tab bar
+  const shouldHideTabBar = React.useMemo(() => {
+    // Check if we're currently on the Create tab
     const createTab = state.routes.find(r => r.name === 'Create');
-    if (createTab?.state?.routes) {
-      const currentRoute = createTab.state.routes[createTab.state.index];
-      const isPost = currentRoute?.name === 'CreatePost';
-      // Also check nested state
-      if (currentRoute?.state?.routes) {
-        const nestedRoute = currentRoute.state.routes[currentRoute.state.index];
-        return isPost || nestedRoute?.name === 'CreatePost';
-      }
-      return isPost;
-    }
-    return false;
+    if (!createTab) return false;
+    
+    // Check if Create tab is the active tab
+    const isCreateTabActive = state.index === state.routes.findIndex(r => r.name === 'Create');
+    if (!isCreateTabActive) return false;
+    
+    // Get the active route name within the Create stack
+    const activeRouteName = getActiveRouteName(createTab.state);
+    
+    // Hide tab bar when on CreatePost or CreateEvent screens
+    return activeRouteName === 'CreatePost' || activeRouteName === 'CreateEvent';
   }, [state]);
 
-  if (isCreatePost) {
-    return null; // Hide tab bar completely when on CreatePost
+  if (shouldHideTabBar) {
+    return null; // Hide tab bar completely when on CreatePost or CreateEvent
   }
 
   return (
@@ -214,24 +227,9 @@ function ProfileStackNavigator() {
 
 // Create Stack Navigator
 function CreateStackNavigator({ navigation }) {
-  // Hide tab bar when CreatePost screen is active
-  useLayoutEffect(() => {
-    const unsubscribe = navigation.addListener('state', () => {
-      const state = navigation.getState();
-      const currentRoute = state.routes[state.index];
-      const isCreatePost = currentRoute.name === 'CreatePost';
-      
-      const tabNavigator = navigation.getParent();
-      if (tabNavigator) {
-        tabNavigator.setOptions({
-          tabBarStyle: isCreatePost ? { display: 'none' } : undefined,
-        });
-      }
-    });
-    
-    return unsubscribe;
-  }, [navigation]);
-
+  // Tab bar visibility is handled by CustomTabBar component
+  // No need for additional logic here
+  
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="CreatePost" component={CreatePostScreen} />

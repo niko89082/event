@@ -240,24 +240,6 @@ function AppNavigator({ onLogout }) {
               }}
             />
             <RootStack.Screen 
-              name="UserSettingsScreen" 
-              component={UserSettingsScreen}
-              options={{ 
-                headerShown: true, 
-                title: 'Settings',
-                headerStyle: {
-                  backgroundColor: '#FFFFFF',
-                  shadowOpacity: 0.1,
-                  elevation: 2,
-                },
-                headerTitleStyle: {
-                  fontWeight: '600',
-                  fontSize: 18,
-                },
-                headerBackTitleVisible: false,
-              }}
-            />
-            <RootStack.Screen 
               name="EditProfileScreen" 
               component={EditProfileScreen}
               options={{ 

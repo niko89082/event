@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 // Direct IP address - update this if .env isn't loading
 // This will be auto-updated by the update script
-const HARDCODED_IP = '10.0.0.249';
+const HARDCODED_IP = '10.0.0.220';
 
 // Try to import from @env
 let API_BASE_URL, EXPO_PUBLIC_API_URL;

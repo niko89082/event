@@ -370,6 +370,17 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
     return null;
   }
 
+  // Calculate total width to prevent over-scrolling
+  const cardSpacing = 16; // marginRight between cards
+  const paddingLeft = 16;
+  const paddingRight = 16; // Padding on the right to ensure last card can be fully visible
+  
+  // Calculate content width: paddingLeft + all cards + spacing between cards (not including last card's margin) + paddingRight
+  const cardsWidth = cards.length * CARD_WIDTH;
+  const spacingWidth = (cards.length - 1) * cardSpacing; // Only spacing between cards, not after last card
+  const totalContentWidth = paddingLeft + cardsWidth + spacingWidth + paddingRight;
+  const shouldScroll = totalContentWidth > SCREEN_WIDTH;
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -377,15 +388,28 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingRight: 16 } // Prevent scrolling past last card
+          { 
+            paddingLeft: paddingLeft,
+            paddingRight: paddingRight,
+            width: totalContentWidth, // Exact width prevents over-scrolling
+          }
         ]}
-        snapToInterval={CARD_WIDTH + 16}
+        snapToInterval={CARD_WIDTH + cardSpacing}
         decelerationRate="fast"
         snapToAlignment="start"
         bounces={false}
+        scrollEnabled={shouldScroll && cards.length > 1}
+        alwaysBounceHorizontal={false}
+        overScrollMode="never"
       >
         {cards.map((card, index) => (
-          <View key={index} style={styles.cardWrapper}>
+          <View 
+            key={index} 
+            style={[
+              styles.cardWrapper,
+              index === cards.length - 1 && { marginRight: 0 } // Remove margin from last card to prevent white space
+            ]}
+          >
             {card}
           </View>
         ))}
@@ -401,9 +425,9 @@ const styles = StyleSheet.create({
     minHeight: 0, // Allow container to collapse when empty
   },
   scrollContent: {
-    paddingHorizontal: 16,
     paddingVertical: 8, // Reduced vertical padding
     gap: 16,
+    // paddingLeft and paddingRight are set dynamically in contentContainerStyle
   },
   cardWrapper: {
     width: CARD_WIDTH,

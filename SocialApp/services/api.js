@@ -6,6 +6,21 @@ import apiConfig from '../config/apiConfig';
 const baseURL = apiConfig.BASE_URL;
 const ipAddress = apiConfig.IP_ADDRESS;
 
+// Logout callback to be registered by AuthContext
+let logoutCallback = null;
+
+// Function to register logout callback from AuthContext
+export const setLogoutCallback = (callback) => {
+  logoutCallback = callback;
+  console.log('🟡 API Service: Logout callback registered');
+};
+
+// Function to clear logout callback
+export const clearLogoutCallback = () => {
+  logoutCallback = null;
+  console.log('🟡 API Service: Logout callback cleared');
+};
+
 console.log('🟡 API Service: Initializing');
 console.log('   Using base URL:', baseURL);
 console.log('   IP Address:', ipAddress);
@@ -25,8 +40,9 @@ const api = axios.create({
   },
   // Add adapter for better error handling
   validateStatus: function (status) {
-    // Don't throw errors for status codes < 500
-    return status < 500;
+    // Treat 401 (Unauthorized) as an error so it triggers the error handler
+    // Other status codes < 500 are treated as success (for backward compatibility)
+    return status < 500 && status !== 401;
   },
 });
 
@@ -54,6 +70,25 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => {
     console.log('🟢 API Response:', response.status, response.config.url);
+    
+    // Check for 401 even in "successful" responses (shouldn't happen with new validateStatus, but just in case)
+    if (response.status === 401) {
+      console.log('🟡 API: Unauthorized detected in response interceptor');
+      console.log('🔴 API: Triggering automatic logout due to 401 error');
+      
+      // Trigger automatic logout if callback is registered
+      if (logoutCallback) {
+        try {
+          logoutCallback();
+          console.log('🟢 API: Logout callback executed successfully');
+        } catch (logoutError) {
+          console.error('❌ API: Error executing logout callback:', logoutError);
+        }
+      } else {
+        console.warn('⚠️ API: No logout callback registered - user may remain logged in');
+      }
+    }
+    
     return response;
   },
   (error) => {
@@ -115,6 +150,19 @@ api.interceptors.response.use(
     // Handle specific HTTP status codes
     if (error.response?.status === 401) {
       console.log('🟡 API: Unauthorized - token may be expired or invalid');
+      console.log('🔴 API: Triggering automatic logout due to 401 error');
+      
+      // Trigger automatic logout if callback is registered
+      if (logoutCallback) {
+        try {
+          logoutCallback();
+          console.log('🟢 API: Logout callback executed successfully');
+        } catch (logoutError) {
+          console.error('❌ API: Error executing logout callback:', logoutError);
+        }
+      } else {
+        console.warn('⚠️ API: No logout callback registered - user may remain logged in');
+      }
     }
     
     if (error.response?.status === 403) {

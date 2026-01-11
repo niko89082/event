@@ -1,7 +1,7 @@
 // services/AuthContext.js - Fixed for Expo with better token management
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useCallback } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import api from './api';
+import api, { setLogoutCallback, clearLogoutCallback } from './api';
 
 export const AuthContext = createContext();
 
@@ -36,6 +36,16 @@ export const AuthProvider = ({ children }) => {
           // Test the token by making a simple API call
           try {
             const testResponse = await api.get('/api/profile');
+            
+            // Double-check: even if no error was thrown, check the status code
+            if (testResponse.status === 401) {
+              console.log('❌ AuthProvider: Token invalid (401 response), clearing stored data');
+              await clearStoredAuth();
+              setIsAuthenticated(false);
+              setCurrentUser(null);
+              return;
+            }
+            
             console.log('🟢 AuthProvider: Token is valid');
             
             setCurrentUser(user);
@@ -43,6 +53,7 @@ export const AuthProvider = ({ children }) => {
             console.log('🟢 AuthProvider: User authenticated successfully');
           } catch (apiError) {
             console.log('❌ AuthProvider: Token invalid, clearing stored data');
+            console.log('❌ AuthProvider: Error details:', apiError.response?.status, apiError.message);
             // Token is invalid, clear it
             await clearStoredAuth();
             setIsAuthenticated(false);
@@ -108,7 +119,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       console.log('🟡 AuthProvider: Logging out...');
       
@@ -127,7 +138,17 @@ export const AuthProvider = ({ children }) => {
       setCurrentUser(null);
       setIsAuthenticated(false);
     }
-  };
+  }, []);
+
+  // Register logout callback with API service for automatic logout on 401
+  useEffect(() => {
+    setLogoutCallback(logout);
+    
+    // Cleanup: clear callback on unmount
+    return () => {
+      clearLogoutCallback();
+    };
+  }, [logout]);
 
   // Add method to refresh token if needed
   const refreshAuth = async () => {
