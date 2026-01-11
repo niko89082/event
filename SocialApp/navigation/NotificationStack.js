@@ -2,6 +2,7 @@ import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 import NotificationScreen from '../screens/NotificationScreen';
 import NotificationExamplesScreen from '../screens/NotificationExamplesScreen';
+import FollowRequestsScreen from '../screens/FollowRequestsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
 const Stack = createStackNavigator();
@@ -19,6 +20,14 @@ export default function NotificationStack() {
         options={{
           headerShown: false,
           title: 'Notification Examples'
+        }}
+      />
+      <Stack.Screen 
+        name="FollowRequests"
+        component={FollowRequestsScreen}
+        options={{
+          headerShown: false,
+          title: 'Follow Requests'
         }}
       />
       <Stack.Screen 

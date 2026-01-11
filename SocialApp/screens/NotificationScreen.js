@@ -1,20 +1,21 @@
-// SocialApp/screens/NotificationScreen.js - PHASE 2: Enhanced with swipe-to-delete functionality
-import React, { useEffect, useState, useContext, useCallback } from 'react';
+// SocialApp/screens/NotificationScreen.js - Redesigned with Follow Requests section and improved UI
+import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Image, SafeAreaView, StatusBar, Alert, RefreshControl
+  ActivityIndicator, Image, SafeAreaView, StatusBar, Alert, RefreshControl,
+  TextInput, SectionList
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import { AuthContext } from '../services/AuthContext';
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused, useFocusEffect } from '@react-navigation/native';
 import { API_BASE_URL } from '@env';
-// Import our new swipeable component
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 
 export default function NotificationScreen({ navigation }) {
   const { currentUser } = useContext(AuthContext);
   const isFocused = useIsFocused();
+  const hasMarkedAsRead = useRef(false);
 
   // Enhanced state management
   const [notifications, setNotifications] = useState([]);
@@ -24,6 +25,9 @@ export default function NotificationScreen({ navigation }) {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [organizedData, setOrganizedData] = useState([]);
+  const [followingStatus, setFollowingStatus] = useState({});
+  const MAX_DISPLAYED_REQUESTS = 2; // Show max 2 requests, then "See all"
 
   useEffect(() => {
     navigation.setOptions({
@@ -55,70 +59,161 @@ export default function NotificationScreen({ navigation }) {
           style={styles.headerButton}
           activeOpacity={0.7}
         >
-          <Ionicons name="albums-outline" size={24} color="#3797EF" />
+          <Ionicons name="settings-outline" size={24} color="#000000" />
         </TouchableOpacity>
       ),
     });
   }, []);
 
+  const markAllNotificationsAsRead = async () => {
+    try {
+      await api.post('/api/notifications/mark-all-read');
+      setNotifications(prev => prev.map(notif => ({ ...notif, isRead: true })));
+      setUnreadCounts({ total: 0 });
+    } catch (error) {
+      console.error('Error marking notifications as read:', error);
+    }
+  };
+
+  // Mark notifications as read when screen is actually viewed (not just focused)
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasMarkedAsRead.current) {
+        markAllNotificationsAsRead();
+        hasMarkedAsRead.current = true;
+      }
+      
+      return () => {
+        // Reset when leaving screen
+        hasMarkedAsRead.current = false;
+      };
+    }, [])
+  );
+
   useEffect(() => {
     if (isFocused) {
       fetchNotifications(true);
       fetchUnreadCounts();
-      // Mark all notifications as read when screen is opened
-      markAllNotificationsAsRead();
-    } else {
-      // When leaving the notification screen, ensure unread count is reset
-      // This helps the FeedScreen badge update immediately
-      console.log('📍 NotificationScreen unfocused - notifications marked as read');
     }
   }, [isFocused]);
 
-  // Friend request handlers removed - using follower-following system
+  // Fetch follow status for follow request notifications
+  useEffect(() => {
+    const fetchFollowStatuses = async () => {
+      const followRequests = notifications.filter(n => n.type === 'new_follower');
+      if (followRequests.length === 0) return;
+
+      const statusMap = {};
+      for (const notif of followRequests) {
+        if (notif.sender?._id) {
+          try {
+            const profileResponse = await api.get(`/api/profile/${notif.sender._id}`);
+            statusMap[notif.sender._id] = {
+              isFollowing: profileResponse.data.isFollowing || false,
+              isPublic: profileResponse.data.isPublic !== false, // default to true
+            };
+          } catch (error) {
+            // Default to public and not following
+            statusMap[notif.sender._id] = {
+              isFollowing: false,
+              isPublic: true,
+            };
+          }
+        }
+      }
+      setFollowingStatus(statusMap);
+    };
+
+    if (notifications.length > 0) {
+      fetchFollowStatuses();
+    }
+  }, [notifications]);
+
+  // Reorganize notifications when they change
+  useEffect(() => {
+    const organized = organizeNotifications(notifications);
+    setOrganizedData(organized);
+  }, [notifications]);
 
   /* ═══════════════════════════════════════════════════════════════════
-     🔧 PHASE 2 NEW: Enhanced notification deletion with optimistic updates
+     NOTIFICATION ORGANIZATION
   ═══════════════════════════════════════════════════════════════════ */
-  const handleDeleteNotification = async (notificationId) => {
-    try {
-      // Find the notification being deleted
-      const deletedNotification = notifications.find(n => n._id === notificationId);
-      
-      // Optimistic update - remove from UI immediately
-      setNotifications(prev => prev.filter(n => n._id !== notificationId));
-      
-      // Update unread counts optimistically
-      if (deletedNotification && !deletedNotification.isRead) {
-        setUnreadCounts(prev => ({
-          total: Math.max(0, prev.total - 1)
-        }));
-      }
 
-      // Make API call to actually delete
-      await api.delete(`/api/notifications/${notificationId}`);
-      
-      console.log(`✅ Successfully deleted notification ${notificationId}`);
-      
-    } catch (error) {
-      console.error('Error deleting notification:', error);
-      
-      // Rollback optimistic update on failure
-      fetchNotifications(true);
-      fetchUnreadCounts();
-      
-      Alert.alert(
-        'Error', 
-        'Failed to remove notification. Please try again.',
-        [{ text: 'OK', style: 'default' }]
-      );
+  const organizeNotifications = (notifs) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    // Separate follow requests (new_follower notifications)
+    const followRequests = notifs.filter(n => n.type === 'new_follower');
+    const otherNotifications = notifs.filter(n => n.type !== 'new_follower');
+
+    // Limit displayed requests to MAX_DISPLAYED_REQUESTS
+    const displayedRequests = followRequests.slice(0, MAX_DISPLAYED_REQUESTS);
+
+    // Group other notifications by date
+    const todayNotifs = [];
+    const yesterdayNotifs = [];
+    const olderNotifs = [];
+
+    otherNotifications.forEach(notif => {
+      const notifDate = new Date(notif.createdAt);
+      if (notifDate >= today) {
+        todayNotifs.push(notif);
+      } else if (notifDate >= yesterday && notifDate < today) {
+        yesterdayNotifs.push(notif);
+      } else {
+        olderNotifs.push(notif);
+      }
+    });
+
+    const sections = [];
+
+    // Follow Requests section
+    if (displayedRequests.length > 0) {
+      sections.push({
+        type: 'follow_requests',
+        title: 'Follow Requests',
+        count: followRequests.length,
+        displayedCount: displayedRequests.length,
+        data: displayedRequests,
+      });
     }
+
+    // Today section
+    if (todayNotifs.length > 0) {
+      sections.push({
+        type: 'date_section',
+        title: 'Today',
+        data: todayNotifs,
+      });
+    }
+
+    // Yesterday section
+    if (yesterdayNotifs.length > 0) {
+      sections.push({
+        type: 'date_section',
+        title: 'Yesterday',
+        data: yesterdayNotifs,
+      });
+    }
+
+    // Older section (if needed)
+    if (olderNotifs.length > 0) {
+      sections.push({
+        type: 'date_section',
+        title: 'Earlier',
+        data: olderNotifs,
+      });
+    }
+
+    return sections;
   };
 
   /* ═══════════════════════════════════════════════════════════════════
-     DATA FETCHING WITH REFRESH SUPPORT
+     DATA FETCHING
   ═══════════════════════════════════════════════════════════════════ */
-
-  // FriendRequestActions component removed - using follower-following system
 
   const fetchNotifications = async (reset = false) => {
     try {
@@ -164,38 +259,9 @@ export default function NotificationScreen({ navigation }) {
     }
   };
 
-  const markAllNotificationsAsRead = async () => {
-    try {
-      await api.post('/api/notifications/mark-all-read');
-      // Update local state to reflect all notifications as read
-      setNotifications(prev => prev.map(notif => ({ ...notif, isRead: true })));
-      setUnreadCounts({ total: 0 });
-    } catch (error) {
-      console.error('Error marking notifications as read:', error);
-    }
-  };
-
-  // Pull to refresh handler
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchNotifications(true);
-  }, []);
-
-  const loadMore = () => {
-    if (!loadingMore && hasMore) {
-      fetchNotifications(false);
-    }
-  };
-
-  /* ═══════════════════════════════════════════════════════════════════
-     NOTIFICATION MANAGEMENT
-  ═══════════════════════════════════════════════════════════════════ */
-
-
   const markAsRead = async (notificationId) => {
     try {
       await api.put(`/api/notifications/${notificationId}/read`);
-      
       setNotifications(prev =>
         prev.map(notif =>
           notif._id === notificationId ? { ...notif, isRead: true } : notif
@@ -208,52 +274,110 @@ export default function NotificationScreen({ navigation }) {
           total: Math.max(0, prev.total - 1)
         }));
       }
-      
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
   };
 
-  /* ═══════════════════════════════════════════════════════════════════
-     NAVIGATION ACTIONS
-  ═══════════════════════════════════════════════════════════════════ */
-  // cleanupFriendRequestNotifications removed - using follower-following system
+  const handleDeleteNotification = async (notificationId) => {
+    try {
+      const deletedNotification = notifications.find(n => n._id === notificationId);
+      setNotifications(prev => prev.filter(n => n._id !== notificationId));
+      
+      if (deletedNotification && !deletedNotification.isRead) {
+        setUnreadCounts(prev => ({
+          total: Math.max(0, prev.total - 1)
+        }));
+      }
 
+      await api.delete(`/api/notifications/${notificationId}`);
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+      fetchNotifications(true);
+      fetchUnreadCounts();
+      Alert.alert('Error', 'Failed to remove notification. Please try again.');
+    }
+  };
 
   const handleNotificationPress = async (notification) => {
-    // Mark as read when tapped
     if (!notification.isRead) {
       await markAsRead(notification._id);
     }
 
-    // Navigate based on action type
     switch (notification.actionType) {
       case 'VIEW_PROFILE':
         navigation.navigate('ProfileScreen', { 
           userId: notification.actionData?.userId || notification.sender?._id 
         });
         break;
-        
       case 'VIEW_EVENT':
         navigation.navigate('EventDetailsScreen', { 
           eventId: notification.actionData?.eventId || notification.data?.eventId 
         });
         break;
-        
       case 'VIEW_MEMORY':
         navigation.navigate('MemoryDetailsScreen', { 
           memoryId: notification.actionData?.memoryId || notification.data?.memoryId 
         });
         break;
-        
       case 'VIEW_POST':
         navigation.navigate('PostDetailsScreen', { 
           postId: notification.actionData?.postId || notification.data?.postId 
         });
         break;
-        
       default:
         console.log('🔔 No specific action for notification type:', notification.type);
+    }
+  };
+
+  const handleFollowRequestAction = async (notification, action) => {
+    if (action === 'confirm') {
+      // Mark as read and navigate to profile
+      await markAsRead(notification._id);
+      navigation.navigate('ProfileScreen', { 
+        userId: notification.sender?._id || notification.data?.userId 
+      });
+    } else if (action === 'delete') {
+      // Delete the notification
+      await handleDeleteNotification(notification._id);
+    }
+  };
+
+  const handleFollow = async (userId, notificationId) => {
+    try {
+      const status = followingStatus[userId];
+      if (status?.isFollowing) {
+        await api.delete(`/api/follow/unfollow/${userId}`);
+        setFollowingStatus(prev => ({
+          ...prev,
+          [userId]: { ...prev[userId], isFollowing: false }
+        }));
+      } else {
+        await api.post(`/api/follow/follow/${userId}`);
+        setFollowingStatus(prev => ({
+          ...prev,
+          [userId]: { ...prev[userId], isFollowing: true }
+        }));
+        // Mark notification as read when following
+        if (notificationId) {
+          await markAsRead(notificationId);
+        }
+      }
+    } catch (error) {
+      console.error('Error following/unfollowing:', error);
+      Alert.alert('Error', 'Failed to update follow status');
+    }
+  };
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchNotifications(true);
+    fetchUnreadCounts();
+  }, []);
+
+  const loadMore = () => {
+    if (!loadingMore && hasMore) {
+      fetchNotifications(false);
     }
   };
 
@@ -268,22 +392,24 @@ export default function NotificationScreen({ navigation }) {
       'memory_photo_added': 'camera',
       'memory_photo_batch': 'photos',
       'event_invitation': 'calendar',
+      'event_invitation_batch': 'calendar',
       'event_reminder': 'time',
       'event_reminder_1_hour': 'alarm',
       'event_rsvp_batch': 'people',
       'post_liked': 'heart',
-      'post_commented': 'chatbubble'
+      'post_commented': 'chatbubble',
+      'memory_photo_liked': 'heart',
     };
-    
     return iconMap[notification.type] || 'notifications';
   };
 
   const getNotificationColor = (notification) => {
     if (notification.priority === 'high') return '#FF3B30';
     if (notification.category === 'events') return '#3797EF';
-    return '#8E44AD';
+    if (notification.type === 'post_liked' || notification.type === 'memory_photo_liked') return '#FF3B30';
+    if (notification.type === 'post_commented') return '#34C759';
+    return '#3797EF';
   };
-
 
   const getTimeAgo = (dateString) => {
     const now = new Date();
@@ -293,45 +419,143 @@ export default function NotificationScreen({ navigation }) {
     if (diffInSeconds < 60) return 'Just now';
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
     
-    return date.toLocaleDateString();
+    const diffInDays = Math.floor(diffInSeconds / 86400);
+    if (diffInDays === 1) return 'Yesterday';
+    if (diffInDays < 7) return `${diffInDays}d ago`;
+    
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  // Friend request organization removed - using follower-following system
-
-  const renderFriendRequestSectionHeader = (count) => (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderContent}>
-        <Ionicons name="people" size={20} color="#3797EF" />
-        <Text style={styles.sectionHeaderTitle}>Friend Requests</Text>
-        {count > 0 && (
-          <View style={styles.sectionBadge}>
-            <Text style={styles.sectionBadgeText}>{count > 9 ? '9+' : count}</Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-
-  const renderOtherNotificationsSectionHeader = () => (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderContent}>
-        <Ionicons name="notifications" size={20} color="#8E8E93" />
-        <Text style={styles.sectionHeaderTitle}>Other Notifications</Text>
-      </View>
-    </View>
-  );
+  const getDetailedTime = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (date >= new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+      return getTimeAgo(dateString);
+    } else if (date >= new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate())) {
+      return `Yesterday, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    }
+    
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
 
   /* ═══════════════════════════════════════════════════════════════════
-     🔧 PHASE 2 ENHANCED: Render notification item with swipe functionality
+     RENDER FUNCTIONS
   ═══════════════════════════════════════════════════════════════════ */
+
+  const renderFollowRequestItem = (notification) => {
+    const sender = notification.sender;
+    const profilePicUrl = sender?.profilePicture 
+      ? (sender.profilePicture.startsWith('http') 
+          ? sender.profilePicture 
+          : `http://${API_BASE_URL}:3000${sender.profilePicture.startsWith('/') ? '' : '/'}${sender.profilePicture}`)
+      : null;
+
+    const status = followingStatus[sender?._id] || { isFollowing: false, isPublic: true };
+    const isPublic = status.isPublic !== false; // Default to public
+    const isFollowing = status.isFollowing;
+
+    return (
+      <View style={styles.followRequestItem}>
+        <TouchableOpacity
+          onPress={() => handleNotificationPress(notification)}
+          activeOpacity={0.7}
+        >
+          {profilePicUrl ? (
+            <Image source={{ uri: profilePicUrl }} style={styles.followRequestAvatar} />
+          ) : (
+            <View style={styles.followRequestAvatarPlaceholder}>
+              <Text style={styles.followRequestAvatarText}>
+                {sender?.username?.charAt(0)?.toUpperCase() || '?'}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        <View style={styles.followRequestInfo}>
+          <TouchableOpacity
+            onPress={() => handleNotificationPress(notification)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.followRequestName} numberOfLines={1}>
+              {sender?.displayName || sender?.username || 'Unknown User'}
+            </Text>
+            <Text style={styles.followRequestUsername}>
+              @{sender?.username || 'unknown'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.followRequestActions}>
+          {isPublic ? (
+            // Public account: Show Follow/Following button
+            <TouchableOpacity
+              style={[
+                styles.followButton,
+                isFollowing && styles.followingButton
+              ]}
+              onPress={() => handleFollow(sender?._id, notification._id)}
+              activeOpacity={0.8}
+            >
+              <Text style={[
+                styles.followButtonText,
+                isFollowing && styles.followingButtonText
+              ]}>
+                {isFollowing ? 'Following' : 'Follow'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            // Private account: Show Confirm/Delete buttons
+            <>
+              <TouchableOpacity
+                style={styles.confirmButton}
+                onPress={() => handleFollowRequestAction(notification, 'confirm')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.confirmButtonText}>Confirm</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => handleFollowRequestAction(notification, 'delete')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  };
 
   const renderNotificationItem = ({ item }) => {
     const iconName = getNotificationIcon(item);
     const iconColor = getNotificationColor(item);
+    const sender = item.sender;
+    const profilePicUrl = sender?.profilePicture 
+      ? (sender.profilePicture.startsWith('http') 
+          ? sender.profilePicture 
+          : `http://${API_BASE_URL}:3000${sender.profilePicture.startsWith('/') ? '' : '/'}${sender.profilePicture}`)
+      : null;
 
-    // Regular notification rendering
+    // Get icon overlay based on notification type
+    let iconOverlay = null;
+    if (item.type === 'post_liked' || item.type === 'memory_photo_liked') {
+      iconOverlay = { name: 'heart', color: '#FF3B30' };
+    } else if (item.type === 'post_commented') {
+      iconOverlay = { name: 'chatbubble', color: '#34C759' };
+    } else if (item.type === 'event_invitation' || item.type === 'event_invitation_batch') {
+      iconOverlay = { name: 'calendar', color: '#3797EF' };
+    }
+
     return (
       <SwipeableNotificationItem
         item={item}
@@ -346,44 +570,84 @@ export default function NotificationScreen({ navigation }) {
           activeOpacity={0.7}
         >
           <View style={styles.notificationRow}>
-            {/* Profile Picture or Icon */}
             <View style={styles.notificationIconContainer}>
-              {item.sender?.profilePicture ? (
-                <Image 
-                  source={{ uri: `${API_BASE_URL}/${item.sender.profilePicture}` }}
-                  style={styles.profilePicture}
-                />
+              {profilePicUrl ? (
+                <View style={styles.profilePictureWrapper}>
+                  <Image source={{ uri: profilePicUrl }} style={styles.profilePicture} />
+                  {iconOverlay && (
+                    <View style={[styles.iconOverlay, { backgroundColor: iconOverlay.color }]}>
+                      <Ionicons name={iconOverlay.name} size={12} color="#FFFFFF" />
+                    </View>
+                  )}
+                </View>
               ) : (
                 <View style={[styles.defaultIcon, { backgroundColor: iconColor + '20' }]}>
                   <Ionicons name={iconName} size={20} color={iconColor} />
                 </View>
               )}
-              
-              {/* Unread indicator */}
               {!item.isRead && (
                 <View style={styles.unreadDot} />
               )}
             </View>
 
-            {/* Notification Content */}
             <View style={styles.notificationContent}>
-              <View style={styles.notificationTextContainer}>
-                <Text style={styles.notificationTitle}>
-                  {item.title}
-                </Text>
-                <Text style={styles.notificationMessage}>
-                  {item.message}
-                </Text>
-                <Text style={styles.notificationTime}>
-                  {getTimeAgo(item.createdAt)}
-                </Text>
-              </View>
-
+              <Text style={styles.notificationMessage} numberOfLines={3}>
+                {item.message}
+              </Text>
+              <Text style={styles.notificationTime}>
+                {getTimeAgo(item.createdAt)}
+              </Text>
             </View>
+
+            {/* Optional image for event notifications */}
+            {item.data?.eventId && item.data?.eventCover && (
+              <Image 
+                source={{ uri: item.data.eventCover }}
+                style={styles.notificationImage}
+              />
+            )}
           </View>
         </TouchableOpacity>
       </SwipeableNotificationItem>
     );
+  };
+
+  const renderSectionHeader = ({ section }) => {
+    if (section.type === 'follow_requests') {
+      return (
+        <View style={styles.followRequestsSection}>
+          <View style={styles.followRequestsHeader}>
+            <Text style={styles.followRequestsTitle}>Follow Requests</Text>
+            {section.count > 0 && (
+              <View style={styles.followRequestsBadge}>
+                <Text style={styles.followRequestsBadgeText}>
+                  {section.count > 9 ? '9+' : section.count}
+                </Text>
+              </View>
+            )}
+          </View>
+          {section.count > section.displayedCount && (
+            <TouchableOpacity 
+              style={styles.seeAllButton}
+              onPress={() => {
+                navigation.navigate('FollowRequests');
+              }}
+            >
+              <Text style={styles.seeAllText}>
+                See all {section.count} requests
+              </Text>
+              <Ionicons name="chevron-down" size={16} color="#3797EF" />
+            </TouchableOpacity>
+          )}
+        </View>
+      );
+    } else {
+      return (
+        <View style={styles.dateSectionHeader}>
+          <Text style={styles.dateSectionTitle}>{section.title}</Text>
+        </View>
+      );
+    }
   };
 
   const renderEmptyState = () => (
@@ -396,8 +660,6 @@ export default function NotificationScreen({ navigation }) {
     </View>
   );
 
-  // Removed separate loading state - show existing notifications while refreshing
-  // Only show loading for initial load with no data
   if (loading && notifications.length === 0 && !refreshing) {
     return (
       <SafeAreaView style={styles.container}>
@@ -414,11 +676,17 @@ export default function NotificationScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      <FlatList
-        data={organizeNotifications(notifications)}
-        keyExtractor={(item) => item._id}
-        renderItem={renderNotificationItem}
-        contentContainerStyle={notifications.length === 0 ? styles.emptyContainer : styles.listContainer}
+      <SectionList
+        sections={organizedData}
+        keyExtractor={(item, index) => item._id || index.toString()}
+        renderItem={({ item, section }) => {
+          if (section.type === 'follow_requests') {
+            return renderFollowRequestItem(item);
+          }
+          return renderNotificationItem({ item });
+        }}
+        renderSectionHeader={renderSectionHeader}
+        contentContainerStyle={organizedData.length === 0 ? styles.emptyContainer : styles.listContainer}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -439,205 +707,13 @@ export default function NotificationScreen({ navigation }) {
             </View>
           ) : null
         }
+        stickySectionHeadersEnabled={false}
       />
     </SafeAreaView>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   ENHANCED STYLES WITH PHASE 2 IMPROVEMENTS
-═══════════════════════════════════════════════════════════════════ */
-
-const enhancedStyles = {
-  // Enhanced notification item styles
-  friendRequestNotification: {
-    backgroundColor: '#F8F9FE', // Slightly different background for friend requests
-    borderLeftWidth: 3,
-    borderLeftColor: '#3797EF',
-  },
-  
-  notificationContent: {
-    flex: 1,
-    flexDirection: 'column',
-  },
-  
-  notificationTextContainer: {
-    flex: 1,
-    marginBottom: 8, // Add space for action buttons
-  },
-  
-  // Friend request action styles
-  friendRequestActions: {
-    flexDirection: 'row',
-    marginTop: 12,
-    gap: 12,
-  },
-  
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 25,
-    minWidth: 110,
-    gap: 6,
-    elevation: 2,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-  },
-  
-  acceptButton: {
-    backgroundColor: '#34C759',
-    flex: 1,
-  },
-  
-  rejectButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#FF3B30',
-    flex: 1,
-  },
-  
-  acceptButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  
-  rejectButtonText: {
-    color: '#FF3B30',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  
-  // Result state styles
-  friendRequestResult: {
-    marginTop: 12,
-    alignItems: 'flex-start',
-  },
-  
-  resultBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 6,
-    elevation: 1,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  
-  acceptedBadge: {
-    backgroundColor: '#34C759',
-  },
-  
-  rejectedBadge: {
-    backgroundColor: '#8E8E93',
-  },
-  
-  resultText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  
-  // Enhanced profile picture styles
-  profilePicture: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-  },
-  
-  defaultIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  
-  unreadDot: {
-    position: 'absolute',
-    top: -3,
-    right: -3,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#3797EF',
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
-    shadowColor: '#3797EF',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
-    elevation: 3,
-  },
-
-  // Enhanced notification row layout
-  notificationRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    minHeight: 60, // Ensure consistent height
-  },
-  
-  notificationIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-    position: 'relative',
-    marginTop: 4, // Slight adjustment for visual alignment
-  },
-  
-  // Enhanced notification item container
-  notificationItem: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#EFEFEF',
-  },
-  
-  unreadNotification: {
-    backgroundColor: '#F8F9FA',
-    borderLeftWidth: 3,
-    borderLeftColor: '#3797EF',
-  },
-  
-  // Title and message styling enhancements
-  notificationTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
-    lineHeight: 20,
-  },
-  
-  notificationMessage: {
-    fontSize: 14,
-    color: '#8E8E93',
-    lineHeight: 18,
-    marginBottom: 6,
-  },
-  
-  notificationTime: {
-    fontSize: 12,
-    color: '#C7C7CC',
-    fontWeight: '500',
-  },
-};
-
 const styles = StyleSheet.create({
-  ...enhancedStyles,
-
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -693,45 +769,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
-  deleteButton: {
-      marginTop: 8,
-      paddingHorizontal: 16,
-      paddingVertical: 6,
-    },
-    deleteButtonText: {
-      color: '#3797EF',
-      fontSize: 13,
-      fontWeight: '500',
-    },
-  friendshipMessage: {
-    fontSize: 14,
-    color: '#1C1C1E',
-    textAlign: 'center',
-    marginTop: 8,
-  },
   
-  // Section header styles for friend request modes
-  sectionHeader: {
-    backgroundColor: '#F8F9FA',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
+  // Follow Requests Section
+  followRequestsSection: {
+    backgroundColor: '#FFFFFF',
+    paddingTop: 8,
   },
-  
-  sectionHeaderContent: {
+  followRequestsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
-  
-  sectionHeaderTitle: {
-    fontSize: 16,
-    fontWeight: '600',
+  followRequestsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
     color: '#000000',
-    marginLeft: 8,
   },
-  
-  sectionBadge: {
+  followRequestsBadge: {
     backgroundColor: '#3797EF',
     borderRadius: 10,
     paddingHorizontal: 8,
@@ -739,11 +794,230 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     minWidth: 20,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  
-  sectionBadgeText: {
+  followRequestsBadgeText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
+  },
+  seeAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  seeAllText: {
+    color: '#3797EF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  
+  // Follow Request Item
+  followRequestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#EFEFEF',
+  },
+  followRequestAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+  },
+  followRequestAvatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#E1E1E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  followRequestAvatarText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  followRequestInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  followRequestName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  followRequestUsername: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  followRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  confirmButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  deleteButton: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteButtonText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  followButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  followingButton: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followingButtonText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  
+  // Date Section Header
+  dateSectionHeader: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#EFEFEF',
+  },
+  dateSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  
+  // Notification Item
+  notificationItem: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#EFEFEF',
+  },
+  unreadNotification: {
+    backgroundColor: '#F8F9FA',
+  },
+  notificationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  notificationIconContainer: {
+    width: 48,
+    height: 48,
+    marginRight: 12,
+    position: 'relative',
+  },
+  profilePictureWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    position: 'relative',
+  },
+  profilePicture: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
+  iconOverlay: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  defaultIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unreadDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#3797EF',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  notificationContent: {
+    flex: 1,
+    marginRight: 8,
+  },
+  notificationMessage: {
+    fontSize: 15,
+    color: '#000000',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  notificationTime: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 4,
+  },
+  notificationImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
   },
 });

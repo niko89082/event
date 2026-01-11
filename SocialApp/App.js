@@ -41,6 +41,8 @@ import NotificationExamplesScreen from './screens/NotificationExamplesScreen';
 import PaymentSettingsScreen from './screens/PaymentSettingsScreen';
 import PostLikesScreen from './screens/PostsLikesScreen'; 
 import CategoryEventsScreen from './screens/CategoryEventsScreen';
+import FollowListScreen from './screens/FollowListScreen';
+import EditAboutScreen from './screens/EditAboutScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { PUBLISHABLE_KEY, API_BASE_URL } from '@env';
 import { palette } from './theme'; 
@@ -258,6 +260,30 @@ function AppNavigator({ onLogout }) {
             <RootStack.Screen 
               name="EditProfileScreen" 
               component={EditProfileScreen}
+              options={{ 
+                headerShown: false,
+              }}
+            />
+            <RootStack.Screen 
+              name="FollowListScreen" 
+              component={FollowListScreen}
+              options={{ 
+                headerShown: true,
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                  shadowOpacity: 0.1,
+                  elevation: 2,
+                },
+                headerTitleStyle: {
+                  fontWeight: '600',
+                  fontSize: 18,
+                },
+                headerBackTitleVisible: false,
+              }}
+            />
+            <RootStack.Screen 
+              name="EditAboutScreen" 
+              component={EditAboutScreen}
               options={{ 
                 headerShown: false,
               }}

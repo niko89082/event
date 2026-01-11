@@ -46,7 +46,34 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
         </View>
         <Text style={styles.cardTitle}>Education</Text>
         <View style={styles.cardContent}>
-          {hasEducationData ? (
+          {isSelf ? (
+            <>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !basicIdentity.school && styles.emptyFieldValue]}>
+                  {basicIdentity.school || 'Add school'}
+                </Text>
+                <Text style={styles.cardTag}>College</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !basicIdentity.major && styles.emptyFieldValue]}>
+                  {basicIdentity.major || 'Add major'}
+                </Text>
+                <Text style={styles.cardTag}>Major</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !basicIdentity.classYear && styles.emptyFieldValue]}>
+                  {basicIdentity.classYear || 'Add class year'}
+                </Text>
+                <Text style={styles.cardTag}>Year</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !basicIdentity.minor && styles.emptyFieldValue]}>
+                  {basicIdentity.minor || 'Add minor (optional)'}
+                </Text>
+                <Text style={styles.cardTag}>Minor</Text>
+              </View>
+            </>
+          ) : hasEducationData ? (
             <>
               {basicIdentity.school && (
                 <View style={styles.cardRow}>
@@ -73,9 +100,7 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
                 </View>
               )}
             </>
-          ) : (
-            <Text style={styles.emptyText}>Add your education information</Text>
-          )}
+          ) : null}
         </View>
       </View>
     );
@@ -101,7 +126,19 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
         </View>
         <Text style={styles.cardTitle}>Work & Info</Text>
         <View style={styles.cardContent}>
-          {hasWorkData ? (
+          {isSelf ? (
+            <View style={styles.workItem}>
+              <View style={styles.workIcon}>
+                <Ionicons name="location" size={18} color="#64748B" />
+              </View>
+              <View style={styles.workText}>
+                <Text style={[styles.workValue, !basicIdentity.hometown && styles.emptyFieldValue]}>
+                  {basicIdentity.hometown || 'Add hometown'}
+                </Text>
+                <Text style={styles.workLabel}>Lives in</Text>
+              </View>
+            </View>
+          ) : hasWorkData ? (
             basicIdentity.hometown && (
               <View style={styles.workItem}>
                 <View style={styles.workIcon}>
@@ -113,9 +150,7 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
                 </View>
               </View>
             )
-          ) : (
-            <Text style={styles.emptyText}>Add your work information</Text>
-          )}
+          ) : null}
         </View>
       </View>
     );
@@ -159,9 +194,24 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
             </TouchableOpacity>
           )}
         </View>
-        <Text style={styles.cardTitle}>Social Context</Text>
+        <Text style={styles.cardTitle}>Relationships</Text>
         <View style={styles.cardContent}>
-          {hasSocialContextData ? (
+          {isSelf ? (
+            <>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !socialContext.relationshipStatus && styles.emptyFieldValue]}>
+                  {socialContext.relationshipStatus ? getRelationshipStatusLabel(socialContext.relationshipStatus) : 'Add relationship status'}
+                </Text>
+                <Text style={styles.cardTag}>Status</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, (!socialContext.lookingFor || socialContext.lookingFor === 'nothing') && styles.emptyFieldValue]}>
+                  {socialContext.lookingFor && socialContext.lookingFor !== 'nothing' ? getLookingForLabel(socialContext.lookingFor) : 'Add what you\'re looking for'}
+                </Text>
+                <Text style={styles.cardTag}>Looking for</Text>
+              </View>
+            </>
+          ) : hasSocialContextData ? (
             <>
               {socialContext.relationshipStatus && (
                 <View style={styles.cardRow}>
@@ -176,9 +226,7 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
                 </View>
               )}
             </>
-          ) : (
-            <Text style={styles.emptyText}>Add your social context</Text>
-          )}
+          ) : null}
         </View>
       </View>
     );
@@ -204,7 +252,34 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
         </View>
         <Text style={styles.cardTitle}>Interests</Text>
         <View style={styles.cardContent}>
-          {hasInterestsData ? (
+          {isSelf ? (
+            <>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !interests.favoriteMovie && styles.emptyFieldValue]}>
+                  {interests.favoriteMovie || 'Add favorite movie'}
+                </Text>
+                <Text style={styles.cardTag}>Movie</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !interests.favoriteArtist && styles.emptyFieldValue]}>
+                  {interests.favoriteArtist || 'Add favorite artist'}
+                </Text>
+                <Text style={styles.cardTag}>Artist</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !interests.favoriteTVShow && styles.emptyFieldValue]}>
+                  {interests.favoriteTVShow || 'Add favorite TV show'}
+                </Text>
+                <Text style={styles.cardTag}>TV Show</Text>
+              </View>
+              <View style={styles.cardRow}>
+                <Text style={[styles.cardValue, !interests.favoriteCampusSpot && styles.emptyFieldValue]}>
+                  {interests.favoriteCampusSpot || 'Add favorite campus spot'}
+                </Text>
+                <Text style={styles.cardTag}>Campus Spot</Text>
+              </View>
+            </>
+          ) : hasInterestsData ? (
             <>
               {interests.favoriteMovie && (
                 <View style={styles.cardRow}>
@@ -231,9 +306,7 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
                 </View>
               )}
             </>
-          ) : (
-            <Text style={styles.emptyText}>Add your interests</Text>
-          )}
+          ) : null}
         </View>
       </View>
     );
@@ -302,10 +375,14 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingRight: 16 } // Prevent scrolling past last card
+        ]}
         snapToInterval={CARD_WIDTH + 16}
         decelerationRate="fast"
         snapToAlignment="start"
+        bounces={false}
       >
         {cards.map((card, index) => (
           <View key={index} style={styles.cardWrapper}>
@@ -320,12 +397,12 @@ export default function AboutSection({ user, isSelf, onEditPress, navigation }) 
 const styles = StyleSheet.create({
   container: {
     marginTop: 0,
-    marginBottom: 16,
+    marginBottom: 0, // No bottom margin - let content determine spacing
     minHeight: 0, // Allow container to collapse when empty
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8, // Reduced vertical padding
     gap: 16,
   },
   cardWrapper: {
@@ -461,6 +538,10 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 8,
+  },
+  emptyFieldValue: {
+    color: '#94A3B8',
+    fontStyle: 'italic',
   },
 });
 

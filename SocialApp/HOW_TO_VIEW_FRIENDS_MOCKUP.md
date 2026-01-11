@@ -74,3 +74,4 @@ The new Friends tab includes:
   - Location
   - Friends going count with avatars
 
+

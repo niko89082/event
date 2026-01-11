@@ -106,6 +106,14 @@ export default function FeedScreen({ navigation }) {
     }
   };
 
+  const handleNotificationLongPress = () => {
+    try {
+      navigation.navigate('NotificationExamples');
+    } catch (error) {
+      console.error('Error navigating to NotificationExamples:', error);
+    }
+  };
+
   const handleProfilePress = () => {
     try {
       navigation.navigate('Profile', { screen: 'MyProfile' });
@@ -225,17 +233,30 @@ export default function FeedScreen({ navigation }) {
               <TouchableOpacity 
                 style={styles.notificationButton}
                 onPress={handleNotificationPress}
+                onLongPress={handleNotificationLongPress}
                 activeOpacity={0.8}
               >
                 <View style={styles.notificationIconContainer}>
-                  <Ionicons name="notifications-outline" size={28} color="#000000" />
-                  {unreadNotificationCount > 0 && (
-                    <View style={styles.notificationBadge}>
-                      <Text style={styles.notificationBadgeText}>
-                        {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                      </Text>
-                    </View>
-                  )}
+                  <Ionicons 
+                    name="notifications-outline" 
+                    size={28} 
+                    color={unreadNotificationCount > 0 ? "#3797EF" : "#000000"} 
+                  />
+                  {unreadNotificationCount > 0 ? (
+                    unreadNotificationCount > 9 ? (
+                      <View style={styles.notificationBadgeBlue}>
+                        <Text style={styles.notificationBadgeText}>
+                          9+
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.notificationBadgeBlue}>
+                        <Text style={styles.notificationBadgeText}>
+                          {unreadNotificationCount}
+                        </Text>
+                      </View>
+                    )
+                  ) : null}
                 </View>
               </TouchableOpacity>
             </View>
@@ -434,21 +455,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   
-  notificationBadge: {
+  notificationBadgeBlue: {
     position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: '#FF3B30',
+    top: -2,
+    right: -2,
+    backgroundColor: '#3797EF',
     borderRadius: 10,
-    minWidth: 10,
-    height: 10,
+    minWidth: 18,
+    height: 18,
     borderWidth: 2,
     borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
   
   notificationBadgeText: {
     color: '#FFFFFF',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
     textAlign: 'center',
   },

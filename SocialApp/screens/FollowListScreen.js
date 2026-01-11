@@ -18,8 +18,13 @@ export default function FollowListScreen({ route, navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [followingStatus, setFollowingStatus] = useState({}); // Track who current user follows
 
-  const isSelf = userId === currentUser?._id;
+  const isSelf = userId && currentUser && String(userId) === String(currentUser._id);
   const isFollowersMode = mode === 'followers';
+  
+  // Debug logging
+  useEffect(() => {
+    console.log('FollowListScreen params:', { userId, mode, isSelf, isFollowersMode });
+  }, [userId, mode, isSelf, isFollowersMode]);
 
   useEffect(() => {
     const title = isFollowersMode ? 'Followers' : 'Following';
@@ -57,6 +62,14 @@ export default function FollowListScreen({ route, navigation }) {
   }, [userId, mode]);
 
   const fetchList = async (isRefresh = false) => {
+    if (!userId) {
+      console.error('FollowListScreen: userId is missing');
+      Alert.alert('Error', 'User ID is missing');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     try {
       if (isRefresh) {
         setRefreshing(true);
@@ -68,9 +81,11 @@ export default function FollowListScreen({ route, navigation }) {
         ? `/api/profile/${userId}/followers`
         : `/api/profile/${userId}/following`;
       
+      console.log('FollowListScreen: Fetching from', endpoint);
       const res = await api.get(endpoint);
       const userList = isFollowersMode ? res.data.followers : res.data.following;
       
+      console.log('FollowListScreen: Received', userList?.length || 0, 'users');
       setUsers(userList || []);
       
       // If viewing followers, check which ones the current user follows

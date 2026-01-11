@@ -102,7 +102,20 @@ const CATEGORY_COLORS = {
         }
       });
 
-      const categoryEvents = response.data.events || response.data || [];
+      // Check if response is an error (401, 403, etc.) before using data
+      if (response.status >= 400) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      // Ensure we always get an array
+      let categoryEvents = [];
+      if (response.data) {
+        if (Array.isArray(response.data.events)) {
+          categoryEvents = response.data.events;
+        } else if (Array.isArray(response.data)) {
+          categoryEvents = response.data;
+        }
+      }
       
       // Cache the results
       categoryCacheService.setCategoryEvents(category, categoryEvents);

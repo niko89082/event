@@ -76,3 +76,4 @@ class SearchHistoryService {
 
 export default SearchHistoryService;
 
+

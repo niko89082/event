@@ -4,6 +4,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import SearchScreen from '../screens/SearchScreen';
 import ProfileScreen from '../screens/ProfileScreen'; // Use the universal ProfileScreen
 import FollowListScreen from '../screens/FollowListScreen';
+import EditAboutScreen from '../screens/EditAboutScreen';
 import CategoryEventsScreen from '../screens/CategoryEventsScreen'; // ✅ Added for View More
 import EventDetailsScreen from '../screens/EventDetailsScreen'; // ✅ Added for event navigation
 const Stack = createStackNavigator();
@@ -22,6 +23,11 @@ export default function SearchStack() {
         options={{ title: 'Profile' }}
       />
       <Stack.Screen name="FollowListScreen" component={FollowListScreen} />
+      <Stack.Screen 
+        name="EditAboutScreen" 
+        component={EditAboutScreen}
+        options={{ headerShown: false }}
+      />
       {/* ✅ Added CategoryEventsScreen for "View More" functionality */}
       <Stack.Screen 
         name="CategoryEventsScreen" 

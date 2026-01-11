@@ -1353,7 +1353,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 8,
+    paddingBottom: 12, // Reduced from 8 to 12 for better spacing
   },
   profileTopRow: {
     flexDirection: 'row',
@@ -1456,7 +1456,8 @@ const styles = StyleSheet.create({
   // Action Buttons
   actionButtons: {
     width: '100%',
-    marginBottom: 16,
+    marginTop: 12,
+    marginBottom: 8, // Reduced from 16 to 8
   },
   selfActionButtons: {
     flexDirection: 'row',
@@ -1533,7 +1534,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E7EDF3',
-    paddingTop: 4,
+    paddingTop: 0, // Reduced from 4 to 0
+    marginTop: 0, // Ensure no top margin
   },
   tab: {
     flex: 1,

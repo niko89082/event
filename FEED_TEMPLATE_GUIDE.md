@@ -141,3 +141,4 @@ To add a debug button to FeedScreen (for development only):
 - `SocialApp/components/PostActivityComponent.js` - Post rendering component
 - `routes/feed.js` - Backend feed endpoint
 
+

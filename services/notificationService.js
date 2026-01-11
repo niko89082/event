@@ -673,7 +673,7 @@ class NotificationService {
    * @param {string} category - Optional category filter
    */
   async getUnreadCount(userId, category = null) {
-    const query = { user: userId, read: false };
+    const query = { user: userId, isRead: false };
     if (category) {
       query.category = category;
     }
@@ -689,7 +689,7 @@ class NotificationService {
   async markAsRead(notificationId, userId) {
     const notification = await Notification.findOneAndUpdate(
       { _id: notificationId, user: userId },
-      { $set: { read: true, readAt: new Date() } },
+      { $set: { isRead: true, readAt: new Date() } },
       { new: true }
     );
     
@@ -702,14 +702,14 @@ class NotificationService {
    * @param {string} category - Optional category filter
    */
   async markAllAsRead(userId, category = null) {
-    const query = { user: userId, read: false };
+    const query = { user: userId, isRead: false };
     if (category) {
       query.category = category;
     }
     
     const result = await Notification.updateMany(
       query,
-      { $set: { read: true, readAt: new Date() } }
+      { $set: { isRead: true, readAt: new Date() } }
     );
     
     return result;

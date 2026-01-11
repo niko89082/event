@@ -94,7 +94,20 @@ export default function CategoryEventsScreen({ route, navigation }) {
         }
       });
 
-      const newEvents = response.data.events || response.data || [];
+      // Check if response is an error (401, 403, etc.) before using data
+      if (response.status >= 400) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      // Ensure we always get an array
+      let newEvents = [];
+      if (response.data) {
+        if (Array.isArray(response.data.events)) {
+          newEvents = response.data.events;
+        } else if (Array.isArray(response.data)) {
+          newEvents = response.data;
+        }
+      }
 
       if (reset || !loadMore) {
         setEvents(newEvents);

@@ -170,6 +170,24 @@ function main() {
       console.log(`⚠️  SocialApp .env file not found at: ${socialAppEnvPath}`);
     }
     
+    // Also update the hardcoded IP in apiConfig.js as a fallback
+    const apiConfigPath = path.join(__dirname, '..', 'SocialApp', 'config', 'apiConfig.js');
+    if (fs.existsSync(apiConfigPath)) {
+      try {
+        let configContent = fs.readFileSync(apiConfigPath, 'utf8');
+        // Update the HARDCODED_IP constant
+        const ipRegex = /const HARDCODED_IP = ['"]([^'"]+)['"]/;
+        if (ipRegex.test(configContent)) {
+          configContent = configContent.replace(ipRegex, `const HARDCODED_IP = '${ipAddress}'`);
+          fs.writeFileSync(apiConfigPath, configContent, 'utf8');
+          console.log(`✅ Updated HARDCODED_IP in apiConfig.js`);
+          updated = true;
+        }
+      } catch (error) {
+        console.log(`⚠️  Could not update apiConfig.js: ${error.message}`);
+      }
+    }
+    
     if (errors.length > 0) {
       console.log(`\n⚠️  Some errors occurred:`);
       errors.forEach(err => console.log(`   - ${err}`));

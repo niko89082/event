@@ -26,15 +26,21 @@ export default function FeaturedEventsSection({ navigation, useMockData = false 
       // Try to fetch featured events from backend
       try {
         const response = await api.get('/api/events/featured?limit=3');
-        if (response.data && response.data.events) {
+        
+        // Check if response is an error (401, 403, etc.) before using data
+        if (response.status >= 400) {
+          throw new Error(`API error: ${response.status}`);
+        }
+        
+        if (response.data && response.data.events && Array.isArray(response.data.events)) {
           setFeaturedEvents(response.data.events);
         } else {
-          // Fallback to mock data if endpoint doesn't exist
+          // Fallback to mock data if endpoint doesn't exist or returns invalid data
           setFeaturedEvents(getMockFeaturedEvents());
         }
       } catch (error) {
-        // If endpoint doesn't exist, use mock data
-        console.log('Featured events endpoint not available, using mock data');
+        // If endpoint doesn't exist or returns error, use mock data
+        console.log('Featured events endpoint not available, using mock data:', error.message);
         setFeaturedEvents(getMockFeaturedEvents());
       }
     } catch (error) {

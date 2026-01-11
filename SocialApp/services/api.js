@@ -10,11 +10,23 @@ console.log('🟡 API Service: Initializing');
 console.log('   Using base URL:', baseURL);
 console.log('   IP Address:', ipAddress);
 
+// Validate baseURL before creating axios instance
+if (!baseURL || baseURL === 'http://undefined:3000' || baseURL === 'http://localhost:3000') {
+  console.error('❌ Invalid baseURL:', baseURL);
+  console.error('   This usually means .env file is not loading correctly');
+  console.error('   Try: cd SocialApp && rm -rf .expo && npm start -- -c');
+}
+
 const api = axios.create({
   baseURL: baseURL,
-  timeout: 15000, // 15 second timeout
+  timeout: 20000, // Increased to 20 seconds for slower networks
   headers: {
     'Content-Type': 'application/json',
+  },
+  // Add adapter for better error handling
+  validateStatus: function (status) {
+    // Don't throw errors for status codes < 500
+    return status < 500;
   },
 });
 
@@ -50,14 +62,59 @@ api.interceptors.response.use(
       status: error.response?.status,
       message: error.response?.data?.message || error.message,
       data: error.response?.data,
+      code: error.code,
     };
     
-    console.error('❌ API Response Error:', errorInfo);
+    // Log the full URL that was attempted
+    const attemptedUrl = error.config?.baseURL + error.config?.url;
+    console.error('❌ API Error Details:');
+    console.error('   Attempted URL:', attemptedUrl);
+    console.error('   Error Code:', error.code);
+    console.error('   Error Message:', error.message);
+    console.error('   Response Status:', error.response?.status);
     
-    // Handle specific error cases
+    // Handle network errors specifically
+    const isNetworkError = 
+      error.code === 'NETWORK_ERROR' ||
+      error.code === 'ERR_NETWORK' ||
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'ETIMEDOUT' ||
+      error.message?.includes('Network Error') ||
+      error.message?.includes('Network request failed') ||
+      error.message?.includes('Failed to connect') ||
+      (!error.response && error.request);
+    
+    if (isNetworkError) {
+      console.error('🚨 NETWORK ERROR DETECTED');
+      console.error('   Base URL:', baseURL);
+      console.error('   IP Address:', ipAddress);
+      console.error('   Full URL:', attemptedUrl);
+      console.error('');
+      console.error('🔧 Troubleshooting Steps:');
+      console.error('   1. Check if server is running: npm start (in root directory)');
+      console.error('   2. Verify IP address is correct:', ipAddress);
+      console.error('   3. Test from phone browser: http://' + ipAddress + ':3000/api/auth/test');
+      console.error('   4. Ensure both devices are on the same WiFi network');
+      console.error('   5. Check macOS firewall settings');
+      console.error('   6. Try updating IP: npm run update-ip');
+      
+      // Create a more helpful error message
+      error.networkDiagnostics = {
+        baseURL,
+        ipAddress,
+        attemptedUrl,
+        suggestions: [
+          'Server may not be running - check terminal where you ran "npm start"',
+          'IP address may have changed - run "npm run update-ip" and restart Expo',
+          'Devices may be on different networks - ensure same WiFi',
+          'Firewall may be blocking - check macOS System Settings > Network > Firewall',
+        ]
+      };
+    }
+    
+    // Handle specific HTTP status codes
     if (error.response?.status === 401) {
       console.log('🟡 API: Unauthorized - token may be expired or invalid');
-      // Don't auto-logout here, let the components handle it
     }
     
     if (error.response?.status === 403) {
@@ -69,21 +126,9 @@ api.interceptors.response.use(
       console.log('🟡 API: Available endpoints should be prefixed with /api/');
     }
     
-    if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error')) {
-      console.error('❌ API: Network error - check if server is running on', baseURL);
-      console.error('❌ API: Current IP address:', ipAddress);
-    }
-    
     if (error.code === 'ECONNABORTED') {
       console.error('❌ API: Request timeout - server may be slow or unreachable');
-      console.error('❌ API: Attempted URL:', error.config?.baseURL + error.config?.url);
-      console.error('❌ API: Check if server is running and accessible from this device');
-    }
-    
-    // Log the full URL that was attempted
-    if (error.config) {
-      const attemptedUrl = error.config.baseURL + error.config.url;
-      console.error('❌ API: Attempted URL:', attemptedUrl);
+      console.error('❌ API: Timeout after 15 seconds');
     }
     
     return Promise.reject(error);

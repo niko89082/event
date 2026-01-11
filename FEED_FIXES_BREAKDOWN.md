@@ -590,3 +590,4 @@ contentOffset={Platform.OS === 'ios' ? { x: 0, y: -HEADER_HEIGHT } : undefined}
 - [ ] Triple-tap opens debug panel
 - [ ] Debug panel values update feed in real-time
 
+

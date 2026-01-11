@@ -37,25 +37,49 @@ export default function AttendingEventsView({
       let response;
       try {
         response = await api.get(`/api/events/attending?limit=100`);
+        
+        // Check if response is an error (401, 403, etc.) before using data
+        if (response.status >= 400) {
+          throw new Error(`API error: ${response.status}`);
+        }
       } catch (error) {
         // Fallback: get user's attending events from profile
-        const userResponse = await api.get(`/api/profile/${currentUserId}`);
-        const user = userResponse.data;
-        const attendingEvents = user.attendingEvents || [];
-        
-        // Filter out events where user is host or cohost
-        const filteredEvents = attendingEvents.filter(event => {
-          const isHost = String(event.host?._id || event.host) === String(currentUserId);
-          const isCohost = event.coHosts?.some(cohost => 
-            String(cohost._id || cohost) === String(currentUserId)
-          );
-          return !isHost && !isCohost;
-        });
-        
-        response = { data: { events: filteredEvents } };
+        try {
+          const userResponse = await api.get(`/api/profile/${currentUserId}`);
+          
+          // Check if fallback response is also an error
+          if (userResponse.status >= 400) {
+            throw new Error(`API error: ${userResponse.status}`);
+          }
+          
+          const user = userResponse.data;
+          const attendingEvents = user.attendingEvents || [];
+          
+          // Filter out events where user is host or cohost
+          const filteredEvents = attendingEvents.filter(event => {
+            const isHost = String(event.host?._id || event.host) === String(currentUserId);
+            const isCohost = event.coHosts?.some(cohost => 
+              String(cohost._id || cohost) === String(currentUserId)
+            );
+            return !isHost && !isCohost;
+          });
+          
+          response = { data: { events: filteredEvents }, status: 200 };
+        } catch (fallbackError) {
+          console.error('Fallback also failed:', fallbackError);
+          response = { data: { events: [] }, status: 200 };
+        }
       }
       
-      const events = response.data.events || response.data || [];
+      // Ensure we always get an array
+      let events = [];
+      if (response.data) {
+        if (Array.isArray(response.data.events)) {
+          events = response.data.events;
+        } else if (Array.isArray(response.data)) {
+          events = response.data;
+        }
+      }
       
       // Add friends going count for each event
       const eventsWithFriendsCount = await Promise.all(
@@ -213,4 +237,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
 

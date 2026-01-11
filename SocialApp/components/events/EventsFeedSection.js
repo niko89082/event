@@ -104,7 +104,21 @@ export default function EventsFeedSection({
           response = await api.get(`/api/events/discover?limit=${limit}&skip=${skip}`);
       }
 
-      const fetchedEvents = response.data.events || response.data || [];
+      // Check if response is an error (401, 403, etc.) before using data
+      if (response.status >= 400) {
+        console.warn(`API returned error status ${response.status} for ${activeTab} events`);
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      // Ensure we always get an array
+      let fetchedEvents = [];
+      if (response.data) {
+        if (Array.isArray(response.data.events)) {
+          fetchedEvents = response.data.events;
+        } else if (Array.isArray(response.data)) {
+          fetchedEvents = response.data;
+        }
+      }
       
       // Add friends going count for each event (with error handling)
       const eventsWithFriendsCount = await Promise.all(

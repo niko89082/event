@@ -1,325 +1,299 @@
-// SocialApp/screens/NotificationExamplesScreen.js - Example screen showing all notification types
-import React, { useState } from 'react';
+// SocialApp/screens/NotificationExamplesScreen.js - Template notification screen with example data
+import React, { useState, useMemo } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet,
-  Image, SafeAreaView, StatusBar, ScrollView
+  View, Text, TouchableOpacity, StyleSheet,
+  Image, SafeAreaView, StatusBar, SectionList,
+  TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@env';
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
-import FriendRequestNotificationRedesigned from '../components/notifications/FriendRequestNotificationRedesigned';
 
 export default function NotificationExamplesScreen({ navigation }) {
-  const [selectedType, setSelectedType] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Example notifications for each type
-  const exampleNotifications = {
-    friend_request: {
-      _id: 'example_friend_request',
-      type: 'friend_request',
+  // Template notifications matching the new design
+  const templateNotifications = [
+    // Follow Requests (new_follower type)
+    {
+      _id: 'template_follow_1',
+      type: 'new_follower',
       category: 'social',
-      title: 'New Friend Request',
-      message: 'Sarah Johnson wants to be friends',
+      title: 'New Follower',
+      message: 'Alex Thompson started following you',
       sender: {
-        _id: 'user123',
-        username: 'sarahjohnson',
-        displayName: 'Sarah Johnson',
-        profilePicture: null,
-      },
-      data: {
-        actionTaken: null,
-        mutualFriends: 3, // Show mutual friends count
-        sharedEvents: 0,
-      },
-      isRead: false,
-      createdAt: new Date(Date.now() - 5 * 60 * 1000), // 5 minutes ago
-      priority: 'normal',
-    },
-
-    friend_request_with_events: {
-      _id: 'example_friend_request_2',
-      type: 'friend_request',
-      category: 'social',
-      title: 'New Friend Request',
-      message: 'Mike Chen wants to be friends',
-      sender: {
-        _id: 'user124',
-        username: 'mikechen',
-        displayName: 'Mike Chen',
-        profilePicture: null,
-      },
-      data: {
-        actionTaken: null,
-        mutualFriends: 0,
-        sharedEvents: 2, // Show shared events count
-      },
-      isRead: false,
-      createdAt: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
-      priority: 'normal',
-    },
-
-    friend_request_accepted: {
-      _id: 'example_friend_accepted',
-      type: 'friend_request_accepted',
-      category: 'social',
-      title: 'Friend Request Accepted',
-      message: 'Mike Chen accepted your friend request',
-      sender: {
-        _id: 'user456',
-        username: 'mikechen',
-        displayName: 'Mike Chen',
+        _id: 'user1',
+        username: 'alex_t',
+        displayName: 'Alex Thompson',
         profilePicture: null,
       },
       isRead: false,
-      createdAt: new Date(Date.now() - 30 * 60 * 1000), // 30 minutes ago
-      priority: 'normal',
-      actionType: 'VIEW_PROFILE',
-      actionData: { userId: 'user456' },
+      createdAt: new Date(Date.now() - 30 * 60 * 1000), // 30 min ago
+      // User already follows this person
+      _isFollowing: false, // Show "Follow" button
     },
-
-    memory_invitation: {
-      _id: 'example_memory_invitation',
-      type: 'memory_invitation',
+    {
+      _id: 'template_follow_2',
+      type: 'new_follower',
       category: 'social',
-      title: 'Memory Invitation',
-      message: 'Emily Davis invited you to "Summer BBQ 2024" memory',
+      title: 'New Follower',
+      message: 'Jordan Rivers started following you',
       sender: {
-        _id: 'user101',
-        username: 'emilydavis',
-        displayName: 'Emily Davis',
+        _id: 'user2',
+        username: 'jor_dan',
+        displayName: 'Jordan Rivers',
         profilePicture: null,
-      },
-      data: {
-        memoryId: 'memory123',
-        memoryTitle: 'Summer BBQ 2024',
       },
       isRead: false,
-      createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000), // 1 hour ago
-      priority: 'normal',
-      actionType: 'VIEW_MEMORY',
-      actionData: { memoryId: 'memory123' },
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago
+      // User already follows this person
+      _isFollowing: true, // Show "Following" button
     },
-
-    memory_photo_added: {
-      _id: 'example_memory_photo',
-      type: 'memory_photo_added',
+    {
+      _id: 'template_follow_3',
+      type: 'new_follower',
       category: 'social',
-      title: 'New Photo Added',
-      message: 'Chris Lee added a photo to "Beach Trip"',
+      title: 'New Follower',
+      message: 'Sarah Miller started following you',
       sender: {
-        _id: 'user202',
-        username: 'chrislee',
-        displayName: 'Chris Lee',
+        _id: 'user3',
+        username: 'sarah_m',
+        displayName: 'Sarah Miller',
         profilePicture: null,
-      },
-      data: {
-        memoryId: 'memory456',
-        memoryTitle: 'Beach Trip',
-        photoCount: 1,
       },
       isRead: false,
-      createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000), // 3 hours ago
-      priority: 'normal',
-      actionType: 'VIEW_MEMORY',
-      actionData: { memoryId: 'memory456' },
+      createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000), // 5h ago
+      _isFollowing: false, // Show "Follow" button
     },
-
-    memory_photo_batch: {
-      _id: 'example_memory_batch',
-      type: 'memory_photo_batch',
+    {
+      _id: 'template_follow_4',
+      type: 'new_follower',
       category: 'social',
-      title: 'New Photos Added',
-      message: 'Jessica Brown and 2 others added 15 photos to "Wedding Day"',
+      title: 'New Follower',
+      message: 'Marcus Chen started following you',
       sender: {
-        _id: 'user303',
-        username: 'jessicabrown',
-        displayName: 'Jessica Brown',
+        _id: 'user4',
+        username: 'marcus_c',
+        displayName: 'Marcus Chen',
         profilePicture: null,
-      },
-      data: {
-        memoryId: 'memory789',
-        memoryTitle: 'Wedding Day',
-        photoCount: 15,
-        contributors: ['Jessica Brown', 'Tom Wilson', 'Lisa Anderson'],
-      },
-      isRead: true,
-      createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000), // 5 hours ago
-      priority: 'normal',
-      actionType: 'VIEW_MEMORY',
-      actionData: { memoryId: 'memory789' },
-    },
-
-    event_invitation: {
-      _id: 'example_event_invitation',
-      type: 'event_invitation',
-      category: 'events',
-      title: 'Event Invitation',
-      message: 'David Kim invited you to "Tech Meetup 2024"',
-      sender: {
-        _id: 'user404',
-        username: 'davidkim',
-        displayName: 'David Kim',
-        profilePicture: null,
-      },
-      data: {
-        eventId: 'event123',
-        eventTitle: 'Tech Meetup 2024',
-        eventTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-        eventLocation: 'San Francisco, CA',
       },
       isRead: false,
       createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
-      priority: 'normal',
-      actionType: 'VIEW_EVENT',
-      actionData: { eventId: 'event123' },
+      _isFollowing: true, // Show "Following" button
     },
-
-    event_reminder: {
-      _id: 'example_event_reminder',
-      type: 'event_reminder',
+    
+    // Today notifications
+    {
+      _id: 'template_event_invite',
+      type: 'event_invitation_batch',
       category: 'events',
-      title: 'Event Tomorrow',
-      message: 'Don\'t forget: "Coffee Meetup" is tomorrow at 10:00 AM',
-      sender: null,
-      data: {
-        eventId: 'event456',
-        eventTitle: 'Coffee Meetup',
-        eventTime: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000), // Tomorrow
-        eventLocation: 'Local Cafe',
-      },
-      isRead: false,
-      createdAt: new Date(Date.now() - 10 * 60 * 1000), // 10 minutes ago
-      priority: 'high',
-      actionType: 'VIEW_EVENT',
-      actionData: { eventId: 'event456' },
-    },
-
-    event_reminder_1_hour: {
-      _id: 'example_event_1hour',
-      type: 'event_reminder_1_hour',
-      category: 'events',
-      title: 'Event Starting Soon',
-      message: '"Birthday Party" starts in 1 hour',
-      sender: null,
-      data: {
-        eventId: 'event789',
-        eventTitle: 'Birthday Party',
-        eventTime: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
-        eventLocation: '123 Main St',
-      },
-      isRead: false,
-      createdAt: new Date(Date.now() - 2 * 60 * 1000), // 2 minutes ago
-      priority: 'high',
-      actionType: 'VIEW_EVENT',
-      actionData: { eventId: 'event789' },
-    },
-
-    event_rsvp_batch: {
-      _id: 'example_event_rsvp',
-      type: 'event_rsvp_batch',
-      category: 'events',
-      title: 'Event RSVPs',
-      message: '5 people are attending your event "Game Night"',
-      sender: null,
-      data: {
-        eventId: 'event101',
-        eventTitle: 'Game Night',
-        attendeeCount: 5,
-        attendees: ['John', 'Sarah', 'Mike', 'Emily', 'Chris'],
-      },
-      isRead: true,
-      createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000), // 6 hours ago
-      priority: 'normal',
-      actionType: 'VIEW_EVENT',
-      actionData: { eventId: 'event101' },
-    },
-
-    post_liked: {
-      _id: 'example_post_liked',
-      type: 'post_liked',
-      category: 'social',
-      title: 'New Like',
-      message: 'Rachel Green liked your post',
+      title: 'Event Invitation',
+      message: 'Summer Rooftop Party',
       sender: {
-        _id: 'user505',
-        username: 'rachelgreen',
-        displayName: 'Rachel Green',
+        _id: 'user5',
+        username: 'eventhost',
+        displayName: 'Event Host',
         profilePicture: null,
       },
       data: {
-        postId: 'post123',
-        postPreview: 'Had an amazing day at the beach!',
+        eventId: 'event1',
+        eventTitle: 'Summer Rooftop Party',
+        eventTime: 'Sat, 8 PM',
+        eventCover: null,
       },
-      isRead: true,
-      createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000), // 4 hours ago
-      priority: 'normal',
-      actionType: 'VIEW_POST',
-      actionData: { postId: 'post123' },
+      isRead: false,
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago
+      actionType: 'VIEW_EVENT',
     },
-
-    post_commented: {
-      _id: 'example_post_comment',
+    {
+      _id: 'template_like',
+      type: 'post_liked',
+      category: 'social',
+      title: 'Photo Liked',
+      message: 'Sarah liked your review of "Inception"',
+      sender: {
+        _id: 'user3',
+        username: 'sarah_m',
+        displayName: 'Sarah Miller',
+        profilePicture: null,
+      },
+      data: {
+        postId: 'post1',
+      },
+      isRead: false,
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago
+      actionType: 'VIEW_POST',
+    },
+    {
+      _id: 'template_rating',
+      type: 'post_liked',
+      category: 'social',
+      title: 'Rating',
+      message: 'Marcus rated Blinding Lights 5 stars',
+      sender: {
+        _id: 'user4',
+        username: 'marcus_c',
+        displayName: 'Marcus Chen',
+        profilePicture: null,
+      },
+      data: {
+        postId: 'post2',
+      },
+      isRead: false,
+      createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000), // 4h ago
+      actionType: 'VIEW_POST',
+    },
+    
+    // Yesterday notifications
+    {
+      _id: 'template_comment',
       type: 'post_commented',
       category: 'social',
       title: 'New Comment',
-      message: 'Monica Geller commented on your post: "Looks amazing!"',
+      message: 'Elena commented on your rooftop post: "Can\'t wait for this!"',
       sender: {
-        _id: 'user606',
-        username: 'monicageller',
-        displayName: 'Monica Geller',
+        _id: 'user6',
+        username: 'elena_g',
+        displayName: 'Elena Gray',
         profilePicture: null,
       },
       data: {
-        postId: 'post456',
-        comment: 'Looks amazing!',
-        postPreview: 'Check out my new recipe',
+        postId: 'post3',
       },
-      isRead: false,
-      createdAt: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
-      priority: 'normal',
+      isRead: true,
+      createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000), // Yesterday, 2:15 PM
       actionType: 'VIEW_POST',
-      actionData: { postId: 'post456' },
     },
-  };
-
-  const notificationTypes = [
-    { key: 'all', label: 'All Types', icon: 'grid-outline' },
-    { key: 'friend_request', label: 'Friend Request (Mutuals)', icon: 'person-add', color: '#3797EF' },
-    { key: 'friend_request_with_events', label: 'Friend Request (Events)', icon: 'person-add', color: '#3797EF' },
-    { key: 'friend_request_accepted', label: 'Request Accepted', icon: 'checkmark-circle', color: '#34C759' },
-    { key: 'memory_invitation', label: 'Memory Invite', icon: 'images', color: '#FF9500' },
-    { key: 'memory_photo_added', label: 'Photo Added', icon: 'camera', color: '#5AC8FA' },
-    { key: 'memory_photo_batch', label: 'Photos Batch', icon: 'photos', color: '#FF2D55' },
-    { key: 'event_invitation', label: 'Event Invite', icon: 'calendar', color: '#3797EF' },
-    { key: 'event_reminder', label: 'Event Tomorrow', icon: 'time', color: '#FF9500' },
-    { key: 'event_reminder_1_hour', label: 'Event Soon', icon: 'alarm', color: '#FF3B30' },
-    { key: 'event_rsvp_batch', label: 'Event RSVPs', icon: 'people', color: '#34C759' },
-    { key: 'post_liked', label: 'Post Liked', icon: 'heart', color: '#FF3B30' },
-    { key: 'post_commented', label: 'Post Comment', icon: 'chatbubble', color: '#5AC8FA' },
+    {
+      _id: 'template_planning',
+      type: 'event_invitation',
+      category: 'events',
+      title: 'Planning',
+      message: 'Movie Night: Interstellar',
+      sender: {
+        _id: 'user7',
+        username: 'movienight',
+        displayName: 'Movie Night',
+        profilePicture: null,
+      },
+      data: {
+        eventId: 'event2',
+        eventTitle: 'Movie Night: Interstellar',
+        eventTime: 'Next Friday',
+        eventCover: null,
+      },
+      isRead: true,
+      createdAt: new Date(Date.now() - 28 * 60 * 60 * 1000), // Yesterday
+      actionType: 'VIEW_EVENT',
+    },
   ];
+
+  // Organize notifications like the real screen
+  const organizedData = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    // Separate follow requests
+    const followRequests = templateNotifications.filter(n => n.type === 'new_follower');
+    const otherNotifications = templateNotifications.filter(n => n.type !== 'new_follower');
+
+    // Filter follow requests by search
+    const filteredFollowRequests = searchQuery
+      ? followRequests.filter(n => {
+          const sender = n.sender;
+          const searchLower = searchQuery.toLowerCase();
+          return (
+            sender?.username?.toLowerCase().includes(searchLower) ||
+            sender?.displayName?.toLowerCase().includes(searchLower) ||
+            n.message?.toLowerCase().includes(searchLower)
+          );
+        })
+      : followRequests;
+
+    // Group other notifications by date
+    const todayNotifs = [];
+    const yesterdayNotifs = [];
+    const olderNotifs = [];
+
+    otherNotifications.forEach(notif => {
+      const notifDate = new Date(notif.createdAt);
+      if (notifDate >= today) {
+        todayNotifs.push(notif);
+      } else if (notifDate >= yesterday && notifDate < today) {
+        yesterdayNotifs.push(notif);
+      } else {
+        olderNotifs.push(notif);
+      }
+    });
+
+    const sections = [];
+
+    // Follow Requests section
+    if (filteredFollowRequests.length > 0) {
+      sections.push({
+        type: 'follow_requests',
+        title: 'Follow Requests',
+        count: followRequests.length,
+        data: filteredFollowRequests,
+      });
+    }
+
+    // Today section
+    if (todayNotifs.length > 0) {
+      sections.push({
+        type: 'date_section',
+        title: 'Today',
+        data: todayNotifs,
+      });
+    }
+
+    // Yesterday section
+    if (yesterdayNotifs.length > 0) {
+      sections.push({
+        type: 'date_section',
+        title: 'Yesterday',
+        data: yesterdayNotifs,
+      });
+    }
+
+    // Older section
+    if (olderNotifs.length > 0) {
+      sections.push({
+        type: 'date_section',
+        title: 'Earlier',
+        data: olderNotifs,
+      });
+    }
+
+    return sections;
+  }, [searchQuery]);
 
   const getNotificationIcon = (notification) => {
     const iconMap = {
-      'friend_request': 'person-add',
-      'friend_request_accepted': 'checkmark-circle',
+      'new_follower': 'people',
       'memory_invitation': 'images',
       'memory_photo_added': 'camera',
       'memory_photo_batch': 'photos',
       'event_invitation': 'calendar',
+      'event_invitation_batch': 'calendar',
       'event_reminder': 'time',
       'event_reminder_1_hour': 'alarm',
       'event_rsvp_batch': 'people',
       'post_liked': 'heart',
-      'post_commented': 'chatbubble'
+      'post_commented': 'chatbubble',
+      'memory_photo_liked': 'heart',
     };
-    
     return iconMap[notification.type] || 'notifications';
   };
 
   const getNotificationColor = (notification) => {
     if (notification.priority === 'high') return '#FF3B30';
     if (notification.category === 'events') return '#3797EF';
-    return '#8E44AD';
+    if (notification.type === 'post_liked' || notification.type === 'memory_photo_liked') return '#FF3B30';
+    if (notification.type === 'post_commented') return '#34C759';
+    return '#3797EF';
   };
 
   const getTimeAgo = (dateString) => {
@@ -330,115 +304,208 @@ export default function NotificationExamplesScreen({ navigation }) {
     if (diffInSeconds < 60) return 'Just now';
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
     
-    return date.toLocaleDateString();
+    const diffInDays = Math.floor(diffInSeconds / 86400);
+    if (diffInDays === 1) return 'Yesterday';
+    if (diffInDays < 7) return `${diffInDays}d ago`;
+    
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  const renderNotificationItem = (notification) => {
-    const iconName = getNotificationIcon(notification);
-    const iconColor = getNotificationColor(notification);
-    const isFriendRequest = notification.type === 'friend_request' || notification._id.includes('friend_request');
+  const renderFollowRequestItem = (notification) => {
+    const sender = notification.sender;
+    const profilePicUrl = sender?.profilePicture 
+      ? (sender.profilePicture.startsWith('http') 
+          ? sender.profilePicture 
+          : `http://${API_BASE_URL}:3000${sender.profilePicture.startsWith('/') ? '' : '/'}${sender.profilePicture}`)
+      : null;
 
-    // For friend requests, use the redesigned component
-    if (isFriendRequest) {
-      return (
-        <View style={styles.exampleContainer}>
-          <Text style={styles.typeLabel}>{notification.type}</Text>
-          <SwipeableNotificationItem
-            item={notification}
-            onDelete={() => console.log('Delete')}
-            disabled={true}
-          >
-            <FriendRequestNotificationRedesigned 
-              notification={notification}
-              onActionComplete={() => console.log('Action complete')}
-              onDelete={() => console.log('Delete')}
-            />
-          </SwipeableNotificationItem>
-        </View>
-      );
-    }
+    // For template, show public account behavior (Follow button)
+    const isPublic = true; // All accounts are public in template
+    // Use _isFollowing from notification data to show different states
+    const isFollowing = notification._isFollowing || false;
 
-    // Regular notification rendering
     return (
-      <View style={styles.exampleContainer}>
-        <Text style={styles.typeLabel}>{notification.type}</Text>
-        <SwipeableNotificationItem
-          item={notification}
-          onDelete={() => console.log('Delete')}
-        >
-          <TouchableOpacity
-            style={[
-              styles.notificationItem, 
-              !notification.isRead && styles.unreadNotification
-            ]}
-            activeOpacity={0.7}
-          >
-            <View style={styles.notificationRow}>
-              {/* Profile Picture or Icon */}
-              <View style={styles.notificationIconContainer}>
-                {notification.sender?.profilePicture ? (
-                  <Image 
-                    source={{ uri: `${API_BASE_URL}/${notification.sender.profilePicture}` }}
-                    style={styles.profilePicture}
-                  />
-                ) : notification.sender ? (
-                  <View style={[styles.defaultIcon, { backgroundColor: iconColor + '20' }]}>
-                    <Text style={[styles.initialsText, { color: iconColor }]}>
-                      {notification.sender.displayName?.substring(0, 2).toUpperCase() || 'U'}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={[styles.defaultIcon, { backgroundColor: iconColor + '20' }]}>
-                    <Ionicons name={iconName} size={20} color={iconColor} />
-                  </View>
-                )}
-                
-                {/* Unread indicator */}
-                {!notification.isRead && (
-                  <View style={styles.unreadDot} />
-                )}
-
-                {/* Priority indicator */}
-                {notification.priority === 'high' && (
-                  <View style={styles.priorityBadge}>
-                    <Ionicons name="alert-circle" size={12} color="#FFFFFF" />
-                  </View>
-                )}
-              </View>
-
-              {/* Notification Content */}
-              <View style={styles.notificationContent}>
-                <View style={styles.notificationTextContainer}>
-                  <Text style={styles.notificationTitle}>
-                    {notification.title}
-                  </Text>
-                  <Text style={styles.notificationMessage}>
-                    {notification.message}
-                  </Text>
-                  <Text style={styles.notificationTime}>
-                    {getTimeAgo(notification.createdAt)}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Category indicator */}
-              <View style={styles.categoryIndicator}>
-                <View style={[styles.categoryDot, { backgroundColor: iconColor }]} />
-              </View>
+      <View style={styles.followRequestItem}>
+        <TouchableOpacity activeOpacity={0.7}>
+          {profilePicUrl ? (
+            <Image source={{ uri: profilePicUrl }} style={styles.followRequestAvatar} />
+          ) : (
+            <View style={styles.followRequestAvatarPlaceholder}>
+              <Text style={styles.followRequestAvatarText}>
+                {sender?.username?.charAt(0)?.toUpperCase() || '?'}
+              </Text>
             </View>
+          )}
+        </TouchableOpacity>
+
+        <View style={styles.followRequestInfo}>
+          <TouchableOpacity activeOpacity={0.7}>
+            <Text style={styles.followRequestName} numberOfLines={1}>
+              {sender?.displayName || sender?.username || 'Unknown User'}
+            </Text>
+            <Text style={styles.followRequestUsername}>
+              @{sender?.username || 'unknown'}
+            </Text>
           </TouchableOpacity>
-        </SwipeableNotificationItem>
+        </View>
+
+        <View style={styles.followRequestActions}>
+          {isPublic ? (
+            // Public account: Show Follow button
+            <TouchableOpacity
+              style={[
+                styles.followButton,
+                isFollowing && styles.followingButton
+              ]}
+              activeOpacity={0.8}
+            >
+              <Text style={[
+                styles.followButtonText,
+                isFollowing && styles.followingButtonText
+              ]}>
+                {isFollowing ? 'Following' : 'Follow'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            // Private account: Show Confirm/Delete buttons
+            <>
+              <TouchableOpacity
+                style={styles.confirmButton}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.confirmButtonText}>Confirm</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </View>
     );
   };
 
-  const getDisplayNotifications = () => {
-    if (selectedType === 'all') {
-      return Object.values(exampleNotifications);
+  const renderNotificationItem = ({ item }) => {
+    const iconName = getNotificationIcon(item);
+    const iconColor = getNotificationColor(item);
+    const sender = item.sender;
+    const profilePicUrl = sender?.profilePicture 
+      ? (sender.profilePicture.startsWith('http') 
+          ? sender.profilePicture 
+          : `http://${API_BASE_URL}:3000${sender.profilePicture.startsWith('/') ? '' : '/'}${sender.profilePicture}`)
+      : null;
+
+    // Get icon overlay based on notification type
+    let iconOverlay = null;
+    if (item.type === 'post_liked' || item.type === 'memory_photo_liked') {
+      iconOverlay = { name: 'heart', color: '#FF3B30' };
+    } else if (item.type === 'post_commented') {
+      iconOverlay = { name: 'chatbubble', color: '#34C759' };
+    } else if (item.type === 'event_invitation' || item.type === 'event_invitation_batch') {
+      iconOverlay = { name: 'calendar', color: '#3797EF' };
     }
-    return [exampleNotifications[selectedType]];
+
+    return (
+      <SwipeableNotificationItem
+        item={item}
+        onDelete={() => {}}
+        disabled={true}
+      >
+        <TouchableOpacity
+          style={[
+            styles.notificationItem, 
+            !item.isRead && styles.unreadNotification
+          ]}
+          activeOpacity={0.7}
+        >
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIconContainer}>
+              {profilePicUrl ? (
+                <View style={styles.profilePictureWrapper}>
+                  <Image source={{ uri: profilePicUrl }} style={styles.profilePicture} />
+                  {iconOverlay && (
+                    <View style={[styles.iconOverlay, { backgroundColor: iconOverlay.color }]}>
+                      <Ionicons name={iconOverlay.name} size={12} color="#FFFFFF" />
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <View style={[styles.defaultIcon, { backgroundColor: iconColor + '20' }]}>
+                  <Ionicons name={iconName} size={20} color={iconColor} />
+                </View>
+              )}
+              {!item.isRead && (
+                <View style={styles.unreadDot} />
+              )}
+            </View>
+
+            <View style={styles.notificationContent}>
+              <Text style={styles.notificationMessage} numberOfLines={3}>
+                {item.message}
+              </Text>
+              <Text style={styles.notificationTime}>
+                {getTimeAgo(item.createdAt)}
+              </Text>
+            </View>
+
+            {/* Optional image for event notifications */}
+            {item.data?.eventId && item.data?.eventCover && (
+              <Image 
+                source={{ uri: item.data.eventCover }}
+                style={styles.notificationImage}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </SwipeableNotificationItem>
+    );
+  };
+
+  const renderSectionHeader = ({ section }) => {
+    if (section.type === 'follow_requests') {
+      return (
+        <View style={styles.followRequestsSection}>
+          <View style={styles.followRequestsHeader}>
+            <Text style={styles.followRequestsTitle}>Follow Requests</Text>
+            {section.count > 0 && (
+              <View style={styles.followRequestsBadge}>
+                <Text style={styles.followRequestsBadgeText}>
+                  {section.count > 9 ? '9+' : section.count}
+                </Text>
+              </View>
+            )}
+          </View>
+          <View style={styles.searchContainer}>
+            <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search requests"
+              placeholderTextColor="#8E8E93"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+          {section.count > 2 && (
+            <TouchableOpacity style={styles.seeAllButton}>
+              <Text style={styles.seeAllText}>
+                See all {section.count} requests
+              </Text>
+              <Ionicons name="chevron-down" size={16} color="#3797EF" />
+            </TouchableOpacity>
+          )}
+        </View>
+      );
+    } else {
+      return (
+        <View style={styles.dateSectionHeader}>
+          <Text style={styles.dateSectionTitle}>{section.title}</Text>
+        </View>
+      );
+    }
   };
 
   return (
@@ -453,50 +520,32 @@ export default function NotificationExamplesScreen({ navigation }) {
         >
           <Ionicons name="chevron-back" size={26} color="#000000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Notification Examples</Text>
+        <Text style={styles.headerTitle}>Template Notifications</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Type Selector */}
-      <View style={styles.typeSelectorContainer}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.typeSelectorContent}
-        >
-          {notificationTypes.map(type => (
-            <TouchableOpacity
-              key={type.key}
-              style={[
-                styles.typeChip,
-                selectedType === type.key && styles.typeChipActive
-              ]}
-              onPress={() => setSelectedType(type.key)}
-            >
-              <Ionicons 
-                name={type.icon} 
-                size={16} 
-                color={selectedType === type.key ? '#FFFFFF' : (type.color || '#8E8E93')} 
-              />
-              <Text style={[
-                styles.typeChipText,
-                selectedType === type.key && styles.typeChipTextActive
-              ]}>
-                {type.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+      {/* Info Banner */}
+      <View style={styles.infoBanner}>
+        <Ionicons name="information-circle" size={20} color="#3797EF" />
+        <Text style={styles.infoText}>
+          Template view: Shows "Follow" and "Following" button states for public accounts
+        </Text>
       </View>
-
-      {/* Notifications List */}
-      <ScrollView style={styles.scrollView}>
-        {getDisplayNotifications().map(notification => (
-          <React.Fragment key={notification._id}>
-            {renderNotificationItem(notification)}
-          </React.Fragment>
-        ))}
-      </ScrollView>
+      
+      <SectionList
+        sections={organizedData}
+        keyExtractor={(item, index) => item._id || index.toString()}
+        renderItem={({ item, section }) => {
+          if (section.type === 'follow_requests') {
+            return renderFollowRequestItem(item);
+          }
+          return renderNotificationItem({ item });
+        }}
+        renderSectionHeader={renderSectionHeader}
+        contentContainerStyle={styles.listContainer}
+        showsVerticalScrollIndicator={false}
+        stickySectionHeadersEnabled={false}
+      />
     </SafeAreaView>
   );
 }
@@ -525,57 +574,214 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000000',
   },
-  typeSelectorContainer: {
-    backgroundColor: '#F8F9FA',
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E1E1E1',
-  },
-  typeSelectorContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
-  },
-  typeChip: {
+  infoBanner: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#E3F2FD',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E1E1E1',
-    gap: 6,
-    marginRight: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E1E1E1',
+    gap: 8,
   },
-  typeChipActive: {
-    backgroundColor: '#3797EF',
-    borderColor: '#3797EF',
-  },
-  typeChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1C1C1E',
-  },
-  typeChipTextActive: {
-    color: '#FFFFFF',
-  },
-  scrollView: {
+  infoText: {
     flex: 1,
+    fontSize: 14,
+    color: '#1976D2',
+    fontWeight: '500',
   },
-  exampleContainer: {
-    marginVertical: 8,
-    backgroundColor: '#F8F9FA',
+  listContainer: {
+    paddingBottom: 20,
+  },
+  
+  // Follow Requests Section
+  followRequestsSection: {
+    backgroundColor: '#FFFFFF',
     paddingTop: 8,
   },
-  typeLabel: {
-    fontSize: 11,
+  followRequestsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  followRequestsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  followRequestsBadge: {
+    backgroundColor: '#3797EF',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginLeft: 8,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followRequestsBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 10,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#000000',
+    paddingVertical: 0,
+  },
+  seeAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  seeAllText: {
+    color: '#3797EF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  
+  // Follow Request Item
+  followRequestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#EFEFEF',
+  },
+  followRequestAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+  },
+  followRequestAvatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#E1E1E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  followRequestAvatarText: {
+    fontSize: 20,
     fontWeight: '600',
     color: '#8E8E93',
-    paddingHorizontal: 20,
-    paddingBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
+  followRequestInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  followRequestName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  followRequestUsername: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  followRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  confirmButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  deleteButton: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteButtonText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  followButton: {
+    backgroundColor: '#3797EF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  followingButton: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    minWidth: 65,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followingButtonText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  
+  // Date Section Header
+  dateSectionHeader: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#EFEFEF',
+  },
+  dateSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  
+  // Notification Item
   notificationItem: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,
@@ -585,8 +791,6 @@ const styles = StyleSheet.create({
   },
   unreadNotification: {
     backgroundColor: '#F8F9FA',
-    borderLeftWidth: 3,
-    borderLeftColor: '#3797EF',
   },
   notificationRow: {
     flexDirection: 'row',
@@ -595,16 +799,31 @@ const styles = StyleSheet.create({
   notificationIconContainer: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginRight: 12,
+    position: 'relative',
+  },
+  profilePictureWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     position: 'relative',
   },
   profilePicture: {
     width: 48,
     height: 48,
     borderRadius: 24,
+  },
+  iconOverlay: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
   defaultIcon: {
     width: 48,
@@ -613,67 +832,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  initialsText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
   unreadDot: {
     position: 'absolute',
     top: -2,
     right: -2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#3797EF',
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
-  },
-  priorityBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#FF3B30',
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },
   notificationContent: {
     flex: 1,
-    flexDirection: 'column',
-  },
-  notificationTextContainer: {
-    flex: 1,
-  },
-  notificationTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
-    lineHeight: 20,
+    marginRight: 8,
   },
   notificationMessage: {
-    fontSize: 14,
-    color: '#1C1C1E',
-    lineHeight: 18,
-    marginBottom: 6,
+    fontSize: 15,
+    color: '#000000',
+    lineHeight: 20,
+    marginBottom: 4,
   },
   notificationTime: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#8E8E93',
-    fontWeight: '500',
+    marginTop: 4,
   },
-  categoryIndicator: {
-    marginLeft: 8,
-    justifyContent: 'center',
-  },
-  categoryDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  notificationImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
   },
 });
-
